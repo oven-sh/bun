@@ -591,7 +591,7 @@ const Browsers = css.targets.Browsers;
 pub const Feature = enum {
   ${[...p.keys()].flat().map(enumify).sort().join(",\n  ")},
 
-  pub fn prefixes_for(this: *const Feature, browsers: Browsers) VendorPrefix {
+  pub fn prefixesFor(this: *const Feature, browsers: Browsers) VendorPrefix {
     var prefixes = VendorPrefix{ .none = true };
     switch (this.*) {
       ${[...p]

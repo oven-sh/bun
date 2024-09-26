@@ -1,12 +1,4 @@
-import type {
-  ServerWebSocket,
-  Socket,
-  SocketHandler,
-  TCPSocketConnectOptions,
-  UnixSocketOptions,
-  WebSocketHandler,
-  Server as WebSocketServer,
-} from "bun";
+import type { ServerWebSocket, Socket, SocketHandler, WebSocketHandler, Server as WebSocketServer } from "bun";
 
 export default function (
   executionContextId: string,
@@ -111,7 +103,7 @@ class Debugger {
       return;
     }
 
-    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'wss:')`);
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:' or 'ws+unix:')`);
   }
 
   get #websocket(): WebSocketHandler<Connection> {

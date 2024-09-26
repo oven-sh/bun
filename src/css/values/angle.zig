@@ -87,7 +87,7 @@ pub const Angle = union(Tag) {
 
                 // We print 5 digits of precision by default.
                 // Switch to degrees if there are an even number of them.
-                if (std.math.round(deg * 100000.0) - (deg - @trunc(deg)) == 0) {
+                if (css.fract(std.math.round(deg * 100000.0)) == 0) {
                     break :brk .{ val, "deg" };
                 } else {
                     break :brk .{ val, "rad" };

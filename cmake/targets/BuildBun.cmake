@@ -54,16 +54,16 @@ register_command(
   COMMENT
     "Generating src/js_lexer/*.blob"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       run
       ${CMAKE_ZIG_FLAGS}
       ${BUN_ZIG_IDENTIFIER_SCRIPT}
   SOURCES
     ${BUN_ZIG_IDENTIFIER_SOURCES}
-  OUTPUTS
-    ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   TARGETS
     clone-zig
+  OUTPUTS
+    ${BUN_ZIG_IDENTIFIER_OUTPUTS}
 )
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
@@ -484,6 +484,9 @@ list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/root.zig
   ${CWD}/root_wasm.zig
+)
+
+set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}
@@ -496,9 +499,9 @@ list(APPEND BUN_ZIG_SOURCES
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
 if (DEBUG)
-  list(APPEND BUN_ZIG_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/kit_empty_file)
 else()
-  list(APPEND BUN_ZIG_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
@@ -527,7 +530,7 @@ register_command(
   COMMENT
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
-    ${CMAKE_ZIG_COMPILER}
+    ${ZIG_EXECUTABLE}
       build obj
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
@@ -543,10 +546,11 @@ register_command(
       -Dgenerated-code=${CODEGEN_PATH}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
-  SOURCES
-    ${BUN_ZIG_SOURCES}
   TARGETS
     clone-zig
+  SOURCES
+    ${BUN_ZIG_SOURCES}
+    ${BUN_ZIG_GENERATED_SOURCES}
 )
 
 set_property(TARGET bun-zig PROPERTY JOB_POOL compile_pool)
@@ -577,6 +581,10 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.c
 )
 
+if(WIN32)
+  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+endif()
+
 register_repository(
   NAME
     picohttpparser
@@ -588,15 +596,26 @@ register_repository(
     picohttpparser.c
 )
 
-list(APPEND BUN_C_SOURCES ${VENDOR_PATH}/picohttpparser/picohttpparser.c)
+set(NODEJS_HEADERS_PATH ${VENDOR_PATH}/nodejs)
 
-if(WIN32)
-  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
-endif()
+register_command(
+  TARGET
+    bun-node-headers
+  COMMENT
+    "Download node ${NODEJS_VERSION} headers"
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DDOWNLOAD_PATH=${NODEJS_HEADERS_PATH}
+      -DDOWNLOAD_URL=https://nodejs.org/dist/v${NODEJS_VERSION}/node-v${NODEJS_VERSION}-headers.tar.gz
+      -P ${CWD}/cmake/scripts/DownloadUrl.cmake
+  OUTPUTS
+    ${NODEJS_HEADERS_PATH}/include/node/node_version.h
+)
 
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
@@ -820,8 +839,34 @@ elseif(APPLE)
     -fno-keep-static-consts
   )
 else()
+  # Try to use lld-16 if available, otherwise fallback to lld
+  # Cache it so we don't have to re-run CMake to pick it up
+  if((NOT DEFINED LLD_NAME) AND (NOT CI OR BUN_LINK_ONLY))
+    find_program(LLD_EXECUTABLE_NAME lld-${LLVM_VERSION_MAJOR})
+
+    if(NOT LLD_EXECUTABLE_NAME)
+      if(CI)
+        # Ensure we don't use a differing version of lld in CI vs clang
+        message(FATAL_ERROR "lld-${LLVM_VERSION_MAJOR} not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and set to lld-${LLVM_VERSION_MAJOR}")
+      endif()
+
+      # To make it easier for contributors, allow differing versions of lld vs clang/cmake
+      find_program(LLD_EXECUTABLE_NAME lld)
+    endif()
+
+    if(NOT LLD_EXECUTABLE_NAME)
+      message(FATAL_ERROR "LLD not found. Please make sure you have LLVM ${LLVM_VERSION_MAJOR}.x installed and lld is available in your PATH as lld-${LLVM_VERSION_MAJOR}")
+    endif()
+
+    # normalize to basename so it can be used with -fuse-ld
+    get_filename_component(LLD_NAME ${LLD_EXECUTABLE_NAME} NAME CACHE)
+    message(STATUS "Using linker: ${LLD_NAME} (${LLD_EXECUTABLE_NAME})")
+  elseif(NOT DEFINED LLD_NAME)
+    set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
+  endif()
+
   target_link_options(${bun} PUBLIC
-    -fuse-ld=lld-${LLVM_VERSION_MAJOR}
+    -fuse-ld=${LLD_NAME}
     -fno-pic
     -static-libstdc++
     -static-libgcc

@@ -1,5 +1,16 @@
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, sep } from "path";
@@ -81,7 +92,7 @@ it("should not error when package.json has comments and trailing commas", async 
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -226,10 +237,70 @@ registry = "http://${server.hostname}:${server.port}/"
   expect(await exited).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
+});
+
+it("should support --registry CLI flag", async () => {
+  const connected = jest.fn();
+  function end(socket: Socket) {
+    connected();
+    socket.end();
+  }
+  const server = listen({
+    socket: {
+      data: function data(socket) {
+        end(socket);
+      },
+      drain: function drain(socket) {
+        end(socket);
+      },
+      open: function open(socket) {
+        end(socket);
+      },
+    },
+    hostname: "localhost",
+    port: 0,
+  });
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "https://badssl.com:bad"
+`,
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--registry", `http://${server.hostname}:${server.port}/`],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toMatch(/error: (ConnectionRefused|ConnectionClosed) downloading package manifest bar/gm);
+  expect(await new Response(stdout).text()).toBeEmpty();
+  expect(await exited).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect.unreachable();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+  expect(connected).toHaveBeenCalled();
 });
 
 it("should work when moving workspace packages", async () => {
@@ -410,7 +481,7 @@ it("should handle missing package", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -461,7 +532,7 @@ foo = { token = "bar" }
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -1551,7 +1622,7 @@ it("should handle ^1 in dependencies", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -1628,7 +1699,7 @@ it("should handle ^0.1 in dependencies", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -1663,7 +1734,7 @@ it("should handle ^0.0.0 in dependencies", async () => {
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -4512,7 +4583,7 @@ it("should fail on invalid Git URL", async () => {
   expect(requested).toBe(0);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -4548,7 +4619,7 @@ it("should fail on ssh Git URL if invalid credentials", async () => {
   expect(requested).toBe(0);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
@@ -4586,7 +4657,7 @@ it("should fail on Git URL with invalid committish", async () => {
   expect(requested).toBe(0);
   try {
     await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }

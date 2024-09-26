@@ -142,8 +142,11 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            _ = this; // autofix
-            @panic(css.todo_stuff.depth);
+            this.scratchbuf.deinit();
+            this.indentation_buf.deinit();
+            if (this.dependencies) |*dependencies| {
+                dependencies.deinit(this.allocator);
+            }
         }
 
         pub fn new(allocator: Allocator, scratchbuf: std.ArrayList(u8), dest: Writer, options: PrinterOptions) This {

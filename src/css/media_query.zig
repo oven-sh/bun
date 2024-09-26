@@ -84,6 +84,12 @@ pub const MediaList = struct {
         return;
     }
 
+    pub fn eql(lhs: *const MediaList, rhs: *const MediaList) bool {
+        _ = lhs; // autofix
+        _ = rhs; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
     /// Returns whether the media query list always matches.
     pub fn alwaysMatches(this: *const MediaList) bool {
         // If the media list is empty, it always matches.

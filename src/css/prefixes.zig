@@ -190,7 +190,7 @@ pub const Feature = enum {
     zoom_in,
     zoom_out,
 
-    pub fn prefixes_for(this: *const Feature, browsers: Browsers) VendorPrefix {
+    pub fn prefixesFor(this: *const Feature, browsers: Browsers) VendorPrefix {
         var prefixes = VendorPrefix{ .none = true };
         switch (this.*) {
             .border_radius, .border_top_left_radius, .border_top_right_radius, .border_bottom_right_radius, .border_bottom_left_radius => {

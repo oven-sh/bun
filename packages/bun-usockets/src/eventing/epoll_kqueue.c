@@ -368,7 +368,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     return new_p;
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
 #ifdef LIBUS_USE_EPOLL
@@ -379,9 +379,14 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     do {
         ret = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
     } while (IS_EINTR(ret));
+    return ret;
 #else
-    kqueue_change(loop->fd, p->state.fd, 0, events, p);
+    return kqueue_change(loop->fd, p->state.fd, 0, events, p);
 #endif
+}
+
+void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+    us_poll_start_rc(p, loop, events);
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {

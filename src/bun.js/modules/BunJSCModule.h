@@ -413,7 +413,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         throwVMError(
             globalObject, scope,
             createTypeError(globalObject, "directory couldn't be created"_s));
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
       }
 
       Options::samplingProfilerPath() = pathCString.data();
@@ -465,7 +465,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetRandomSeed, (JSGlobalObject * globalObject,
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   unsigned seed = callFrame->argument(0).toUInt32(globalObject);
-  RETURN_IF_EXCEPTION(scope, encodedJSValue());
+  RETURN_IF_EXCEPTION(scope, {});
   globalObject->weakRandom().setSeed(seed);
   return JSValue::encode(jsUndefined());
 }
@@ -582,22 +582,22 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject,
   if (callFrame->argumentCount() < 1) {
     throwTypeError(globalObject, scope,
                    "setTimeZone requires a timezone string"_s);
-    return encodedJSValue();
+    return {};
   }
 
   if (!callFrame->argument(0).isString()) {
     throwTypeError(globalObject, scope,
                    "setTimeZone requires a timezone string"_s);
-    return encodedJSValue();
+    return {};
   }
 
   String timeZoneName = callFrame->argument(0).toWTFString(globalObject);
-  RETURN_IF_EXCEPTION(scope, encodedJSValue());
+  RETURN_IF_EXCEPTION(scope, {});
 
   if (!WTF::setTimeZoneOverride(timeZoneName)) {
     throwTypeError(globalObject, scope,
                    makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
-    return encodedJSValue();
+    return {};
   }
   vm.dateCache.resetIfNecessarySlow();
   WTF::Vector<UChar, 32> buffer;
@@ -708,7 +708,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject,
           auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
           reportFailure(globalObject->vm());
           throwException(globalObject, scope, error.value());
-          return JSValue::encode(jsUndefined());
+          return JSValue::encode({});
         });
     promise->performPromiseThen(globalObject, resolve, reject,
                                 afterOngoingPromiseCapability);
@@ -759,12 +759,12 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
       if (!binaryTypeValue.isString()) {
         throwTypeError(globalObject, throwScope,
                        "binaryType must be a string"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
       }
 
       asNodeBuffer =
           binaryTypeValue.toWTFString(globalObject) == "nodebuffer"_s;
-      RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+      RETURN_IF_EXCEPTION(throwScope, {});
     }
   }
 
@@ -822,10 +822,10 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject,
   } else {
     throwTypeError(globalObject, throwScope,
                    "First argument must be an ArrayBuffer"_s);
-    return JSValue::encode(jsUndefined());
+    return {};
   }
 
-  RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+  RETURN_IF_EXCEPTION(throwScope, {});
   RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
@@ -840,14 +840,14 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
   auto throwScope = DECLARE_THROW_SCOPE(vm);
 
   String fileName = callFrame->argument(0).toWTFString(globalObject);
-  RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+  RETURN_IF_EXCEPTION(throwScope, {});
   bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
   auto sourceID = Zig::sourceIDForSourceURL(fileName);
   if (!sourceID) {
     throwException(globalObject, throwScope,
                    createError(globalObject, "No source for file"_s));
-    return JSValue::encode(jsUndefined());
+    return {};
   }
 
   auto basicBlocks =

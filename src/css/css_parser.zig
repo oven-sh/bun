@@ -6,6 +6,8 @@ const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
+pub const prefixes = @import("./prefixes.zig");
+
 pub const dependencies = @import("./dependencies.zig");
 pub const Dependency = dependencies.Dependency;
 
@@ -26,6 +28,8 @@ pub const UnknownAtRule = css_rules.unknown.UnknownAtRule;
 pub const ImportRule = css_rules.import.ImportRule;
 pub const StyleRule = css_rules.style.StyleRule;
 pub const StyleContext = css_rules.StyleContext;
+
+pub const MinifyContext = css_rules.MinifyContext;
 
 pub const media_query = @import("./media_query.zig");
 pub const MediaList = media_query.MediaList;
@@ -75,7 +79,8 @@ pub const Targets = css_printer.Targets;
 // pub const Features = css_printer.Features;
 
 const context = @import("./context.zig");
-const PropertyHandlerContext = context.PropertyHandlerContext;
+pub const PropertyHandlerContext = context.PropertyHandlerContext;
+pub const DeclarationHandler = declaration.DeclarationHandler;
 
 pub const Maybe = bun.JSC.Node.Maybe;
 // TODO: Remove existing Error defined here and replace it with these
@@ -90,6 +95,7 @@ pub const BasicParseError = errors_.BasicParseError;
 pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
 pub const SelectorError = errors_.SelectorError;
 pub const MinifyErrorKind = errors_.MinifyErrorKind;
+pub const MinifyError = errors_.MinifyError;
 
 pub const compat = @import("./compat.zig");
 
@@ -147,6 +153,10 @@ pub const VendorPrefix = packed struct(u8) {
     __unused: u3 = 0,
 
     pub usingnamespace Bitflags(@This());
+
+    pub fn all() VendorPrefix {
+        return VendorPrefix{ .webkit = true, .moz = true, .ms = true, .o = true, .none = true };
+    }
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
@@ -544,7 +554,7 @@ pub fn DeriveParse(comptime T: type) type {
                 // Multiple fields declared before the payload fields, use tryParse
                 const state = input.state();
                 if (input.tryParse(Parser.expectIdent, .{}).asValue()) |ident| {
-                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
                         inline for (void_fields) |field| {
                             if (field.value == @intFromEnum(matched)) {
                                 if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
@@ -579,7 +589,7 @@ pub fn DeriveParse(comptime T: type) type {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
                 };
-                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
                     inline for (void_fields) |field| {
                         if (field.value == @intFromEnum(matched)) {
                             if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
@@ -647,7 +657,7 @@ pub fn DeriveParse(comptime T: type) type {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
-            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptime)) |matched| {
+            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
                 inline for (bun.meta.EnumFields(enum_type)) |field| {
                     if (field.value == @intFromEnum(matched)) {
                         if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
@@ -722,20 +732,19 @@ pub fn DefineEnumProperty(comptime T: type) type {
         }
 
         pub fn parse(input: *Parser) Result(T) {
-            _ = input; // autofix
-            // const location = input.currentSourceLocation();
-            // const ident = switch (input.expectIdent()) {
-            //     .err => |e| return .{ .err = e },
-            //     .result => |v| v,
-            // };
+            const location = input.currentSourceLocation();
+            const ident = switch (input.expectIdent()) {
+                .err => |e| return .{ .err = e },
+                .result => |v| v,
+            };
 
-            // // todo_stuff.match_ignore_ascii_case
-            // inline for (fields) |field| {
-            //     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
-            // }
+            // todo_stuff.match_ignore_ascii_case
+            inline for (fields) |field| {
+                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
+            }
 
-            // return location.newUnexpectedTokenError(.{ .ident = ident });
-            @panic("TODO renable this");
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            // @panic("TODO renable this");
         }
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -2420,15 +2429,12 @@ pub fn StyleSheet(comptime AtRule: type) type {
             _ = this; // autofix
             _ = allocator; // autofix
             _ = options; // autofix
-            // TODO: IMPLEMENT THIS!
+            // TODO
             return .{ .result = {} };
 
             // const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
-            // _ = ctx; // autofix
             // var handler = declaration.DeclarationHandler.default();
-            // _ = handler; // autofix
             // var important_handler = declaration.DeclarationHandler.default();
-            // _ = important_handler; // autofix
 
             // // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
             // // of a stylesheet. Do a pre-scan here and create a lookup table by name.
@@ -2445,7 +2451,24 @@ pub fn StyleSheet(comptime AtRule: type) type {
             // } else null;
             // defer if (custom_media) |media| media.deinit(allocator);
 
-            // var minify_ctx = MinifyCtx{};
+            // var minify_ctx = MinifyContext{
+            //     .targets = &options.targets,
+            //     .handler = &handler,
+            //     .important_handler = &important_handler,
+            //     .handler_context = ctx,
+            //     .unused_symbols = &options.unused_symbols,
+            //     .custom_media = custom_media,
+            //     .css_modules = this.options.css_modules != null,
+            // };
+
+            // switch (this.rules.minify(&minify_ctx, false)) {
+            //     .result => return .{ .result = {} },
+            //     .err => |e| {
+            //         _ = e; // autofix
+            //         @panic("TODO: here");
+            //         // return .{ .err = .{ .kind = e, .loc = } };
+            //     },
+            // }
         }
 
         pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
@@ -2797,15 +2820,22 @@ pub const ParserOptions = struct {
     logger: ?*Log = null,
     /// Feature flags to enable.
     flags: ParserFlags,
+    allocator: Allocator,
 
     pub fn warn(this: *const ParserOptions, warning: ParseError(ParserError)) void {
-        _ = this; // autofix
-        _ = warning; // autofix
-        @panic("TODO: implement");
+        if (this.logger) |lg| {
+            lg.addWarningFmtLineCol(
+                this.filename,
+                warning.location.line,
+                warning.location.column,
+                this.allocator,
+                "{}",
+                .{warning.kind},
+            ) catch unreachable;
+        }
     }
 
     pub fn default(allocator: std.mem.Allocator, log: ?*Log) ParserOptions {
-        _ = allocator; // autofix
         return ParserOptions{
             .filename = "",
             .css_modules = null,
@@ -2813,6 +2843,7 @@ pub const ParserOptions = struct {
             .error_recovery = false,
             .logger = log,
             .flags = ParserFlags{},
+            .allocator = allocator,
         };
     }
 };
@@ -5618,8 +5649,7 @@ pub const serializer = struct {
     }
 
     pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        // const int_value: ?i32 = if (@rem(value, 1) == 0.0) @as(i32, @intFromFloat(value)) else null;
-        const int_value: ?i32 = if (1.0 - @trunc(value) == 0.0) @intFromFloat(value) else null;
+        const int_value: ?i32 = if (fract(value) == 0.0) @intFromFloat(value) else null;
         const token = Token{ .dimension = .{
             .num = .{
                 .has_sign = value < 0.0,
@@ -5689,39 +5719,46 @@ pub const serializer = struct {
         return writer.writeAll(value[chunk_start..]);
     }
 
+    // pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, writer: anytype) !void {
+    //     // `value >= 0` is true for negative 0.
+    //     if (has_sign and !std.math.signbit(value)) {
+    //         try writer.writeAll("+");
+    //     }
+
+    //     if (value == 0.0 and signfns.isSignNegative(value)) {
+    //         // Negative zero. Work around #20596.
+    //         try writer.writeAll("-0");
+    //         if (int_value == null and @mod(value, 1) == 0) {
+    //             try writer.writeAll(".0");
+    //         }
+    //     } else {
+    //         var buf: [124]u8 = undefined;
+    //         const bytes = bun.fmt.FormatDouble.dtoa(&buf, @floatCast(value));
+    //         try writer.writeAll(bytes);
+    //     }
+    // }
+
     pub fn writeNumeric(value: f32, int_value: ?i32, has_sign: bool, writer: anytype) !void {
         // `value >= 0` is true for negative 0.
         if (has_sign and !std.math.signbit(value)) {
             try writer.writeAll("+");
         }
 
-        const notation: struct { decimal_point: bool, scientific: bool } = if (value == 0.0 and std.math.signbit(value)) notation: {
+        const notation: Notation = if (value == 0.0 and std.math.signbit(value)) notation: {
             // Negative zero. Work around #20596.
             try writer.writeAll("-0");
-            break :notation .{
+            break :notation Notation{
                 .decimal_point = false,
                 .scientific = false,
             };
         } else notation: {
-            // TODO: calculate the actual number of chars here
-            var buf: [64]u8 = undefined;
-            // PERF/TODO: Compare this to Rust dtoa-short crate
-            // const floats = std.fmt.formatFloat(buf[0..], value, .{
-            //     .mode = .scientific,
-            //     .precision = 6,
-            // }) catch unreachable;
-            const floats = std.fmt.formatFloat(buf[0..], value, .{
-                .mode = .decimal,
-            }) catch unreachable;
-            try writer.writeAll(floats);
-            // TODO: this is not correct, might need to copy impl from dtoa_short here
-            break :notation .{
-                .decimal_point = true,
-                .scientific = false,
-            };
+            var buf: [129]u8 = undefined;
+            const str, const notation = dtoa_short(&buf, value, 6);
+            try writer.writeAll(str);
+            break :notation notation;
         };
 
-        if (int_value == null and @mod(value, 1) == 0) {
+        if (int_value == null and fract(value) == 0) {
             if (!notation.decimal_point and !notation.scientific) {
                 try writer.writeAll(".0");
             }
@@ -6087,4 +6124,156 @@ pub fn deepDeinit(comptime V: type, allocator: Allocator, list: *ArrayList(V)) v
     }
 
     list.deinit(allocator);
+}
+
+const Notation = struct {
+    decimal_point: bool,
+    scientific: bool,
+
+    pub fn integer() Notation {
+        return .{
+            .decimal_point = false,
+            .scientific = false,
+        };
+    }
+};
+
+pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
+    buf[0] = '0';
+    const buf_len = bun.fmt.FormatDouble.dtoa(@ptrCast(buf[1..].ptr), @floatCast(value)).len;
+    return restrict_prec(buf[0 .. buf_len + 1], precision);
+}
+
+fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
+    const len: u8 = @intCast(buf.len);
+
+    // Put a leading zero to capture any carry.
+    // Caller must prepare an empty byte for us;
+    bun.debugAssert(buf[0] == '0');
+    buf[0] = '0';
+    // Remove the sign for now. We will put it back at the end.
+    const sign = switch (buf[1]) {
+        '+', '-' => brk: {
+            const s = buf[1];
+            buf[1] = '0';
+            break :brk s;
+        },
+        else => null,
+    };
+
+    // Locate dot, exponent, and the first significant digit.
+    var _pos_dot: ?u8 = null;
+    var pos_exp: ?u8 = null;
+    var _prec_start: ?u8 = null;
+    for (1..len) |i| {
+        if (buf[i] == '.') {
+            bun.debugAssert(_pos_dot == null);
+            _pos_dot = @intCast(i);
+        } else if (buf[i] == 'e') {
+            pos_exp = @intCast(i);
+            // We don't change exponent part, so stop here.
+            break;
+        } else if (_prec_start == null and buf[i] != '0') {
+            bun.debugAssert(buf[i] >= '1' and buf[i] <= '9');
+            _prec_start = @intCast(i);
+        }
+    }
+
+    const prec_start = if (_prec_start) |i|
+        i
+    else
+        // If there is no non-zero digit at all, it is just zero.
+        return .{
+            buf[0..1],
+            Notation.integer(),
+        };
+
+    // Coefficient part ends at 'e' or the length.
+    const coeff_end = pos_exp orelse len;
+    // Decimal dot is effectively at the end of coefficient part if no
+    // dot presents before that.
+    const had_pos_dot = _pos_dot != null;
+    const pos_dot = _pos_dot orelse coeff_end;
+    // Find the end position of the number within the given precision.
+    const prec_end: u8 = brk: {
+        const end = prec_start + prec;
+        break :brk if (pos_dot > prec_start and pos_dot <= end) end + 1 else end;
+    };
+    var new_coeff_end = coeff_end;
+    if (prec_end < coeff_end) {
+        // Round to the given precision.
+        const next_char = buf[prec_end];
+        new_coeff_end = prec_end;
+        if (next_char >= '5') {
+            var i = prec_end;
+            while (i != 0) {
+                i -= 1;
+                if (buf[i] == '.') {
+                    continue;
+                }
+                if (buf[i] != '9') {
+                    buf[i] += 1;
+                    new_coeff_end = i + 1;
+                    break;
+                }
+                buf[i] = '0';
+            }
+        }
+    }
+    if (new_coeff_end < pos_dot) {
+        // If the precision isn't enough to reach the dot, set all digits
+        // in-between to zero and keep the number until the dot.
+        for (new_coeff_end..pos_dot) |i| {
+            buf[i] = '0';
+        }
+        new_coeff_end = pos_dot;
+    } else if (had_pos_dot) {
+        // Strip any trailing zeros.
+        var i = new_coeff_end;
+        while (i != 0) {
+            i -= 1;
+            if (buf[i] != '0') {
+                if (buf[i] == '.') {
+                    new_coeff_end = i;
+                }
+                break;
+            }
+            new_coeff_end = i;
+        }
+    }
+    // Move exponent part if necessary.
+    const real_end = if (pos_exp) |posexp| brk: {
+        const exp_len = len - posexp;
+        if (new_coeff_end != posexp) {
+            for (0..exp_len) |i| {
+                buf[new_coeff_end + i] = buf[posexp + i];
+            }
+        }
+        break :brk new_coeff_end + exp_len;
+    } else new_coeff_end;
+    // Add back the sign and strip the leading zero.
+    const result = if (sign) |sgn| brk: {
+        if (buf[1] == '0' and buf[2] != '.') {
+            buf[1] = sgn;
+            break :brk buf[1..real_end];
+        }
+        bun.debugAssert(buf[0] == '0');
+        buf[0] = sgn;
+        break :brk buf[0..real_end];
+    } else brk: {
+        if (buf[0] == '0' and buf[1] != '.') {
+            break :brk buf[1..real_end];
+        }
+        break :brk buf[0..real_end];
+    };
+    // Generate the notation info.
+    const notation = Notation{
+        .decimal_point = pos_dot < new_coeff_end,
+        .scientific = pos_exp != null,
+    };
+    return .{ result, notation };
+}
+
+pub inline fn fract(val: f32) f32 {
+    return val - @trunc(val);
 }

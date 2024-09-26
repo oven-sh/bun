@@ -16,6 +16,26 @@ const Result = css.Result;
 pub const LayerName = struct {
     v: css.SmallList([]const u8, 1) = .{},
 
+    pub fn HashMap(comptime V: type) type {
+        return std.ArrayHashMapUnmanaged(LayerName, V, struct {
+            pub fn hash(_: @This(), key: LayerName) u32 {
+                var hasher = std.hash.Wyhash.init(0);
+                for (key.v.items) |part| {
+                    hasher.update(part);
+                }
+                return hasher.final();
+            }
+
+            pub fn eql(_: @This(), a: LayerName, b: LayerName, _: usize) bool {
+                if (a.v.len != b.v.len) return false;
+                for (a.v.items, 0..) |part, i| {
+                    if (!bun.strings.eql(part, b.v.items[i])) return false;
+                }
+                return true;
+            }
+        }, false);
+    }
+
     pub fn parse(input: *css.Parser) Result(LayerName) {
         var parts: css.SmallList([]const u8, 1) = .{};
         const ident = switch (input.expectIdent()) {

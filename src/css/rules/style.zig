@@ -152,5 +152,19 @@ pub fn StyleRule(comptime R: type) type {
                 try dest.withContext(&this.selectors, this, This.toCss);
             }
         }
+
+        /// Returns whether this rule is a duplicate of another rule.
+        /// This means it has the same selectors and properties.
+        pub inline fn isDuplicate(this: *const This, other: *const This) bool {
+            return this.declarations.len() == other.declarations.len() and
+                this.selectors.eql(&other.selectors) and
+                brk: {
+                const len = @min(this.declarations.len(), other.declarations.len());
+                for (this.declarations[0..len], other.declarations[0..len]) |*a, *b| {
+                    if (!a.eql(b)) break :brk false;
+                }
+                break :brk true;
+            };
+        }
     };
 }

@@ -133,3 +133,5 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
   "OperatingSystem.jsFunctionOperatingSystemIsMatch",
   1,
 );
+
+export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);

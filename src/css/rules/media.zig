@@ -24,6 +24,13 @@ pub fn MediaRule(comptime R: type) type {
 
         const This = @This();
 
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) Maybe(bool, css.MinifyError) {
+            _ = this; // autofix
+            _ = context; // autofix
+            _ = parent_is_unused; // autofix
+            @panic(css.todo_stuff.depth);
+        }
+
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             if (dest.minify and this.query.alwaysMatches()) {
                 try this.rules.toCss(W, dest);

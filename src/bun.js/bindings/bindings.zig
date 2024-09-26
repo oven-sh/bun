@@ -5128,6 +5128,16 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("fastGet_", .{ this, global, builtin_name });
     }
 
+    extern fn JSC__JSValue__fastGetOwn(value: JSValue, globalObject: *JSGlobalObject, property: BuiltinName) JSValue;
+    pub fn fastGetOwn(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
+        const result = JSC__JSValue__fastGetOwn(this, global, builtin_name);
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
+    }
+
     pub fn fastGetDirect_(this: JSValue, global: *JSGlobalObject, builtin_name: u8) JSValue {
         return cppFn("fastGetDirect_", .{ this, global, builtin_name });
     }
@@ -5199,6 +5209,15 @@ pub const JSValue = enum(JSValueReprInt) {
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
+    pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
+        if (getOwn(this, global, property_name)) |prop| {
+            if (prop == .undefined) return null;
+            return prop;
+        }
+
+        return null;
+    }
+
     /// safe to use on any JSValue
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
         if (!this.isObject())
@@ -5206,6 +5225,14 @@ pub const JSValue = enum(JSValueReprInt) {
         const function = this.fastGet(global, BuiltinName.toString) orelse
             return false;
         return function.isCell() and function.isCallable(global.vm());
+    }
+
+    pub fn getOwnTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
+            return fastGetOwn(this, global, @field(BuiltinName, property));
+        }
+
+        return getOwnTruthy(this, global, property);
     }
 
     pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
@@ -5295,15 +5322,58 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
+    pub fn getOwnOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) JSError!?Enum {
+        if (comptime BuiltinName.has(property_name)) {
+            if (fastGetOwn(this, globalThis, @field(BuiltinName, property_name))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull())
+                    return null;
+                return try toEnum(prop, globalThis, property_name, Enum);
+            }
+            return null;
+        }
+
+        if (getOwn(this, globalThis, property_name)) |prop| {
+            if (prop.isEmptyOrUndefinedOrNull())
+                return null;
+            return try toEnum(prop, globalThis, property_name, Enum);
+        }
+        return null;
+    }
+
+    pub fn coerceToArray(prop: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+        if (!prop.jsTypeLoose().isArray()) {
+            globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
+            return error.JSError;
+        }
+
+        if (prop.getLength(globalThis) == 0) {
+            return null;
+        }
+
+        return prop;
+    }
+
     pub fn getArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getTruthy(this, globalThis, property_name)) |prop| {
-            if (!prop.jsTypeLoose().isArray()) {
-                globalThis.throwInvalidArguments(property_name ++ " must be an array", .{});
-                return error.JSError;
-            }
+            return coerceToArray(prop, globalThis, property_name);
+        }
 
-            if (prop.getLength(globalThis) == 0) {
-                return null;
+        return null;
+    }
+
+    pub fn getOwnArray(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+        if (getOwnTruthy(this, globalThis, property_name)) |prop| {
+            return coerceToArray(prop, globalThis, property_name);
+        }
+
+        return null;
+    }
+
+    pub fn getObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+        if (getTruthy(this, globalThis, property_name)) |prop| {
+            if (!prop.jsTypeLoose().isObject()) {
+                globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
+                return error.JSError;
             }
 
             return prop;
@@ -5312,8 +5382,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
-    pub fn getObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+    pub fn getOwnObject(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+        if (getOwnTruthy(this, globalThis, property_name)) |prop| {
             if (!prop.jsTypeLoose().isObject()) {
                 globalThis.throwInvalidArguments(property_name ++ " must be an object", .{});
                 return error.JSError;
@@ -5338,6 +5408,46 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
+    pub fn getOwnFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
+        if (getOwnTruthy(this, globalThis, property_name)) |prop| {
+            if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
+                globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
+                return error.JSError;
+            }
+
+            return prop;
+        }
+
+        return null;
+    }
+    fn coerceOptional(prop: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
+        switch (comptime T) {
+            bool => {
+                if (prop.isBoolean()) {
+                    return prop.toBoolean();
+                }
+
+                if (prop.isNumber()) {
+                    return prop.coerce(f64, globalThis) != 0;
+                }
+
+                globalThis.throwInvalidArguments(property_name ++ " must be a boolean", .{});
+                return error.JSError;
+            },
+            ZigString.Slice => {
+                if (prop.isString()) {
+                    if (return prop.toSliceOrNull(globalThis)) |str| {
+                        return str;
+                    }
+                }
+
+                globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
+                return error.JSError;
+            },
+            else => @compileError("TODO:" ++ @typeName(T)),
+        }
+    }
+
     pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
         const prop = (if (comptime BuiltinName.has(property_name))
             fastGet(this, globalThis, @field(BuiltinName, property_name))
@@ -5345,31 +5455,20 @@ pub const JSValue = enum(JSValueReprInt) {
             get(this, globalThis, property_name)) orelse return null;
 
         if (!prop.isEmptyOrUndefinedOrNull()) {
-            switch (comptime T) {
-                bool => {
-                    if (prop.isBoolean()) {
-                        return prop.toBoolean();
-                    }
+            return coerceOptional(prop, globalThis, property_name, T);
+        }
 
-                    if (prop.isNumber()) {
-                        return prop.coerce(f64, globalThis) != 0;
-                    }
+        return null;
+    }
 
-                    globalThis.throwInvalidArguments(property_name ++ " must be a boolean", .{});
-                    return error.JSError;
-                },
-                ZigString.Slice => {
-                    if (prop.isString()) {
-                        if (return prop.toSliceOrNull(globalThis)) |str| {
-                            return str;
-                        }
-                    }
+    pub fn getOwnOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
+        const prop = (if (comptime BuiltinName.has(property_name))
+            fastGetOwn(this, globalThis, @field(BuiltinName, property_name))
+        else
+            getOwn(this, globalThis, property_name)) orelse return null;
 
-                    globalThis.throwInvalidArguments(property_name ++ " must be a string", .{});
-                    return error.JSError;
-                },
-                else => @compileError("TODO:" ++ @typeName(T)),
-            }
+        if (!prop.isEmptyOrUndefinedOrNull()) {
+            return coerceOptional(prop, globalThis, property_name, T);
         }
 
         return null;

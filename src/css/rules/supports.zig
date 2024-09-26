@@ -378,5 +378,12 @@ pub fn SupportsRule(comptime R: type) type {
             try dest.newline();
             try dest.writeChar('}');
         }
+
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) Maybe(void, css.MinifyError) {
+            _ = this; // autofix
+            _ = context; // autofix
+            _ = parent_is_unused; // autofix
+            @panic(css.todo_stuff.depth);
+        }
     };
 }

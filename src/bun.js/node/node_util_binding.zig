@@ -103,6 +103,6 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (err_int == -bun.C.UV_ENODATA) return ZigString.static("ENODATA").toJS(globalThis);
     if (err_int == -bun.C.UV_EUNATCH) return ZigString.static("EUNATCH").toJS(globalThis);
 
-    const fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
-    return fmtstring.toJS(globalThis);
+    var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
+    return fmtstring.transferToJS(globalThis);
 }

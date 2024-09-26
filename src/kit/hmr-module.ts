@@ -1,6 +1,6 @@
-import * as runtimeHelpers from '../runtime.bun.js';
+import * as runtimeHelpers from "../runtime.bun.js";
 
-const registry = new Map<Id, HotModule>()
+const registry = new Map<Id, HotModule>();
 
 export type ModuleLoadFunction = (module: HotModule) => void;
 export type ExportsCallbackFunction = (new_exports: any) => void;
@@ -8,7 +8,7 @@ export type ExportsCallbackFunction = (new_exports: any) => void;
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module
- * reloading. It is unacceptable to depend 
+ * reloading. It is unacceptable to depend
  */
 export class HotModule {
   exports: any = {};
@@ -26,13 +26,11 @@ export class HotModule {
   importSync(id: Id, onReload: null | ExportsCallbackFunction) {
     const module = loadModule(id);
     const { exports, __esModule } = module;
-    return __esModule
-      ? exports
-      : module._ext_exports ??= { ...exports, default: exports };
+    return __esModule ? exports : (module._ext_exports ??= { ...exports, default: exports });
   }
 
   importMeta() {
-    return this._import_meta ??= initImportMeta(this);
+    return (this._import_meta ??= initImportMeta(this));
   }
 }
 
@@ -54,12 +52,14 @@ export function loadModule(key: Id): HotModule {
   registry.set(key, module);
   const load = input_graph[key];
   if (!load) {
-    throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun`);
+    throw new Error(
+      `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun`,
+    );
   }
   load(module);
   return module;
 }
 
-runtimeHelpers.__name(HotModule.prototype.importSync, '<HMR runtime> importSync')
-runtimeHelpers.__name(HotModule.prototype.require, '<HMR runtime> require')
-runtimeHelpers.__name(loadModule, '<HMR runtime> loadModule')
+runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
+runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");
+runtimeHelpers.__name(loadModule, "<HMR runtime> loadModule");

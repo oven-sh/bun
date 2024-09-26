@@ -1,7 +1,7 @@
-import { spawn, spawnSync, env } from "bun";
-import fs from "node:fs/promises";
-import { describe, expect, it } from "bun:test";
+import { spawn } from "bun";
+import { expect, it } from "bun:test";
 import { bunExe, isWindows } from "harness";
+import fs from "node:fs/promises";
 import path from "path";
 
 it.todoIf(isWindows)("spawning a bun package script should inherit the ipc fd", async () => {

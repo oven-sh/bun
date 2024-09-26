@@ -143,7 +143,7 @@ pub const PluginRunner = struct {
             bun.String.init(importer),
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        const path_value = on_resolve_plugin.getOwn(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             log.addError(null, loc, "Expected \"path\" to be a string") catch unreachable;
@@ -176,7 +176,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+            if (on_resolve_plugin.getOwn(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
                     return null;
@@ -242,7 +242,7 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        const path_value = on_resolve_plugin.getOwn(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             return JSC.ErrorableString.err(
@@ -272,7 +272,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+            if (on_resolve_plugin.getOwn(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     return JSC.ErrorableString.err(
                         error.JSErrorObject,
@@ -1473,9 +1473,9 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.ParseTSConfig(&source, bundler.log, allocator) catch return null
+                        json_parser.ParseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.ParseJSON(&source, bundler.log, allocator) catch return null
+                        json_parser.ParseJSON(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

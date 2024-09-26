@@ -124,12 +124,19 @@ optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to u
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 
 if(CI)
-  set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+  set(WARNING FATAL_ERROR)
 else()
-  set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+  set(WARNING WARNING)
 endif()
 
-optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${DEFAULT_VENDOR_PATH})
+# TODO: This causes flaky zig builds in CI, so temporarily disable it.
+# if(CI)
+#   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+# else()
+#   set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+# endif()
+
+optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
 optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
@@ -377,12 +384,12 @@ function(register_command)
     get_source_file_property(generated ${output} GENERATED)
     if(generated)
       list(REMOVE_ITEM CMD_EFFECTIVE_OUTPUTS ${output})
-      list(APPEND CMD_EFFECTIVE_OUTPUTS ${output}.always_run)
+      list(APPEND CMD_EFFECTIVE_OUTPUTS ${output}.always_run_${CMD_TARGET})
     endif()
   endforeach()
 
   if(CMD_ALWAYS_RUN)
-    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run)
+    list(APPEND CMD_EFFECTIVE_OUTPUTS ${CMD_CWD}/.always_run_${CMD_TARGET})
   endif()
 
   if(CMD_TARGET_PHASE)
@@ -575,14 +582,6 @@ function(register_repository)
     set(GIT_PATH ${VENDOR_PATH}/${GIT_NAME})
   endif()
 
-  if(GIT_COMMIT)
-    set(GIT_REF ${GIT_COMMIT})
-  elseif(GIT_TAG)
-    set(GIT_REF refs/tags/${GIT_TAG})
-  else()
-    set(GIT_REF refs/heads/${GIT_BRANCH})
-  endif()
-
   set(GIT_EFFECTIVE_OUTPUTS)
   foreach(output ${GIT_OUTPUTS})
     list(APPEND GIT_EFFECTIVE_OUTPUTS ${GIT_PATH}/${output})
@@ -597,8 +596,10 @@ function(register_repository)
       ${CMAKE_COMMAND}
         -DGIT_PATH=${GIT_PATH}
         -DGIT_REPOSITORY=${GIT_REPOSITORY}
-        -DGIT_REF=${GIT_REF}
         -DGIT_NAME=${GIT_NAME}
+        -DGIT_COMMIT=${GIT_COMMIT}
+        -DGIT_TAG=${GIT_TAG}
+        -DGIT_BRANCH=${GIT_BRANCH}
         -P ${CWD}/cmake/scripts/GitClone.cmake
     OUTPUTS
       ${GIT_PATH}

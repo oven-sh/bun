@@ -3090,6 +3090,77 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__privateDecrypt, (JSGlobalObject * globalObje
     return doAsymmetricCipher(globalObject, callFrame, false);
 }
 
+static EncodedJSValue doAsymmetricSign(JSGlobalObject* globalObject, CallFrame* callFrame, bool encrypt)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() != 3) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_MISSING_ARGS,
+            "expected three arguments"_s);
+    }
+
+    auto* jsCryptoKey = jsDynamicCast<JSCryptoKey*>(callFrame->uncheckedArgument(0));
+    if (!jsCryptoKey) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "expected CryptoKey as first argument"_s);
+    }
+    auto& cryptoKey = jsCryptoKey->wrapped();
+
+    // We should only sign with private keys, and verify with public keys.
+    if ((encrypt && cryptoKey.type() != CryptoKeyType::Private)
+        || (!encrypt && cryptoKey.type() != CryptoKeyType::Public)
+        // We may classify the key as RSA_OAEP, but it can still be used for signing. RSA_PSS relies
+        // on an incompatible scheme, and must be used via the generic crypto.sign function.
+        || (cryptoKey.algorithmIdentifier() != CryptoAlgorithmIdentifier::RSA_OAEP
+        && cryptoKey.algorithmIdentifier() != CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5)) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE,
+            "unsupported key type for asymmetric signing"_s);
+    }
+
+    auto jsBuffer = KeyObject__GetBuffer(callFrame->uncheckedArgument(1));
+    if (jsBuffer.hasException()) {
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+            "expected Buffer or array-like object as second argument"_s);
+    }
+    auto buffer = jsBuffer.releaseReturnValue();
+
+    auto padding = RSA_PKCS1_PADDING;
+    auto jsPadding = callFrame->uncheckedArgument(2);
+    if (!jsPadding.isUndefinedOrNull() && !jsPadding.isEmpty()) {
+        if (UNLIKELY(!jsPadding.isNumber())) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                "expected number for padding"_s);
+        }
+        padding = jsPadding.toUInt32(globalObject);
+        if (padding != RSA_PKCS1_PADDING && padding != RSA_NO_PADDING) {
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE,
+                "unsupported padding"_s);
+        }
+    }
+
+    const auto& rsaKey = downcast<CryptoKeyRSA>(cryptoKey);
+    auto operation = encrypt ? CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignNoAlgorithm
+        : CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyRecover;
+    auto result = operation(rsaKey, padding, buffer);
+    if (result.hasException()) {
+        WebCore::propagateException(*globalObject, scope, result.releaseException());
+        return encodedJSUndefined();
+    }
+    auto outBuffer = result.releaseReturnValue();
+    return JSValue::encode(WebCore::createBuffer(globalObject, outBuffer));
+}
+
+JSC_DEFINE_HOST_FUNCTION(KeyObject__privateEncrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return doAsymmetricSign(globalObject, callFrame, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(KeyObject__publicDecrypt, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return doAsymmetricSign(globalObject, callFrame, false);
+}
+
 JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -3125,6 +3196,11 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, KeyObject__publicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "privateDecrypt"_s)),
         JSFunction::create(vm, globalObject, 2, "privateDecrypt"_s, KeyObject__privateDecrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "privateEncrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "privateEncrypt"_s, KeyObject__privateEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicDecrypt"_s)),
+        JSFunction::create(vm, globalObject, 2, "publicDecrypt"_s, KeyObject__publicDecrypt, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

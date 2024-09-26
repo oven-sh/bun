@@ -106,12 +106,14 @@ pub const Source = struct {
     pub fn getForceColorDepth() ?ColorDepth {
         const force_color = bun.getenvZ("FORCE_COLOR") orelse return null;
         // Supported by Node.js, if set will ignore NO_COLOR.
+        // - "0" to indicate no color support
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
         if (strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "")) {
             return ColorDepth.@"16";
         }
+
         if (strings.eqlComptime(force_color, "2")) {
             return ColorDepth.@"256";
         }
@@ -119,7 +121,7 @@ pub const Source = struct {
             return ColorDepth.@"16m";
         }
 
-        return ColorDepth.@"256";
+        return ColorDepth.none;
     }
 
     pub fn isForceColor() bool {

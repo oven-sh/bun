@@ -435,7 +435,8 @@ pub fn shellEscape(
                 globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
                 return .undefined;
             }
-            return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
+            var str = bun.String.createUTF8(outbuf.items[0..]);
+            return str.transferToJS(globalThis);
         }
         return jsval;
     }
@@ -445,7 +446,8 @@ pub fn shellEscape(
             globalThis.throwOutOfMemory();
             return .undefined;
         };
-        return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
+        var str = bun.String.createUTF8(outbuf.items[0..]);
+        return str.transferToJS(globalThis);
     }
 
     return jsval;

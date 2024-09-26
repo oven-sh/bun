@@ -379,7 +379,7 @@ pub const BundleV2 = struct {
     /// needed when it is important to distinct between client and server
     ///
     /// Note that .log, .allocator, and other things are shared
-    /// between the two bundler configurations
+    /// between the three bundler configurations
     pub inline fn bundlerForTarget(this: *BundleV2, target: options.Target) *Bundler {
         return if (!this.bundler.options.server_components)
             this.bundler

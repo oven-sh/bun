@@ -8492,6 +8492,31 @@ pub const PackageManager = struct {
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
         initializeStore();
+        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
+            var buf: bun.PathBuffer = undefined;
+            var parts = [_]string{
+                "./.npmrc",
+            };
+
+            bun.ini.loadNpmrcFromFile(
+                ctx.allocator,
+                ctx.install orelse brk: {
+                    const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+                    install_.* = std.mem.zeroes(Api.BunInstall);
+                    ctx.install = install_;
+                    break :brk install_;
+                },
+                env,
+                true,
+                Path.joinAbsStringBufZ(
+                    data_dir,
+                    &buf,
+                    &parts,
+                    .auto,
+                ),
+            );
+        }
+
         bun.ini.loadNpmrcFromFile(
             ctx.allocator,
             ctx.install orelse brk: {
@@ -8502,6 +8527,7 @@ pub const PackageManager = struct {
             },
             env,
             true,
+            ".npmrc",
         );
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));

@@ -265,7 +265,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * 
         if (signal.isNull()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
         if (!signal.isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
 
-        auto propin = signal.getObject()->hasOwnProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
+        auto propin = signal.getObject()->hasProperty(globalObject, Identifier::fromString(vm, "aborted"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!propin) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
     }

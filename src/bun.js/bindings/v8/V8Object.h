@@ -22,4 +22,4 @@ private:
     BUN_EXPORT Local<Data> SlowGetInternalField(int index);
 };
 
-}
+} // namespace v8

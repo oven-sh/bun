@@ -1,64 +1,38 @@
 #include "V8Function.h"
+#include "shim/Function.h"
+#include "V8HandleScope.h"
+#include "v8_compatibility_assertions.h"
 
-#include "V8FunctionTemplate.h"
-
-#include "JavaScriptCore/FunctionPrototype.h"
-
-using JSC::Structure;
-using JSC::VM;
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Function)
 
 namespace v8 {
 
-// for CREATE_METHOD_TABLE
-namespace JSCastingHelpers = JSC::JSCastingHelpers;
-
-const JSC::ClassInfo Function::s_info = {
-    "Function"_s,
-    &Base::s_info,
-    nullptr,
-    nullptr,
-    CREATE_METHOD_TABLE(Function)
-};
-
-Structure* Function::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    return Structure::create(
-        vm,
-        globalObject,
-        globalObject->functionPrototype(),
-        JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
-        info());
-}
-
-template<typename Visitor>
-void Function::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    Function* fn = jsCast<Function*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(fn, info());
-    Base::visitChildren(fn, visitor);
-
-    visitor.append(fn->__internals.functionTemplate);
-}
-
-DEFINE_VISIT_CHILDREN(Function);
-
-Function* Function::create(VM& vm, Structure* structure, FunctionTemplate* functionTemplate)
-{
-    auto* function = new (NotNull, JSC::allocateCell<Function>(vm)) Function(vm, structure);
-    function->finishCreation(vm, functionTemplate);
-    return function;
-}
-
-void Function::finishCreation(VM& vm, FunctionTemplate* functionTemplate)
-{
-    Base::finishCreation(vm, 0, "Function"_s);
-    __internals.functionTemplate.set(vm, this, functionTemplate);
-}
-
 void Function::SetName(Local<String> name)
 {
-    auto* thisObj = localToObjectPointer();
-    thisObj->m_originalName.set(Isolate::GetCurrent()->vm(), thisObj, name->localToJSString());
+    if (auto* jsFunction = localToObjectPointer<JSC::JSFunction>()) {
+        jsFunction->setFunctionName(jsFunction->globalObject(), name->localToJSString());
+    } else if (auto* v8Function = localToObjectPointer<shim::Function>()) {
+        v8Function->setName(name->localToJSString());
+    } else {
+        RELEASE_ASSERT_NOT_REACHED("v8::Function::SetName called on invalid type");
+    }
 }
 
+Local<Value> Function::GetName() const
+{
+    WTF::String wtfString;
+    if (auto* jsFunction = localToObjectPointer<JSC::JSFunction>()) {
+        wtfString = const_cast<JSC::JSFunction*>(jsFunction)->name(jsFunction->globalObject()->vm());
+    } else if (auto* internalFunction = localToObjectPointer<JSC::InternalFunction>()) {
+        wtfString = const_cast<JSC::InternalFunction*>(internalFunction)->name();
+    } else {
+        RELEASE_ASSERT_NOT_REACHED("v8::Function::GetName called on invalid type");
+    }
+
+    auto* globalObject = jsCast<Zig::GlobalObject*>(localToObjectPointer<JSC::JSNonFinalObject>()->globalObject());
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* jsString = JSC::jsString(globalObject->vm(), wtfString);
+    return handleScope->createLocal<Value>(globalObject->vm(), jsString);
 }
+
+} // namespace v8

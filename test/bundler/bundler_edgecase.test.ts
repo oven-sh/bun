@@ -1831,6 +1831,58 @@ describe("bundler", () => {
     },
     run: { stdout: "1\n2" },
   });
+  itBundled("edgecase/Latin1StringInImportedJSON", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x + 'a');
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "bun",
+    run: { stdout: `测试a` },
+  });
+  itBundled("edgecase/Latin1StringInImportedJSONBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x + 'a');
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "browser",
+    run: { stdout: `测试a` },
+  });
+  itBundled("edgecase/Latin1StringKey", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试" + "a"]);
+      `,
+      "/second.json": `
+        {"测试a" : 123}
+      `,
+    },
+    target: "bun",
+    run: { stdout: `123` },
+  });
+  itBundled("edgecase/Latin1StringKeyBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试" + "a"]);
+      `,
+      "/second.json": `
+        {"测试a" : 123}
+      `,
+    },
+    target: "browser",
+    run: { stdout: `123` },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

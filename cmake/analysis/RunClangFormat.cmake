@@ -1,3 +1,5 @@
+# https://clang.llvm.org/docs/ClangFormat.html
+
 find_command(
   VARIABLE
     CLANG_FORMAT_PROGRAM
@@ -33,5 +35,37 @@ register_command(
       -i # edits files in-place
       --verbose
       ${CLANG_FORMAT_SOURCES}
+  ALWAYS_RUN
+)
+
+if(GIT_CHANGED_SOURCES)
+  set(CLANG_FORMAT_CHANGED_SOURCES)
+  foreach(source ${CLANG_FORMAT_SOURCES})
+    list(FIND GIT_CHANGED_SOURCES ${source} index)
+    if(NOT ${index} EQUAL -1)
+      list(APPEND CLANG_FORMAT_CHANGED_SOURCES ${source})
+    endif()
+  endforeach()
+endif()
+
+if(CLANG_FORMAT_CHANGED_SOURCES)
+  set(CLANG_FORMAT_DIFF_COMMAND ${CLANG_FORMAT_PROGRAM}
+    -i # edits files in-place
+    --verbose
+    ${CLANG_FORMAT_CHANGED_SOURCES}
+  )
+else()
+  set(CLANG_FORMAT_DIFF_COMMAND ${CMAKE_COMMAND} -E echo "No changed files for clang-format")
+endif()
+
+register_command(
+  TARGET
+    clang-format-diff
+  COMMENT
+    "Running clang-format on changed files"
+  COMMAND
+    ${CLANG_FORMAT_DIFF_COMMAND}
+  CWD
+    ${BUILD_PATH}
   ALWAYS_RUN
 )

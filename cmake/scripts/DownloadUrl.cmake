@@ -125,7 +125,5 @@ else()
   file(RENAME ${DOWNLOAD_TMP_FILE} ${DOWNLOAD_PATH})
 endif()
 
-get_filename_component(DOWNLOAD_FILENAME ${DOWNLOAD_PATH} NAME)
-message(STATUS "Saved ${DOWNLOAD_FILENAME}")
-
 file(REMOVE_RECURSE ${DOWNLOAD_TMP_PATH})
+message(STATUS "Saved ${DOWNLOAD_PATH}")

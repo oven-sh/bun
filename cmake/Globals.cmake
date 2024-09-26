@@ -124,12 +124,19 @@ optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to u
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 
 if(CI)
-  set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+  set(WARNING FATAL_ERROR)
 else()
-  set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+  set(WARNING WARNING)
 endif()
 
-optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${DEFAULT_VENDOR_PATH})
+# TODO: This causes flaky zig builds in CI, so temporarily disable it.
+# if(CI)
+#   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
+# else()
+#   set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
+# endif()
+
+optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
 optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)

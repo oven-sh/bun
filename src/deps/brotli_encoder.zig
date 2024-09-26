@@ -9,6 +9,8 @@ pub const BROTLI_SHARED_DICTIONARY_RAW: c_int = 0;
 pub const BROTLI_SHARED_DICTIONARY_SERIALIZED: c_int = 1;
 pub const enum_BrotliSharedDictionaryType = c_uint;
 pub const BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
+pub const struct_BrotliEncoderPreparedDictionaryStruct = opaque {};
+pub const BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
 extern fn BrotliSharedDictionaryCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) ?*BrotliSharedDictionary;
 extern fn BrotliSharedDictionaryDestroyInstance(dict: ?*BrotliSharedDictionary) void;
 extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*c]const u8) c_int;
@@ -46,7 +48,25 @@ pub const BrotliEncoderParameter = enum(c_uint) {
     npostfix = 7,
     ndirect = 8,
     stream_offset = 9,
+    // update kMaxBrotliParam in src/js/node/zlib.ts if this list changes
 };
+
+pub extern fn BrotliEncoderSetParameter(state: *BrotliEncoder, param: c_uint, value: u32) c_int;
+pub extern fn BrotliEncoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) ?*BrotliEncoder;
+pub extern fn BrotliEncoderDestroyInstance(state: *BrotliEncoder) void;
+pub extern fn BrotliEncoderPrepareDictionary(@"type": BrotliSharedDictionaryType, data_size: usize, data: [*c]const u8, quality: c_int, alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) *BrotliEncoderPreparedDictionary;
+pub extern fn BrotliEncoderDestroyPreparedDictionary(dictionary: *BrotliEncoderPreparedDictionary) void;
+pub extern fn BrotliEncoderAttachPreparedDictionary(state: *BrotliEncoder, dictionary: ?*const BrotliEncoderPreparedDictionary) c_int;
+pub extern fn BrotliEncoderMaxCompressedSize(input_size: usize) usize;
+pub extern fn BrotliEncoderCompress(quality: c_int, lgwin: c_int, mode: BrotliEncoderMode, input_size: usize, input_buffer: [*]const u8, encoded_size: *usize, encoded_buffer: [*]u8) c_int;
+pub extern fn BrotliEncoderCompressStream(state: *BrotliEncoder, op: BrotliEncoder.Operation, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_in: ?*?[*]u8, total_out: ?*usize) c_int;
+pub extern fn BrotliEncoderIsFinished(state: *BrotliEncoder) c_int;
+pub extern fn BrotliEncoderHasMoreOutput(state: *BrotliEncoder) c_int;
+pub extern fn BrotliEncoderTakeOutput(state: *BrotliEncoder, size: *usize) ?[*]const u8;
+pub extern fn BrotliEncoderEstimatePeakMemoryUsage(quality: c_int, lgwin: c_int, input_size: usize) usize;
+pub extern fn BrotliEncoderGetPreparedDictionarySize(dictionary: ?*const BrotliEncoderPreparedDictionary) usize;
+pub extern fn BrotliEncoderVersion() u32;
+
 pub const BrotliEncoder = opaque {
     pub const Operation = enum(c_uint) {
         process = 0,
@@ -54,24 +74,6 @@ pub const BrotliEncoder = opaque {
         finish = 2,
         emit_metadata = 3,
     };
-
-    extern fn BrotliEncoderSetParameter(state: *BrotliEncoder, param: BrotliEncoderParameter, value: u32) c_int;
-    extern fn BrotliEncoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) *BrotliEncoder;
-    extern fn BrotliEncoderDestroyInstance(state: *BrotliEncoder) void;
-    pub const struct_BrotliEncoderPreparedDictionaryStruct = opaque {};
-    pub const BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
-    extern fn BrotliEncoderPrepareDictionary(@"type": BrotliSharedDictionaryType, data_size: usize, data: [*c]const u8, quality: c_int, alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) *BrotliEncoderPreparedDictionary;
-    extern fn BrotliEncoderDestroyPreparedDictionary(dictionary: *BrotliEncoderPreparedDictionary) void;
-    extern fn BrotliEncoderAttachPreparedDictionary(state: *BrotliEncoder, dictionary: ?*const BrotliEncoderPreparedDictionary) c_int;
-    extern fn BrotliEncoderMaxCompressedSize(input_size: usize) usize;
-    extern fn BrotliEncoderCompress(quality: c_int, lgwin: c_int, mode: BrotliEncoderMode, input_size: usize, input_buffer: [*]const u8, encoded_size: *usize, encoded_buffer: [*]u8) c_int;
-    extern fn BrotliEncoderCompressStream(state: *BrotliEncoder, op: Operation, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: ?[*]u8, total_out: ?*usize) c_int;
-    extern fn BrotliEncoderIsFinished(state: *BrotliEncoder) c_int;
-    extern fn BrotliEncoderHasMoreOutput(state: *BrotliEncoder) c_int;
-    extern fn BrotliEncoderTakeOutput(state: *BrotliEncoder, size: *usize) ?[*]const u8;
-    extern fn BrotliEncoderEstimatePeakMemoryUsage(quality: c_int, lgwin: c_int, input_size: usize) usize;
-    extern fn BrotliEncoderGetPreparedDictionarySize(dictionary: ?*const BrotliEncoderPreparedDictionary) usize;
-    extern fn BrotliEncoderVersion() u32;
 
     pub fn createInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) callconv(.C) ?*BrotliEncoder {
         return BrotliEncoderCreateInstance(alloc_func, free_func, @"opaque");
@@ -121,7 +123,7 @@ pub const BrotliEncoder = opaque {
     }
 
     pub fn setParameter(state: *BrotliEncoder, param: BrotliEncoderParameter, value: u32) bool {
-        return BrotliEncoderSetParameter(state, param, value) > 0;
+        return BrotliEncoderSetParameter(state, @intFromEnum(param), value) > 0;
     }
 };
 

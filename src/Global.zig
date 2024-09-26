@@ -95,10 +95,11 @@ export fn Bun__atexit(function: ExitFn) void {
 }
 
 pub fn runExitCallbacks() void {
-    for (on_exit_callbacks.items) |callback| {
+    const callbacks = on_exit_callbacks.items;
+    on_exit_callbacks.items.len = 0;
+    for (callbacks) |callback| {
         callback();
     }
-    on_exit_callbacks.items.len = 0;
 }
 
 var is_exiting = std.atomic.Value(bool).init(false);
@@ -115,6 +116,11 @@ pub fn exit(code: u32) noreturn {
 
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
+
+    if (code != 0) {
+        Bun__onExit();
+        std._exit(@bitCast(code));
+    }
 
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),

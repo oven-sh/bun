@@ -379,6 +379,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
+    // no check to throw ERR_UNKNOWN_ENCODING ? it's not in node but feels like it would be apt here
+
     auto length = data.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});
     auto length_num = length.toNumber(globalObject);
@@ -386,7 +388,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     if (normalized == BufferEncodingType::hex && std::fmod(length_num, 2.0) != 0) {
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encoding, makeString("is invalid for data of length "_s, length_num));
     }
-    // no check for ERR_UNKNOWN_ENCODING ? it's not in node but feels apt here
     return JSValue::encode(jsUndefined());
 }
 

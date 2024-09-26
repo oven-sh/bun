@@ -1,5 +1,6 @@
 #include "KitDevGlobalObject.h"
 #include "JSNextTickQueue.h"
+#include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "headers-handwritten.h"
 

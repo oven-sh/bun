@@ -60,6 +60,8 @@ register_command(
       ${BUN_ZIG_IDENTIFIER_SCRIPT}
   SOURCES
     ${BUN_ZIG_IDENTIFIER_SOURCES}
+  TARGETS
+    clone-zig
   OUTPUTS
     ${BUN_ZIG_IDENTIFIER_OUTPUTS}
 )
@@ -544,6 +546,8 @@ register_command(
       -Dgenerated-code=${CODEGEN_PATH}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
+  TARGETS
+    clone-zig
   SOURCES
     ${BUN_ZIG_SOURCES}
     ${BUN_ZIG_GENERATED_SOURCES}
@@ -590,6 +594,22 @@ register_repository(
     066d2b1e9ab820703db0837a7255d92d30f0c9f5
   OUTPUTS
     picohttpparser.c
+)
+
+set(NODEJS_HEADERS_PATH ${VENDOR_PATH}/nodejs)
+
+register_command(
+  TARGET
+    bun-node-headers
+  COMMENT
+    "Download node ${NODEJS_VERSION} headers"
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DDOWNLOAD_PATH=${NODEJS_HEADERS_PATH}
+      -DDOWNLOAD_URL=https://nodejs.org/dist/v${NODEJS_VERSION}/node-v${NODEJS_VERSION}-headers.tar.gz
+      -P ${CWD}/cmake/scripts/DownloadUrl.cmake
+  OUTPUTS
+    ${NODEJS_HEADERS_PATH}/include/node/node_version.h
 )
 
 list(APPEND BUN_CPP_SOURCES

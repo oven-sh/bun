@@ -37,8 +37,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Zig Format
+        env:
+          ENABLE_CCACHE: OFF
+          SKIP_LLVM: ON
         run: |
-          bun run zig-format -DENABLE_CCACHE=OFF -DSKIP_LLVM=ON
+          bun run zig-format:diff
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

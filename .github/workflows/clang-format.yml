@@ -48,11 +48,12 @@ jobs:
       - name: Install LLVM
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
-      - name: Format
+      - name: Clang Format
+        env:
+          ENABLE_CCACHE: OFF
+          LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
-          bun run clang-format -DLLVM_VERSION=${{ env.LLVM_VERSION }}
+          bun run clang-format:diff
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

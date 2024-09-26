@@ -123,7 +123,7 @@ pub const Source = struct {
     }
 
     pub fn isForceColor() bool {
-        return getForceColorDepth() != null;
+        return (getForceColorDepth() orelse ColorDepth.none) != .none;
     }
 
     pub fn isColorTerminal() bool {

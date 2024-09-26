@@ -127,12 +127,6 @@ pub const Source = struct {
     }
 
     pub fn isColorTerminal() bool {
-        if (bun.getenvZ("COLORTERM")) |color_term| {
-            return !strings.eqlComptime(color_term, "0");
-        }
-        if (bun.getenvZ("TERM")) |term| {
-            return !strings.eqlComptime(term, "dumb");
-        }
         if (Environment.isWindows) {
             // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
             // Windows 10 build 10586 is the first Windows release that supports 256 colors.
@@ -140,7 +134,8 @@ pub const Source = struct {
             // Every other version supports 16 colors.
             return true;
         }
-        return false;
+
+        return colorDepth() != .none;
     }
 
     export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
@@ -308,6 +303,7 @@ pub const Source = struct {
                 }
             }
 
+            lazy_color_depth = .@"16";
             return;
         }
 

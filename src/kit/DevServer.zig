@@ -4,6 +4,7 @@
 //! Currently does not have a `deinit()`, as it is assumed to be alive for the
 //! remainder of this process' lifespan.
 pub const DevServer = @This();
+pub const debug = bun.Output.scoped(.Kit, false);
 
 pub const Options = struct {
     cwd: []u8,
@@ -670,7 +671,8 @@ pub fn IncrementalGraph(side: kit.Side) type {
             is_ssr_graph: bool,
         ) !void {
             const code = chunk.code();
-            if (code.len == 0) return;
+            debug("get code for {s} - {d} bytes, {s} ssr={}\n", .{ abs_path, code.len, @tagName(side), is_ssr_graph });
+            if (code.len == 0) return; // TODO: these should never even be emitted
 
             g.current_incremental_chunk_len += code.len;
 

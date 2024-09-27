@@ -77,9 +77,6 @@ pub const Framework = struct {
 
     const ReactFastRefresh = struct {
         import_source: []const u8,
-        register_export: []const u8 = "register",
-        create_signature_export: []const u8 = "createSignatureFunctionForTransform",
-        inject_export: []const u8 = "injectIntoGlobalHook",
     };
 
     /// Given a Framework configuration, this returns another one with all modules resolved.
@@ -222,15 +219,15 @@ pub fn addImportMetaDefines(
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/server"),
-    .key_path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/server"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "kit/server"),
+    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "kit/server"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.kit_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/client"),
-    .key_path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/client"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "kit/client"),
+    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "kit/client"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.kit_client_data,
 };

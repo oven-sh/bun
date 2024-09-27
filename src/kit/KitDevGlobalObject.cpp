@@ -86,16 +86,17 @@ extern "C" DevGlobalObject *KitCreateDevGlobal(DevServer *owner,
   global->setConsole(console);
   global->setStackTraceLimit(10); // Node.js defaults to 10
 
+  // TODO: it segfaults! process.nextTick is scoped out for now i guess!
   // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-  vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
-    if (auto nextTickQueue = global->m_nextTickQueue.get()) {
-      global->resetOnEachMicrotaskTick();
-      Bun::JSNextTickQueue *queue =
-          jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
-      queue->drain(vm, global);
-      return;
-    }
-  });
+  // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
+  //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
+  //     global->resetOnEachMicrotaskTick();
+  //     // Bun::JSNextTickQueue *queue =
+  //     //     jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
+  //     // queue->drain(vm, global);
+  //     return;
+  //   }
+  // });
 
   return global;
 }

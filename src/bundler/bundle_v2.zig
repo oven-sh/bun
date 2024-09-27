@@ -947,7 +947,7 @@ pub const BundleV2 = struct {
         const id_string = server.newExpr(E.String{ .data = "id" });
         const name_string = server.newExpr(E.String{ .data = "name" });
         const chunks_string = server.newExpr(E.String{ .data = "chunks" });
-        const specifier_string = server.newExpr(E.String{ .data = "specifier_string" });
+        const specifier_string = server.newExpr(E.String{ .data = "specifier" });
         const empty_array = server.newExpr(E.Array{});
 
         for (
@@ -1040,8 +1040,8 @@ pub const BundleV2 = struct {
             .is_export = true,
         });
 
-        this.graph.ast.set(Index.kit_server_data.get(), try server.toBundledAst());
-        this.graph.ast.set(Index.kit_client_data.get(), try client.toBundledAst());
+        this.graph.ast.set(Index.kit_server_data.get(), try server.toBundledAst(.bun));
+        this.graph.ast.set(Index.kit_client_data.get(), try client.toBundledAst(.browser));
     }
 
     pub fn enqueueParseTask(
@@ -3479,18 +3479,15 @@ pub const ServerComponentParseTask = struct {
     ) !ParseTask.Result.Success {
         var ab = try AstBuilder.init(allocator, &task.source, task.ctx.bundler.options.hot_module_reloading);
 
-        try switch (task.data) {
-            .client_reference_proxy => |data| task.generateClientReferenceProxy(data, &ab),
-        };
-
-        var ast = try ab.toBundledAst();
-        ast.target = switch (task.data) {
-            // Server-side
-            .client_reference_proxy => task.ctx.bundler.options.target,
-        };
+        switch (task.data) {
+            .client_reference_proxy => |data| try task.generateClientReferenceProxy(data, &ab),
+        }
 
         return .{
-            .ast = ast,
+            .ast = try ab.toBundledAst(switch (task.data) {
+                // Server-side
+                .client_reference_proxy => task.ctx.bundler.options.target,
+            }),
             .source = task.source,
             .log = log.*,
         };
@@ -4569,9 +4566,6 @@ pub const LinkerContext = struct {
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
-                if (record.tag.isReactReference())
-                    return true;
-
                 if (record.source_index.isValid() and c.graph.meta.items(.flags)[record.source_index.get()].wrap == .none) {
                     return false;
                 }
@@ -4899,6 +4893,9 @@ pub const LinkerContext = struct {
         part_ranges_shared: *std.ArrayList(PartRange),
         parts_prefix_shared: *std.ArrayList(PartRange),
     ) !void {
+        // TODO: for Kit, just add every file that is reachable
+        // currently a chunk is being printed twice.
+
         var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator, chunk.files_with_parts_in_chunk.count());
         defer chunk_order_array.deinit();
         const distances = this.graph.files.items(.distance_from_entry_point);
@@ -4907,7 +4904,6 @@ pub const LinkerContext = struct {
                 .{
                     .source_index = source_index,
                     .distance = distances[source_index],
-
                     .tie_breaker = this.graph.stable_source_indices[source_index],
                 },
             );
@@ -5104,7 +5100,6 @@ pub const LinkerContext = struct {
             &.{ visitor.parts_prefix.items, visitor.part_ranges.items },
         );
         chunk.content.javascript.files_in_chunk_order = visitor.files.items;
-
         chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
     }
 
@@ -6590,27 +6585,6 @@ pub const LinkerContext = struct {
                             else => unreachable,
                         }
                     }
-                }
-
-                // TODO: this is a workaround for a missing tree-shaking
-                // annotated wrt these generated segments
-                if (c.parse_graph.kit_referenced_server_data) {
-                    c.markFileLiveForTreeShaking(
-                        Index.kit_server_data.get(),
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                    );
-                }
-                if (c.parse_graph.kit_referenced_client_data) {
-                    c.markFileLiveForTreeShaking(
-                        Index.kit_client_data.get(),
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                    );
                 }
             };
         }
@@ -8723,7 +8697,7 @@ pub const LinkerContext = struct {
     ) !void {
         // for Bun Kit, export wrapping is already done. Import wrapping is special cased.
         if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
-            try c.convertStmtsForChunkKit(source_index, stmts, part_stmts, allocator, ast);
+            try c.convertStmtsForChunkForKit(source_index, stmts, part_stmts, allocator, ast);
             return;
         }
 
@@ -9214,7 +9188,7 @@ pub const LinkerContext = struct {
     }
 
     /// The conversion logic is completely different for format .kit_internal_hmr
-    fn convertStmtsForChunkKit(
+    fn convertStmtsForChunkForKit(
         c: *LinkerContext,
         source_index: u32,
         stmts: *StmtList,
@@ -12802,7 +12776,7 @@ pub const AstBuilder = struct {
         return ref;
     }
 
-    pub fn toBundledAst(p: *AstBuilder) !js_ast.BundledAst {
+    pub fn toBundledAst(p: *AstBuilder, target: options.Target) !js_ast.BundledAst {
         // TODO: missing import scanner
         bun.assert(p.scopes.items.len == 0);
         const module_scope = p.current_scope;
@@ -12889,6 +12863,7 @@ pub const AstBuilder = struct {
             .top_level_symbols_to_parts = top_level_symbols_to_parts,
             .char_freq = .{},
             .flags = .{},
+            .target = target,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else

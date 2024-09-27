@@ -3695,11 +3695,6 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
         &bytes_decoded,
     );
-    if (comptime Environment.allow_assert) {
-        if (pret == -1) {
-            @breakpoint();
-        }
-    }
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
 

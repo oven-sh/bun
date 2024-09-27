@@ -576,13 +576,19 @@ pub const PublishCommand = struct {
                 switch (done_res.status_code) {
                     202 => {
                         // retry
-                        for (done_res.headers) |header| {
-                            if (strings.eqlCaseInsensitiveASCII(header.name, "retry-after", true)) {
-                                const seconds = bun.fmt.parseInt(u32, strings.trim(header.value, &strings.whitespace_chars), 10) catch continue;
-                                std.time.sleep(seconds * std.time.ns_per_s);
+                        const nanoseconds = nanoseconds: {
+                            default: for (done_res.headers) |header| {
+                                if (strings.eqlCaseInsensitiveASCII(header.name, "retry-after", true)) {
+                                    const trimmed = strings.trim(header.value, &strings.whitespace_chars);
+                                    const seconds = bun.fmt.parseInt(u32, trimmed, 10) catch break :default;
+                                    break :nanoseconds seconds * std.time.ns_per_s;
+                                }
                             }
-                        }
 
+                            break :nanoseconds 500 * std.time.ns_per_ms;
+                        };
+
+                        std.time.sleep(nanoseconds);
                         continue;
                     },
                     200 => {

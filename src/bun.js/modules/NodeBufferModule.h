@@ -46,9 +46,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     }
 
     if (UNLIKELY(impl->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBuffer is detached"_s);
-      return {};
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     byteLength = impl->byteLength();
@@ -82,9 +81,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
   if (bufferView) {
 
     if (UNLIKELY(bufferView->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBufferView is detached"_s);
-      return {};
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     byteLength = bufferView->byteLength();
@@ -169,7 +167,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
 
   put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(std::numeric_limits<unsigned>().max()));
+      JSC::jsNumber(WTF::String::MaxLength));
 
   JSC::JSObject *constants = JSC::constructEmptyObject(
       lexicalGlobalObject, globalObject->objectPrototype(), 2);
@@ -177,7 +175,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
                        JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
   constants->putDirect(vm,
                        JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(std::numeric_limits<unsigned>().max()));
+                       JSC::jsNumber(WTF::String::MaxLength));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 

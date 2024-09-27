@@ -1269,7 +1269,7 @@ function getBuildLabel() {
  * @returns {string | undefined}
  */
 function getFileUrl(file, line) {
-  if (isAbsolute(filePath)) {
+  if (isAbsolute(filePath) && filePath.includes(cwd)) {
     file = relative(cwd, filePath);
   }
 

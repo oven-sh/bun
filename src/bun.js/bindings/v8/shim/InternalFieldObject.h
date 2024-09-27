@@ -1,8 +1,12 @@
 #pragma once
 
-#include "V8ObjectTemplate.h"
+#include "BunClientData.h"
 
 namespace v8 {
+
+namespace shim {
+
+class ObjectTemplate;
 
 class InternalFieldObject : public JSC::JSDestructibleObject {
 public:
@@ -26,21 +30,21 @@ public:
     // never changes size
     using FieldContainer = WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>;
 
-    FieldContainer* internalFields() { return &fields; }
-    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, Local<ObjectTemplate> objectTemplate);
+    FieldContainer* internalFields() { return &m_fields; }
+    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount);
 
     DECLARE_VISIT_CHILDREN;
 
 protected:
     InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
         : Base(vm, structure)
-        , fields(internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
+        , m_fields(internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
     {
     }
 
 private:
-    // TODO(@190n) use template with fixed size array for small counts
-    FieldContainer fields;
+    FieldContainer m_fields;
 };
 
-}
+} // namespace shim
+} // namespace v8

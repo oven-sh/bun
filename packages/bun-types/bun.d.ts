@@ -3029,6 +3029,87 @@ declare module "bun" {
 
   type StringLike = string | { toString(): string };
 
+  type ColorInput =
+    | { r: number; g: number; b: number; a?: number }
+    | [number, number, number]
+    | [number, number, number, number]
+    | Uint8Array
+    | Uint8ClampedArray
+    | Float32Array
+    | Float64Array
+    | string
+    | number
+    | { toString(): string };
+
+  function color(
+    input: ColorInput,
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
+      /**
+       * 256 color ANSI color string, for use in terminals which don't support true color
+       *
+       * Tries to match closest 24-bit color to 256 color palette
+       */
+      | "ansi256"
+      /**
+       * Lowercase hex color string without alpha
+       * @example #aabb11
+       */
+      | "hex"
+      /**
+       * RGB color string without alpha
+       * rgb(100, 200, 200)
+       */
+      | "rgb"
+      /**
+       * RGB color string with alpha
+       * rgba(100, 200, 200, 0.5)
+       */
+      | "rgba"
+      | "hsl"
+      | "lab"
+      | "css"
+      | "lab"
+      | "HEX",
+  ): string | null;
+
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGB color
+     * @example [100, 200, 200]
+     */
+    outputFormat: "[rgb]",
+  ): [number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGBA color
+     * @example [100, 200, 200, 255]
+     */
+    outputFormat: "[rgba]",
+  ): [number, number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGB color
+     * @example { r: 100, g: 200, b: 200 }
+     */
+    outputFormat: "{rgb}",
+  ): { r: number; g: number; b: number } | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGBA color
+     * @example { r: 100, g: 200, b: 200, a: 0.5 }
+     */
+    outputFormat: "{rgba}",
+  ): { r: number; g: number; b: number; a: number } | null;
+  function color(input: ColorInput, outputFormat: "number"): number | null;
+
   interface Semver {
     /**
      * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
@@ -4615,6 +4696,32 @@ declare module "bun" {
        * @default cmds[0]
        */
       argv0?: string;
+
+      /**
+       * An {@link AbortSignal} that can be used to abort the subprocess.
+       *
+       * This is useful for aborting a subprocess when some other part of the
+       * program is aborted, such as a `fetch` response.
+       *
+       * Internally, this works by calling `subprocess.kill(1)`.
+       *
+       * @example
+       * ```ts
+       * const controller = new AbortController();
+       * const { signal } = controller;
+       * const start = performance.now();
+       * const subprocess = Bun.spawn({
+       *  cmd: ["sleep", "100"],
+       *  signal,
+       * });
+       * await Bun.sleep(1);
+       * controller.abort();
+       * await subprocess.exited;
+       * const end = performance.now();
+       * console.log(end - start); // 1ms instead of 101ms
+       * ```
+       */
+      signal?: AbortSignal;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =

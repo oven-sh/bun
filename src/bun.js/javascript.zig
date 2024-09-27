@@ -2674,6 +2674,8 @@ pub const VirtualMachine = struct {
             )) {
                 .success => |r| r,
                 .failure => |e| {
+                    {
+                    }
                     this.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,

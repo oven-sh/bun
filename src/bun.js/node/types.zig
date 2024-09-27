@@ -59,8 +59,8 @@ pub const Flavor = enum {
 /// - "path"
 /// - "errno"
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
-    const hasRetry = @hasDecl(ErrorTypeT, "retry");
-    const hasTodo = @hasDecl(ErrorTypeT, "todo");
+    const hasRetry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
+    const hasTodo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;
@@ -114,6 +114,23 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
+        /// Unwrap the value if it is `result` or use the provided `default_value`
+        ///
+        /// `default_value` must be comptime known so the optimizer can optimize this branch out
+        pub inline fn unwrapOr(this: @This(), comptime default_value: ReturnType) ReturnType {
+            return switch (this) {
+                .result => |v| v,
+                .err => default_value,
+            };
+        }
+
+        pub inline fn unwrapOrNoOptmizations(this: @This(), default_value: ReturnType) ReturnType {
+            return switch (this) {
+                .result => |v| v,
+                .err => default_value,
+            };
+        }
+
         pub inline fn initErr(e: ErrorType) Maybe(ReturnType, ErrorType) {
             return .{ .err = e };
         }
@@ -131,8 +148,47 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return null;
         }
 
+        pub inline fn asValue(this: *const @This()) ?ReturnType {
+            if (this.* == .result) return this.result;
+            return null;
+        }
+
+        pub inline fn isOk(this: *const @This()) bool {
+            return switch (this.*) {
+                .result => true,
+                .err => false,
+            };
+        }
+
+        pub inline fn isErr(this: *const @This()) bool {
+            return switch (this.*) {
+                .result => false,
+                .err => true,
+            };
+        }
+
         pub inline fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
             return .{ .result = result };
+        }
+
+        pub inline fn mapErr(this: @This(), comptime E: type, err_fn: *const fn (ErrorTypeT) E) Maybe(ReturnType, E) {
+            return switch (this) {
+                .result => |v| .{ .result = v },
+                .err => |e| .{ .err = err_fn(e) },
+            };
+        }
+
+        pub inline fn toCssResult(this: @This()) Maybe(ReturnType, bun.css.ParseError(bun.css.ParserError)) {
+            return switch (ErrorTypeT) {
+                bun.css.BasicParseError => {
+                    return switch (this) {
+                        .result => |v| return .{ .result = v },
+                        .err => |e| return .{ .err = e.intoDefaultParseError() },
+                    };
+                },
+                bun.css.ParseError(bun.css.ParserError) => @compileError("Already a ParseError(ParserError)"),
+                else => @compileError("Bad!"),
+            };
         }
 
         pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -1875,6 +1931,7 @@ pub const Process = struct {
 
         var args = std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1) catch bun.outOfMemory();
         defer args.deinit();
+        defer for (args.items) |*arg| arg.deref();
 
         var seen_run = false;
         var prev: ?[]const u8 = null;

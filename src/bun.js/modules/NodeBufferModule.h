@@ -46,9 +46,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     }
 
     if (UNLIKELY(impl->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBuffer is detached"_s);
-      return {};
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     byteLength = impl->byteLength();
@@ -82,9 +81,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
   if (bufferView) {
 
     if (UNLIKELY(bufferView->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBufferView is detached"_s);
-      return {};
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     byteLength = bufferView->byteLength();

@@ -1931,6 +1931,7 @@ pub const Process = struct {
 
         var args = std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1) catch bun.outOfMemory();
         defer args.deinit();
+        defer for (args.items) |*arg| arg.deref();
 
         var seen_run = false;
         var prev: ?[]const u8 = null;

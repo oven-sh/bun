@@ -1,8 +1,9 @@
 #pragma once
 
-#include "V8TaggedPointer.h"
+#include "TaggedPointer.h"
 
 namespace v8 {
+namespace shim {
 
 enum class InstanceType : uint16_t {
     // v8-internal.h:787, kFirstNonstringType is 0x80
@@ -23,38 +24,40 @@ enum class InstanceType : uint16_t {
 // V8's description of the structure of an object
 struct Map {
     // the structure of the map itself (always points to map_map)
-    TaggedPointer meta_map;
+    TaggedPointer m_metaMap;
     // TBD whether we need to put anything here to please inlined V8 functions
-    uint32_t unused;
+    uint32_t m_unused;
     // describes which kind of object this is. we shouldn't actually need to create very many
     // instance types -- only ones for primitives, and one to make sure V8 thinks it cannot take the
     // fast path when accessing internal fields
     // (v8::internal::Internals::CanHaveInternalField, in v8-internal.h)
-    InstanceType instance_type;
+    InstanceType m_instanceType;
 
-    // the map used by maps
+    // Since maps are V8 objects, they each also have a map pointer at the start, which is this one
     static const Map map_map;
-    // the map used by objects inheriting JSCell
+    // All V8 values not covered by a more specific map use this one
     static const Map object_map;
-    // the map used by pointers to non-JSCell objects stored in handles
-    static const Map raw_ptr_map;
-    // the map used by oddballs (null, undefined)
+    // The map used by null, undefined, true, and false. Required since V8 checks these values'
+    // instance type in the inline QuickIs* functions
     static const Map oddball_map;
-    // the map used by booleans
-    static const Map boolean_map;
-    // the map used by strings
+    // All strings use this map. Required since V8's inline QuickIsString() checks the instance
+    // type.
     static const Map string_map;
-    // the map used by heap numbers
+    // Handles containing a double instead of a JSCell pointer use this map so that we can tell they
+    // are numbers.
     static const Map heap_number_map;
 
-    Map(InstanceType instance_type_)
-        : meta_map(const_cast<Map*>(&map_map))
-        , unused(0xaaaaaaaa)
-        , instance_type(instance_type_)
+    Map(InstanceType instance_type)
+        : m_metaMap(const_cast<Map*>(&map_map))
+        , m_unused(0xaaaaaaaa)
+        , m_instanceType(instance_type)
     {
     }
 };
 
 static_assert(sizeof(Map) == 16, "Map has wrong layout");
+static_assert(offsetof(Map, m_metaMap) == 0, "Map has wrong layout");
+static_assert(offsetof(Map, m_instanceType) == 12, "Map has wrong layout");
 
-}
+} // namespace shim
+} // namespace v8

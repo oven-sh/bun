@@ -253,6 +253,11 @@ pub const Bunfig = struct {
                         this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("timeout")) |expr| {
+                        try this.expect(expr, .e_number);
+                        this.ctx.test_options.default_timeout_ms = expr.data.e_number.toU32();
+                    }
+
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;

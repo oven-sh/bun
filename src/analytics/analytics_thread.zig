@@ -79,13 +79,14 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
+    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
     pub var @"Bun.stdout": usize = 0;
     pub var WebSocket: usize = 0;
     pub var abort_signal: usize = 0;
     pub var binlinks: usize = 0;
-    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;

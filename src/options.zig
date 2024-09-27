@@ -388,11 +388,11 @@ pub const Target = enum {
     kit_server_components_ssr,
 
     pub const Map = bun.ComptimeStringMap(Target, .{
-        .{ "browser", Target.browser },
-        .{ "bun", Target.bun },
-        .{ "bun_macro", Target.bun_macro },
-        .{ "macro", Target.bun_macro },
-        .{ "node", Target.node },
+        .{ "browser", .browser },
+        .{ "bun", .bun },
+        .{ "bun_macro", .bun_macro },
+        .{ "macro", .bun_macro },
+        .{ "node", .node },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Target {
@@ -970,12 +970,6 @@ pub const JSX = struct {
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
 
-        // TODO: delete the following three fields
-        // https://github.com/facebook/react/commit/2f26eb85d657a08c21edbac1e00f9626d68f84ae
-        refresh_runtime: string = "react-refresh/runtime",
-        supports_fast_refresh: bool = true,
-        use_embedded_refresh_runtime: bool = false,
-
         development: bool = true,
         parse: bool = true,
 
@@ -1020,7 +1014,9 @@ pub const JSX = struct {
         }
 
         pub fn isReactLike(pragma: *const Pragma) bool {
-            return strings.eqlComptime(pragma.package_name, "react") or strings.eqlComptime(pragma.package_name, "@emotion/jsx") or strings.eqlComptime(pragma.package_name, "@emotion/react");
+            return strings.eqlComptime(pragma.package_name, "react") or
+                strings.eqlComptime(pragma.package_name, "@emotion/jsx") or
+                strings.eqlComptime(pragma.package_name, "@emotion/react");
         }
 
         pub fn setImportSource(pragma: *Pragma, allocator: std.mem.Allocator) void {
@@ -1121,7 +1117,6 @@ pub const JSX = struct {
                 pragma.classic_import_source = pragma.package_name;
             }
 
-            pragma.supports_fast_refresh = if (pragma.runtime == .solid) false else pragma.supports_fast_refresh;
             pragma.development = jsx.development;
             pragma.parse = true;
             return pragma;
@@ -1129,18 +1124,6 @@ pub const JSX = struct {
     };
 
     pub const Runtime = api.Api.JsxRuntime;
-};
-
-const TypeScript = struct {
-    parse: bool = false,
-};
-
-pub const Timings = struct {
-    resolver: i128 = 0,
-    parse: i128 = 0,
-    print: i128 = 0,
-    http: i128 = 0,
-    read_file: i128 = 0,
 };
 
 pub const DefaultUserDefines = struct {
@@ -1445,7 +1428,6 @@ pub const BundleOptions = struct {
     write: bool = false,
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
-    timings: Timings = Timings{},
     production: bool = false,
     serve: bool = false,
 
@@ -2345,129 +2327,6 @@ pub const EntryPoint = struct {
             this.env.allocator = allocator;
             try this.env.setFromAPI(env);
         }
-    }
-};
-
-// TODO: delete this structure
-// superseded by bun.kit.Framework
-pub const Framework = struct {
-    client: EntryPoint = EntryPoint{},
-    server: EntryPoint = EntryPoint{},
-    fallback: EntryPoint = EntryPoint{},
-
-    display_name: string = "",
-    /// "version" field in package.json
-    version: string = "",
-    /// "name" field in package.json
-    package: string = "",
-    development: bool = true,
-    resolved: bool = false,
-    from_bundle: bool = false,
-
-    resolved_dir: string = "",
-    override_modules: Api.StringMap,
-    override_modules_hashes: []u64 = &[_]u64{},
-
-    client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
-
-    pub const fallback_html: string = @embedFile("./fallback.html");
-
-    pub fn platformEntryPoint(this: *const Framework, target: Target) ?*const EntryPoint {
-        const entry: *const EntryPoint = switch (target) {
-            .browser => &this.client,
-            .bun => &this.server,
-            .node => return null,
-        };
-
-        if (entry.kind == .disabled) return null;
-        return entry;
-    }
-
-    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: std.mem.Allocator) !Framework {
-        var framework = Framework{
-            .package = loaded.package,
-            .development = loaded.development,
-            .from_bundle = true,
-            .client_css_in_js = loaded.client_css_in_js,
-            .display_name = loaded.display_name,
-            .override_modules = loaded.override_modules,
-        };
-
-        if (loaded.entry_points.fallback) |fallback| {
-            try framework.fallback.fromLoaded(fallback, allocator, .fallback);
-        }
-
-        if (loaded.entry_points.client) |client| {
-            try framework.client.fromLoaded(client, allocator, .client);
-        }
-
-        if (loaded.entry_points.server) |server| {
-            try framework.server.fromLoaded(server, allocator, .server);
-        }
-
-        return framework;
-    }
-
-    pub fn toAPI(
-        this: *const Framework,
-        allocator: std.mem.Allocator,
-        toplevel_path: string,
-    ) !?Api.LoadedFramework {
-        if (this.client.kind == .disabled and this.server.kind == .disabled and this.fallback.kind == .disabled) return null;
-
-        return Api.LoadedFramework{
-            .package = this.package,
-            .development = this.development,
-            .display_name = this.display_name,
-            .entry_points = .{
-                .client = try this.client.toAPI(allocator, toplevel_path, .client),
-                .fallback = try this.fallback.toAPI(allocator, toplevel_path, .fallback),
-                .server = try this.server.toAPI(allocator, toplevel_path, .server),
-            },
-            .client_css_in_js = this.client_css_in_js,
-            .override_modules = this.override_modules,
-        };
-    }
-
-    pub fn needsResolveFromPackage(this: *const Framework) bool {
-        return !this.resolved and this.package.len > 0;
-    }
-
-    pub fn fromApi(
-        transform: Api.FrameworkConfig,
-        allocator: std.mem.Allocator,
-    ) !Framework {
-        var client = EntryPoint{};
-        var server = EntryPoint{};
-        var fallback = EntryPoint{};
-
-        if (transform.client) |_client| {
-            try client.fromAPI(_client, allocator, .client);
-        }
-
-        if (transform.server) |_server| {
-            try server.fromAPI(_server, allocator, .server);
-        }
-
-        if (transform.fallback) |_fallback| {
-            try fallback.fromAPI(_fallback, allocator, .fallback);
-        }
-
-        return Framework{
-            .client = client,
-            .server = server,
-            .fallback = fallback,
-            .package = transform.package orelse "",
-            .display_name = transform.display_name orelse "",
-            .development = transform.development orelse true,
-            .override_modules = transform.override_modules orelse .{ .keys = &.{}, .values = &.{} },
-            .resolved = false,
-            .client_css_in_js = switch (transform.client_css_in_js orelse .auto_onimportcss) {
-                .facade_onimportcss => .facade_onimportcss,
-                .facade => .facade,
-                else => .auto_onimportcss,
-            },
-        };
     }
 };
 

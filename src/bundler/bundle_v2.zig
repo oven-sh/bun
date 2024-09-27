@@ -338,7 +338,7 @@ pub const BundleV2 = struct {
     linker: LinkerContext,
     bun_watcher: ?*bun.JSC.Watcher,
     plugins: ?*JSC.API.JSBundler.Plugin,
-    completion: ?CompletionPtr,
+    completion: ?*JSBundleCompletionTask,
     source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
@@ -354,17 +354,6 @@ pub const BundleV2 = struct {
         framework: kit.Framework,
         client_bundler: *Bundler,
         ssr_bundler: *Bundler,
-    };
-
-    pub const CompletionPtr = union(enum) {
-        js: *JSBundleCompletionTask,
-        // kit: *bun.kit.DevServer.BundleTask,
-
-        pub fn log(ptr: CompletionPtr) *bun.logger.Log {
-            return switch (ptr) {
-                inline else => |inner| &inner.log,
-            };
-        }
     };
 
     const ResolvedFramework = struct {};
@@ -567,7 +556,7 @@ pub const BundleV2 = struct {
         ) catch |err| {
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
-            const log = this.completion.?.log();
+            const log = &this.completion.?.log;
 
             if (import_record.importer_source_index) |importer| {
                 var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -1877,7 +1866,7 @@ pub const BundleV2 = struct {
                             .original_target = original_target,
                         },
                     },
-                    this.completion.?.js,
+                    this.completion.?,
                 );
                 resolve.dispatch();
                 return true;
@@ -1897,7 +1886,7 @@ pub const BundleV2 = struct {
                 });
                 var load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
                 load.* = JSC.API.JSBundler.Load.create(
-                    this.completion.?.js,
+                    this.completion.?,
                     parse.source_index,
                     parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js,
                     parse.path,
@@ -2528,13 +2517,14 @@ pub const BundleV2 = struct {
 /// Used to keep the bundle thread from spinning on Windows
 pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
 
-/// Used for Bun.build and Kit, as they asynchronously schedule multiple
-/// bundles. To account for their respective differences, the scheduling code
-/// is generalized over the Task structure.
+/// Originally, kit.DevServer required a separate bundling thread, but that was
+/// later removed. The bundling thread's scheduling logic is generalized over
+/// the completion structure.
+///
+/// CompletionStruct's interface:
 ///
 /// - `configureBundler` is used to configure `Bundler`.
 /// - `completeOnBundleThread` is used to tell the task that it is done.
-///
 pub fn BundleThread(CompletionStruct: type) type {
     return struct {
         const Self = @This();
@@ -2656,8 +2646,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
-                BundleV2.JSBundleCompletionTask => .{ .js = completion },
-                // bun.kit.DevServer.BundleTask => .{ .kit = completion },
+                BundleV2.JSBundleCompletionTask => completion,
                 else => @compileError("Unknown completion struct: " ++ CompletionStruct),
             };
             completion.bundler = this;
@@ -3452,9 +3441,9 @@ pub const ParseTask = struct {
     }
 };
 
-/// Files for Server Components are generated using `AstBuilder`. This is
-/// equivalent to a ParseTask, including using the same completion callback, but
-/// it does not take a source code string.
+/// Files for Server Components are generated using `AstBuilder`, instead of
+/// running through the js_parser. This is ParseTask, including using the same
+/// completion callback. It does not accept source code input.
 pub const GenerateTask = struct {
     task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap },
     data: Data,
@@ -6520,8 +6509,6 @@ pub const LinkerContext = struct {
 
             // Now that we know this, we can determine cross-part dependencies
             for (part.symbol_uses.keys(), 0..) |ref, j| {
-                // if (bun.strings.eql(c.graph.symbols.get(ref).?.original_name, "registerClientReference")) @breakpoint();
-
                 if (comptime Environment.allow_assert) {
                     bun.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
@@ -6921,18 +6908,6 @@ pub const LinkerContext = struct {
                     if (other_chunk_index == chunk_index or other_chunk.content != .javascript) continue;
 
                     if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
-                        // if (other_chunk.entry_point.is_entry_point) {
-                        //     if (c.graph.react_client_component_boundary.bit_length > 0 or c.graph.react_server_component_boundary.bit_length > 0) {
-                        //         const other_kind = c.graph.files.items(.entry_point_kind)[other_chunk.entry_point.source_index];
-                        //         const this_kind = c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index];
-
-                        //         if (this_kind != .react_client_component and
-                        //             other_kind.isReactReference())
-                        //         {
-                        //             continue;
-                        //         }
-                        //     }
-                        // }
                         _ = js.imports_from_other_chunks.getOrPutValue(
                             c.allocator,
                             @as(u32, @truncate(other_chunk_index)),
@@ -7802,9 +7777,9 @@ pub const LinkerContext = struct {
                 }
                 {
                     const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
-                    var buf = MutableString.initEmpty(c.allocator);
+                    var buf = MutableString.initEmpty(worker.allocator);
                     js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
-                    const str = buf.toOwnedSliceLeaky(); // c.allocator is an arena
+                    const str = buf.toOwnedSliceLeaky(); // worker.allocator is an arena
                     j.pushStatic(str);
                     line_offset.advance(str);
                 }
@@ -10252,152 +10227,10 @@ pub const LinkerContext = struct {
             }
         }
 
-        const react_client_components_manifest: []u8 = if (false) brk: { // TODO: this component manifest is useless in current form
-            var bytes = std.ArrayList(u8).init(c.allocator);
-            defer bytes.deinit();
-            const all_sources = c.parse_graph.input_files.items(.source);
-            var all_named_exports = c.graph.ast.items(.named_exports);
-            var export_names = std.ArrayList(Api.StringPointer).init(c.allocator);
-            defer export_names.deinit();
-
-            var client_modules = std.ArrayList(Api.ClientServerModule).initCapacity(c.allocator, c.graph.react_client_component_boundary.count()) catch unreachable;
-            defer client_modules.deinit();
-            var server_modules = std.ArrayList(Api.ClientServerModule).initCapacity(c.allocator, c.graph.react_server_component_boundary.count()) catch unreachable;
-            defer server_modules.deinit();
-
-            var react_client_components_iterator = c.graph.react_client_component_boundary.iterator(.{});
-            var server_components_iterator = c.graph.react_server_component_boundary.iterator(.{});
-
-            var sorted_client_component_ids = std.ArrayList(u32).initCapacity(c.allocator, client_modules.capacity) catch unreachable;
-            defer sorted_client_component_ids.deinit();
-            while (react_client_components_iterator.next()) |source_index| {
-                if (!c.graph.files_live.isSet(source_index)) continue;
-                sorted_client_component_ids.appendAssumeCapacity(@as(u32, @intCast(source_index)));
-            }
-
-            var sorted_server_component_ids = std.ArrayList(u32).initCapacity(c.allocator, server_modules.capacity) catch unreachable;
-            defer sorted_server_component_ids.deinit();
-            while (server_components_iterator.next()) |source_index| {
-                if (!c.graph.files_live.isSet(source_index)) continue;
-                sorted_server_component_ids.appendAssumeCapacity(@as(u32, @intCast(source_index)));
-            }
-
-            const Sorter = struct {
-                sources: []const Logger.Source,
-                pub fn isLessThan(ctx: @This(), a_index: u32, b_index: u32) bool {
-                    const a = ctx.sources[a_index].path.text;
-                    const b = ctx.sources[b_index].path.text;
-                    return strings.order(a, b) == .lt;
-                }
-            };
-            std.sort.pdq(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
-            std.sort.pdq(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
-
-            inline for (.{
-                sorted_client_component_ids.items,
-                sorted_server_component_ids.items,
-            }, .{
-                &client_modules,
-                &server_modules,
-            }) |sorted_component_ids, modules| {
-                for (sorted_component_ids) |component_source_index| {
-                    var source_index_for_named_exports = component_source_index;
-
-                    const chunk: *Chunk = brk2: {
-                        for (chunks) |*chunk_| {
-                            if (!chunk_.entry_point.is_entry_point) continue;
-                            if (chunk_.entry_point.source_index == @as(u32, @intCast(component_source_index))) {
-                                break :brk2 chunk_;
-                            }
-
-                            if (chunk_.files_with_parts_in_chunk.contains(component_source_index)) {
-                                source_index_for_named_exports = chunk_.entry_point.source_index;
-                                break :brk2 chunk_;
-                            }
-                        }
-
-                        @panic("could not find chunk for component");
-                    };
-
-                    var grow_length: usize = 0;
-
-                    const named_exports = all_named_exports[source_index_for_named_exports].keys();
-
-                    try export_names.ensureUnusedCapacity(named_exports.len);
-                    const exports_len = @as(u32, @intCast(named_exports.len));
-                    const exports_start = @as(u32, @intCast(export_names.items.len));
-
-                    grow_length += chunk.final_rel_path.len;
-
-                    grow_length += all_sources[component_source_index].path.pretty.len;
-
-                    for (named_exports) |export_name| {
-                        try export_names.append(Api.StringPointer{
-                            .offset = @as(u32, @intCast(bytes.items.len + grow_length)),
-                            .length = @as(u32, @intCast(export_name.len)),
-                        });
-                        grow_length += export_name.len;
-                    }
-
-                    try bytes.ensureUnusedCapacity(grow_length);
-
-                    const input_name = Api.StringPointer{
-                        .offset = @as(u32, @intCast(bytes.items.len)),
-                        .length = @as(u32, @intCast(all_sources[component_source_index].path.pretty.len)),
-                    };
-
-                    bytes.appendSliceAssumeCapacity(all_sources[component_source_index].path.pretty);
-
-                    const asset_name = Api.StringPointer{
-                        .offset = @as(u32, @intCast(bytes.items.len)),
-                        .length = @as(u32, @intCast(chunk.final_rel_path.len)),
-                    };
-
-                    bytes.appendSliceAssumeCapacity(chunk.final_rel_path);
-
-                    for (named_exports) |export_name| {
-                        bytes.appendSliceAssumeCapacity(export_name);
-                    }
-
-                    modules.appendAssumeCapacity(.{
-                        .module_id = bun.hash32(all_sources[component_source_index].path.pretty),
-                        .asset_name = asset_name,
-                        .input_name = input_name,
-                        .export_names = .{
-                            .length = exports_len,
-                            .offset = exports_start,
-                        },
-                    });
-                }
-            }
-
-            if (client_modules.items.len == 0 and server_modules.items.len == 0) break :brk &.{};
-
-            var manifest = Api.ClientServerModuleManifest{
-                .version = 2,
-                .client_modules = client_modules.items,
-
-                // TODO:
-                .ssr_modules = client_modules.items,
-
-                .server_modules = server_modules.items,
-                .export_names = export_names.items,
-                .contents = bytes.items,
-            };
-            var byte_buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, bytes.items.len) catch unreachable;
-            var byte_buffer_writer = byte_buffer.writer();
-            const SchemaWriter = schema.Writer(@TypeOf(&byte_buffer_writer));
-            var writer = SchemaWriter.init(&byte_buffer_writer);
-            manifest.encode(&writer) catch unreachable;
-            break :brk byte_buffer.items;
-        } else &.{};
-
         var output_files = std.ArrayList(options.OutputFile).initCapacity(
             bun.default_allocator,
-            (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) + @as(
-                usize,
-                @intFromBool(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
-            ),
+            (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) +
+                @as(usize, c.parse_graph.additional_output_files.items.len),
         ) catch unreachable;
 
         const root_path = c.resolver.opts.output_dir;
@@ -10408,7 +10241,7 @@ pub const LinkerContext = struct {
         }
 
         if (root_path.len > 0) {
-            try c.writeOutputFilesToDisk(root_path, chunks, react_client_components_manifest, &output_files);
+            try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
         } else {
 
             // In-memory build
@@ -10532,25 +10365,6 @@ pub const LinkerContext = struct {
                 }
             }
 
-            // if (react_client_components_manifest.len > 0) {
-            //     output_files.appendAssumeCapacity(options.OutputFile.init(
-            //         .{
-            //             .data = .{
-            //                 .buffer = .{
-            //                     .data = react_client_components_manifest,
-            //                     .allocator = bun.default_allocator,
-            //                 },
-            //             },
-
-            //             .input_path = try bun.default_allocator.dupe(u8, components_manifest_path),
-            //             .output_path = try bun.default_allocator.dupe(u8, components_manifest_path),
-            //             .loader = .file,
-            //             .input_loader = .file,
-            //             .output_kind = .@"component-manifest",
-            //         },
-            //     ));
-            // }
-
             output_files.appendSliceAssumeCapacity(c.parse_graph.additional_output_files.items);
         }
 
@@ -10614,10 +10428,8 @@ pub const LinkerContext = struct {
         c: *LinkerContext,
         root_path: string,
         chunks: []Chunk,
-        react_client_components_manifest: []const u8,
         output_files: *std.ArrayList(options.OutputFile),
     ) !void {
-        _ = react_client_components_manifest; // autofix
         const trace = tracer(@src(), "writeOutputFilesToDisk");
         defer trace.end();
         var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
@@ -12813,112 +12625,6 @@ fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
         bun.strings.removeLeadingDotSlash(suffix),
     };
 }
-
-// For Server Components, we generate an entry point which re-exports all client components
-// This is a "shadow" of the server entry point.
-// The client is expected to import this shadow entry point
-const ShadowEntryPoint = struct {
-    from_source_index: Index.Int,
-    to_source_index: Index.Int,
-
-    named_exports: bun.BabyList(NamedExport) = .{},
-
-    pub const NamedExport = struct {
-        // TODO: packed string
-        from: string,
-        to: string,
-        source_index: Index.Int,
-    };
-
-    pub const Builder = struct {
-        source_code_buffer: MutableString,
-        ctx: *BundleV2,
-        resolved_source_indices: std.ArrayList(Index.Int),
-        shadow: *ShadowEntryPoint,
-
-        pub fn addClientComponent(
-            this: *ShadowEntryPoint.Builder,
-            source_index: usize,
-        ) void {
-            var writer = this.source_code_buffer.writer();
-            const path = this.ctx.graph.input_files.items(.source)[source_index].path;
-            // TODO: tree-shaking to named imports only
-            writer.print(
-                \\// {s}
-                \\import {} from '${d}';
-                \\export {};
-                \\
-            ,
-                .{
-                    path.pretty,
-                    ImportsFormatter{ .ctx = this.ctx, .source_index = @as(Index.Int, @intCast(source_index)), .pretty = path.pretty },
-                    bun.fmt.hexIntUpper(bun.hash(path.pretty)),
-                    ExportsFormatter{ .ctx = this.ctx, .source_index = @as(Index.Int, @intCast(source_index)), .pretty = path.pretty, .shadow = this.shadow },
-                },
-            ) catch unreachable;
-            this.resolved_source_indices.append(@as(Index.Int, @truncate(source_index))) catch unreachable;
-        }
-    };
-
-    const ImportsFormatter = struct {
-        ctx: *BundleV2,
-        pretty: string,
-        source_index: Index.Int,
-
-        pub fn format(self: ImportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            var this = self.ctx;
-            const named_exports: *js_ast.Ast.NamedExports = &this.graph.ast.items(.named_exports)[self.source_index];
-            try writer.writeAll("{");
-            // for (named_exports.keys()) |*named| {
-            //     named.* = try std.fmt.allocPrint(
-            //         this.graph.allocator,
-            //         "oldtechdebt${}_{s}",
-            //         .{
-            //             bun.fmt.hexIntLower(bun.hash(self.pretty)),
-            //             named.*,
-            //         },
-            //     );
-            // }
-            try named_exports.reIndex();
-
-            for (named_exports.keys(), 0..) |name, i| {
-                try writer.writeAll(name);
-                if (i < named_exports.count() - 1) {
-                    try writer.writeAll(" , ");
-                }
-            }
-            try writer.writeAll("}");
-        }
-    };
-
-    const ExportsFormatter = struct {
-        ctx: *BundleV2,
-        pretty: string,
-        source_index: Index.Int,
-        shadow: *ShadowEntryPoint,
-
-        pub fn format(self: ExportsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            var this = self.ctx;
-            const named_exports: js_ast.Ast.NamedExports = this.graph.ast.items(.named_exports)[self.source_index];
-            try writer.writeAll("{");
-            var shadow = self.shadow;
-            try shadow.named_exports.ensureUnusedCapacity(this.graph.allocator, named_exports.count());
-            for (named_exports.keys(), 0..) |name, i| {
-                if (i != 0) {
-                    try writer.writeAll(", ");
-                }
-                try shadow.named_exports.push(this.graph.allocator, .{
-                    .from = name,
-                    .to = name,
-                    .source_index = self.source_index,
-                });
-
-                try writer.writeAll(name);
-            }
-            try writer.writeAll(" }");
-        }
-    };
-};
 
 fn getRedirectId(id: u32) ?u32 {
     if (id == std.math.maxInt(u32)) {

@@ -1349,7 +1349,7 @@ pub const Bundler = struct {
 
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
                     jsx.parse and
-                    bundler.options.jsx.supports_fast_refresh;
+                    bundler.options.react_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();

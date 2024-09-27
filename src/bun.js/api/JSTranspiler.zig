@@ -827,8 +827,9 @@ pub fn constructor(
     bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
     bundler.options.inlining = transpiler_options.runtime.inlining;
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
-    bundler.options.jsx.supports_fast_refresh = bundler.options.hot_module_reloading and
-        bundler.options.allow_runtime and transpiler_options.runtime.react_fast_refresh;
+    bundler.options.react_fast_refresh = bundler.options.hot_module_reloading and
+        bundler.options.allow_runtime and
+        transpiler_options.runtime.react_fast_refresh;
 
     const transpiler = allocator.create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{
@@ -881,19 +882,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         // .allocator = this.
     };
 
-    const parse_result = this.bundler.parse(parse_options, null);
-
-    // necessary because we don't run the linker
-    // if (parse_result) |*res| {
-    //     for (res.ast.import_records.slice()) |*import| {
-    //         if (import.kind.isCommonJS()) {
-    //             import.do_commonjs_transform_in_printer = true;
-    //             import.module_id = @as(u32, @truncate(bun.hash(import.path.pretty)));
-    //         }
-    //     }
-    // }
-
-    return parse_result;
+    return this.bundler.parse(parse_options, null);
 }
 
 pub fn scan(

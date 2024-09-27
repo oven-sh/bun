@@ -132,9 +132,7 @@ pub fn init(options: Options) !*DevServer {
 
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
-    const dev = bun.new(DevServer, undefined);
-
-    dev.* = .{
+    const dev = bun.new(DevServer, .{
         .cwd = options.cwd,
         .app = app,
         .routes = options.routes,
@@ -146,8 +144,8 @@ pub fn init(options: Options) !*DevServer {
         .server_register_update_callback = .{},
         .listener = null,
         .log = Log.init(default_allocator),
-        .client_graph = .{ .owner = dev },
-        .server_graph = .{ .owner = dev },
+        .client_graph = undefined,
+        .server_graph = undefined,
         .dump_dir = dump_dir,
         .framework = options.framework,
         .bundle_result = null,
@@ -158,7 +156,10 @@ pub fn init(options: Options) !*DevServer {
         .server_bundler = undefined,
         .client_bundler = undefined,
         .ssr_bundler = undefined,
-    };
+    });
+
+    dev.server_graph = .{ .owner = dev };
+    dev.client_graph = .{ .owner = dev };
 
     const fs = try bun.fs.FileSystem.init(options.cwd);
     dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);

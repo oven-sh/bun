@@ -480,10 +480,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
-
-    // bun.kit.DevServer.BundleTask,
     bun.kit.DevServer.HotReloadTask,
-
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
@@ -1245,9 +1242,6 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
-                // @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
-                //     task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
-                // },
 
                 else => {
                     bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});

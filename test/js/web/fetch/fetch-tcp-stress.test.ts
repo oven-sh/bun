@@ -42,7 +42,7 @@ async function runStressTest({
             socket.data ??= {};
             socket.data.read = true;
             sockets[i] = socket;
-            if (socket.write("200 OK\r\nCo") === "200 OK\r\nCo".length) {
+            if (socket.write("200 OK\r\n\r\n") === "200 OK\r\n\r\n".length) {
               socket.data.written = true;
               onServerWritten(socket);
             }
@@ -56,7 +56,7 @@ async function runStressTest({
             return;
           }
 
-          if (socket.write("200 OK\r\nCo") === "200 OK\r\nCo".length) {
+          if (socket.write("200 OK\r\n\r\n") === "200 OK\r\n\r\n".length) {
             socket.data.written = true;
             onServerWritten(socket);
           }
@@ -81,9 +81,11 @@ async function runStressTest({
         toClose = batch;
         for (let i = 0; i < batch; i++) {
           promises.push(
-            fetch(`http://127.0.0.1:${server.port}`, objects[i]).finally(() => {
-              onFetchWritten(sockets[i]);
-            }),
+            fetch(`http://127.0.0.1:${server.port}`, objects[i])
+              .then(r => r.blob())
+              .finally(() => {
+                onFetchWritten(sockets[i]);
+              }),
           );
         }
         await Promise.allSettled(promises);
@@ -120,7 +122,7 @@ test(
   async () => {
     await runStressTest({
       onServerWritten(socket) {
-        socket.end();
+        socket.shutdown();
       },
       onFetchWritten(socket) {},
     });

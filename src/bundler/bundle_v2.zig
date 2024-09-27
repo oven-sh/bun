@@ -3141,37 +3141,6 @@ pub const ParseTask = struct {
             .fd => brk: {
                 const trace = tracer(@src(), "readFile");
                 defer trace.end();
-                // if (bundler.options.framework) |framework| {
-                //     if (framework.override_modules_hashes.len > 0) {
-                //         const package_relative_path_hash = bun.hash(file_path.pretty);
-                //         if (std.mem.indexOfScalar(
-                //             u64,
-                //             framework.override_modules_hashes,
-                //             package_relative_path_hash,
-                //         )) |index| {
-                //             const relative_path = [_]string{
-                //                 framework.resolved_dir,
-                //                 framework.override_modules.values[index],
-                //             };
-                //             const override_path = bundler.fs.absBuf(
-                //                 &relative_path,
-                //                 &override_file_path_buf,
-                //             );
-                //             override_file_path_buf[override_path.len] = 0;
-                //             const override_pathZ = override_file_path_buf[0..override_path.len :0];
-                //             debug("{s} -> {s}", .{ file_path.text, override_path });
-                //             break :brk try resolver.caches.fs.readFileWithAllocator(
-                //                 allocator,
-                //                 bundler.fs,
-                //                 override_pathZ,
-                //                 .zero,
-                //                 false,
-                //                 null,
-                //             );
-                //         }
-                //     }
-                // }
-
                 if (strings.eqlComptime(file_path.namespace, "node"))
                     break :brk CacheEntry{
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",

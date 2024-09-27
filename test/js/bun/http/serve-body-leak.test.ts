@@ -7,6 +7,7 @@ const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size 
 const batchSize = 40;
 const totalCount = 10_000;
 const zeroCopyPayload = new Blob([payload]);
+const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
@@ -60,6 +61,13 @@ async function callBuffering() {
   const result = await fetch(`${url.origin}/buffering`, {
     method: "POST",
     body: zeroCopyPayload,
+  }).then(res => res.text());
+  expect(result).toBe("Ok");
+}
+async function callJSONBuffering() {
+  const result = await fetch(`${url.origin}/json-buffering`, {
+    method: "POST",
+    body: zeroCopyJSONPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
@@ -142,6 +150,7 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 for (const test_info of [
   ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
   ["should not leak memory when buffering the body", callBuffering, false, 64],
+  ["should not leak memory when buffering a JSON body", callJSONBuffering, false, 64],
   ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
   ["should not leak memory when streaming the body", callStreaming, false, 64],
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],

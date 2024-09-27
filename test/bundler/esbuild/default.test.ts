@@ -3495,7 +3495,6 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3518,7 +3517,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import('./a')

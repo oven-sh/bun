@@ -216,6 +216,24 @@ pub fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
+// TODO: copy https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
+// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
+pub fn isNpmSecret(str: string) bool {
+    _ = str;
+    // if (!strings.hasPrefixComptime(str, "npm")) return false;
+    // var remain = str["npm".len..];
+    // if (remain.len == 0) return false;
+    // if (remain[0] != '_') {
+    //     if (remain[0] == 's')
+    // }
+
+}
+
+// TODO: copy https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L25
+pub fn isUUID(str: string) bool {
+    _ = str;
+}
+
 pub fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
@@ -938,6 +956,10 @@ pub fn hasPrefixCaseInsensitiveT(comptime T: type, str: []const T, prefix: []con
     if (str.len < prefix.len) return false;
 
     return eqlCaseInsensitiveT(T, str[0..prefix.len], prefix);
+}
+
+pub fn hasPrefixCaseInsensitive(str: []const u8, prefix: []const u8) bool {
+    return hasPrefixCaseInsensitiveT(u8, str, prefix);
 }
 
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {

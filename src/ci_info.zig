@@ -14,7 +14,6 @@ var ci_name: ?[]const u8 = null;
 pub fn detectCI() ?[]const u8 {
     const ci = ci_name orelse ci_name: {
         CI.once.call();
-        bun.assertWithLocation(ci_name != null, @src());
         break :ci_name ci_name.?;
     };
 
@@ -75,9 +74,11 @@ const CI = enum {
 
     pub var once = std.once(struct {
         pub fn once() void {
+            var name: []const u8 = "";
+            defer ci_name = name;
+
             if (bun.getenvZ("CI")) |ci| {
                 if (strings.eqlComptime(ci, "false")) {
-                    ci_name = "";
                     return;
                 }
             }
@@ -85,7 +86,7 @@ const CI = enum {
             // Special case Heroku
             if (bun.getenvZ("NODE")) |node| {
                 if (strings.includes(node, "/app/.heroku/node/bin/node")) {
-                    ci_name = "heroku";
+                    name = "heroku";
                     return;
                 }
             }
@@ -100,7 +101,7 @@ const CI = enum {
                         if (value.len == 0 or bun.strings.eqlLong(env, value, true)) {
                             if (!any) continue :pairs;
 
-                            ci_name = @tagName(Array.Indexer.keyForIndex(i));
+                            name = @tagName(Array.Indexer.keyForIndex(i));
                             return;
                         }
                     }
@@ -109,13 +110,10 @@ const CI = enum {
                 }
 
                 if (!any) {
-                    ci_name = @tagName(Array.Indexer.keyForIndex(i));
+                    name = @tagName(Array.Indexer.keyForIndex(i));
                     return;
                 }
             }
-
-            ci_name = "";
-            return;
         }
     }.once);
 

@@ -107,7 +107,12 @@ pub fn Table(
     };
 }
 
-pub fn IntegrityFormatter(comptime short: bool) type {
+const IntegrityFormatStyle = enum {
+    short,
+    full,
+};
+
+pub fn IntegrityFormatter(comptime style: IntegrityFormatStyle) type {
     return struct {
         bytes: [sha.SHA512.digest]u8,
 
@@ -117,7 +122,7 @@ pub fn IntegrityFormatter(comptime short: bool) type {
 
             const encoded = buf[0..count];
 
-            if (comptime short)
+            if (comptime style == .short)
                 try writer.print("sha512-{s}[...]{s}", .{ encoded[0..13], encoded[encoded.len - 15 ..] })
             else
                 try writer.print("sha512-{s}", .{encoded});
@@ -125,7 +130,7 @@ pub fn IntegrityFormatter(comptime short: bool) type {
     };
 }
 
-pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime short: bool) IntegrityFormatter(short) {
+pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime style: IntegrityFormatStyle) IntegrityFormatter(style) {
     return .{ .bytes = bytes };
 }
 

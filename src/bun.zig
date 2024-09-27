@@ -98,6 +98,8 @@ pub const JSError = error{
     JSError,
 };
 
+pub const detectCI = @import("./ci_info.zig").detectCI;
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");

@@ -26,11 +26,10 @@ fn exists(path: anytype) bool {
     return bun.sys.exists(path);
 }
 pub const InitCommand = struct {
-    fn prompt(
+    pub fn prompt(
         alloc: std.mem.Allocator,
         comptime label: string,
         default: []const u8,
-        _: bool,
     ) ![]const u8 {
         Output.pretty(label, .{});
         if (default.len > 0) {
@@ -248,7 +247,6 @@ pub const InitCommand = struct {
                     alloc,
                     "<r><cyan>package name<r> ",
                     fields.name,
-                    Output.enable_ansi_colors_stdout,
                 ) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
@@ -260,7 +258,6 @@ pub const InitCommand = struct {
                     alloc,
                     "<r><cyan>entry point<r> ",
                     fields.entry_point,
-                    Output.enable_ansi_colors_stdout,
                 ) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;

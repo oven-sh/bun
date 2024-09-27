@@ -117,6 +117,8 @@ pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
+pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
+pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1042,7 +1044,6 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
-const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {

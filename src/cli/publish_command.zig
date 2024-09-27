@@ -23,20 +23,28 @@ const Environment = bun.Environment;
 const Archive = bun.libarchive.lib.Archive;
 const logger = bun.logger;
 const Dependency = install.Dependency;
+const Pack = bun.CLI.PackCommand;
+const Lockfile = install.Lockfile;
+const MimeType = http.MimeType;
+const Expr = bun.js_parser.Expr;
+const prompt = bun.CLI.InitCommand.prompt;
+const Npm = install.Npm;
+const Run = bun.CLI.RunCommand;
 
 pub const PublishCommand = struct {
-    const Context = struct {
+    pub const Context = struct {
         manager: *PackageManager,
         allocator: std.mem.Allocator,
+        command_ctx: Command.Context,
+
         package_name: string,
         package_version: string,
         abs_tarball_path: stringZ,
         tarball_bytes: string,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
-        readme: ?string,
-        description: ?string,
         uses_workspaces: bool,
+        directory_publish: bool,
 
         const FromTarballError = OOM || error{
             MissingPackageJSON,
@@ -50,7 +58,11 @@ pub const PublishCommand = struct {
         };
 
         // Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
-        pub fn fromTarballPath(allocator: std.mem.Allocator, manager: *PackageManager, tarball_path: string) FromTarballError!Context {
+        pub fn fromTarballPath(
+            ctx: Command.Context,
+            manager: *PackageManager,
+            tarball_path: string,
+        ) FromTarballError!Context {
             var abs_buf: bun.PathBuffer = undefined;
             const abs_tarball_path = path.joinAbsStringBufZ(
                 FileSystem.instance.top_level_dir,
@@ -59,12 +71,11 @@ pub const PublishCommand = struct {
                 .auto,
             );
 
-            const tarball_bytes = File.readFrom(bun.invalid_fd, abs_tarball_path, allocator).unwrap() catch |err| {
+            const tarball_bytes = File.readFrom(bun.invalid_fd, abs_tarball_path, ctx.allocator).unwrap() catch |err| {
                 Output.err(err, "failed to read tarball: '{s}'", .{tarball_path});
                 Global.crash();
             };
 
-            var readme_contents: ?[]const u8 = null;
             var maybe_package_json_contents: ?[]const u8 = null;
 
             var iter = switch (Archive.Iterator.init(tarball_bytes)) {
@@ -90,13 +101,14 @@ pub const PublishCommand = struct {
                 },
                 .result => |res| res,
             }) |next| {
-                if (readme_contents != null and maybe_package_json_contents != null) break;
+                if (maybe_package_json_contents != null) break;
 
                 const pathname = if (comptime Environment.isWindows)
                     next.entry.pathnameW()
                 else
                     next.entry.pathname();
 
+                // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
                 if (strings.indexOfAnyT(bun.OSPathChar, pathname, "/\\")) |slash| {
                     if (strings.indexOfAnyT(bun.OSPathChar, pathname[slash + 1 ..], "/\\") == null) {
 
@@ -104,15 +116,7 @@ pub const PublishCommand = struct {
                         const filename = pathname[slash + 1 ..];
 
                         if (maybe_package_json_contents == null and strings.eqlCaseInsensitiveT(bun.OSPathChar, filename, "package.json")) {
-                            maybe_package_json_contents = switch (try next.readEntryData(allocator, iter.archive)) {
-                                .err => |err| {
-                                    Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
-                                    Global.crash();
-                                },
-                                .result => |bytes| bytes,
-                            };
-                        } else if (readme_contents == null and strings.hasPrefixCaseInsensitiveT(bun.OSPathChar, filename, "readme.")) {
-                            readme_contents = switch (try next.readEntryData(allocator, iter.archive)) {
+                            maybe_package_json_contents = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
                                 .err => |err| {
                                     Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
                                     Global.crash();
@@ -134,11 +138,11 @@ pub const PublishCommand = struct {
 
             const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
 
-            const package_name, const package_version, const description = package_info: {
-                defer allocator.free(package_json_contents);
+            const package_name, const package_version = package_info: {
+                defer ctx.allocator.free(package_json_contents);
 
                 const source = logger.Source.initPathString("package.json", package_json_contents);
-                const json = JSON.parsePackageJSONUTF8(&source, manager.log, allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8(&source, manager.log, ctx.allocator) catch |err| {
                     return switch (err) {
                         error.OutOfMemory => |oom| return oom,
                         else => error.InvalidPackageJSON,
@@ -153,7 +157,7 @@ pub const PublishCommand = struct {
                     }
                 }
 
-                const name = try json.getStringCloned(allocator, "name") orelse return error.MissingPackageName;
+                const name = try json.getStringCloned(ctx.allocator, "name") orelse return error.MissingPackageName;
                 const is_scoped = try Dependency.isScopedPackageName(name);
 
                 if (manager.options.publish_config.access) |access| {
@@ -162,13 +166,10 @@ pub const PublishCommand = struct {
                     }
                 }
 
-                const version = try json.getStringCloned(allocator, "version") orelse return error.MissingPackageVersion;
+                const version = try json.getStringCloned(ctx.allocator, "version") orelse return error.MissingPackageVersion;
                 if (version.len == 0) return error.InvalidPackageVersion;
 
-                var description = try json.getStringCloned(allocator, "description") orelse null;
-                if (description != null and description.?.len == 0) description = null;
-
-                break :package_info .{ name, version, description };
+                break :package_info .{ name, version };
             };
 
             var sha1_digest: sha.SHA1.Digest = undefined;
@@ -187,23 +188,76 @@ pub const PublishCommand = struct {
 
             return .{
                 .manager = manager,
-                .allocator = allocator,
+                .allocator = ctx.allocator,
                 .package_name = package_name,
                 .package_version = package_version,
-                .abs_tarball_path = try allocator.dupeZ(u8, abs_tarball_path),
+                .abs_tarball_path = try ctx.allocator.dupeZ(u8, abs_tarball_path),
                 .tarball_bytes = tarball_bytes,
                 .shasum = sha1_digest,
                 .integrity = sha512_digest,
-                .readme = readme_contents,
-                .description = description,
                 .uses_workspaces = false,
+                .command_ctx = ctx,
+                .directory_publish = false,
             };
         }
 
-        // `bun publish`. Automatically pack the current workspace, and retrieve information required
-        // for publishing
-        pub fn fromWorkspace() Context {
-            //
+        const FromWorkspaceError = Pack.PackError(true);
+
+        // `bun publish` without a tarball path. Automatically pack the current workspace and get
+        // information required for publishing
+        pub fn fromWorkspace(ctx: Command.Context, manager: *PackageManager) FromWorkspaceError!Context {
+            var lockfile: Lockfile = undefined;
+            const load_from_disk_result = lockfile.loadFromDisk(
+                manager,
+                manager.allocator,
+                manager.log,
+                manager.options.lockfile_path,
+                false,
+            );
+
+            var pack_ctx: Pack.Context = .{
+                .allocator = ctx.allocator,
+                .manager = manager,
+                .command_ctx = ctx,
+                .lockfile = switch (load_from_disk_result) {
+                    .ok => |ok| ok.lockfile,
+                    .not_found => null,
+                    .err => |cause| err: {
+                        switch (cause.step) {
+                            .open_file => {
+                                if (cause.value == error.ENOENT) break :err null;
+                                Output.errGeneric("failed to open lockfile: {s}", .{@errorName(cause.value)});
+                            },
+                            .parse_file => {
+                                Output.errGeneric("failed to parse lockfile: {s}", .{@errorName(cause.value)});
+                            },
+                            .read_file => {
+                                Output.errGeneric("failed to read lockfile: {s}", .{@errorName(cause.value)});
+                            },
+                            .migrating => {
+                                Output.errGeneric("failed to migrate lockfile: {s}", .{@errorName(cause.value)});
+                            },
+                        }
+
+                        if (manager.log.hasErrors()) {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                                },
+                            }
+                        }
+
+                        Global.crash();
+                    },
+                },
+            };
+
+            return switch (manager.options.log_level) {
+                inline else => |log_level| if (manager.options.dry_run)
+                    Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true)
+                else
+                    Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true),
+            };
         }
     };
 
@@ -225,7 +279,7 @@ pub const PublishCommand = struct {
         defer ctx.allocator.free(original_cwd);
 
         if (cli.positionals.len > 1) {
-            const context = Context.fromTarballPath(ctx.allocator, manager, cli.positionals[1]) catch |err| {
+            const context = Context.fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.MissingPackageName => {
@@ -252,7 +306,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("attemped to publish a private package", .{});
                     },
                     error.RestrictedUnscopedPackage => {
-                        Output.errGeneric("unable to restrict access to unscoped packages", .{});
+                        Output.errGeneric("unable to restrict access to unscoped package", .{});
                     },
                 }
                 Global.crash();
@@ -267,25 +321,32 @@ pub const PublishCommand = struct {
             return;
         }
 
-        const sha1_digest: sha.SHA1.Digest = undefined;
-        const sha512_digest: sha.SHA512.Digest = undefined;
+        const context = Context.fromWorkspace(ctx, manager) catch |err| {
+            switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                error.MissingPackageName => {
+                    Output.errGeneric("missing `name` string in package.json", .{});
+                },
+                error.MissingPackageVersion => {
+                    Output.errGeneric("missing `version` string in package.json", .{});
+                },
+                error.InvalidPackageName, error.InvalidPackageVersion => {
+                    Output.errGeneric("package.json `name` and `version` fields must be non-empty strings", .{});
+                },
+                error.MissingPackageJSON => {
+                    Output.errGeneric("failed to find package.json from: '{s}'", .{FileSystem.instance.top_level_dir});
+                },
+                error.RestrictedUnscopedPackage => {
+                    Output.errGeneric("unable to restrict access to unscoped package", .{});
+                },
+            }
+            Global.crash();
+        };
 
-        // TODO: auto pack. pass option to also output shasum, integrity, package name/version and
-        // all other information we need so we don't need to read the tarball.
+        // TODO: read this into memory
+        _ = bun.sys.unlink(context.abs_tarball_path);
 
-        publish(&.{
-            .manager = manager,
-            .allocator = ctx.allocator,
-            .package_name = "ooops",
-            .package_version = "ooops",
-            .abs_tarball_path = "ooops",
-            .tarball_bytes = "ooops",
-            .shasum = sha1_digest,
-            .integrity = sha512_digest,
-            .readme = null,
-            .description = null,
-            .uses_workspaces = false,
-        }) catch |err| {
+        publish(&context) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             }
@@ -297,134 +358,302 @@ pub const PublishCommand = struct {
     pub fn publish(ctx: *const Context) PublishError!void {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
-        const tag = if (ctx.manager.options.publish_config.tag.len > 0)
-            ctx.manager.options.publish_config.tag
-        else
-            "latest";
-
-        const tarball_base64_len = std.base64.standard.Encoder.calcSize(ctx.tarball_bytes.len);
-
-        var json = try std.ArrayListUnmanaged(u8).initCapacity(
-            ctx.allocator,
-            ctx.package_name.len * 5 +
-                ctx.package_version.len * 4 +
-                if (ctx.readme) |readme| readme.len else 0 +
-                ctx.abs_tarball_path.len +
-                if (ctx.description) |description| description.len else 0 +
-                tarball_base64_len,
-        );
-        defer json.deinit(ctx.allocator);
-        var json_writer = json.writer(ctx.allocator);
-
-        try json_writer.print("{{\"_id\":\"{s}\",\"name\":\"{s}\"", .{
-            ctx.package_name,
-            ctx.package_name,
-        });
-
-        if (ctx.description orelse ctx.readme) |description| {
-            try json_writer.print(",\"description\":\"{}\"", .{
-                bun.fmt.formatJSONStringUTF8(description),
-            });
-        }
-
-        try json_writer.print(",\"dist-tags\":{{\"{s}\":\"{s}\"}}", .{
-            tag,
-            ctx.package_version,
-        });
-
-        // "versions"
-        {
-            try json_writer.print(",\"versions\":{{\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\"", .{
-                ctx.package_version,
-                ctx.package_name,
-                ctx.package_version,
-            });
-
-            try json_writer.print(",\"_id\": \"{s}@{s}\",\"readme\":\"{s}\",\"_integrity\":\"{}\"", .{
-                ctx.package_name,
-                ctx.package_version,
-                ctx.readme orelse "ERROR: No README data found!",
-                bun.fmt.integrity(ctx.integrity, false),
-            });
-
-            if (ctx.description orelse ctx.readme) |description| {
-                try json_writer.print(",\"description\":\"{}\"", .{
-                    bun.fmt.formatJSONStringUTF8(description),
-                });
-            }
-
-            // TODO: Doesn't seem needed. It's only included if tarball path is passed
-            // to publish. Mostly likely included due to using manifest
-            // try json_writer.print(",\"_resolved\":\"{s}\",\"_from\":\"file:{s}\"", .{
-            //     ctx.abs_tarball_path,
-            //     std.fs.path.basename(ctx.abs_tarball_path),
-            // });
-
-            try json_writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{
-                Environment.reported_nodejs_version,
-                // TODO: npm version
-                "10.8.3",
-            });
-
-            try json_writer.print(",\"dist\":{{\"integrity\":\"{}\",\"shasum\":\"{s}\"", .{
-                bun.fmt.integrity(ctx.integrity, false),
-                bun.fmt.bytesToHex(ctx.shasum, .lower),
-            });
-
-            // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/libnpmpublish/lib/publish.js#L118
-            // https:// -> http://
-            try json_writer.print(",\"tarball\":\"http://{s}/{s}/-/{s}\"}}}}}}", .{
-                strings.withoutTrailingSlash(registry.url.href),
-                ctx.package_name,
-                std.fs.path.basename(ctx.abs_tarball_path),
-            });
-        }
-
-        if (ctx.manager.options.publish_config.access) |access| {
-            try json_writer.print(",\"access\":\"{s}\"", .{@tagName(access)});
-        } else {
-            try json_writer.writeAll(",\"access\":null");
-        }
-
-        // "_attachments"
-        {
-            try json_writer.print(",\"_attachments\":{{\"{s}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
-                std.fs.path.basename(ctx.abs_tarball_path),
-                "application/octet-stream",
-            });
-
-            try json.ensureUnusedCapacity(ctx.allocator, tarball_base64_len);
-            json.items.len += tarball_base64_len;
-            const count = bun.simdutf.base64.encode(ctx.tarball_bytes, json.items[json.items.len - tarball_base64_len ..], false);
-            bun.assertWithLocation(count == tarball_base64_len, @src());
-
-            try json_writer.print("\",\"length\":{d}}}}}}}", .{
-                ctx.tarball_bytes.len,
-            });
-        }
-
-        // std.debug.print("req body:\n{s}\n", .{json.items});
-
-        const ci_name = @import("../ci_info.zig").detectCI();
+        const publish_req_body = try constructPublishRequestBody(ctx, registry);
 
         var print_buf: std.ArrayListUnmanaged(u8) = .{};
         defer print_buf.deinit(ctx.allocator);
         var print_writer = print_buf.writer(ctx.allocator);
 
-        var headers: HeaderBuilder = .{};
+        var headers = try constructPublishHeaders(
+            ctx,
+            &print_buf,
+            registry,
+            publish_req_body.len,
+            null,
+        );
+
+        var response_buf = try MutableString.init(ctx.allocator, 1024);
+
+        try print_writer.print("{s}/{s}", .{
+            strings.withoutTrailingSlash(registry.url.href),
+            ctx.package_name,
+        });
+        const publish_url = URL.parse(try ctx.allocator.dupe(u8, print_buf.items));
+        print_buf.clearRetainingCapacity();
+
+        var req = http.AsyncHTTP.initSync(
+            ctx.allocator,
+            .PUT,
+            publish_url,
+            headers.entries,
+            headers.content.ptr.?[0..headers.content.len],
+            &response_buf,
+            publish_req_body,
+            null,
+            null,
+            .follow,
+        );
+
+        const res = req.sendSync() catch |err| {
+            switch (err) {
+                error.OutOfMemory => |oom| return oom,
+                else => {
+                    Output.err(err, "failed to publish package", .{});
+                    Global.crash();
+                },
+            }
+        };
+
+        // std.debug.print("res:\n{}\n", .{res});
+        // std.debug.print("res body:\n{s}\n", .{response_buf.list.items});
+
+        switch (res.status_code) {
+            400...std.math.maxInt(@TypeOf(res.status_code)) => {
+                const prompt_for_otp = res.status_code != 401 or prompt_for_otp: {
+                    if (authenticate: {
+                        for (res.headers) |header| {
+                            if (strings.eqlCaseInsensitiveASCII(header.name, "www-authenticate", true)) {
+                                break :authenticate header.value;
+                            }
+                        }
+                        break :authenticate null;
+                    }) |@"www-authenticate"| {
+                        var iter = strings.split(@"www-authenticate", ",");
+                        while (iter.next()) |part| {
+                            const trimmed = strings.trim(part, &strings.whitespace_chars);
+                            if (strings.eqlCaseInsensitiveASCII(trimmed, "ipaddress", true)) {
+                                Output.errGeneric("login is not allowed from your IP address", .{});
+                                Global.crash();
+                            } else if (strings.eqlCaseInsensitiveASCII(trimmed, "otp", true)) {
+                                break :prompt_for_otp true;
+                            }
+                        }
+
+                        Output.errGeneric("unable to authenticate, need: {s}", .{@"www-authenticate"});
+                        Global.crash();
+                    } else if (strings.containsComptime(response_buf.list.items, "one-time pass")) {
+                        // missing www-authenticate header but one-time pass is still included
+                        break :prompt_for_otp true;
+                    }
+
+                    break :prompt_for_otp false;
+                };
+
+                if (!prompt_for_otp) {
+                    // general error
+                    return handleResponseErrors(res.status_code);
+                }
+
+                const otp = try getOTP(ctx, registry, &response_buf, &print_buf);
+
+                headers = try constructPublishHeaders(
+                    ctx,
+                    &print_buf,
+                    registry,
+                    publish_req_body.len,
+                    otp,
+                );
+
+                response_buf.reset();
+
+                var req_with_otp = http.AsyncHTTP.initSync(
+                    ctx.allocator,
+                    .PUT,
+                    publish_url,
+                    headers.entries,
+                    headers.content.ptr.?[0..headers.content.len],
+                    &response_buf,
+                    publish_req_body,
+                    null,
+                    null,
+                    .follow,
+                );
+
+                const otp_res = req_with_otp.sendSync() catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => |oom| return oom,
+                        else => {
+                            Output.err(err, "failed to publish package", .{});
+                            Global.crash();
+                        },
+                    }
+                };
+
+                // std.debug.print("otp res:\n{}\n", .{res});
+                // std.debug.print("otp res body:\n{s}\n", .{response_buf.list.items});
+
+                switch (otp_res.status_code) {
+                    400...std.math.maxInt(@TypeOf(otp_res.status_code)) => |code| {
+                        handleResponseErrors(code);
+                    },
+                    else => {
+                        Output.prettyln("<green>{s}@{s}<r>", .{
+                            ctx.package_name,
+                            ctx.package_version,
+                        });
+                    },
+                }
+            },
+            else => {
+                // Success!
+                Output.prettyln("<green>{s}@{s}<r>", .{
+                    ctx.package_name,
+                    ctx.package_version,
+                });
+            },
+        }
+    }
+
+    const GetOTPError = OOM || error{};
+
+    fn getOTP(
+        ctx: *const Context,
+        registry: *const Npm.Registry.Scope,
+        response_buf: *MutableString,
+        print_buf: *std.ArrayListUnmanaged(u8),
+    ) GetOTPError![]const u8 {
+        const res_source = logger.Source.initPathString("???", response_buf.list.items);
+
+        if (JSON.parseJSONUTF8(&res_source, ctx.manager.log, ctx.allocator) catch |err| res_json: {
+            switch (err) {
+                error.OutOfMemory => |oom| return oom,
+
+                // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-registry-fetch/lib/check-response.js#L65
+                // invalid json is ignored
+                else => break :res_json null,
+            }
+        }) |json| try_web: {
+            const auth_url_str, _ = try json.getString(ctx.allocator, "authUrl") orelse break :try_web;
+
+            // important to clone because it belongs to `response_buf`, and `response_buf` will be
+            // reused with the following requests
+            const done_url_str = try json.getStringCloned(ctx.allocator, "doneUrl") orelse break :try_web;
+            const done_url = URL.parse(done_url_str);
+
+            Output.prettyln("Authenticate your account at:\n{s}", .{auth_url_str});
+            Output.flush();
+
+            const auth_headers = try constructPublishHeaders(
+                ctx,
+                print_buf,
+                registry,
+                null,
+                null,
+            );
+
+            while (true) {
+                response_buf.reset();
+
+                var done_req = http.AsyncHTTP.initSync(
+                    ctx.allocator,
+                    .GET,
+                    done_url,
+                    auth_headers.entries,
+                    auth_headers.content.ptr.?[0..auth_headers.content.len],
+                    response_buf,
+                    "",
+                    null,
+                    null,
+                    .follow,
+                );
+
+                const done_res = done_req.sendSync() catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => |oom| return oom,
+                        else => {
+                            Output.err(err, "failed to send OTP request", .{});
+                            Global.crash();
+                        },
+                    }
+                };
+
+                // std.debug.print("otp done res:\n{}\n", .{done_res});
+                // std.debug.print("otp done res body:\n{s}\n", .{response_buf.list.items});
+
+                switch (done_res.status_code) {
+                    202 => {
+                        // retry
+                        for (done_res.headers) |header| {
+                            if (strings.eqlCaseInsensitiveASCII(header.name, "retry-after", true)) {
+                                const seconds = bun.fmt.parseInt(u32, strings.trim(header.value, &strings.whitespace_chars), 10) catch continue;
+                                std.time.sleep(seconds * std.time.ns_per_s);
+                            }
+                        }
+
+                        continue;
+                    },
+                    200 => {
+                        // login successful
+                        const otp_done_source = logger.Source.initPathString("???", response_buf.list.items);
+                        const otp_done_json = JSON.parseJSONUTF8(&otp_done_source, ctx.manager.log, ctx.allocator) catch |err| {
+                            switch (err) {
+                                error.OutOfMemory => |oom| return oom,
+                                else => {
+                                    Output.err("WebLogin", "failed to parse response json", .{});
+                                    Global.crash();
+                                },
+                            }
+                        };
+
+                        return try otp_done_json.getStringCloned(ctx.allocator, "token") orelse {
+                            Output.err("WebLogin", "missing `token` field in reponse json", .{});
+                            Global.crash();
+                        };
+                    },
+                    else => |code| {
+                        Output.err("WebLogin", "unexpected status code: {d}", .{code});
+                        Global.crash();
+                    },
+                }
+            }
+        }
+
+        // classic
+        return prompt(ctx.allocator, "This operation requires a one-time password.\nEnter OTP: ", "") catch |err| {
+            switch (err) {
+                error.OutOfMemory => |oom| return oom,
+                else => {
+                    Output.err(err, "failed to read OTP input", .{});
+                    Global.crash();
+                },
+            }
+        };
+    }
+
+    fn constructPublishHeaders(
+        ctx: *const Context,
+        print_buf: *std.ArrayListUnmanaged(u8),
+        registry: *const Npm.Registry.Scope,
+        maybe_json_len: ?usize,
+        maybe_otp: ?[]const u8,
+    ) OOM!http.HeaderBuilder {
+        var print_writer = print_buf.writer(ctx.allocator);
+        var headers: http.HeaderBuilder = .{};
+        const npm_auth_type = if (maybe_otp == null) "web" else "legacy";
+        const ci_name = bun.detectCI();
 
         {
             headers.count("accept", "*/*");
             headers.count("accept-encoding", "gzip,deflate");
 
-            try print_writer.print("Bearer {s}", .{
-                registry.token,
-            });
-            headers.count("authorization", print_buf.items);
-            print_buf.clearRetainingCapacity();
+            if (registry.token.len > 0) {
+                try print_writer.print("Bearer {s}", .{registry.token});
+                headers.count("authorization", print_buf.items);
+                print_buf.clearRetainingCapacity();
+            } else if (registry.auth.len > 0) {
+                try print_writer.print("Basic {s}", .{registry.auth});
+                headers.count("authorization", print_buf.items);
+                print_buf.clearRetainingCapacity();
+            }
 
-            headers.count("content-type", "application/json");
-            headers.count("npm-auth-type", "web");
+            if (maybe_json_len != null) {
+                headers.count("content-type", MimeType.json.value);
+            }
+
+            headers.count("npm-auth-type", npm_auth_type);
+            if (maybe_otp) |otp| {
+                headers.count("npm-otp", otp);
+            }
             headers.count("npm-command", "publish");
 
             try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
@@ -442,9 +671,11 @@ pub const PublishCommand = struct {
             headers.count("Connection", "keep-alive");
             headers.count("Host", registry.url.host);
 
-            try print_writer.print("{d}", .{json.items.len});
-            headers.count("Content-Length", print_buf.items);
-            print_buf.clearRetainingCapacity();
+            if (maybe_json_len) |json_len| {
+                try print_writer.print("{d}", .{json_len});
+                headers.count("Content-Length", print_buf.items);
+                print_buf.clearRetainingCapacity();
+            }
         }
 
         try headers.allocate(ctx.allocator);
@@ -453,14 +684,24 @@ pub const PublishCommand = struct {
             headers.append("accept", "*/*");
             headers.append("accept-encoding", "gzip,deflate");
 
-            try print_writer.print("Bearer {s}", .{
-                registry.token,
-            });
-            headers.append("authorization", print_buf.items);
-            print_buf.clearRetainingCapacity();
+            if (registry.token.len > 0) {
+                try print_writer.print("Bearer {s}", .{registry.token});
+                headers.append("authorization", print_buf.items);
+                print_buf.clearRetainingCapacity();
+            } else if (registry.auth.len > 0) {
+                try print_writer.print("Basic {s}", .{registry.auth});
+                headers.append("authorization", print_buf.items);
+                print_buf.clearRetainingCapacity();
+            }
 
-            headers.append("content-type", "application/json");
-            headers.append("npm-auth-type", "web");
+            if (maybe_json_len != null) {
+                headers.append("content-type", MimeType.json.value);
+            }
+
+            headers.append("npm-auth-type", npm_auth_type);
+            if (maybe_otp) |otp| {
+                headers.append("npm-otp", otp);
+            }
             headers.append("npm-command", "publish");
 
             try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
@@ -478,45 +719,112 @@ pub const PublishCommand = struct {
             headers.append("Connection", "keep-alive");
             headers.append("Host", registry.url.host);
 
-            try print_writer.print("{d}", .{json.items.len});
-            headers.append("Content-Length", print_buf.items);
-            print_buf.clearRetainingCapacity();
+            if (maybe_json_len) |json_len| {
+                try print_writer.print("{d}", .{json_len});
+                headers.append("Content-Length", print_buf.items);
+                print_buf.clearRetainingCapacity();
+            }
         }
 
-        var response_buf = try MutableString.init(ctx.allocator, 8192);
+        return headers;
+    }
 
-        // `print_buf` belongs to `url` after this point
-        try print_writer.print("{s}/{s}", .{
-            strings.withoutTrailingSlash(registry.url.href),
+    fn constructPublishRequestBody(
+        ctx: *const Context,
+        registry: *const Npm.Registry.Scope,
+    ) OOM![]const u8 {
+        const tag = if (ctx.manager.options.publish_config.tag.len > 0)
+            ctx.manager.options.publish_config.tag
+        else
+            "latest";
+
+        const encoded_tarball_len = std.base64.standard.Encoder.calcSize(ctx.tarball_bytes.len);
+
+        var buf = try std.ArrayListUnmanaged(u8).initCapacity(
+            ctx.allocator,
+            ctx.package_name.len * 5 +
+                ctx.package_version.len * 4 +
+                ctx.abs_tarball_path.len +
+                encoded_tarball_len,
+        );
+        var writer = buf.writer(ctx.allocator);
+
+        try writer.print("{{\"_id\":\"{s}\",\"name\":\"{s}\"", .{
+            ctx.package_name,
             ctx.package_name,
         });
-        const url = URL.parse(print_buf.items);
 
-        var async_http = http.AsyncHTTP.initSync(
-            ctx.allocator,
-            .PUT,
-            url,
-            headers.entries,
-            headers.content.ptr.?[0..headers.content.len],
-            &response_buf,
-            json.items,
-            null,
-            null,
-            .follow,
-        );
+        try writer.print(",\"dist-tags\":{{\"{s}\":\"{s}\"}}", .{
+            tag,
+            ctx.package_version,
+        });
 
-        const res = async_http.sendSync() catch |err| {
-            switch (err) {
-                error.OutOfMemory => |oom| return oom,
-                else => {
-                    Output.errGeneric("failed to publish package: {s}", .{@errorName(err)});
-                    Global.crash();
-                },
-            }
-        };
+        // "versions"
+        {
+            try writer.print(",\"versions\":{{\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\"", .{
+                ctx.package_version,
+                ctx.package_name,
+                ctx.package_version,
+            });
 
-        std.debug.print("res:\n{}", .{res});
+            try writer.print(",\"_id\": \"{s}@{s}\"", .{
+                ctx.package_name,
+                ctx.package_version,
+            });
 
-        std.debug.print("res body:\n{s}\n", .{response_buf.list.items});
+            try writer.print(",\"_integrity\":\"{}\"", .{
+                bun.fmt.integrity(ctx.integrity, .full),
+            });
+
+            try writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{
+                Environment.reported_nodejs_version,
+                // TODO: npm version
+                "10.8.3",
+            });
+
+            try writer.print(",\"dist\":{{\"integrity\":\"{}\",\"shasum\":\"{s}\"", .{
+                bun.fmt.integrity(ctx.integrity, .full),
+                bun.fmt.bytesToHex(ctx.shasum, .lower),
+            });
+
+            // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/libnpmpublish/lib/publish.js#L118
+            // https:// -> http://
+            try writer.print(",\"tarball\":\"http://{s}/{s}/-/{s}\"}}}}}}", .{
+                strings.withoutTrailingSlash(registry.url.href),
+                ctx.package_name,
+                std.fs.path.basename(ctx.abs_tarball_path),
+            });
+        }
+
+        if (ctx.manager.options.publish_config.access) |access| {
+            try writer.print(",\"access\":\"{s}\"", .{@tagName(access)});
+        } else {
+            try writer.writeAll(",\"access\":null");
+        }
+
+        // "_attachments"
+        {
+            try writer.print(",\"_attachments\":{{\"{s}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+                std.fs.path.basename(ctx.abs_tarball_path),
+                "application/octet-stream",
+            });
+
+            try buf.ensureUnusedCapacity(ctx.allocator, encoded_tarball_len);
+            buf.items.len += encoded_tarball_len;
+            const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
+            bun.assertWithLocation(count == encoded_tarball_len, @src());
+
+            try writer.print("\",\"length\":{d}}}}}}}", .{
+                ctx.tarball_bytes.len,
+            });
+        }
+
+        return buf.items;
+    }
+
+    fn handleResponseErrors(status_code: u32) noreturn {
+        _ = status_code;
+        Output.errGeneric("oops", .{});
+        Global.crash();
     }
 };

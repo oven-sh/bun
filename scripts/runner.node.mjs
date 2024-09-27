@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative, sep } from "node:path";
+import { join, basename, dirname, relative, sep, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
@@ -222,7 +222,11 @@ async function runTests() {
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
+
+      // Make it an absolute path so that the test directory is not scanned, which reduces the load on the filesystem
+      const abs = resolve("test", testPath);
+
+      await runTest(title, async () => spawnBunTest(execPath, abs));
     }
   }
 

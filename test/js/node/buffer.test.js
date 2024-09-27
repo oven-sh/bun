@@ -964,6 +964,10 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf[4]).toBe(128);
       });
 
+      it("fill(N, empty string) should be the same as fill(N) and not include any uninitialized bytes", () => {
+        expect(Buffer.alloc(100, "")).toEqual(Buffer.alloc(100));
+      });
+
       // https://github.com/joyent/node/issues/1758
       it("check for fractional length args, junk length args, etc.", () => {
         // Call .fill() first, stops valgrind warning about uninitialized memory reads.
@@ -2003,9 +2007,9 @@ for (let withOverridenBufferWrite of [false, true]) {
 
       it("constants", () => {
         expect(BufferModule.constants.MAX_LENGTH).toBe(4294967296);
-        expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(4294967295);
+        expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(2147483647);
         expect(BufferModule.default.constants.MAX_LENGTH).toBe(4294967296);
-        expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(4294967295);
+        expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(2147483647);
       });
 
       it("File", () => {

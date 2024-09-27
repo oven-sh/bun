@@ -1078,7 +1078,7 @@ pub const PackCommand = struct {
         abs_package_json_path: stringZ,
         comptime log_level: LogLevel,
         comptime for_publish: bool,
-    ) PackError(for_publish)!if (for_publish) Publish.Context else void {
+    ) PackError(for_publish)!if (for_publish) Publish.Context(true) else void {
         const manager = ctx.manager;
         const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
             .guess_indentation = true,
@@ -1147,12 +1147,12 @@ pub const PackCommand = struct {
 
         const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
 
-        const postpack_script: ?string = postpack_script: {
+        const postpack_script, const publish_script: ?[]const u8, const postpublish_script: ?[]const u8 = post_scripts: {
             // --ignore-scripts
-            if (!manager.options.do.run_scripts or manager.options.dry_run) break :postpack_script null;
+            if (!manager.options.do.run_scripts or manager.options.dry_run) break :post_scripts .{ null, null, null };
 
-            const scripts = json.root.asProperty("scripts") orelse break :postpack_script null;
-            if (scripts.expr.data != .e_object) break :postpack_script null;
+            const scripts = json.root.asProperty("scripts") orelse break :post_scripts .{ null, null, null };
+            if (scripts.expr.data != .e_object) break :post_scripts .{ null, null, null };
 
             if (comptime for_publish) {
                 if (scripts.expr.get("prepublishOnly")) |prepublish_only_script_str| {
@@ -1228,13 +1228,25 @@ pub const PackCommand = struct {
                 }
             }
 
+            var postpack_script: ?[]const u8 = null;
             if (scripts.expr.get("postpack")) |postpack| {
-                if (postpack.asString(ctx.allocator)) |postpack_str| {
-                    break :postpack_script postpack_str;
-                }
+                postpack_script = postpack.asString(ctx.allocator);
             }
 
-            break :postpack_script null;
+            if (comptime for_publish) {
+                var publish_script: ?[]const u8 = null;
+                var postpublish_script: ?[]const u8 = null;
+                if (scripts.expr.get("publish")) |publish| {
+                    publish_script = try publish.asStringCloned(ctx.allocator);
+                }
+                if (scripts.expr.get("postpublish")) |postpublish| {
+                    postpublish_script = try postpublish.asStringCloned(ctx.allocator);
+                }
+
+                break :post_scripts .{ postpack_script, publish_script, postpublish_script };
+            }
+
+            break :post_scripts .{ postpack_script, null, null };
         };
 
         var root_dir = root_dir: {
@@ -1645,7 +1657,9 @@ pub const PackCommand = struct {
                 .shasum = shasum,
                 .integrity = integrity,
                 .uses_workspaces = false,
-                .directory_publish = true,
+                .publish_script = publish_script,
+                .postpublish_script = postpublish_script,
+                .script_env = this_bundler.env,
             };
         }
     }

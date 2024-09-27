@@ -30,236 +30,242 @@ const Expr = bun.js_parser.Expr;
 const prompt = bun.CLI.InitCommand.prompt;
 const Npm = install.Npm;
 const Run = bun.CLI.RunCommand;
+const DotEnv = bun.DotEnv;
 
 pub const PublishCommand = struct {
-    pub const Context = struct {
-        manager: *PackageManager,
-        allocator: std.mem.Allocator,
-        command_ctx: Command.Context,
-
-        package_name: string,
-        package_version: string,
-        abs_tarball_path: stringZ,
-        tarball_bytes: string,
-        shasum: sha.SHA1.Digest,
-        integrity: sha.SHA512.Digest,
-        uses_workspaces: bool,
-        directory_publish: bool,
-
-        const FromTarballError = OOM || error{
-            MissingPackageJSON,
-            InvalidPackageJSON,
-            MissingPackageName,
-            MissingPackageVersion,
-            InvalidPackageName,
-            InvalidPackageVersion,
-            PrivatePackage,
-            RestrictedUnscopedPackage,
-        };
-
-        // Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
-        pub fn fromTarballPath(
-            ctx: Command.Context,
+    pub fn Context(comptime directory_publish: bool) type {
+        return struct {
             manager: *PackageManager,
-            tarball_path: string,
-        ) FromTarballError!Context {
-            var abs_buf: bun.PathBuffer = undefined;
-            const abs_tarball_path = path.joinAbsStringBufZ(
-                FileSystem.instance.top_level_dir,
-                &abs_buf,
-                &[_]string{tarball_path},
-                .auto,
-            );
+            allocator: std.mem.Allocator,
+            command_ctx: Command.Context,
 
-            const tarball_bytes = File.readFrom(bun.invalid_fd, abs_tarball_path, ctx.allocator).unwrap() catch |err| {
-                Output.err(err, "failed to read tarball: '{s}'", .{tarball_path});
-                Global.crash();
+            package_name: string,
+            package_version: string,
+            abs_tarball_path: stringZ,
+            tarball_bytes: string,
+            shasum: sha.SHA1.Digest,
+            integrity: sha.SHA512.Digest,
+            uses_workspaces: bool,
+
+            publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
+            postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
+            script_env: if (directory_publish) *DotEnv.Loader else void,
+
+            const FromTarballError = OOM || error{
+                MissingPackageJSON,
+                InvalidPackageJSON,
+                MissingPackageName,
+                MissingPackageVersion,
+                InvalidPackageName,
+                InvalidPackageVersion,
+                PrivatePackage,
+                RestrictedUnscopedPackage,
             };
 
-            var maybe_package_json_contents: ?[]const u8 = null;
+            // Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
+            pub fn fromTarballPath(
+                ctx: Command.Context,
+                manager: *PackageManager,
+                tarball_path: string,
+            ) FromTarballError!Context(directory_publish) {
+                var abs_buf: bun.PathBuffer = undefined;
+                const abs_tarball_path = path.joinAbsStringBufZ(
+                    FileSystem.instance.top_level_dir,
+                    &abs_buf,
+                    &[_]string{tarball_path},
+                    .auto,
+                );
 
-            var iter = switch (Archive.Iterator.init(tarball_bytes)) {
-                .err => |err| {
-                    Output.errGeneric("{s}: {s}", .{
-                        err.message,
-                        err.archive.errorString(),
-                    });
-
+                const tarball_bytes = File.readFrom(bun.invalid_fd, abs_tarball_path, ctx.allocator).unwrap() catch |err| {
+                    Output.err(err, "failed to read tarball: '{s}'", .{tarball_path});
                     Global.crash();
-                },
-                .result => |res| res,
-            };
-
-            // filter everything but regular files
-            iter.filter.toggleAll();
-            iter.filter.toggle(.file);
-
-            while (switch (iter.next()) {
-                .err => |err| {
-                    Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
-                    Global.crash();
-                },
-                .result => |res| res,
-            }) |next| {
-                if (maybe_package_json_contents != null) break;
-
-                const pathname = if (comptime Environment.isWindows)
-                    next.entry.pathnameW()
-                else
-                    next.entry.pathname();
-
-                // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
-                if (strings.indexOfAnyT(bun.OSPathChar, pathname, "/\\")) |slash| {
-                    if (strings.indexOfAnyT(bun.OSPathChar, pathname[slash + 1 ..], "/\\") == null) {
-
-                        // check for package.json, readme.md, ...
-                        const filename = pathname[slash + 1 ..];
-
-                        if (maybe_package_json_contents == null and strings.eqlCaseInsensitiveT(bun.OSPathChar, filename, "package.json")) {
-                            maybe_package_json_contents = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
-                                .err => |err| {
-                                    Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
-                                    Global.crash();
-                                },
-                                .result => |bytes| bytes,
-                            };
-                        }
-                    }
-                }
-            }
-
-            switch (iter.deinit()) {
-                .err => |err| {
-                    Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
-                    Global.crash();
-                },
-                .result => {},
-            }
-
-            const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
-
-            const package_name, const package_version = package_info: {
-                defer ctx.allocator.free(package_json_contents);
-
-                const source = logger.Source.initPathString("package.json", package_json_contents);
-                const json = JSON.parsePackageJSONUTF8(&source, manager.log, ctx.allocator) catch |err| {
-                    return switch (err) {
-                        error.OutOfMemory => |oom| return oom,
-                        else => error.InvalidPackageJSON,
-                    };
                 };
 
-                if (json.get("private")) |private| {
-                    if (private.asBool()) |is_private| {
-                        if (is_private) {
-                            return error.PrivatePackage;
-                        }
-                    }
-                }
+                var maybe_package_json_contents: ?[]const u8 = null;
 
-                const name = try json.getStringCloned(ctx.allocator, "name") orelse return error.MissingPackageName;
-                const is_scoped = try Dependency.isScopedPackageName(name);
-
-                if (manager.options.publish_config.access) |access| {
-                    if (access == .restricted and !is_scoped) {
-                        return error.RestrictedUnscopedPackage;
-                    }
-                }
-
-                const version = try json.getStringCloned(ctx.allocator, "version") orelse return error.MissingPackageVersion;
-                if (version.len == 0) return error.InvalidPackageVersion;
-
-                break :package_info .{ name, version };
-            };
-
-            var sha1_digest: sha.SHA1.Digest = undefined;
-            var sha1 = sha.SHA1.init();
-            defer sha1.deinit();
-
-            sha1.update(tarball_bytes);
-            sha1.final(&sha1_digest);
-
-            var sha512_digest: sha.SHA512.Digest = undefined;
-            var sha512 = sha.SHA512.init();
-            defer sha512.deinit();
-
-            sha512.update(tarball_bytes);
-            sha512.final(&sha512_digest);
-
-            return .{
-                .manager = manager,
-                .allocator = ctx.allocator,
-                .package_name = package_name,
-                .package_version = package_version,
-                .abs_tarball_path = try ctx.allocator.dupeZ(u8, abs_tarball_path),
-                .tarball_bytes = tarball_bytes,
-                .shasum = sha1_digest,
-                .integrity = sha512_digest,
-                .uses_workspaces = false,
-                .command_ctx = ctx,
-                .directory_publish = false,
-            };
-        }
-
-        const FromWorkspaceError = Pack.PackError(true);
-
-        // `bun publish` without a tarball path. Automatically pack the current workspace and get
-        // information required for publishing
-        pub fn fromWorkspace(ctx: Command.Context, manager: *PackageManager) FromWorkspaceError!Context {
-            var lockfile: Lockfile = undefined;
-            const load_from_disk_result = lockfile.loadFromDisk(
-                manager,
-                manager.allocator,
-                manager.log,
-                manager.options.lockfile_path,
-                false,
-            );
-
-            var pack_ctx: Pack.Context = .{
-                .allocator = ctx.allocator,
-                .manager = manager,
-                .command_ctx = ctx,
-                .lockfile = switch (load_from_disk_result) {
-                    .ok => |ok| ok.lockfile,
-                    .not_found => null,
-                    .err => |cause| err: {
-                        switch (cause.step) {
-                            .open_file => {
-                                if (cause.value == error.ENOENT) break :err null;
-                                Output.errGeneric("failed to open lockfile: {s}", .{@errorName(cause.value)});
-                            },
-                            .parse_file => {
-                                Output.errGeneric("failed to parse lockfile: {s}", .{@errorName(cause.value)});
-                            },
-                            .read_file => {
-                                Output.errGeneric("failed to read lockfile: {s}", .{@errorName(cause.value)});
-                            },
-                            .migrating => {
-                                Output.errGeneric("failed to migrate lockfile: {s}", .{@errorName(cause.value)});
-                            },
-                        }
-
-                        if (manager.log.hasErrors()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                },
-                            }
-                        }
+                var iter = switch (Archive.Iterator.init(tarball_bytes)) {
+                    .err => |err| {
+                        Output.errGeneric("{s}: {s}", .{
+                            err.message,
+                            err.archive.errorString(),
+                        });
 
                         Global.crash();
                     },
-                },
-            };
+                    .result => |res| res,
+                };
 
-            return switch (manager.options.log_level) {
-                inline else => |log_level| if (manager.options.dry_run)
-                    Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true)
-                else
-                    Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true),
-            };
-        }
-    };
+                // filter everything but regular files
+                iter.filter.toggleAll();
+                iter.filter.toggle(.file);
+
+                while (switch (iter.next()) {
+                    .err => |err| {
+                        Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                        Global.crash();
+                    },
+                    .result => |res| res,
+                }) |next| {
+                    if (maybe_package_json_contents != null) break;
+
+                    const pathname = if (comptime Environment.isWindows)
+                        next.entry.pathnameW()
+                    else
+                        next.entry.pathname();
+
+                    // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
+                    if (strings.indexOfAnyT(bun.OSPathChar, pathname, "/\\")) |slash| {
+                        if (strings.indexOfAnyT(bun.OSPathChar, pathname[slash + 1 ..], "/\\") == null) {
+
+                            // check for package.json, readme.md, ...
+                            const filename = pathname[slash + 1 ..];
+
+                            if (maybe_package_json_contents == null and strings.eqlCaseInsensitiveT(bun.OSPathChar, filename, "package.json")) {
+                                maybe_package_json_contents = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
+                                    .err => |err| {
+                                        Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                                        Global.crash();
+                                    },
+                                    .result => |bytes| bytes,
+                                };
+                            }
+                        }
+                    }
+                }
+
+                switch (iter.deinit()) {
+                    .err => |err| {
+                        Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                        Global.crash();
+                    },
+                    .result => {},
+                }
+
+                const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
+
+                const package_name, const package_version = package_info: {
+                    defer ctx.allocator.free(package_json_contents);
+
+                    const source = logger.Source.initPathString("package.json", package_json_contents);
+                    const json = JSON.parsePackageJSONUTF8(&source, manager.log, ctx.allocator) catch |err| {
+                        return switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            else => error.InvalidPackageJSON,
+                        };
+                    };
+
+                    if (json.get("private")) |private| {
+                        if (private.asBool()) |is_private| {
+                            if (is_private) {
+                                return error.PrivatePackage;
+                            }
+                        }
+                    }
+
+                    const name = try json.getStringCloned(ctx.allocator, "name") orelse return error.MissingPackageName;
+                    const is_scoped = try Dependency.isScopedPackageName(name);
+
+                    if (manager.options.publish_config.access) |access| {
+                        if (access == .restricted and !is_scoped) {
+                            return error.RestrictedUnscopedPackage;
+                        }
+                    }
+
+                    const version = try json.getStringCloned(ctx.allocator, "version") orelse return error.MissingPackageVersion;
+                    if (version.len == 0) return error.InvalidPackageVersion;
+
+                    break :package_info .{ name, version };
+                };
+
+                var sha1_digest: sha.SHA1.Digest = undefined;
+                var sha1 = sha.SHA1.init();
+                defer sha1.deinit();
+
+                sha1.update(tarball_bytes);
+                sha1.final(&sha1_digest);
+
+                var sha512_digest: sha.SHA512.Digest = undefined;
+                var sha512 = sha.SHA512.init();
+                defer sha512.deinit();
+
+                sha512.update(tarball_bytes);
+                sha512.final(&sha512_digest);
+
+                return .{
+                    .manager = manager,
+                    .allocator = ctx.allocator,
+                    .package_name = package_name,
+                    .package_version = package_version,
+                    .abs_tarball_path = try ctx.allocator.dupeZ(u8, abs_tarball_path),
+                    .tarball_bytes = tarball_bytes,
+                    .shasum = sha1_digest,
+                    .integrity = sha512_digest,
+                    .uses_workspaces = false,
+                    .command_ctx = ctx,
+                    .script_env = {},
+                };
+            }
+
+            const FromWorkspaceError = Pack.PackError(true);
+
+            // `bun publish` without a tarball path. Automatically pack the current workspace and get
+            // information required for publishing
+            pub fn fromWorkspace(
+                ctx: Command.Context,
+                manager: *PackageManager,
+            ) FromWorkspaceError!Context(directory_publish) {
+                var lockfile: Lockfile = undefined;
+                const load_from_disk_result = lockfile.loadFromDisk(
+                    manager,
+                    manager.allocator,
+                    manager.log,
+                    manager.options.lockfile_path,
+                    false,
+                );
+
+                var pack_ctx: Pack.Context = .{
+                    .allocator = ctx.allocator,
+                    .manager = manager,
+                    .command_ctx = ctx,
+                    .lockfile = switch (load_from_disk_result) {
+                        .ok => |ok| ok.lockfile,
+                        .not_found => null,
+                        .err => |cause| err: {
+                            switch (cause.step) {
+                                .open_file => {
+                                    if (cause.value == error.ENOENT) break :err null;
+                                    Output.errGeneric("failed to open lockfile: {s}", .{@errorName(cause.value)});
+                                },
+                                .parse_file => {
+                                    Output.errGeneric("failed to parse lockfile: {s}", .{@errorName(cause.value)});
+                                },
+                                .read_file => {
+                                    Output.errGeneric("failed to read lockfile: {s}", .{@errorName(cause.value)});
+                                },
+                                .migrating => {
+                                    Output.errGeneric("failed to migrate lockfile: {s}", .{@errorName(cause.value)});
+                                },
+                            }
+
+                            if (manager.log.hasErrors()) {
+                                switch (Output.enable_ansi_colors) {
+                                    inline else => |enable_ansi_colors| {
+                                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                                    },
+                                }
+                            }
+
+                            Global.crash();
+                        },
+                    },
+                };
+
+                return switch (manager.options.log_level) {
+                    inline else => |log_level| Pack.pack(&pack_ctx, manager.original_package_json_path, log_level, true),
+                };
+            }
+        };
+    }
 
     pub fn exec(ctx: Command.Context) !void {
         Output.prettyErrorln("<r><b>bun publish <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
@@ -279,7 +285,7 @@ pub const PublishCommand = struct {
         defer ctx.allocator.free(original_cwd);
 
         if (cli.positionals.len > 1) {
-            const context = Context.fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
+            const context = Context(false).fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.MissingPackageName => {
@@ -312,7 +318,7 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
-            publish(&context) catch |err| {
+            publish(false, &context) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                 }
@@ -321,7 +327,7 @@ pub const PublishCommand = struct {
             return;
         }
 
-        const context = Context.fromWorkspace(ctx, manager) catch |err| {
+        const context = Context(true).fromWorkspace(ctx, manager) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.MissingPackageName => {
@@ -349,7 +355,7 @@ pub const PublishCommand = struct {
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
-        publish(&context) catch |err| {
+        publish(true, &context) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             }
@@ -358,21 +364,25 @@ pub const PublishCommand = struct {
 
     const PublishError = OOM || error{};
 
-    pub fn publish(ctx: *const Context) PublishError!void {
+    pub fn publish(
+        comptime directory_publish: bool,
+        ctx: *const Context(directory_publish),
+    ) PublishError!void {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
-        const publish_req_body = try constructPublishRequestBody(ctx, registry);
+        const publish_req_body = try constructPublishRequestBody(directory_publish, ctx, registry);
 
         var print_buf: std.ArrayListUnmanaged(u8) = .{};
         defer print_buf.deinit(ctx.allocator);
         var print_writer = print_buf.writer(ctx.allocator);
 
         var headers = try constructPublishHeaders(
-            ctx,
+            ctx.allocator,
             &print_buf,
             registry,
             publish_req_body.len,
             null,
+            ctx.uses_workspaces,
         );
 
         var response_buf = try MutableString.init(ctx.allocator, 1024);
@@ -447,14 +457,15 @@ pub const PublishCommand = struct {
                     return handleResponseErrors(res.status_code);
                 }
 
-                const otp = try getOTP(ctx, registry, &response_buf, &print_buf);
+                const otp = try getOTP(directory_publish, ctx, registry, &response_buf, &print_buf);
 
                 headers = try constructPublishHeaders(
-                    ctx,
+                    ctx.allocator,
                     &print_buf,
                     registry,
                     publish_req_body.len,
                     otp,
+                    ctx.uses_workspaces,
                 );
 
                 response_buf.reset();
@@ -489,28 +500,77 @@ pub const PublishCommand = struct {
                     400...std.math.maxInt(@TypeOf(otp_res.status_code)) => |code| {
                         handleResponseErrors(code);
                     },
-                    else => {
-                        Output.prettyln("<green>{s}@{s}<r>", .{
-                            ctx.package_name,
-                            ctx.package_version,
-                        });
-                    },
+                    else => try success(directory_publish, ctx),
                 }
             },
-            else => {
-                // Success!
-                Output.prettyln("<green>{s}@{s}<r>", .{
-                    ctx.package_name,
-                    ctx.package_version,
-                });
-            },
+            else => try success(directory_publish, ctx),
         }
+    }
+
+    fn success(
+        comptime directory_publish: bool,
+        ctx: *const Context(directory_publish),
+    ) OOM!void {
+        if (comptime directory_publish) {
+            if (ctx.manager.options.do.run_scripts) {
+                const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(ctx.manager.original_package_json_path, "package.json"));
+                if (ctx.publish_script) |publish_script| {
+                    _ = Run.runPackageScriptForeground(
+                        ctx.command_ctx,
+                        ctx.allocator,
+                        publish_script,
+                        "publish",
+                        abs_workspace_path,
+                        ctx.script_env,
+                        &.{},
+                        ctx.manager.options.log_level == .silent,
+                        ctx.command_ctx.debug.use_system_shell,
+                    ) catch |err| {
+                        switch (err) {
+                            error.MissingShell => {
+                                Output.errGeneric("failed to find shell executable to run publish script", .{});
+                                Global.crash();
+                            },
+                            error.OutOfMemory => |oom| return oom,
+                        }
+                    };
+                }
+
+                if (ctx.postpublish_script) |postpublish_script| {
+                    _ = Run.runPackageScriptForeground(
+                        ctx.command_ctx,
+                        ctx.allocator,
+                        postpublish_script,
+                        "postpublish",
+                        abs_workspace_path,
+                        ctx.script_env,
+                        &.{},
+                        ctx.manager.options.log_level == .silent,
+                        ctx.command_ctx.debug.use_system_shell,
+                    ) catch |err| {
+                        switch (err) {
+                            error.MissingShell => {
+                                Output.errGeneric("failed to find shell executable to run postpublish script", .{});
+                                Global.crash();
+                            },
+                            error.OutOfMemory => |oom| return oom,
+                        }
+                    };
+                }
+            }
+        }
+
+        Output.prettyln("<green>{s}@{s}<r>", .{
+            ctx.package_name,
+            ctx.package_version,
+        });
     }
 
     const GetOTPError = OOM || error{};
 
     fn getOTP(
-        ctx: *const Context,
+        comptime directory_publish: bool,
+        ctx: *const Context(directory_publish),
         registry: *const Npm.Registry.Scope,
         response_buf: *MutableString,
         print_buf: *std.ArrayListUnmanaged(u8),
@@ -537,11 +597,12 @@ pub const PublishCommand = struct {
             Output.flush();
 
             const auth_headers = try constructPublishHeaders(
-                ctx,
+                ctx.allocator,
                 print_buf,
                 registry,
                 null,
                 null,
+                ctx.uses_workspaces,
             );
 
             while (true) {
@@ -630,13 +691,14 @@ pub const PublishCommand = struct {
     }
 
     fn constructPublishHeaders(
-        ctx: *const Context,
+        allocator: std.mem.Allocator,
         print_buf: *std.ArrayListUnmanaged(u8),
         registry: *const Npm.Registry.Scope,
         maybe_json_len: ?usize,
         maybe_otp: ?[]const u8,
+        uses_workspaces: bool,
     ) OOM!http.HeaderBuilder {
-        var print_writer = print_buf.writer(ctx.allocator);
+        var print_writer = print_buf.writer(allocator);
         var headers: http.HeaderBuilder = .{};
         const npm_auth_type = if (maybe_otp == null) "web" else "legacy";
         const ci_name = bun.detectCI();
@@ -669,7 +731,7 @@ pub const PublishCommand = struct {
                 Global.user_agent,
                 Global.os_name,
                 Global.arch_name,
-                ctx.uses_workspaces,
+                uses_workspaces,
                 if (ci_name != null) " ci/" else "",
                 ci_name orelse "",
             });
@@ -687,7 +749,7 @@ pub const PublishCommand = struct {
             }
         }
 
-        try headers.allocate(ctx.allocator);
+        try headers.allocate(allocator);
 
         {
             headers.append("accept", "*/*");
@@ -717,7 +779,7 @@ pub const PublishCommand = struct {
                 Global.user_agent,
                 Global.os_name,
                 Global.arch_name,
-                ctx.uses_workspaces,
+                uses_workspaces,
                 if (ci_name != null) " ci/" else "",
                 ci_name orelse "",
             });
@@ -739,7 +801,8 @@ pub const PublishCommand = struct {
     }
 
     fn constructPublishRequestBody(
-        ctx: *const Context,
+        comptime directory_publish: bool,
+        ctx: *const Context(directory_publish),
         registry: *const Npm.Registry.Scope,
     ) OOM![]const u8 {
         const tag = if (ctx.manager.options.publish_config.tag.len > 0)

@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isCI, isMacOS, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -427,7 +427,8 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
+// https://github.com/oven-sh/bun/issues/13830
+it.skipIf(isWindows || (isMacOS && isCI))("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
     unlinkSync(fifoPath);

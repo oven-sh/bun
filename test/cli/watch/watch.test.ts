@@ -1,14 +1,16 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tmpdirSync } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
 
 for (const dir of ["dir", "©️"]) {
-  it(`should watch files ${dir === "dir" ? "" : "(non-ascii path)"}`, async () => {
+  // prettier-ignore
+  // https://github.com/oven-sh/bun/issues/13830
+  it.todoIf(isWindows && isCI)(`should watch files ${dir === "dir" ? "" : "(non-ascii path)"}`, async () => {
     const cwd = join(tmpdirSync(), dir);
     const path = join(cwd, "watchee.js");
 

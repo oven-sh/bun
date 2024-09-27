@@ -1,12 +1,13 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, forEachLine, isCI, isWindows, tempDirWithFiles } from "harness";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe("--watch works", async () => {
   for (const watchedFile of ["entry.js", "tmp.js"]) {
-    test(`with ${watchedFile}`, async () => {
+    // https://github.com/oven-sh/bun/issues/13830
+    test.todoIf(isWindows && isCI)(`with ${watchedFile}`, async () => {
       const tmpdir_ = tempDirWithFiles("watch-fixture", {
         "tmp.js": "console.log('hello #1')",
         "entry.js": "import './tmp.js'",

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { isCI, isWindows, withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -126,7 +126,9 @@ test("formData uploads roundtrip, without a call to .body", async () => {
   expect(await (resData.get("file") as Blob).arrayBuffer()).toEqual(await file.arrayBuffer());
 });
 
-test("uploads roundtrip with sendfile()", async () => {
+// prettier-ignore
+// https://github.com/oven-sh/bun/issues/13830
+test.todoIf(isWindows&&isCI)("uploads roundtrip with sendfile()", async () => {
   const hugeTxt = Buffer.allocUnsafe(1024 * 1024 * 32 * "huge".length);
   hugeTxt.fill("huge");
   const hash = Bun.CryptoHasher.hash("sha256", hugeTxt, "hex");

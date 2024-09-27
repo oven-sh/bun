@@ -31,4 +31,17 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_throw_in_completion = async () => {
+  nativeTests.create_promise_with_threadsafe_function(() => {
+    throw new Error("1");
+  });
+  nativeTests.create_promise_with_threadsafe_function(() => {
+    throw new Error("2");
+  });
+};
+
+nativeTests.test_throw_in_two_completions = () => {
+  return Promise.all([nativeTests.create_promise(), nativeTests.create_promise()]);
+};
+
 module.exports = nativeTests;

@@ -25,7 +25,12 @@ const result = fn.apply(null, [
   ...eval(process.argv[3] ?? "[]"),
 ]);
 if (result instanceof Promise) {
-  result.then(x => console.log("resolved to", x));
+  result
+    .then(x => console.log("resolved to", x))
+    .catch(e => {
+      console.error("rejected");
+      console.error(e);
+    });
 } else if (result) {
   throw new Error(result);
 }

@@ -378,6 +378,8 @@ struct AsyncWorkData {
   AsyncWorkData() : result(0), deferred(nullptr), work(nullptr) {}
 
   static void execute(napi_env env, void *data) {
+    using namespace std::chrono_literals;
+    std::this_thread::sleep_for(10ms);
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
     async_work_data->result = 42;
   }
@@ -394,6 +396,14 @@ struct AsyncWorkData {
     assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
            napi_ok);
     assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
+
+    napi_value err;
+    napi_value msg;
+    assert(napi_create_string_utf8(env, "error from napi", NAPI_AUTO_LENGTH,
+                                   &msg) == napi_ok);
+    assert(napi_create_error(env, nullptr, msg, &err) == napi_ok);
+    assert(napi_throw(env, err) == napi_ok);
+
     delete async_work_data;
   }
 };
@@ -452,12 +462,18 @@ struct ThreadsafeFunctionData {
 
     // call our JS function with undefined for this and no arguments
     napi_value js_result;
-    assert(napi_call_function(env, recv, js_callback, 0, nullptr, &js_result) ==
-           napi_ok);
+    napi_status call_result =
+        napi_call_function(env, recv, js_callback, 0, nullptr, &js_result);
+    assert(call_result == napi_ok || call_result == napi_pending_exception);
 
-    // resolve the promise with the return value of the JS function
-    assert(napi_resolve_deferred(env, tsfn_data->deferred, js_result) ==
-           napi_ok);
+    if (call_result == napi_ok) {
+      // only resolve if js_callback did not return an error
+      // resolve the promise with the return value of the JS function
+      napi_status defer_result =
+          napi_resolve_deferred(env, tsfn_data->deferred, js_result);
+      printf("%d\n", defer_result);
+      assert(defer_result == napi_ok);
+    }
 
     // clean up the threadsafe function
     assert(napi_release_threadsafe_function(tsfn_data->tsfn, napi_tsfn_abort) ==

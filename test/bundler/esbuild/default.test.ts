@@ -3536,6 +3536,25 @@ describe("bundler", () => {
       stdout: "0\n1",
     },
   });
+  itBundled("default/TopLevelAwaitImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a } = await import('./a.js');
+        console.log(a);
+      `,
+      "/a.js": /* js */ `
+        async function five() {
+          return 5;
+        }
+
+        export const a = await five();
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "5",
+    },
+  });
   itBundled("default/TopLevelAwaitAllowedImportWithSplitting", {
     files: {
       "/entry.js": /* js */ `

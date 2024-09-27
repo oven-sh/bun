@@ -6823,7 +6823,7 @@ pub const Ast = struct {
     // that they can be used in log messages. Check to see if "Len > 0".
     import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
     export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: logger.Range = logger.Range.None,
+    top_level_await_keyword: logger.Range,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -6916,9 +6916,9 @@ pub const Ast = struct {
 };
 
 pub const tlaCheck = struct {
-    depth: i32,
-    parent: Index.Int,
-    importRecordIndex: Index.Int,
+    depth: u32 = 0,
+    parent: Index.Int = Index.invalid.get(),
+    importRecordIndex: Index.Int = Index.invalid.get(),
 };
 
 /// Like Ast but slimmer and for bundling only.
@@ -6951,6 +6951,8 @@ pub const BundledAst = struct {
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
+    top_level_await_keyword: logger.Range,
+    tla_check: tlaCheck = .{},
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
@@ -6973,8 +6975,6 @@ pub const BundledAst = struct {
     ts_enums: Ast.TsEnumsMap = .{},
 
     flags: BundledAst.Flags = .{},
-
-    tla_check: tlaCheck = undefined,
 
     pub const NamedImports = Ast.NamedImports;
     pub const NamedExports = Ast.NamedExports;
@@ -7022,6 +7022,7 @@ pub const BundledAst = struct {
             .module_ref = this.module_ref,
             .wrapper_ref = this.wrapper_ref,
             .require_ref = this.require_ref,
+            .top_level_await_keyword = this.top_level_await_keyword,
 
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
@@ -7074,7 +7075,7 @@ pub const BundledAst = struct {
             .module_ref = ast.module_ref,
             .wrapper_ref = ast.wrapper_ref,
             .require_ref = ast.require_ref,
-
+            .top_level_await_keyword = ast.top_level_await_keyword,
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.

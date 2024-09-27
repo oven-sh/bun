@@ -3512,7 +3512,8 @@ describe("bundler", () => {
       "/entry.js": [
         'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
         'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
-        'This require call is not allowed because the transitive dependency "entry.js" contains a top-level await',
+        'This require call is not allowed because the transitive dependency "c.js" contains a top-level await',
+        'This require call is not allowed because the imported file "entry.js" contains a top-level await',
       ],
     },
   });

@@ -4249,7 +4249,7 @@ pub const LinkerContext = struct {
 
         // Stop now if there were errors
         if (this.log.hasErrors()) {
-            return &[_]Chunk{};
+            return error.BuildFailed;
         }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -7611,11 +7611,10 @@ pub const LinkerContext = struct {
                         }
 
                         const imported_pretty_path = c.parse_graph.input_files.items(.source)[source_index].path.pretty;
-                        const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path)) {
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file {s} contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory();
-                        } else {
-                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency {s} contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
-                        };
+                        const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
+                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory()
+                        else
+                            std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
 
                         const source: Logger.Source = c.parse_graph.input_files.items(.source)[source_index];
                         c.log.addRangeErrorWithNotes(&source, record.range, text, notes.items) catch bun.outOfMemory();
@@ -9571,6 +9570,8 @@ pub const LinkerContext = struct {
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
         const trace = tracer(@src(), "generateChunksInParallel");
         defer trace.end();
+
+        bun.assert(chunks.len > 0);
 
         {
             debug(" START {d} renamers", .{chunks.len});

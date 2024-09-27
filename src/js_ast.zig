@@ -6823,7 +6823,7 @@ pub const Ast = struct {
     // that they can be used in log messages. Check to see if "Len > 0".
     import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
     export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: logger.Range,
+    top_level_await_keyword: logger.Range = logger.Range.None,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal

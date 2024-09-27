@@ -1,11 +1,17 @@
 #pragma once
 
-#include "v8.h"
-#include "V8TaggedPointer.h"
-#include "V8Map.h"
-#include "V8Handle.h"
+#include "../v8.h"
+#include "TaggedPointer.h"
+#include "Map.h"
+#include "Handle.h"
+#include <JavaScriptCore/JSCell.h>
 
 namespace v8 {
+
+class Isolate;
+class EscapableHandleScopeBase;
+
+namespace shim {
 
 // An array used by HandleScope to store the items. Must keep pointer stability when resized, since
 // v8::Locals point inside this array.
@@ -34,19 +40,28 @@ public:
     }
 
     TaggedPointer* createHandle(JSC::JSCell* object, const Map* map, JSC::VM& vm);
-    TaggedPointer* createRawHandle(void* ptr);
     TaggedPointer* createSmiHandle(int32_t smi);
     TaggedPointer* createDoubleHandle(double value);
-    TaggedPointer* createHandleFromExistingHandle(TaggedPointer address);
+
+    // Given a tagged pointer from V8, create a handle around the same object or the same
+    // numeric value
+    //
+    // address:     V8 object pointer or Smi
+    // isolate:     received in any V8 method
+    // reuseHandle: if nonnull, change this handle instead of creating a new one
+    // returns the location of the new handle's V8 object pointer or Smi
+    TaggedPointer* createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle = nullptr);
+
+    void clear();
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    friend class EscapableHandleScopeBase;
+    friend class ::v8::EscapableHandleScopeBase;
 
 private:
-    WTF::Lock gc_lock;
-    WTF::SegmentedVector<Handle, 16> storage;
+    WTF::Lock m_gcLock;
+    WTF::SegmentedVector<Handle, 16> m_storage;
 
     Handle& createEmptyHandle();
 
@@ -56,4 +71,5 @@ private:
     }
 };
 
-}
+} // namespace shim
+} // namespace v8

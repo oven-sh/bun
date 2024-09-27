@@ -604,6 +604,22 @@ pub fn rand(bytes: []u8) void {
     _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
 }
 
+pub fn randomData(
+    globalThis: *JSC.JSGlobalObject,
+    slice: []u8,
+) void {
+    switch (slice.len) {
+        0 => {},
+        // 256 bytes or less we reuse from the same cache as UUID generation.
+        1...JSC.RareData.EntropyCache.size / 8 => {
+            copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
+        },
+        else => {
+            rand(slice);
+        },
+    }
+}
+
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {

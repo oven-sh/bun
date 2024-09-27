@@ -614,9 +614,8 @@ pub const Crypto = struct {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
             return .undefined;
         };
-        const slice = array_buffer.byteSlice();
 
-        randomData(globalThis, slice.ptr, slice.len);
+        bun.randomData(globalThis, array_buffer.slice());
 
         return arguments[0];
     }
@@ -626,28 +625,8 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         array: *JSC.JSUint8Array,
     ) JSC.JSValue {
-        const slice = array.slice();
-        randomData(globalThis, slice.ptr, slice.len);
+        bun.randomData(globalThis, array.slice());
         return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
-    }
-
-    fn randomData(
-        globalThis: *JSC.JSGlobalObject,
-        ptr: [*]u8,
-        len: usize,
-    ) void {
-        const slice = ptr[0..len];
-
-        switch (slice.len) {
-            0 => {},
-            // 512 bytes or less we reuse from the same cache as UUID generation.
-            1...JSC.RareData.EntropyCache.size / 8 => {
-                bun.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
-            },
-            else => {
-                bun.rand(slice);
-            },
-        }
     }
 
     pub fn randomUUID(

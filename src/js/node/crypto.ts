@@ -25,10 +25,20 @@ const {
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
 const {
+  randomBytes: _randomBytes,
   randomInt: _randomInt,
+  randomFill: _randomFill,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+
+function randomBytes(size, callback) {
+  if (callback != null) {
+    process.nextTick(() => callback(null, _randomBytes(size)));
+    return;
+  }
+  return _randomBytes(size);
+}
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -40,6 +50,22 @@ function randomInt(min, max, callback) {
     return;
   }
   return _randomInt(min, max);
+}
+
+function randomFill(buffer, offset, size, callback) {
+  if (typeof offset == "function") {
+    callback = offset;
+    offset = undefined;
+    size = undefined;
+  } else if (typeof size == "function") {
+    callback = size;
+    size = undefined;
+  }
+  process.nextTick(() => callback(null, _randomFill(buffer, offset, size)));
+}
+
+function randomFillSync(buffer, offset, size) {
+  return _randomFill(buffer, offset, size);
 }
 
 const MAX_STRING_LENGTH = 536870888;
@@ -143,36 +169,6 @@ var require_safe_buffer = __commonJS({
       if (typeof size != "number") throw new TypeError("Argument must be a number");
       return buffer.SlowBuffer(size);
     };
-  },
-});
-
-// node_modules/randombytes/browser.js
-var require_browser = __commonJS({
-  "node_modules/randombytes/browser.js"(exports, module) {
-    "use strict";
-    var MAX_BYTES = 65536,
-      MAX_UINT32 = 4294967295;
-    function oldBrowser() {
-      throw new Error(`Secure random number generation is not supported by this browser.
-Use Chrome, Firefox or Internet Explorer 11`);
-    }
-    var Buffer2 = require_safe_buffer().Buffer,
-      crypto2 = globalCrypto;
-    crypto2 && crypto2.getRandomValues ? (module.exports = randomBytes) : (module.exports = oldBrowser);
-    function randomBytes(size, cb) {
-      if (size > MAX_UINT32) throw new RangeError("requested too many random bytes");
-      var bytes = Buffer2.allocUnsafe(size);
-      if (size > 0)
-        if (size > MAX_BYTES)
-          for (var generated = 0; generated < size; generated += MAX_BYTES)
-            crypto2.getRandomValues(bytes.slice(generated, generated + MAX_BYTES));
-        else crypto2.getRandomValues(bytes);
-      return typeof cb == "function"
-        ? process.nextTick(function () {
-            cb(null, bytes);
-          })
-        : bytes;
-    }
   },
 });
 
@@ -5257,7 +5253,6 @@ var require_mr = __commonJS({
 // node_modules/diffie-hellman/lib/generatePrime.js
 var require_generatePrime = __commonJS({
   "node_modules/diffie-hellman/lib/generatePrime.js"(exports, module) {
-    var randomBytes = require_browser();
     module.exports = findPrime;
     findPrime.simpleSieve = simpleSieve;
     findPrime.fermatTest = fermatTest;
@@ -5379,8 +5374,7 @@ var require_dh = __commonJS({
       TEN = new BN(10),
       THREE = new BN(3),
       SEVEN = new BN(7),
-      primes = require_generatePrime(),
-      randomBytes = require_browser();
+      primes = require_generatePrime();
     module.exports = DH;
     function setPublicKey(pub, enc) {
       return (
@@ -5523,8 +5517,7 @@ var require_bn3 = require_bn;
 // node_modules/browserify-rsa/index.js
 var require_browserify_rsa = __commonJS({
   "node_modules/browserify-rsa/index.js"(exports, module) {
-    var BN = require_bn3(),
-      randomBytes = require_browser();
+    var BN = require_bn3();
     function blind(priv) {
       var r = getr(priv),
         blinder = r.toRed(BN.mont(priv.modulus)).redPow(new BN(priv.publicExponent)).fromRed();
@@ -11445,66 +11438,10 @@ var require_browser9 = __commonJS({
 
 const { CryptoHasher } = globalThis.Bun;
 
-// node_modules/randomfill/browser.js
-var require_browser11 = __commonJS({
-  "node_modules/randomfill/browser.js"(exports) {
-    "use strict";
-    var safeBuffer = require_safe_buffer(),
-      randombytes = require_browser(),
-      Buffer2 = safeBuffer.Buffer,
-      kBufferMaxLength = safeBuffer.kMaxLength,
-      kMaxUint32 = Math.pow(2, 32) - 1;
-    function assertOffset(offset, length) {
-      if (typeof offset != "number" || offset !== offset) throw new TypeError("offset must be a number");
-      if (offset > kMaxUint32 || offset < 0) throw new TypeError("offset must be a uint32");
-      if (offset > kBufferMaxLength || offset > length) throw new RangeError("offset out of range");
-    }
-    function assertSize(size, offset, length) {
-      if (typeof size != "number" || size !== size) throw new TypeError("size must be a number");
-      if (size > kMaxUint32 || size < 0) throw new TypeError("size must be a uint32");
-      if (size + offset > length || size > kBufferMaxLength) throw new RangeError("buffer too small");
-    }
-
-    exports.randomFill = randomFill;
-    exports.randomFillSync = randomFillSync;
-
-    function randomFill(buf, offset, size, cb) {
-      if (!Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array))
-        throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
-      if (typeof offset == "function") (cb = offset), (offset = 0), (size = buf.length);
-      else if (typeof size == "function") (cb = size), (size = buf.length - offset);
-      else if (typeof cb != "function") throw new TypeError('"cb" argument must be a function');
-      return assertOffset(offset, buf.length), assertSize(size, offset, buf.length), actualFill(buf, offset, size, cb);
-    }
-    function actualFill(buf, offset, size, cb) {
-      if (cb) {
-        randombytes(size, function (err, bytes2) {
-          if (err) return cb(err);
-          bytes2.copy(buf, offset), cb(null, buf);
-        });
-        return;
-      }
-      var bytes = randombytes(size);
-      return bytes.copy(buf, offset), buf;
-    }
-    function randomFillSync(buf, offset, size) {
-      if ((typeof offset > "u" && (offset = 0), !Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array)))
-        throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
-      return (
-        assertOffset(offset, buf.length),
-        size === void 0 && (size = buf.length - offset),
-        assertSize(size, offset, buf.length),
-        actualFill(buf, offset, size)
-      );
-    }
-  },
-});
-
 // node_modules/crypto-browserify/index.js
 var require_crypto_browserify2 = __commonJS({
   "node_modules/crypto-browserify/index.js"(exports) {
     "use strict";
-    exports.randomBytes = exports.rng = exports.pseudoRandomBytes = exports.prng = require_browser();
     exports.createHash = require_browser2();
     exports.Hash = exports.createHash.Hash;
     exports.createHmac = exports.Hmac = require_browser3();
@@ -11540,9 +11477,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.Verify = sign.Verify;
     exports.createECDH = require_browser9();
     exports.getRandomValues = values => crypto.getRandomValues(values);
-    var rf = require_browser11();
-    exports.randomFill = rf.randomFill;
-    exports.randomFillSync = rf.randomFillSync;
     exports.createCredentials = function () {
       throw new Error(
         [
@@ -12044,7 +11978,10 @@ __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
   randomUUID: () => randomUUID,
+  randomBytes: () => randomBytes,
   randomInt: () => randomInt,
+  randomFill: () => randomFill,
+  randomFillSync: () => randomFillSync,
   getCurves: () => getCurves,
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,

@@ -208,15 +208,17 @@ pub const PackCommand = struct {
     }
 
     pub fn PackError(comptime for_publish: bool) type {
-        return OOM ||
-            error{
+        return OOM || error{
             MissingPackageName,
             InvalidPackageName,
             MissingPackageVersion,
             InvalidPackageVersion,
             MissingPackageJSON,
         } ||
-            if (for_publish) error{RestrictedUnscopedPackage} else error{};
+            if (for_publish) error{
+            RestrictedUnscopedPackage,
+            PrivatePackage,
+        } else error{};
     }
 
     const package_prefix = "package/";
@@ -1114,6 +1116,16 @@ pub const PackCommand = struct {
         const package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
         defer if (comptime !for_publish) ctx.allocator.free(package_version);
         if (package_version.len == 0) return error.InvalidPackageVersion;
+
+        if (comptime for_publish) {
+            if (json.root.get("private")) |private| {
+                if (private.asBool()) |is_private| {
+                    if (is_private) {
+                        return error.PrivatePackage;
+                    }
+                }
+            }
+        }
 
         var this_bundler: bun.bundler.Bundler = undefined;
 

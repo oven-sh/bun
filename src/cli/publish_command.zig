@@ -303,7 +303,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("failed to parse tarball package.json", .{});
                     },
                     error.PrivatePackage => {
-                        Output.errGeneric("attemped to publish a private package", .{});
+                        Output.errGeneric("attempted to publish a private package", .{});
                     },
                     error.RestrictedUnscopedPackage => {
                         Output.errGeneric("unable to restrict access to unscoped package", .{});
@@ -338,6 +338,9 @@ pub const PublishCommand = struct {
                 },
                 error.RestrictedUnscopedPackage => {
                     Output.errGeneric("unable to restrict access to unscoped package", .{});
+                },
+                error.PrivatePackage => {
+                    Output.errGeneric("attempted to publish a private package", .{});
                 },
             }
             Global.crash();

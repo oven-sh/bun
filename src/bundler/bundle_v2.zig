@@ -1139,11 +1139,11 @@ pub const BundleV2 = struct {
         return source_index.get();
     }
 
-    /// Enqueue a GenerateTask.
+    /// Enqueue a ServerComponentParseTask.
     /// `source_without_index` is copied and assigned a new source index. That index is returned.
-    pub fn enqueueGenerateTask(
+    pub fn enqueueServerComponentGeneratedFile(
         this: *BundleV2,
-        data: GenerateTask.Data,
+        data: ServerComponentParseTask.Data,
         source_without_index: Logger.Source,
     ) OOM!Index.Int {
         var new_source: Logger.Source = source_without_index;
@@ -1156,7 +1156,7 @@ pub const BundleV2 = struct {
         });
         try this.graph.ast.append(default_allocator, JSAst.empty);
 
-        const task = bun.new(GenerateTask, .{
+        const task = bun.new(ServerComponentParseTask, .{
             .data = data,
             .ctx = this,
             .source = new_source,
@@ -2449,7 +2449,7 @@ pub const BundleV2 = struct {
                     if (!this.framework.?.server_components.?.separate_ssr_graph)
                         bun.todoPanic(@src(), "implement 'separate_ssr_graph = false'", .{});
 
-                    const reference_source_index = this.enqueueGenerateTask(
+                    const reference_source_index = this.enqueueServerComponentGeneratedFile(
                         .{ .client_reference_proxy = .{
                             .other_source = result.source,
                             .named_exports = result.ast.named_exports,
@@ -3411,9 +3411,9 @@ pub const ParseTask = struct {
 };
 
 /// Files for Server Components are generated using `AstBuilder`, instead of
-/// running through the js_parser. This is ParseTask, including using the same
-/// completion callback. It does not accept source code input.
-pub const GenerateTask = struct {
+/// running through the js_parser. It emits a ParseTask.Result and joins
+/// with the same logic that it runs though.
+pub const ServerComponentParseTask = struct {
     task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap },
     data: Data,
     ctx: *BundleV2,
@@ -3431,7 +3431,7 @@ pub const GenerateTask = struct {
     };
 
     fn taskCallbackWrap(thread_pool_task: *ThreadPoolLib.Task) void {
-        const task: *GenerateTask = @fieldParentPtr("task", thread_pool_task);
+        const task: *ServerComponentParseTask = @fieldParentPtr("task", thread_pool_task);
         var worker = ThreadPool.Worker.get(task.ctx);
         defer worker.unget();
         var log = Logger.Log.init(worker.allocator);
@@ -3473,7 +3473,7 @@ pub const GenerateTask = struct {
     }
 
     fn taskCallback(
-        task: *GenerateTask,
+        task: *ServerComponentParseTask,
         log: *Logger.Log,
         allocator: std.mem.Allocator,
     ) !ParseTask.Result.Success {
@@ -3496,7 +3496,7 @@ pub const GenerateTask = struct {
         };
     }
 
-    fn generateClientReferenceProxy(task: *GenerateTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {
+    fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {
         const server_components = task.ctx.framework.?.server_components orelse
             unreachable; // config must be non-null to enter this function
 

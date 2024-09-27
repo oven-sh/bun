@@ -964,6 +964,10 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf[4]).toBe(128);
       });
 
+      it("fill(N, empty string) should be the same as fill(N) and not include any uninitialized bytes", () => {
+        expect(Buffer.alloc(100, "")).toEqual(Buffer.alloc(100));
+      });
+
       // https://github.com/joyent/node/issues/1758
       it("check for fractional length args, junk length args, etc.", () => {
         // Call .fill() first, stops valgrind warning about uninitialized memory reads.

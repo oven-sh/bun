@@ -104,6 +104,14 @@ async function runStressTest({
 
   await Bun.sleep(80);
 
+  for (let i = 0; i < 10; i++) {
+    let max = getMaxFD();
+    if (max > initialMaxFD + 10) {
+      await Bun.sleep(10);
+      console.log("Max FD is still high!", { max, initialMaxFD });
+    }
+  }
+
   expect(getMaxFD()).toBeLessThan(initialMaxFD + 10);
 }
 

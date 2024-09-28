@@ -5885,11 +5885,10 @@ pub const LinkerContext = struct {
 
                                     continue;
                                 } else {
-
                                     // We should use "__require" instead of "require" if we're not
                                     // generating a CommonJS output file, since it won't exist otherwise.
                                     // Disabled for target bun because `import.meta.require` will be inlined.
-                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
+                                    if (kind != .dynamic or shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
                                         record.calls_runtime_require = true;
                                         runtime_require_uses += 1;
                                     }

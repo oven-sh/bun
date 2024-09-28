@@ -7633,7 +7633,7 @@ pub const LinkerContext = struct {
 
                         c.log.addRangeErrorWithNotes(source, record.range, text, notes.items) catch bun.outOfMemory();
 
-                        notes.resize(0) catch bun.outOfMemory();
+                        notes.clearRetainingCapacity();
                     }
                 }
             }

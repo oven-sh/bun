@@ -1876,8 +1876,10 @@ declare global {
 
   interface Navigator {
     readonly userAgent: string;
-    readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
+    readonly platform: string;
     readonly hardwareConcurrency: number;
+    readonly language: string;
+    readonly languages: string[];
   }
 
   var navigator: Navigator;

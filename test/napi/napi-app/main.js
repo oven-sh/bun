@@ -14,6 +14,8 @@ if (typeof fn !== "function") {
 
 // pass GC runner as first argument
 try {
+  // napi.test.ts:147 tries to read this variable and shouldn't be able to
+  let shouldNotExist = 5;
   const result = fn.apply(null, [
     () => {
       if (process.isBun) {

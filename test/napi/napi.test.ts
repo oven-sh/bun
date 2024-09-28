@@ -142,6 +142,10 @@ describe("napi", () => {
     it("propagates exceptions", () => {
       checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    it("cannot see locals from around its invocation", () => {
+      // variable is declared on main.js:18, but it should not be in scope for the eval'd code
+      checkSameOutput("eval_wrapper", ["shouldNotExist"]);
+    });
   });
 });
 

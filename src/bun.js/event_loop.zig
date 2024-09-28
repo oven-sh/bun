@@ -483,6 +483,7 @@ pub const Task = TaggedPointerUnion(.{
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
+    bun.kit.DevServer.HotReloadTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {

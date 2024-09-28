@@ -6937,6 +6937,7 @@ pub const BundledAst = struct {
     directive: string = "",
     url_for_css: string = "",
     parts: Part.List = Part.List{},
+    css: ?*bun.css.BundlerStyleSheet = null,
     // This list may be mutated later, so we should store the capacity
     symbols: Symbol.List = Symbol.List{},
     module_scope: Scope = Scope{},

@@ -5973,6 +5973,15 @@ pub const BufferWriter = struct {
             ) catch unreachable,
         };
     }
+
+    pub fn print(ctx: *BufferWriter, comptime fmt: string, args: anytype) anyerror!void {
+        try ctx.buffer.list.writer(ctx.buffer.allocator).print(fmt, args);
+    }
+
+    pub fn writeByteNTimes(ctx: *BufferWriter, byte: u8, n: usize) anyerror!void {
+        try ctx.buffer.appendCharNTimes(byte, n);
+    }
+
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
         ctx.approximate_newline_count += @intFromBool(byte == '\n');

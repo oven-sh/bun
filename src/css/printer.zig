@@ -72,6 +72,15 @@ const Browsers = css.targets.Browsers;
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
 pub fn Printer(comptime Writer: type) type {
+    const getWrittenAmt = struct {
+        pub inline fn func(writer: Writer) usize {
+            return switch (Writer) {
+                ArrayList(u8).Writer => writer.context.self.items.len,
+                *bun.js_printer.BufferWriter => writer.written.len,
+                else => @compileError("Dunno what to do with this type yo: " ++ @typeName(Writer)),
+            };
+        }
+    }.func;
     return struct {
         // #[cfg(feature = "sourcemap")]
         sources: ?*const ArrayList([]const u8),
@@ -190,7 +199,7 @@ pub fn Printer(comptime Writer: type) type {
                 bun.assert(std.mem.indexOfScalar(u8, s, '\n') == null);
             }
             this.col += @intCast(s.len);
-            this.dest.writeAll(s) catch {
+            _ = this.dest.writeAll(s) catch {
                 return this.addFmtError();
             };
             return;
@@ -202,9 +211,9 @@ pub fn Printer(comptime Writer: type) type {
         /// If such a string is written, it will break source maps.
         pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintErr!void {
             // assuming the writer comes from an ArrayList
-            const start: usize = this.dest.context.self.items.len;
+            const start: usize = getWrittenAmt(this.dest);
             this.dest.print(fmt, args) catch bun.outOfMemory();
-            const written = this.dest.context.self.items.len - start;
+            const written = getWrittenAmt(this.dest) - start;
             this.col += @intCast(written);
         }
 
@@ -293,7 +302,7 @@ pub fn Printer(comptime Writer: type) type {
             } else {
                 this.col += 1;
             }
-            return this.dest.writeByte(char) catch {
+            _ = this.dest.writeByte(char) catch {
                 return this.addFmtError();
             };
         }

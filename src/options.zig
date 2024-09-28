@@ -680,7 +680,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .file,
             // TODO: CSS
-            .css,
+            // .css,
             .napi,
             .sqlite,
             .sqlite_embedded,

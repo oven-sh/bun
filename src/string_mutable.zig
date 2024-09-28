@@ -202,6 +202,10 @@ pub const MutableString = struct {
         try self.list.resize(self.allocator, amount);
     }
 
+    pub inline fn appendCharNTimes(self: *MutableString, char: u8, n: usize) !void {
+        try self.list.appendNTimes(self.allocator, char, n);
+    }
+
     pub inline fn appendChar(self: *MutableString, char: u8) !void {
         try self.list.append(self.allocator, char);
     }

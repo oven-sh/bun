@@ -1002,7 +1002,6 @@ pub const Bundler = struct {
             .dataurl, .base64 => {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
-            // ZACK YOUR CODE GOES HERE!!
             .css => {
                 if (comptime bun.FeatureFlags.css) {
                     const alloc = bundler.allocator;

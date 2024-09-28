@@ -6,6 +6,9 @@ const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
+const ImportRecord = bun.ImportRecord;
+const ImportKind = bun.ImportKind;
+
 pub const prefixes = @import("./prefixes.zig");
 
 pub const dependencies = @import("./dependencies.zig");
@@ -1169,26 +1172,60 @@ pub const DefaultAtRuleParser = struct {
         pub const Prelude = void;
         pub const AtRule = DefaultAtRule;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, options: *const ParserOptions) Result(Prelude) {
-            _ = options; // autofix
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
             return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
-        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, options: *const ParserOptions, is_nested: bool) Result(CustomAtRuleParser.AtRule) {
-            _ = options; // autofix
-            _ = is_nested; // autofix
+        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, _: *const ParserOptions, _: bool) Result(CustomAtRuleParser.AtRule) {
             return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, options: *const ParserOptions, is_nested: bool) Maybe(CustomAtRuleParser.AtRule, void) {
-            _ = options; // autofix
-            _ = is_nested; // autofix
+        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
             return .{ .err = {} };
+        }
+
+        pub fn onImportRule(_: *This, _: *const ImportRule, _: u32, _: u32) void {}
+    };
+};
+
+pub const BundlerAtRuleParser = struct {
+    const This = @This();
+    allocator: Allocator,
+    import_records: *bun.BabyList(ImportRecord),
+
+    pub const CustomAtRuleParser = struct {
+        pub const Prelude = void;
+        pub const AtRule = DefaultAtRule;
+
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
+            return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
+        }
+
+        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, _: *const ParserOptions, _: bool) Result(CustomAtRuleParser.AtRule) {
+            return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
+        }
+
+        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
+            return .{ .err = {} };
+        }
+
+        pub fn onImportRule(this: *This, import_rule: *const ImportRule, start_position: u32, end_position: u32) void {
+            this.import_records.push(this.allocator, ImportRecord{
+                .path = bun.fs.Path.init(import_rule.url),
+                .kind = if (import_rule.supports != null) .at_conditional else .at,
+                .range = bun.logger.Range{
+                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .len = @intCast(end_position - start_position),
+                },
+            }) catch bun.outOfMemory();
         }
     };
 };
 
 /// Same as `ValidAtRuleParser` but modified to provide parser options
+///
+/// Also added:
+/// - onImportRule to handle @import rules
 pub fn ValidCustomAtRuleParser(comptime T: type) void {
     // The intermediate representation of prelude of an at-rule.
     _ = T.CustomAtRuleParser.Prelude;
@@ -1236,6 +1273,8 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     //
     // This is only called when a block was found following the prelude.
     _ = T.CustomAtRuleParser.parseBlock;
+
+    _ = T.CustomAtRuleParser.onImportRule;
 }
 
 pub fn ValidAtRuleParser(comptime T: type) void {
@@ -1375,28 +1414,6 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             pub const AtRule = void;
 
             pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
-                // TODO: optimize string switch
-                // So rust does the strategy of:
-                // 1. switch (or if branches) on the length of the input string
-                // 2. then do string comparison by word size (or smaller sometimes)
-                // rust sometimes makes jump table https://godbolt.org/z/63d5vYnsP
-                // sometimes it doesn't make a jump table and just does branching on lengths: https://godbolt.org/z/d8jGPEd56
-                // it looks like it will only make a jump table when it knows it won't be too sparse? If I add a "h" case (to make it go 1, 2, 4, 5) or a  "hzz" case (so it goes 2, 3, 4, 5) it works:
-                // - https://godbolt.org/z/WGTMPxafs (change "hzz" to "h" and it works too, remove it and jump table is gone)
-                //
-                // I tried recreating the jump table (first link) by hand: https://godbolt.org/z/WPM5c5K4b
-                // it worked fairly well. Well I actually just made it match on the length, compiler made the jump table,
-                // so we should let the compiler make the jump table.
-                // Another recreation with some more nuances: https://godbolt.org/z/9Y1eKdY3r
-                // Another recreation where hand written is faster than the Rust compiler: https://godbolt.org/z/sTarKe4Yx
-                // specifically we can make the compiler generate a jump table instead of brancing
-                //
-                // Our ExactSizeMatcher is decent
-                // or comptime string map that calls eqlcomptime function thingy, or std.StaticStringMap
-                // rust-cssparser does a thing where it allocates stack buffer with maximum possible size and
-                // then uses that to do ASCII to lowercase conversion:
-                // https://github.com/servo/rust-cssparser/blob/b75ce6a8df2dbd712fac9d49ba38ee09b96d0d52/src/macros.rs#L168
-                // we could probably do something similar, looks like the max length never goes above 20 bytes
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "import")) {
                     if (@intFromEnum(this.state) > @intFromEnum(State.imports)) {
                         return .{ .err = input.newCustomError(@as(ParserError, ParserError.unexpected_import_rule)) };
@@ -1514,14 +1531,16 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 switch (prelude) {
                     .import => {
                         this.state = State.imports;
+                        const import_rule = ImportRule{
+                            .url = prelude.import[0],
+                            .media = prelude.import[1],
+                            .supports = prelude.import[2],
+                            .layer = if (prelude.import[3]) |v| .{ .v = v.value } else null,
+                            .loc = loc,
+                        };
+                        AtRuleParserT.CustomAtRuleParser.onImportRule(this.at_rule_parser, &import_rule, @intCast(start.position), @intCast(start.position + 1));
                         this.rules.v.append(this.allocator, .{
-                            .import = ImportRule{
-                                .url = prelude.import[0],
-                                .media = prelude.import[1],
-                                .supports = prelude.import[2],
-                                .layer = if (prelude.import[3]) |v| .{ .v = v.value } else null,
-                                .loc = loc,
-                            },
+                            .import = import_rule,
                         }) catch bun.outOfMemory();
                         return .{ .result = {} };
                     },
@@ -2440,6 +2459,18 @@ pub const ToCssResult = struct {
     dependencies: ?ArrayList(Dependency),
 };
 
+pub const ToCssResultInternal = struct {
+    /// A map of CSS module exports, if the `css_modules` option was
+    /// enabled during parsing.
+    exports: ?CssModuleExports,
+    /// A map of CSS module references, if the `css_modules` config
+    /// had `dashed_idents` enabled.
+    references: ?CssModuleReferences,
+    /// A list of dependencies (e.g. `@import` or `url()`) found in
+    /// the style sheet, if the `analyze_dependencies` option is enabled.
+    dependencies: ?ArrayList(Dependency),
+};
+
 pub const MinifyOptions = struct {
     /// Targets to compile the CSS for.
     targets: targets.Targets,
@@ -2454,6 +2485,8 @@ pub const MinifyOptions = struct {
         };
     }
 };
+
+pub const BundlerStyleSheet = StyleSheet(DefaultAtRule);
 
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
@@ -2513,11 +2546,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             // }
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
-            // TODO: this is not necessary
-            // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
-            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
-            const writer = dest.writer(allocator);
+        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions) PrintErr!ToCssResultInternal {
             const W = @TypeOf(writer);
             const project_root = options.project_root;
             var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
@@ -2545,31 +2574,53 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 try this.rules.toCss(W, &printer);
                 try printer.newline();
 
-                return ToCssResult{
+                return ToCssResultInternal{
                     .dependencies = printer.dependencies,
                     .exports = exports: {
                         const val = printer.css_module.?.exports_by_source_index.items[0];
                         printer.css_module.?.exports_by_source_index.items[0] = .{};
                         break :exports val;
                     },
-                    .code = dest.items,
+                    // .code = dest.items,
                     .references = references,
                 };
             } else {
                 try this.rules.toCss(W, &printer);
                 try printer.newline();
-                return ToCssResult{
+                return ToCssResultInternal{
                     .dependencies = printer.dependencies,
-                    .code = dest.items,
+                    // .code = dest.items,
                     .exports = null,
                     .references = null,
                 };
             }
         }
 
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
+            // TODO: this is not necessary
+            // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
+            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
+            const writer = dest.writer(allocator);
+            const result = try toCssWithWriter(this, allocator, writer, options);
+            return ToCssResult{
+                .code = dest.items,
+                .dependencies = result.dependencies,
+                .exports = result.exports,
+                .references = result.references,
+            };
+        }
+
         pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(This, Err(ParserError)) {
             var default_at_rule_parser = DefaultAtRuleParser{};
             return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser);
+        }
+
+        pub fn parseBundler(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
+            var at_rule_parser = BundlerAtRuleParser{
+                .import_records = import_records,
+                .allocator = allocator,
+            };
+            return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser);
         }
 
         /// Parse a style sheet from a string.

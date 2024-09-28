@@ -2861,6 +2861,31 @@ pub const ParseTask = struct {
                 unique_key_for_additional_file.* = unique_key;
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
+            .css => {
+                var import_records = BabyList(ImportRecord){};
+                const source_code = source.contents;
+                const css_ast =
+                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
+                    allocator,
+                    source_code,
+                    bun.css.ParserOptions.default(allocator, bundler.log),
+                    &import_records,
+                )) {
+                    .result => |v| v,
+                    .err => |e| {
+                        bundler.log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{} parsing", .{e}) catch unreachable;
+                        @panic("handle this");
+                    },
+                };
+                const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
+                return js_ast.BundledAst{
+                    .approximate_newline_count = 0, // TODO: this
+                    .import_records = import_records,
+                    .css = css_ast_heap,
+                    .allocator = bundler.allocator,
+                    .parts = js_ast.Part.List.fromSlice(bundler.allocator, &.{ .{}, .{} }) catch bun.outOfMemory(),
+                };
+            },
             // TODO: css
             else => {
                 const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
@@ -3062,7 +3087,7 @@ pub const ParseTask = struct {
         };
 
         ast.target = target;
-        if (ast.parts.len <= 1) {
+        if (ast.parts.len <= 1 and ast.css == null) {
             task.side_effects = .no_side_effects__empty_ast;
         }
 
@@ -4314,18 +4339,37 @@ pub const LinkerContext = struct {
             // always generated even if the resulting file is empty
             const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
 
-            js_chunk_entry.value_ptr.* = .{
-                .entry_point = .{
-                    .entry_point_id = entry_bit,
-                    .source_index = source_index,
-                    .is_entry_point = true,
-                },
-                .entry_bits = entry_bits.*,
-                .content = .{
-                    .javascript = .{},
-                },
-                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-            };
+            if (this.graph.ast.items(.css)[source_index]) |*css| {
+                _ = css; // autofix
+                const order = this.findImportedFilesInCSSOrder(&[_]Index{Index.init(source_index)});
+                js_chunk_entry.value_ptr.* = .{
+                    .entry_point = .{
+                        .entry_point_id = entry_bit,
+                        .source_index = source_index,
+                        .is_entry_point = true,
+                    },
+                    .entry_bits = entry_bits.*,
+                    .content = .{
+                        .css = .{
+                            .imports_in_chunk_in_order = order,
+                        },
+                    },
+                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                };
+            } else {
+                js_chunk_entry.value_ptr.* = .{
+                    .entry_point = .{
+                        .entry_point_id = entry_bit,
+                        .source_index = source_index,
+                        .is_entry_point = true,
+                    },
+                    .entry_bits = entry_bits.*,
+                    .content = .{
+                        .javascript = .{},
+                    },
+                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                };
+            }
         }
         var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
 
@@ -4424,7 +4468,7 @@ pub const LinkerContext = struct {
 
             const pathname = Fs.PathName.init(output_paths[chunk.entry_point.entry_point_id].slice());
             chunk.template.placeholder.name = pathname.base;
-            chunk.template.placeholder.ext = "js";
+            chunk.template.placeholder.ext = chunk.content.ext();
 
             // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
             const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
@@ -4451,11 +4495,16 @@ pub const LinkerContext = struct {
         defer part_ranges_shared.deinit();
         defer parts_prefix_shared.deinit();
         for (chunks) |*chunk| {
-            try this.findImportedPartsInJSOrder(
-                chunk,
-                &part_ranges_shared,
-                &parts_prefix_shared,
-            );
+            switch (chunk.content) {
+                .javascript => {
+                    try this.findImportedPartsInJSOrder(
+                        chunk,
+                        &part_ranges_shared,
+                        &parts_prefix_shared,
+                    );
+                },
+                .css => {},
+            }
         }
     }
 
@@ -4672,6 +4721,80 @@ pub const LinkerContext = struct {
         chunk.content.javascript.files_in_chunk_order = visitor.files.items;
 
         chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
+    }
+
+    // CSS files are traversed in depth-first postorder just like JavaScript. But
+    // unlike JavaScript import statements, CSS "@import" rules are evaluated every
+    // time instead of just the first time.
+    //
+    //	  A
+    //	 / \
+    //	B   C
+    //	 \ /
+    //	  D
+    //
+    // If A imports B and then C, B imports D, and C imports D, then the CSS
+    // traversal order is D B D C A.
+    //
+    // However, evaluating a CSS file multiple times is sort of equivalent to
+    // evaluating it once at the last location. So we basically drop all but the
+    // last evaluation in the order.
+    //
+    // The only exception to this is "@layer". Evaluating a CSS file multiple
+    // times is sort of equivalent to evaluating it once at the first location
+    // as far as "@layer" is concerned. So we may in some cases keep both the
+    // first and last locations and only write out the "@layer" information
+    // for the first location.
+    pub fn findImportedFilesInCSSOrder(this: *LinkerContext, entry_points: []const Index) BabyList(Chunk.CssImportOrder) {
+        // const Visit = struct {
+        //     c: *LinkerContext,
+        //     has_external_import: bool,
+
+        //     pub fn visit(this: *Visit, source_index: Index, visited: BabyList(Index), wrapping_conditions:
+        // };
+
+        // TODO: do this actually properly
+        // doing dumb way for now to get things working
+
+        const impl = struct {
+            pub fn impl(
+                c: *LinkerContext,
+                source_index: Index,
+                worklist: *BabyList(Index),
+                order: *BabyList(Chunk.CssImportOrder),
+                import_records: []const BabyList(ImportRecord),
+                css_parts: []?*bun.css.BundlerStyleSheet,
+            ) void {
+                if (css_parts[source_index.get()]) |css| {
+                    _ = css; // autofix
+                    order.push(c.allocator, Chunk.CssImportOrder{
+                        // TODO: compute this properly
+                        .kind = .{ .source_index = source_index },
+                    }) catch bun.outOfMemory();
+
+                    const records = import_records[source_index.get()];
+                    for (records.slice()) |rec| {
+                        // this doesn't handle cycles
+                        worklist.push(c.allocator, rec.source_index) catch bun.outOfMemory();
+                    }
+                }
+            }
+        }.impl;
+
+        const import_records = this.graph.ast.items(.import_records);
+        const css_parts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+        var order = BabyList(Chunk.CssImportOrder){};
+        // TODO: stack fallback
+        var worklist = BabyList(Index){};
+        defer worklist.deinitWithAllocator(this.allocator);
+        for (entry_points) |source_index| {
+            impl(this, source_index, &worklist, &order, import_records, css_parts);
+        }
+        for (worklist.slice()) |source_index| {
+            impl(this, source_index, &worklist, &order, import_records, css_parts);
+        }
+
+        return order;
     }
 
     pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) !struct { Ref, u32 } {
@@ -6116,6 +6239,7 @@ pub const LinkerContext = struct {
 
         const parts = c.graph.ast.items(.parts);
         const import_records = c.graph.ast.items(.import_records);
+        const css_reprs = c.graph.ast.items(.css);
         const side_effects = c.parse_graph.input_files.items(.side_effects);
         const entry_point_kinds = c.graph.files.items(.entry_point_kind);
         const entry_points = c.graph.entry_points.items(.source_index);
@@ -6132,6 +6256,7 @@ pub const LinkerContext = struct {
                     parts,
                     import_records,
                     entry_point_kinds,
+                    css_reprs,
                 );
             }
         }
@@ -6164,6 +6289,7 @@ pub const LinkerContext = struct {
                     parts,
                     import_records,
                     file_entry_bits,
+                    css_reprs,
                 );
             }
         }
@@ -6612,11 +6738,14 @@ pub const LinkerContext = struct {
         chunks: []Chunk,
         chunk: *Chunk,
     };
-    fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
+    fn generateChunk(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
         const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
-        postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
+        switch (chunk.content) {
+            .javascript => postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
+            .css => postProcessCSSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
+        }
     }
 
     // TODO: investigate if we need to parallelize this function
@@ -6877,7 +7006,10 @@ pub const LinkerContext = struct {
         defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
-        generateJSRenamer_(ctx, worker, chunk, chunk_index);
+        switch (chunk.content) {
+            .javascript => generateJSRenamer_(ctx, worker, chunk, chunk_index),
+            .css => {},
+        }
     }
 
     fn generateJSRenamer_(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) void {
@@ -6887,6 +7019,59 @@ pub const LinkerContext = struct {
             chunk,
             chunk.content.javascript.files_in_chunk_order,
         ) catch @panic("TODO: handle error");
+    }
+
+    fn generateCompileResultForCssChunk(task: *ThreadPoolLib.Task) void {
+        const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
+        const ctx = part_range.ctx;
+        defer ctx.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
+        defer worker.unget();
+
+        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
+        defer if (Environment.isDebug) {
+            bun.crash_handler.current_action = prev_action;
+        };
+        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+            .chunk = ctx.chunk,
+            .context = ctx.c,
+            .part_range = &part_range.part_range,
+        } };
+
+        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForCssChunkImpl(worker, ctx.c, ctx.chunk, part_range.i);
+    }
+
+    fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, chunk_index: u32) CompileResult {
+        const trace = tracer(@src(), "generateCodeForFileInChunkCss");
+        defer trace.end();
+
+        var arena = &worker.temporary_arena;
+        var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
+        defer _ = arena.reset(.retain_capacity);
+
+        const css_import = chunk.content.css.imports_in_chunk_in_order.at(chunk_index);
+
+        switch (css_import.kind) {
+            .layers => @panic("TODO:"),
+            .external_path => {
+                @panic("TODO: ");
+            },
+            .source_index => |idx| {
+                const css: *const bun.css.BundlerStyleSheet = c.graph.ast.items(.css)[idx.get()].?;
+                _ = css.toCssWithWriter(worker.allocator, &buffer_writer, bun.css.PrinterOptions{
+                    // TODO: make this more configurable
+                    .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                }) catch {
+                    @panic("TODO: HANDLE THIS ERROR!");
+                };
+                return CompileResult{
+                    .css = .{
+                        .code = buffer_writer.getWritten(),
+                        .source_index = idx.get(),
+                    },
+                };
+            },
+        }
     }
 
     fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
@@ -6906,10 +7091,10 @@ pub const LinkerContext = struct {
             .part_range = &part_range.part_range,
         } };
 
-        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
+        ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunkImpl(worker, ctx.c, ctx.chunk, part_range.part_range);
     }
 
-    fn generateCompileResultForJSChunk_(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, part_range: PartRange) CompileResult {
+    fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, part_range: PartRange) CompileResult {
         const trace = tracer(@src(), "generateCodeForFileInChunkJS");
         defer trace.end();
 
@@ -6943,6 +7128,120 @@ pub const LinkerContext = struct {
                 .source_index = part_range.source_index.get(),
             },
         };
+    }
+
+    // This runs after we've already populated the compile results
+    fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
+        _ = chunk_index; // autofix
+        const c = ctx.c;
+        var j = StringJoiner{
+            .allocator = worker.allocator,
+            .watcher = .{
+                .input = chunk.unique_key,
+            },
+        };
+
+        var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
+
+        var newline_before_comment = false;
+
+        // TODO: css banner
+        // if len(c.options.CSSBanner) > 0 {
+        // 	prevOffset.AdvanceString(c.options.CSSBanner)
+        // 	j.AddString(c.options.CSSBanner)
+        // 	prevOffset.AdvanceString("\n")
+        // 	j.AddString("\n")
+        // }
+
+        // TODO: (this is where we would put the imports)
+        // Generate any prefix rules now
+        // (THIS SHOULD BE SET WHEN GENERATING PREFIX RULES!)
+        newline_before_comment = true;
+
+        // TODO: meta
+
+        // Concatenate the generated CSS chunks together
+        const compile_results = chunk.compile_results_for_chunk;
+
+        var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
+        compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+
+        const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
+        for (compile_results) |compile_result| {
+            const source_index = compile_result.sourceIndex();
+
+            if (c.options.mode == .bundle and !c.options.minify_whitespace and Index.init(source_index).isValid()) {
+                if (newline_before_comment) {
+                    j.pushStatic("\n");
+                    line_offset.advance("\n");
+                }
+
+                const pretty = sources[source_index].path.pretty;
+
+                j.pushStatic("/* ");
+                line_offset.advance("/* ");
+
+                j.pushStatic(pretty);
+                line_offset.advance(pretty);
+
+                j.pushStatic(" */\n");
+                line_offset.advance(" */\n");
+            }
+
+            if (compile_result.code().len > 0) {
+                newline_before_comment = true;
+            }
+
+            // Save the offset to the start of the stored JavaScript
+            j.push(compile_result.code(), bun.default_allocator);
+
+            if (compile_result.source_map_chunk()) |source_map_chunk| {
+                if (c.options.source_maps != .none) {
+                    try compile_results_for_source_map.append(worker.allocator, CompileResultForSourceMap{
+                        .source_map_chunk = source_map_chunk,
+                        .generated_offset = line_offset.value,
+                        .source_index = compile_result.sourceIndex(),
+                    });
+                }
+
+                line_offset.reset();
+            } else {
+                line_offset.advance(compile_result.code());
+            }
+        }
+
+        // Make sure the file ends with a newline
+        j.ensureNewlineAtEnd();
+        // if c.options.UnsupportedCSSFeatures.Has(compat.InlineStyle) {
+        // 	slashTag = ""
+        // }
+        // c.maybeAppendLegalComments(c.options.LegalComments, legalCommentList, chunk, &j, slashTag)
+
+        // if len(c.options.CSSFooter) > 0 {
+        // 	j.AddString(c.options.CSSFooter)
+        // 	j.AddString("\n")
+        // }
+
+        chunk.intermediate_output = c.breakOutputIntoPieces(
+            worker.allocator,
+            &j,
+            @as(u32, @truncate(ctx.chunks.len)),
+        ) catch bun.outOfMemory();
+        // TODO: meta contents
+
+        chunk.isolated_hash = c.generateIsolatedHash(chunk);
+        // chunk.is_executable = is_executable;
+
+        if (c.options.source_maps != .none) {
+            const can_have_shifts = chunk.intermediate_output == .pieces;
+            chunk.output_source_map = try c.generateSourceMapForChunk(
+                chunk.isolated_hash,
+                worker,
+                compile_results_for_source_map,
+                c.resolver.opts.output_dir,
+                can_have_shifts,
+            );
+        }
     }
 
     // This runs after we've already populated the compile results
@@ -9518,9 +9817,18 @@ pub const LinkerContext = struct {
             {
                 var total_count: usize = 0;
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
-                    chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
-                    total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
-                    chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
+                    switch (chunk.content) {
+                        .javascript => {
+                            chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                            total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
+                            chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
+                        },
+                        .css => {
+                            chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
+                            total_count += chunk.content.css.imports_in_chunk_in_order.len;
+                            chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len) catch bun.outOfMemory();
+                        },
+                    }
                 }
 
                 debug(" START {d} compiling part ranges", .{total_count});
@@ -9530,18 +9838,38 @@ pub const LinkerContext = struct {
                 var remaining_part_ranges = combined_part_ranges;
                 var batch = ThreadPoolLib.Batch{};
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
-                    for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
-                        remaining_part_ranges[0] = .{
-                            .part_range = part_range,
-                            .i = @as(u32, @truncate(i)),
-                            .task = ThreadPoolLib.Task{
-                                .callback = &generateCompileResultForJSChunk,
-                            },
-                            .ctx = chunk_ctx,
-                        };
-                        batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+                    switch (chunk.content) {
+                        .javascript => {
+                            for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
+                                remaining_part_ranges[0] = .{
+                                    .part_range = part_range,
+                                    .i = @as(u32, @truncate(i)),
+                                    .task = ThreadPoolLib.Task{
+                                        .callback = &generateCompileResultForJSChunk,
+                                    },
+                                    .ctx = chunk_ctx,
+                                };
+                                batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
 
-                        remaining_part_ranges = remaining_part_ranges[1..];
+                                remaining_part_ranges = remaining_part_ranges[1..];
+                            }
+                        },
+                        .css => {
+                            for (chunk.content.css.imports_in_chunk_in_order.slice(), 0..) |css_import, i| {
+                                _ = css_import; // autofix
+                                remaining_part_ranges[0] = .{
+                                    .part_range = .{},
+                                    .i = @as(u32, @truncate(i)),
+                                    .task = ThreadPoolLib.Task{
+                                        .callback = &generateCompileResultForCssChunk,
+                                    },
+                                    .ctx = chunk_ctx,
+                                };
+                                batch.push(ThreadPoolLib.Batch.from(&remaining_part_ranges[0].task));
+
+                                remaining_part_ranges = remaining_part_ranges[1..];
+                            }
+                        },
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
@@ -9563,7 +9891,7 @@ pub const LinkerContext = struct {
                 wait_group.init();
                 wait_group.counter = @as(u32, @truncate(chunks.len));
 
-                try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunkJS, chunks);
+                try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunk, chunks);
             }
         }
 
@@ -9924,7 +10252,7 @@ pub const LinkerContext = struct {
                                 },
                             },
                             .hash = chunk.template.placeholder.hash,
-                            .loader = .js,
+                            .loader = chunk.content.loader(),
                             .input_path = input_path,
                             .display_size = @as(u32, @truncate(display_size)),
                             .output_kind = if (chunk.entry_point.is_entry_point)
@@ -10423,6 +10751,7 @@ pub const LinkerContext = struct {
         parts: []bun.BabyList(js_ast.Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         file_entry_bits: []AutoBitSet,
+        css_reprs: []?*bun.css.BundlerStyleSheet,
     ) void {
         if (!c.graph.files_live.isSet(source_index))
             return;
@@ -10452,6 +10781,23 @@ pub const LinkerContext = struct {
                 },
             );
 
+        if (css_reprs[source_index]) |css| {
+            _ = css; // autofix
+            for (import_records[source_index].slice()) |*record| {
+                c.markFileReachableForCodeSplitting(
+                    record.source_index.get(),
+                    entry_points_count,
+                    distances,
+                    out_dist,
+                    parts,
+                    import_records,
+                    file_entry_bits,
+                    css_reprs,
+                );
+            }
+            return;
+        }
+
         // TODO: CSS AST
         var imports_a_boundary = false;
         const use_directive = c.graph.useDirectiveBoundary(source_index);
@@ -10468,6 +10814,7 @@ pub const LinkerContext = struct {
                     parts,
                     import_records,
                     file_entry_bits,
+                    css_reprs,
                 );
             }
         }
@@ -10490,6 +10837,7 @@ pub const LinkerContext = struct {
                         parts,
                         import_records,
                         file_entry_bits,
+                        css_reprs,
                     );
                 }
             }
@@ -10503,6 +10851,7 @@ pub const LinkerContext = struct {
         parts: []bun.BabyList(js_ast.Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
+        css_reprs: []?*bun.css.BundlerStyleSheet,
     ) void {
         if (comptime bun.Environment.allow_assert) {
             debugTreeShake("markFileLiveForTreeShaking({d}, {s}) = {s}", .{
@@ -10526,6 +10875,22 @@ pub const LinkerContext = struct {
 
         if (source_index >= c.graph.ast.len) {
             bun.assert(false);
+            return;
+        }
+
+        if (css_reprs[source_index]) |css| {
+            _ = css; // autofix
+            for (import_records[source_index].slice()) |*record| {
+                const other_source_index = record.source_index.get();
+                c.markFileLiveForTreeShaking(
+                    other_source_index,
+                    side_effects,
+                    parts,
+                    import_records,
+                    entry_point_kinds,
+                    css_reprs,
+                );
+            }
             return;
         }
 
@@ -10564,6 +10929,7 @@ pub const LinkerContext = struct {
                         parts,
                         import_records,
                         entry_point_kinds,
+                        css_reprs,
                     );
                 } else if (record.is_external_without_side_effects) {
                     // This can be removed if it's unused
@@ -10590,6 +10956,7 @@ pub const LinkerContext = struct {
                     parts,
                     import_records,
                     entry_point_kinds,
+                    css_reprs,
                 );
             }
         }
@@ -10603,6 +10970,7 @@ pub const LinkerContext = struct {
         parts: []bun.BabyList(js_ast.Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
+        css_reprs: []?*bun.css.BundlerStyleSheet,
     ) void {
         const part: *js_ast.Part = &parts[source_index].slice()[part_index];
 
@@ -10633,6 +11001,7 @@ pub const LinkerContext = struct {
             parts,
             import_records,
             entry_point_kinds,
+            css_reprs,
         );
 
         if (Environment.enable_logs and part.dependencies.slice().len == 0) {
@@ -10655,6 +11024,7 @@ pub const LinkerContext = struct {
                 parts,
                 import_records,
                 entry_point_kinds,
+                css_reprs,
             );
         }
     }
@@ -12054,10 +12424,55 @@ pub const Chunk = struct {
         cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
     };
 
+    pub const CssChunk = struct {
+        imports_in_chunk_in_order: BabyList(CssImportOrder) = .{},
+    };
+
+    const CssImportKind = enum {
+        source_index,
+        external_path,
+        import_layers,
+    };
+
+    pub const CssImportOrder = struct {
+        // TODO: all these boiz
+        conditions: BabyList(void) = .{},
+        condition_import_records: BabyList(ImportRecord) = .{},
+
+        kind: union(enum) {
+            // kind == .import_layers
+            layers: [][]const u8,
+            // kind == .external_path
+            external_path: bun.fs.Path,
+            // kind == .source_idnex
+            source_index: Index,
+        },
+    };
+
     pub const ImportsFromOtherChunks = std.AutoArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List);
 
-    pub const Content = union(enum) {
+    pub const ContentKind = enum {
+        javascript,
+        css,
+    };
+
+    pub const Content = union(ContentKind) {
         javascript: JavaScriptChunk,
+        css: CssChunk,
+
+        pub fn loader(this: *const Content) Loader {
+            return switch (this.*) {
+                .javascript => .js,
+                .css => .css,
+            };
+        }
+
+        pub fn ext(this: *const Content) string {
+            return switch (this.*) {
+                .javascript => "js",
+                .css => "css",
+            };
+        }
     };
 };
 
@@ -12129,6 +12544,12 @@ const CompileResult = union(enum) {
         source_index: Index.Int,
         result: js_printer.PrintResult,
     },
+    css: struct {
+        source_index: Index.Int,
+        code: []const u8,
+        // TODO: we need to do this
+        source_map: ?bun.sourcemap.Chunk = null,
+    },
 
     pub const empty = CompileResult{
         .javascript = .{
@@ -12147,7 +12568,7 @@ const CompileResult = union(enum) {
                 .result => |r2| r2.code,
                 else => "",
             },
-            // else => "",
+            .css => |*c| c.code,
         };
     }
 
@@ -12157,12 +12578,14 @@ const CompileResult = union(enum) {
                 .result => |r2| r2.source_map,
                 else => null,
             },
+            .css => |*c| c.source_map,
         };
     }
 
     pub fn sourceIndex(this: *const CompileResult) Index.Int {
         return switch (this.*) {
             .javascript => |r| r.source_index,
+            .css => |*c| c.source_index,
             // else => 0,
         };
     }

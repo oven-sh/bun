@@ -131,6 +131,18 @@ describe("napi", () => {
       expect(result).toBe("success!");
     });
   });
+
+  describe("napi_run_script", () => {
+    it("evaluates a basic expression", () => {
+      checkSameOutput("eval_wrapper", ["5 * (1 + 2)"]);
+    });
+    it("provides the right this value", () => {
+      checkSameOutput("eval_wrapper", ["this === global"]);
+    });
+    it("propagates exceptions", () => {
+      checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

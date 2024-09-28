@@ -13,19 +13,26 @@ if (typeof fn !== "function") {
 }
 
 // pass GC runner as first argument
-const result = fn.apply(null, [
-  () => {
-    if (process.isBun) {
-      Bun.gc(true);
-    } else if (global.gc) {
-      global.gc();
-    }
-    console.log("GC did run");
-  },
-  ...eval(process.argv[3] ?? "[]"),
-]);
-if (result instanceof Promise) {
-  result.then(x => console.log("resolved to", x));
-} else if (result) {
-  throw new Error(result);
+try {
+  const result = fn.apply(null, [
+    () => {
+      if (process.isBun) {
+        Bun.gc(true);
+      } else if (global.gc) {
+        global.gc();
+      }
+      console.log("GC did run");
+    },
+    ...eval(process.argv[3] ?? "[]"),
+  ]);
+  if (result instanceof Promise) {
+    result.then(x => console.log("resolved to", x));
+  } else if (process.argv[2] == "eval_wrapper") {
+    // eval_wrapper just returns the result of the expression so it shouldn't be an error
+    console.log(result);
+  } else if (result) {
+    throw new Error(result);
+  }
+} catch (e) {
+  console.log("threw", e.name);
 }

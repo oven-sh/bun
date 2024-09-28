@@ -231,6 +231,7 @@
     __ZNK2v87Integer5ValueEv;
     __ZN2v812api_internal17FromJustIsNothingEv;
     __ZNK2v85Value11NumberValueENS_5LocalINS_7ContextEEE;
+    __ZNK2v85Value7IsArrayEv;
     _uv_os_getpid;
     _uv_os_getppid;
 };

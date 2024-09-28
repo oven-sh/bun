@@ -209,7 +209,8 @@ describe("FunctionTemplate", () => {
 describe("Function", () => {
   // TODO call native from native and napi from native
   it("correctly receives all its arguments from JS", () => {
-    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
+    // this will print out all the values we pass it
+    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}, [5, 6]]);
     checkSameOutput("print_native_function", []);
   });
 

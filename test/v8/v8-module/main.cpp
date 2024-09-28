@@ -37,6 +37,8 @@ using namespace v8;
     LOG_EXPR(v->IsNumber());                                                   \
     LOG_EXPR(v->IsUint32());                                                   \
     LOG_EXPR(v->IsInt32());                                                    \
+    LOG_EXPR(v->IsArray());                                                    \
+    LOG_EXPR(v->IsFunction());                                                 \
   } while (0)
 
 namespace v8tests {
@@ -78,7 +80,9 @@ static std::string describe(Isolate *isolate, Local<Value> value) {
     result += "()";
     return result;
   } else if (value->IsObject()) {
-    return "[object Object]";
+    return "{object}";
+  } else if (value->IsArray()) {
+    return "[array]";
   } else if (value->IsNumber()) {
     return std::to_string(value.As<Number>()->Value());
   } else {
@@ -133,8 +137,8 @@ perform_number_and_integer_test(const FunctionCallbackInfo<Value> &info,
   LOG_MAYBE(v8_number->Uint32Value(context));
   LOG_VALUE_KIND(v8_number);
 
-  // we need to check if number can be a uint32 or a int32 before running these
-  // tests. first, check if it has a fractional part
+  // we need to check if number can be a uint32 or a int32 before running
+  // these tests. first, check if it has a fractional part
   double _int_part;
   if (modf(number, &_int_part) == 0.0) {
     if (number >= 0 && number <= UINT32_MAX) {
@@ -501,9 +505,11 @@ void return_this(const FunctionCallbackInfo<Value> &info) {
 
 void run_function_from_js(const FunctionCallbackInfo<Value> &info) {
   // extract function, this value, and arguments
-  auto context = info.GetIsolate()->GetCurrentContext();
-  auto function = info[0].As<Function>();
-  auto jsThis = info[1];
+  Local<Context> context = info.GetIsolate()->GetCurrentContext();
+  Local<Value> function_generic = info[0];
+  LOG_VALUE_KIND(function_generic);
+  Local<Function> function = function_generic.As<Function>();
+  Local<Value> jsThis = info[1];
   int num_args = info.Length() - 2;
 
   std::vector<Local<Value>> args(num_args);
@@ -669,8 +675,8 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   }
 
   // add more internal fields to the objects after the first collection, to
-  // ensure these can also be traced. we make a new handlescope here so that the
-  // new strings we allocate are only referenced by the objects
+  // ensure these can also be traced. we make a new handlescope here so that
+  // the new strings we allocate are only referenced by the objects
   {
     HandleScope inner_hs(isolate);
     for (auto &o : objects) {
@@ -719,9 +725,9 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   Local<Number> n = escape_smi(isolate);
   Local<Boolean> t = escape_true(isolate);
 
-  // we don't trigger GC here because Bun's handle scope eagerly overwrites all
-  // handles once it goes out of scope, so the original handles created in those
-  // functions are already invalidated.
+  // we don't trigger GC here because Bun's handle scope eagerly overwrites
+  // all handles once it goes out of scope, so the original handles created in
+  // those functions are already invalidated.
 
   LOG_VALUE_KIND(s);
   LOG_VALUE_KIND(n);

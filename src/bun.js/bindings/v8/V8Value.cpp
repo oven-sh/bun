@@ -66,6 +66,12 @@ bool Value::IsFunction() const
     return JSC::jsTypeofIsFunction(defaultGlobalObject(), localToJSValue());
 }
 
+bool Value::IsArray() const
+{
+    JSC::JSValue val = localToJSValue();
+    return val.isCell() && val.asCell()->type() == JSC::ArrayType;
+}
+
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
     auto js_value = localToJSValue();

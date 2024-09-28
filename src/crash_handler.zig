@@ -168,6 +168,10 @@ pub fn crashHandler(
 ) noreturn {
     @setCold(true);
 
+    if (bun.Environment.isWindows) {
+        @breakpoint();
+    }
+
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
 

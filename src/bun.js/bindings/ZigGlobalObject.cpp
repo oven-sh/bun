@@ -147,7 +147,7 @@
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "ErrorCode.h"
-#include "v8/V8GlobalInternals.h"
+#include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -2729,11 +2729,11 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     m_V8GlobalInternals.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, v8::GlobalInternals>::Initializer& init) {
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, v8::shim::GlobalInternals>::Initializer& init) {
             init.set(
-                v8::GlobalInternals::create(
+                v8::shim::GlobalInternals::create(
                     init.vm,
-                    v8::GlobalInternals::createStructure(init.vm, init.owner),
+                    v8::shim::GlobalInternals::createStructure(init.vm, init.owner),
                     jsDynamicCast<Zig::GlobalObject*>(init.owner)));
         });
 

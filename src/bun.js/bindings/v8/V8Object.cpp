@@ -1,9 +1,11 @@
 #include "V8Object.h"
-#include "V8InternalFieldObject.h"
+#include "shim/InternalFieldObject.h"
 #include "V8HandleScope.h"
-
 #include "JavaScriptCore/ConstructData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Object)
 
 using JSC::Identifier;
 using JSC::JSFinalObject;
@@ -14,7 +16,7 @@ using JSC::PutPropertySlot;
 
 namespace v8 {
 
-using FieldContainer = InternalFieldObject::FieldContainer;
+using FieldContainer = shim::InternalFieldObject::FieldContainer;
 
 static FieldContainer* getInternalFieldsContainer(Object* object)
 {
@@ -22,7 +24,7 @@ static FieldContainer* getInternalFieldsContainer(Object* object)
 
     // TODO(@190n): do we need to unwrap proxies like node-jsc did?
 
-    if (auto ifo = JSC::jsDynamicCast<InternalFieldObject*>(js_object)) {
+    if (auto ifo = JSC::jsDynamicCast<shim::InternalFieldObject*>(js_object)) {
         return ifo->internalFields();
     }
 
@@ -39,8 +41,8 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
 {
     Zig::GlobalObject* globalObject = context->globalObject();
     JSObject* object = localToObjectPointer<JSObject>();
-    JSValue k = key->localToJSValue(globalObject->V8GlobalInternals());
-    JSValue v = value->localToJSValue(globalObject->V8GlobalInternals());
+    JSValue k = key->localToJSValue();
+    JSValue v = value->localToJSValue();
     auto& vm = globalObject->vm();
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -67,7 +69,7 @@ void Object::SetInternalField(int index, Local<Data> data)
     RELEASE_ASSERT(index >= 0 && index < fields->size(), "internal field index is out of bounds");
     JSObject* js_object = localToObjectPointer<JSObject>();
     auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
-    fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue(globalObject->V8GlobalInternals()));
+    fields->at(index).set(globalObject->vm(), localToCell(), data->localToJSValue());
 }
 
 Local<Data> Object::GetInternalField(int index)
@@ -80,7 +82,7 @@ Local<Data> Object::SlowGetInternalField(int index)
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
     auto* globalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject());
-    HandleScope* handleScope = Isolate::fromGlobalObject(globalObject)->currentHandleScope();
+    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);
         return handleScope->createLocal<Data>(globalObject->vm(), field.get());
@@ -88,4 +90,4 @@ Local<Data> Object::SlowGetInternalField(int index)
     return handleScope->createLocal<Data>(globalObject->vm(), JSC::jsUndefined());
 }
 
-}
+} // namespace v8

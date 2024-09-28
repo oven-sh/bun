@@ -6622,31 +6622,31 @@ pub const LinkerContext = struct {
                 );
             }
 
-            // When using server components with a separated SSR graph, these
-            // components are not required to be referenced; The framework may
-            // use a dynamic import to get a handle to it.
-            if (c.framework) |fw| if (fw.server_components) |sc| {
-                if (sc.separate_ssr_graph) {
-                    const slice = c.parse_graph.server_component_boundaries.list.slice();
-                    for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
-                        switch (use) {
-                            .client => {
-                                inline for (.{ source_index, ssr_source_index }) |idx| {
-                                    c.markFileLiveForTreeShaking(
-                                        idx,
-                                        side_effects,
-                                        parts,
-                                        import_records,
-                                        entry_point_kinds,
-                                    );
-                                }
-                            },
-                            .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
-                            else => unreachable,
-                        }
-                    }
-                }
-            };
+            // // When using server components with a separated SSR graph, these
+            // // components are not required to be referenced; The framework may
+            // // use a dynamic import to get a handle to it.
+            // if (c.framework) |fw| if (fw.server_components) |sc| {
+            //     if (sc.separate_ssr_graph) {
+            //         const slice = c.parse_graph.server_component_boundaries.list.slice();
+            //         for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
+            //             switch (use) {
+            //                 .client => {
+            //                     inline for (.{ source_index, ssr_source_index }) |idx| {
+            //                         c.markFileLiveForTreeShaking(
+            //                             idx,
+            //                             side_effects,
+            //                             parts,
+            //                             import_records,
+            //                             entry_point_kinds,
+            //                         );
+            //                     }
+            //                 },
+            //                 .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
+            //                 else => unreachable,
+            //             }
+            //         }
+            //     }
+            // };
         }
 
         {
@@ -6679,28 +6679,28 @@ pub const LinkerContext = struct {
                     file_entry_bits,
                 );
 
-                if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
-                    const slice = c.parse_graph.server_component_boundaries.list.slice();
-                    for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
-                        switch (use) {
-                            .client => {
-                                inline for (.{ source_index, ssr_source_index }) |idx| {
-                                    c.markFileReachableForCodeSplitting(
-                                        idx,
-                                        i,
-                                        distances,
-                                        0,
-                                        parts,
-                                        import_records,
-                                        file_entry_bits,
-                                    );
-                                }
-                            },
-                            .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
-                            else => unreachable,
-                        }
-                    }
-                };
+                // if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
+                //     const slice = c.parse_graph.server_component_boundaries.list.slice();
+                //     for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
+                //         switch (use) {
+                //             .client => {
+                //                 inline for (.{ source_index, ssr_source_index }) |idx| {
+                //                     c.markFileReachableForCodeSplitting(
+                //                         idx,
+                //                         i,
+                //                         distances,
+                //                         0,
+                //                         parts,
+                //                         import_records,
+                //                         file_entry_bits,
+                //                     );
+                //                 }
+                //             },
+                //             .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
+                //             else => unreachable,
+                //         }
+                //     }
+                // };
             }
         }
     }

@@ -4846,6 +4846,10 @@ pub const LinkerContext = struct {
             var named_imports: []js_ast.Ast.NamedImports = this.graph.ast.items(.named_imports);
             var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
 
+            const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
+            const tla_checks = this.parse_graph.ast.items(.tla_check);
+            const input_files = this.parse_graph.input_files.items(.source);
+
             const export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             const exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             const module_refs: []Ref = this.graph.ast.items(.module_ref);
@@ -4862,13 +4866,9 @@ pub const LinkerContext = struct {
                 // does it have a JS AST?
                 if (!(id < import_records_list.len)) continue;
 
-                const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
-                const tla_checks = this.parse_graph.ast.items(.tla_check);
-                const input_files = this.parse_graph.input_files.items(.source);
-                const meta_flags = this.graph.meta.items(.flags);
                 const import_records: []ImportRecord = import_records_list[id].slice();
 
-                _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, meta_flags);
+                _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags);
 
                 for (import_records) |record| {
                     if (!record.source_index.isValid()) {
@@ -7563,11 +7563,10 @@ pub const LinkerContext = struct {
         meta_flags: []JSMeta.Flags,
     ) js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
-        const result_top_level_await_keyword = tla_keywords[source_index];
 
         if (result_tla_check.depth == 0) {
             result_tla_check.depth = 1;
-            if (result_top_level_await_keyword.len > 0) {
+            if (tla_keywords[source_index].len > 0) {
                 result_tla_check.parent = source_index;
             }
 

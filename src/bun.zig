@@ -3471,7 +3471,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
+pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
             @compileLog(a);
@@ -3479,7 +3479,10 @@ pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
             @compileError("A != B");
         }
     }
-    return assert(a == b);
+    if (!Environment.allow_assert) return;
+    if (a != b) {
+        Output.panic("Assertion failure: {} != {}", .{ a, b });
+    }
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
@@ -3819,4 +3822,50 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
             return null;
         }
     };
+}
+
+pub const DebugThreadLock = if (Environment.allow_assert)
+    struct {
+        owning_thread: std.Thread.Id,
+
+        pub fn initFromCurrentThread() @This() {
+            return .{ .owning_thread = std.Thread.getCurrentId() };
+        }
+
+        pub fn assertOwningThread(lock: DebugThreadLock) void {
+            assert(std.Thread.getCurrentId() == lock.owning_thread);
+        }
+    }
+else
+    struct {
+        pub inline fn initFromCurrentThread() @This() {
+            return .{};
+        }
+
+        pub inline fn assertOwningThread(lock: DebugThreadLock) void {
+            _ = lock;
+        }
+    };
+
+pub fn assertIsDefaultAllocator(ptr: anytype) void {
+    if (!Environment.isDebug) return;
+    assert(isOwnedByDefaultAllocator(ptr)); // must use default_allocator
+}
+
+pub fn assertIsNotDefaultAllocator(ptr: anytype) void {
+    if (!Environment.isDebug) return;
+    assert(!isOwnedByDefaultAllocator(ptr)); // must not use default_allocator
+}
+
+pub fn isOwnedByDefaultAllocator(ptr: anytype) bool {
+    switch (@typeInfo(@TypeOf(ptr))) {
+        .Pointer => |info| {
+            const p: *const anyopaque = switch (info.size) {
+                .One, .C => ptr,
+                .Slice, .Many => &ptr[0],
+            };
+            return Mimalloc.mi_is_in_heap_region(p);
+        },
+        else => @compileError(@typeName(@TypeOf(ptr)) ++ "is not a pointer (cannot be an optional)"),
+    }
 }

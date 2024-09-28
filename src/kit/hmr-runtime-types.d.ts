@@ -3,7 +3,8 @@ type Id = string;
 interface Config {
   main: Id;
   /** If available, this is the Id of `react-refresh/runtime` */
-  refresh: Id;
+  refresh?: Id;
+  separateSSRGraph?: true;
 }
 
 /**

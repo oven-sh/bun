@@ -3655,7 +3655,7 @@ pub const Parser = struct {
             }
         }
 
-        if (p.options.bundle and parts.items.len < 4 and parts.items.len > 0) {
+        if (p.options.bundle and parts.items.len < 4 and parts.items.len > 0 and !p.options.features.hot_module_reloading) {
 
             // Specially handle modules shaped like this:
             //

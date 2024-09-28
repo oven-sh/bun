@@ -329,6 +329,7 @@ set(BUN_KIT_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/kit-codegen.ts)
 file(GLOB_RECURSE BUN_KIT_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/kit/*.ts
   ${CWD}/src/kit/*/*.ts
+  ${CWD}/src/kit/*/*.css
 )
 
 list(APPEND BUN_KIT_RUNTIME_CODEGEN_SOURCES

@@ -123,6 +123,7 @@ const MinifyRenamer = renamer.MinifyRenamer;
 const Scope = js_ast.Scope;
 const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
+const debugPartRanges = Output.scoped(.PartRanges, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 
@@ -4874,6 +4875,27 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "findAllImportedPartsInJSOrder");
         defer trace.end();
 
+        // The dev server never compiles chunks, and requires every reachable
+        // file to be printed, So the logic is special-cased.
+        if (this.kit_dev_server != null) {
+            const chunk = &chunks[0];
+            const part_ranges = try this.allocator.alloc(PartRange, this.graph.reachable_files.len);
+
+            const parts = this.parse_graph.ast.items(.parts);
+            for (this.graph.reachable_files, part_ranges) |source_index, *part_range| {
+                part_range.* = .{
+                    .source_index = source_index,
+                    .part_index_begin = 0,
+                    .part_index_end = parts[source_index.get()].len,
+                };
+            }
+
+            // TODO(@paperdave): this ptrCast should not be needed.
+            chunk.content.javascript.files_in_chunk_order = @ptrCast(this.graph.reachable_files);
+            chunk.content.javascript.parts_in_chunk_in_order = part_ranges;
+            return;
+        }
+
         var part_ranges_shared = std.ArrayList(PartRange).init(temp_allocator);
         var parts_prefix_shared = std.ArrayList(PartRange).init(temp_allocator);
         defer part_ranges_shared.deinit();
@@ -4893,9 +4915,6 @@ pub const LinkerContext = struct {
         part_ranges_shared: *std.ArrayList(PartRange),
         parts_prefix_shared: *std.ArrayList(PartRange),
     ) !void {
-        // TODO: for Kit, just add every file that is reachable
-        // currently a chunk is being printed twice.
-
         var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator, chunk.files_with_parts_in_chunk.count());
         defer chunk_order_array.deinit();
         const distances = this.graph.files.items(.distance_from_entry_point);
@@ -6570,16 +6589,18 @@ pub const LinkerContext = struct {
             if (c.framework) |fw| if (fw.server_components) |sc| {
                 if (sc.separate_ssr_graph) {
                     const slice = c.parse_graph.server_component_boundaries.list.slice();
-                    for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
+                    for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
                         switch (use) {
                             .client => {
-                                c.markFileLiveForTreeShaking(
-                                    ssr_source_index,
-                                    side_effects,
-                                    parts,
-                                    import_records,
-                                    entry_point_kinds,
-                                );
+                                inline for (.{ source_index, ssr_source_index }) |idx| {
+                                    c.markFileLiveForTreeShaking(
+                                        idx,
+                                        side_effects,
+                                        parts,
+                                        import_records,
+                                        entry_point_kinds,
+                                    );
+                                }
                             },
                             .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
                             else => unreachable,
@@ -6621,18 +6642,20 @@ pub const LinkerContext = struct {
 
                 if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
                     const slice = c.parse_graph.server_component_boundaries.list.slice();
-                    for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
+                    for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
                         switch (use) {
                             .client => {
-                                c.markFileReachableForCodeSplitting(
-                                    ssr_source_index,
-                                    i,
-                                    distances,
-                                    0,
-                                    parts,
-                                    import_records,
-                                    file_entry_bits,
-                                );
+                                inline for (.{ source_index, ssr_source_index }) |idx| {
+                                    c.markFileReachableForCodeSplitting(
+                                        idx,
+                                        i,
+                                        distances,
+                                        0,
+                                        parts,
+                                        import_records,
+                                        file_entry_bits,
+                                    );
+                                }
                             },
                             .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
                             else => unreachable,
@@ -10005,6 +10028,18 @@ pub const LinkerContext = struct {
                 var batch = ThreadPoolLib.Batch{};
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
                     for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
+                        if (Environment.enable_logs) {
+                            debugPartRanges(
+                                "Part Range: {s} {s} ({d}..{d})",
+                                .{
+                                    c.parse_graph.input_files.items(.source)[part_range.source_index.get()].path.pretty,
+                                    @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer()),
+                                    part_range.part_index_begin,
+                                    part_range.part_index_end,
+                                },
+                            );
+                        }
+
                         remaining_part_ranges[0] = .{
                             .part_range = part_range,
                             .i = @truncate(i),
@@ -10055,8 +10090,6 @@ pub const LinkerContext = struct {
                         );
                     }
                 }
-
-                // kit.main_path = default_allocator.dupe(u8, c.parse_graph.input_files.items(.source)[chunks[0].entry_point.source_index].path.pretty) catch bun.outOfMemory();
 
                 return std.ArrayList(options.OutputFile).init(bun.default_allocator);
             }
@@ -10611,58 +10644,6 @@ pub const LinkerContext = struct {
             }
         }
 
-        // if (react_client_components_manifest.len > 0) {
-        //     switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-        //         &pathbuf,
-        //         JSC.Node.Arguments.WriteFile{
-        //             .data = JSC.Node.StringOrBuffer{
-        //                 .buffer = JSC.Buffer{
-        //                     .buffer = .{
-        //                         .ptr = @constCast(react_client_components_manifest.ptr),
-        //                         // TODO: handle > 4 GB files
-        //                         .len = @as(u32, @truncate(react_client_components_manifest.len)),
-        //                         .byte_len = @as(u32, @truncate(react_client_components_manifest.len)),
-        //                     },
-        //                 },
-        //             },
-        //             .encoding = .buffer,
-        //             .dirfd = bun.toFD(root_dir.fd),
-        //             .file = .{
-        //                 .path = JSC.Node.PathLike{
-        //                     .string = JSC.PathString.init(components_manifest_path),
-        //                 },
-        //             },
-        //         },
-        //     )) {
-        //         .err => |err| {
-        //             const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
-        //             defer utf8.deinit();
-        //             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-        //                 bun.fmt.quote(utf8.slice()),
-        //                 bun.fmt.quote(components_manifest_path),
-        //             }) catch unreachable;
-        //             return error.WriteFailed;
-        //         },
-        //         .result => {},
-        //     }
-
-        //     output_files.appendAssumeCapacity(
-        //         options.OutputFile.init(
-        //             options.OutputFile.Options{
-        //                 .data = .{
-        //                     .saved = 0,
-        //                 },
-        //                 .loader = .file,
-        //                 .input_loader = .file,
-        //                 .output_kind = .@"component-manifest",
-        //                 .size = @as(u32, @truncate(react_client_components_manifest.len)),
-        //                 .input_path = bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable,
-        //                 .output_path = bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable,
-        //             },
-        //         ),
-        //     );
-        // }
-
         {
             const offset = output_files.items.len;
             output_files.items.len += c.parse_graph.additional_output_files.items.len;
@@ -10784,12 +10765,13 @@ pub const LinkerContext = struct {
 
         bits.set(entry_points_count);
 
-        if (comptime bun.Environment.allow_assert)
+        if (comptime bun.Environment.enable_logs)
             debugTreeShake(
-                "markFileReachableForCodeSplitting(entry: {d}): {s} ({d})",
+                "markFileReachableForCodeSplitting(entry: {d}): {s} {s} ({d})",
                 .{
                     entry_points_count,
-                    c.parse_graph.input_files.get(source_index).source.path.text,
+                    c.parse_graph.input_files.items(.source)[source_index].path.pretty,
+                    @tagName(c.parse_graph.ast.items(.target)[source_index].kitRenderer()),
                     out_dist,
                 },
             );
@@ -10837,10 +10819,11 @@ pub const LinkerContext = struct {
         entry_point_kinds: []EntryPoint.Kind,
     ) void {
         if (comptime bun.Environment.allow_assert) {
-            debugTreeShake("markFileLiveForTreeShaking({d}, {s}) = {s}", .{
+            debugTreeShake("markFileLiveForTreeShaking({d}, {s} {s}) = {s}", .{
                 source_index,
                 c.parse_graph.input_files.get(source_index).source.path.pretty,
-                if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
+                @tagName(c.parse_graph.ast.items(.target)[source_index].kitRenderer()),
+                if (c.graph.files_live.isSet(source_index)) "already seen" else "first seen",
             });
         }
 
@@ -10848,12 +10831,6 @@ pub const LinkerContext = struct {
             debugTreeShake("end()", .{});
         };
 
-        if (c.graph.files_live.isSet(source_index)) {
-            if (Environment.allow_assert) {
-                debugTreeShake("already set", .{});
-            }
-            return;
-        }
         c.graph.files_live.set(source_index);
 
         if (source_index >= c.graph.ast.len) {

@@ -1,22 +1,18 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
 // On the server, communication is facilitated using a secret global.
-import { loadModule, LoadModuleType, replaceModule } from './hmr-module';
+import { loadModule, LoadModuleType, replaceModules } from './hmr-module';
 import { showErrorOverlay } from './client/overlay';
+import { initHmrWebSocket } from './client/websocket';
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
+
 // Client-side features.
 if (mode === 'client') {
   try {
-    let refresh_runtime: any;
-    const { refresh } = config;
-    if (refresh) {
-      refresh_runtime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
-      refresh_runtime.injectIntoGlobalHook(window);
-    }
 
     const main = loadModule(config.main, LoadModuleType.AssertPresent);
 
@@ -24,28 +20,7 @@ if (mode === 'client') {
       console.warn(`Framework client entry point (${config.main}) was not expected to export anything, found: ${Object.keys(main.exports).join(', ')}`);
     }
 
-    const ws = new WebSocket('/_bun/hmr');
-    ws.onopen = (ev) => {
-      console.log('Open!');
-    }
-    ws.onmessage = (ev) => {
-      // if(typeof ev.data === 'string') {
-      //   console.log(ev.data);
-      //   if(ev.data !== 'bun!') {
-      //     const evaluated = (0, eval)(ev.data);
-
-      //     if (refresh) {
-      //       refresh_runtime.performReactRefresh();
-      //     }
-      //   }
-      // }
-    }
-    ws.onclose = (ev) => {
-      console.log("Closed");
-    }
-    ws.onerror = (ev) => {
-      console.error(ev);
-    }
+    initHmrWebSocket();
   } catch (e) {
     if (mode !== "client") throw e;
     showErrorOverlay(e);
@@ -79,14 +54,7 @@ if (mode === 'server')  {
       // TODO: support streaming
       return await response.text();
     },
-    registerUpdate(modules) {
-      for (const k in modules) {
-        input_graph[k] = modules[k];
-      }
-      for (const k in modules) {
-        replaceModule(k, modules[k]);
-      }
-    },
+    registerUpdate: replaceModules,
   };
 }
 

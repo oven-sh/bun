@@ -4145,16 +4145,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 _ = this.reloader.pending_count.fetchAdd(1, .monotonic);
 
                 BunDebugger__willHotReload();
-                var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
-
-                that.* = this.*;
+                const that = bun.new(HotReloadTask, this.*);
                 this.count = 0;
                 that.concurrent_task.task = Task.init(that);
                 this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
             }
 
             pub fn deinit(this: *HotReloadTask) void {
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
             }
         };
 

@@ -712,10 +712,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 
     if (comptime !Environment.isDebug and !Environment.enable_logs) {
         return struct {
-            pub fn isVisible() bool {
+            pub inline fn isVisible() bool {
                 return false;
             }
-            pub fn log(comptime _: string, _: anytype) void {}
+            pub inline fn log(comptime _: string, _: anytype) void {}
         };
     }
 

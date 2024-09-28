@@ -1,5 +1,6 @@
 import * as runtimeHelpers from "../runtime.bun.js";
 
+let refreshRuntime: any;
 const registry = new Map<Id, HotModule>();
 
 export type ModuleLoadFunction = (module: HotModule) => void;
@@ -57,21 +58,22 @@ export class HotModule {
     return (this._import_meta ??= initImportMeta(this));
   }
 
-  importBuiltin(id: string) {
+  /** Server-only */
+  declare importBuiltin: (id: string) => any;
+}
+
+if(mode === 'server') {
+  HotModule.prototype.importBuiltin = function (id: string) {
     return import.meta.require(id);
   }
 }
+
+
 
 function initImportMeta(m: HotModule): ImportMeta {
   throw new Error("TODO: import meta object");
 }
 
-// {
-//   const runtime = new HotModule(0);
-//   runtime.exports = runtimeHelpers;
-//   runtime.__esModule = true;
-//   registry.set(0, runtime);
-// }
 
 export function loadModule(key: Id, type: LoadModuleType): HotModule {
   let module = registry.get(key);
@@ -108,6 +110,47 @@ export function replaceModule(key: Id, load: ModuleLoadFunction) {
     module.exports = {};
     load(module);
     // TODO: repair live bindings
+  }
+}
+
+export function replaceModules(modules: any) {
+  for (const k in modules) {
+    input_graph[k] = modules[k];
+  }
+  for (const k in modules) {
+    try {
+      replaceModule(k, modules[k]);
+    } catch (err) {
+      // TODO: overlay for client
+      console.error(err);
+    }
+  }
+  if (mode === 'client' && refreshRuntime) {
+    refreshRuntime.performReactRefresh(window);
+  }
+}
+
+// {
+//   const runtime = new HotModule(0);
+//   runtime.exports = runtimeHelpers;
+//   runtime.__esModule = true;
+//   registry.set(0, runtime);
+// }
+
+if(mode === 'client') {
+  const { refresh } = config;
+  if (refresh) {
+    refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
+    refreshRuntime.injectIntoGlobalHook(window);
+  }
+}
+
+// TODO: Remove this after `react-server-dom-bun` is uploaded
+globalThis.__webpack_require__ = (id: string) => {
+  if(mode == 'server' && config.separateSSRGraph && !id.startsWith('ssr:')) {
+    return loadModule("ssr:" + id, LoadModuleType.UserDynamic).exports;
+  } else {
+    return loadModule(id, LoadModuleType.UserDynamic).exports;
   }
 }
 

@@ -19,7 +19,11 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     if (!bun.FeatureFlags.kit) return .undefined;
 
     bun.Output.warn(
-        \\Be advised that Bun Kit is experimental, and its API is likely to change.
+        \\Be advised that Bun Kit is highly experimental, and its API will have
+        \\breaking changes. Join the <magenta>#kit<r> Discord channel to help us find bugs
+        \\and suggest use-cases/features: <blue>https://bun.sh/discord<r>
+        \\
+        \\
     , .{});
     bun.Output.flush();
 
@@ -29,6 +33,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
         return .zero;
     };
 
+    // TODO: this should inherit the current VM, running on the main thread.
     const t = std.Thread.spawn(.{}, wipDevServer, .{options}) catch @panic("Failed to start");
     t.detach();
 
@@ -61,8 +66,8 @@ pub const Framework = struct {
                 .import_source = "react-refresh/runtime",
             },
             // TODO: embed these in bun
-            .entry_client = "./entry_client.tsx",
-            .entry_server = "./entry_server.tsx",
+            .entry_client = "./framework/client.tsx",
+            .entry_server = "./framework/server.tsx",
         };
     }
 

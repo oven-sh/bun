@@ -4,7 +4,7 @@
 //! Currently does not have a `deinit()`, as it is assumed to be alive for the
 //! remainder of this process' lifespan.
 pub const DevServer = @This();
-pub const debug = bun.Output.scoped(.Kit, false);
+pub const debug = bun.Output.Scoped(.Kit, false);
 
 pub const Options = struct {
     cwd: []u8,
@@ -40,6 +40,7 @@ server_fetch_function_callback: JSC.Strong,
 server_register_update_callback: JSC.Strong,
 
 // Bundling
+generation: usize = 0,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
 framework: kit.Framework,
@@ -60,6 +61,8 @@ bundle_result: ?ExtraBundleData,
 
 // Debugging
 dump_dir: ?std.fs.Dir,
+
+main_thread_lock: bun.DebugThreadLock,
 
 pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
@@ -134,6 +137,8 @@ pub fn init(options: Options) !*DevServer {
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.new(DevServer, .{
+        .main_thread_lock = bun.DebugThreadLock.initFromCurrentThread(),
+
         .cwd = options.cwd,
         .app = app,
         .routes = options.routes,
@@ -144,19 +149,22 @@ pub fn init(options: Options) !*DevServer {
         .server_fetch_function_callback = .{},
         .server_register_update_callback = .{},
         .listener = null,
+        .generation = 0,
         .log = Log.init(default_allocator),
-        .client_graph = undefined,
-        .server_graph = undefined,
         .dump_dir = dump_dir,
         .framework = options.framework,
         .bundle_result = null,
 
-        .server_global = undefined,
-        .vm = undefined,
-        .bun_watcher = undefined,
+        .client_graph = undefined,
+        .server_graph = undefined,
+
         .server_bundler = undefined,
         .client_bundler = undefined,
         .ssr_bundler = undefined,
+
+        .server_global = undefined,
+        .vm = undefined,
+        .bun_watcher = undefined,
     });
 
     dev.server_graph = .{ .owner = dev };
@@ -244,12 +252,15 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Render
     };
     bundler.options.entry_points = &.{};
     bundler.options.log = &dev.log;
-    bundler.options.output_dir = ""; // this disables filesystem output;
-    bundler.options.entry_naming = "bundle.js"; // unused output file generation is skipped
     bundler.options.output_format = .internal_kit_dev;
     bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
     bundler.options.hot_module_reloading = true;
 
+    // force disable filesystem output, even though bundle_v2
+    // is special cased to return before that code is reached.
+    bundler.options.output_dir = "";
+
+    // framework configuration
     bundler.options.react_fast_refresh = renderer == .client and framework.react_fast_refresh != null;
     bundler.options.server_components = framework.server_components != null;
 
@@ -259,7 +270,7 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Render
     }
 
     bundler.options.tree_shaking = false;
-    bundler.options.minify_syntax = true;
+    bundler.options.minify_syntax = true; // required for DCE
     bundler.options.minify_identifiers = false;
     bundler.options.minify_whitespace = false;
     bundler.options.kit = dev;
@@ -295,7 +306,7 @@ fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
     ctx.listener = listen;
     ctx.address.port = @intCast(listen.getLocalPort());
 
-    Output.prettyErrorln("--\\> <magenta>http://{s}:{d}<r>\n", .{
+    Output.prettyErrorln("--\\> <green>http://{s}:{d}<r>\n", .{
         bun.span(ctx.address.hostname),
         ctx.address.port,
     });
@@ -337,19 +348,10 @@ const ExtraBundleData = struct {};
 
 fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
     if (route.bundle == .stale) {
-        var fail: Failure = .{
-            .zig_error = error.FileNotFound,
-        };
+        var fail: Failure = undefined;
         route.bundle = bundle: {
             const success = dev.performBundleAndWaitInner(route, &fail) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                if (fail == .zig_error) {
-                    if (dev.log.hasAny()) {
-                        fail = Failure.fromLog(&dev.log);
-                    } else {
-                        fail = .{ .zig_error = err };
-                    }
-                }
                 fail.printToConsole(route);
                 break :bundle .{ .fail = fail };
             };
@@ -363,10 +365,40 @@ fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
     };
 }
 
+fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bundle {
+    return dev.theRealBundlingFunction(&.{
+        dev.framework.entry_server.?,
+        route.entry_point,
+    }, &.{
+        dev.framework.entry_client.?,
+    }, route, .initial_response, fail);
+}
+
 /// Error handling is done either by writing to `fail` with a specific failure,
 /// or by appending to `dev.log`. The caller, `getRouteBundle`, will handle the
 /// error, including replying to the request as well as console logging.
-fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bundle {
+fn theRealBundlingFunction(
+    dev: *DevServer,
+    server_requirements: []const []const u8,
+    client_requirements: []const []const u8,
+    dependant_route: ?*Route,
+    comptime client_chunk_kind: ChunkKind,
+    fail: *Failure,
+) !Bundle {
+    // Ensure something is written to `fail` if something goes wrong
+    fail.* = .{ .zig_error = error.FileNotFound };
+    errdefer |err| if (fail.* == .zig_error) {
+        if (dev.log.hasAny()) {
+            fail.* = Failure.fromLog(&dev.log);
+        } else {
+            fail.* = .{ .zig_error = err };
+        }
+    };
+
+    assert(server_requirements.len > 0 or client_requirements.len > 0);
+
+    dev.main_thread_lock.assertOwningThread();
+
     var heap = try ThreadlocalArena.init();
     defer heap.deinit();
 
@@ -377,11 +409,13 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
     ast_memory_allocator.push();
 
     if (dev.framework.server_components == null) {
-        // The handling of the dependency graph is SLIGHTLY different. It's
-        // enough that it would be incorrect to let the current code execute at
-        // all.
+        // The handling of the dependency graphs are SLIGHTLY different when
+        // server components are disabled. It's subtle, but enough that it
+        // would be incorrect to even try to run a build.
         bun.todoPanic(@src(), "support non-server components build", .{});
     }
+
+    var timer = if (debug.isVisible()) std.time.Timer.start() catch null else null;
 
     const bv2 = try BundleV2.init(
         &dev.server_bundler,
@@ -413,12 +447,12 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
         bv2.linker.source_maps.quoted_contents_wait_group.wait();
     }
 
-    const output_files = try bv2.runFromJSInNewThread(&.{
-        route.entry_point,
-        dev.framework.entry_server.?,
-    }, &.{
-        dev.framework.entry_client.?,
-    });
+    defer {
+        dev.server_graph.reset();
+        dev.client_graph.reset();
+    }
+
+    const output_files = try bv2.runFromJSInNewThread(server_requirements, client_requirements);
 
     try dev.client_graph.ensureStaleBitCapacity();
     try dev.server_graph.ensureStaleBitCapacity();
@@ -428,53 +462,96 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
     bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
     bv2.client_bundler.log.printForLogLevel(Output.errorWriter()) catch {};
 
-    const server_bundle = try dev.server_graph.takeBundle(.initial_response);
+    dev.generation +%= 1;
+    if (timer) |*t| {
+        comptime assert(Environment.enable_logs);
+        debug.log("Bundle Round {d}: {d} server, {d} client, {d} ms", .{
+            dev.generation,
+            dev.server_graph.current_incremental_chunk_parts.items.len,
+            dev.client_graph.current_incremental_chunk_parts.items.len,
+            @divFloor(t.read(), std.time.ns_per_ms),
+        });
+    }
+
+    const is_first_server_chunk = !dev.server_fetch_function_callback.has();
+
+    const server_bundle = try dev.server_graph.takeBundle(if (is_first_server_chunk) .initial_response else .hmr_chunk);
     defer default_allocator.free(server_bundle);
 
-    const client_bundle = try dev.client_graph.takeBundle(.initial_response);
-    errdefer default_allocator.free(client_bundle);
+    const client_bundle = try dev.client_graph.takeBundle(client_chunk_kind);
+
+    errdefer if (client_chunk_kind != .hmr_chunk) default_allocator.free(client_bundle);
+    defer if (client_chunk_kind == .hmr_chunk) default_allocator.free(client_bundle);
+
+    if (client_bundle.len > 0 and client_chunk_kind == .hmr_chunk) {
+        assert(client_bundle[0] == '(');
+        _ = dev.app.publish("*", client_bundle, .binary, true);
+    }
 
     if (dev.log.hasAny()) {
         dev.log.printForLogLevel(Output.errorWriter()) catch {};
     }
 
-    const server_code = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(server_bundle));
-    dev.vm.waitForPromise(.{ .internal = server_code.promise });
-
-    switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
-        .pending => unreachable, // promise is settled
-        .rejected => |err| {
-            fail.* = Failure.fromJSServerLoad(err, dev.server_global.js());
-            return error.ServerJSLoad;
-        },
-        .fulfilled => |v| bun.assert(v == .undefined),
+    if (dependant_route) |route| {
+        if (route.module_name_string == null) {
+            route.module_name_string = bun.String.createUTF8(bun.path.relative(dev.cwd, route.entry_point));
+        }
     }
 
-    if (route.module_name_string == null) {
-        route.module_name_string = bun.String.createUTF8(bun.path.relative(dev.cwd, route.entry_point));
+    if (server_bundle.len > 0) {
+        if (is_first_server_chunk) {
+            const server_code = c.KitLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
+                fail.* = Failure.fromJSServerLoad(dev.server_global.js().takeException(err), dev.server_global.js());
+                return error.ServerJSLoad;
+            };
+            dev.vm.waitForPromise(.{ .internal = server_code.promise });
+
+            switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
+                .pending => unreachable, // promise is settled
+                .rejected => |err| {
+                    fail.* = Failure.fromJSServerLoad(err, dev.server_global.js());
+                    return error.ServerJSLoad;
+                },
+                .fulfilled => |v| bun.assert(v == .undefined),
+            }
+
+            const default_export = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
+            if (!default_export.isObject())
+                @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
+            const fetch_function: JSValue = default_export.get(dev.server_global.js(), "handleRequest") orelse
+                @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
+            bun.assert(fetch_function.isCallable(dev.vm.jsc));
+            dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.server_global.js());
+            const register_update = default_export.get(dev.server_global.js(), "registerUpdate") orelse
+                @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
+            dev.server_register_update_callback = JSC.Strong.create(register_update, dev.server_global.js());
+
+            fetch_function.ensureStillAlive();
+            register_update.ensureStillAlive();
+        } else {
+            const server_code = c.KitLoadServerHmrPatch(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
+                // No user code has been evaluated yet, since everything is to
+                // be wrapped in a function clousure. This means that the likely
+                // error is going to be a syntax error, or other mistake in the
+                // bundler.
+                dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
+                @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
+            };
+            _ = dev.server_register_update_callback.get().?.call(
+                dev.server_global.js(),
+                dev.server_global.js().toJSValue(),
+                &.{server_code},
+            ) catch |err| {
+                // One module replacement error should NOT prevent follow-up
+                // module replacements to fail. It is the HMR runtime's
+                // responsibility to handle these errors.
+                dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
+                @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
+            };
+        }
     }
 
-    if (!dev.server_fetch_function_callback.has()) {
-        const default_export = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
-        if (!default_export.isObject())
-            @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-        const fetch_function: JSValue = default_export.get(dev.server_global.js(), "handleRequest") orelse
-            @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
-        bun.assert(fetch_function.isCallable(dev.vm.jsc));
-        dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.server_global.js());
-        const register_update = default_export.get(dev.server_global.js(), "registerUpdate") orelse
-            @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
-        dev.server_register_update_callback = JSC.Strong.create(register_update, dev.server_global.js());
-
-        fetch_function.ensureStillAlive();
-        register_update.ensureStillAlive();
-    } else {
-        bun.todoPanic(@src(), "Kit: server's secondary bundle", .{});
-    }
-
-    return .{
-        .client_bundle = client_bundle,
-    };
+    return .{ .client_bundle = client_bundle };
 }
 
 pub fn receiveChunk(
@@ -488,6 +565,21 @@ pub fn receiveChunk(
         .ssr => dev.server_graph.addChunk(abs_path, chunk, true),
         .client => dev.client_graph.addChunk(abs_path, chunk, false),
     };
+}
+
+pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Renderer) bool {
+    switch (side) {
+        inline else => |side_comptime| {
+            const g = switch (side_comptime) {
+                .client => &dev.client_graph,
+                .server => &dev.server_graph,
+                .ssr => &dev.server_graph,
+            };
+            const index = g.bundled_files.getIndex(path) orelse
+                return true; // non-existent files are considered stale
+            return g.stale_files.isSet(index);
+        },
+    }
 }
 
 // uws with bundle handlers
@@ -537,9 +629,8 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
         }
     }
 
-    // TODO: This interface and implementation is very poor. but fine until API
-    // considerations become important (as of writing, there are 3 dozen todo
-    // items before it)
+    // TODO: This interface and implementation is very poor. It is fine as
+    // the runtime currently emulates returning a `new Response`
     //
     // It probably should use code from `server.zig`, but most importantly it should
     // not have a tie to DevServer, but instead be generic with a context structure
@@ -664,6 +755,13 @@ pub fn IncrementalGraph(side: kit.Side) type {
             },
         };
 
+        /// Never takes ownership of `abs_path`
+        ///
+        /// For client, takes ownership of the code slice (must be default allocated)
+        ///
+        /// For server, the code is temporarily kept in the
+        /// `current_incremental_chunk_parts` array, where it must live until
+        /// takeChunk is called. Then it can be freed.
         pub fn addChunk(
             g: *@This(),
             abs_path: []const u8,
@@ -671,7 +769,6 @@ pub fn IncrementalGraph(side: kit.Side) type {
             is_ssr_graph: bool,
         ) !void {
             const code = chunk.code();
-            debug("get code for {s} - {d} bytes, {s} ssr={}\n", .{ abs_path, code.len, @tagName(side), is_ssr_graph });
             if (code.len == 0) return; // TODO: these should never even be emitted
 
             g.current_incremental_chunk_len += code.len;
@@ -695,13 +792,18 @@ pub fn IncrementalGraph(side: kit.Side) type {
 
             const gop = try g.bundled_files.getOrPut(default_allocator, abs_path);
 
+            if (!gop.found_existing) {
+                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+            }
+
             switch (side) {
                 .client => {
+                    bun.assertIsDefaultAllocator(code);
                     if (gop.found_existing) {
                         bun.default_allocator.free(gop.value_ptr.code);
                     }
                     gop.value_ptr.* = .{
-                        .code = chunk.code(),
+                        .code = code,
                         // .imports = &.{},
                     };
                     try g.current_incremental_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
@@ -744,17 +846,14 @@ pub fn IncrementalGraph(side: kit.Side) type {
             }
         }
 
-        const ChunkKind = enum {
-            initial_response,
-            hmr_chunk,
-        };
-
         fn reset(g: *@This()) void {
             g.current_incremental_chunk_len = 0;
             g.current_incremental_chunk_parts.clearRetainingCapacity();
         }
 
         pub fn takeBundle(g: *@This(), kind: ChunkKind) ![]const u8 {
+            if (g.current_incremental_chunk_len == 0) return "";
+
             const runtime = switch (kind) {
                 .initial_response => bun.kit.getHmrRuntime(side),
                 .hmr_chunk => "({\n",
@@ -762,36 +861,54 @@ pub fn IncrementalGraph(side: kit.Side) type {
 
             // A small amount of metadata is present at the end of the chunk
             // to inform the HMR runtime some crucial entry-point info. The
-            // upper bound of this can be calculated, but 64kb is given to
-            // ensure no problems.
-            //
-            // TODO: is a higher upper bound required on Windows?
-            // Alternate solution: calculate the upper bound by summing
-            // framework paths and then reusing that allocation.
-            var end_buf: [65536]u8 = undefined;
+            // exact upper bound of this can be calculated, but is not to
+            // avoid worrying about windows paths.
+            var end_sfa = std.heap.stackFallback(65536, default_allocator);
+            var end_list = std.ArrayList(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
+            defer end_list.deinit();
             const end = end: {
-                var fbs = std.io.fixedBufferStream(&end_buf);
-                const w = fbs.writer();
+                const w = end_list.writer();
                 switch (kind) {
                     .initial_response => {
-                        w.writeAll("}, {\n  main: ") catch unreachable;
+                        const fw = g.owner.framework;
+                        try w.writeAll("}, {\n  main: ");
                         const entry = switch (side) {
-                            .server => g.owner.framework.entry_server,
-                            .client => g.owner.framework.entry_client,
+                            .server => fw.entry_server,
+                            .client => fw.entry_client,
                         } orelse bun.todoPanic(@src(), "non-framework provided entry-point", .{});
-                        bun.js_printer.writeJSONString(
+                        try bun.js_printer.writeJSONString(
                             bun.path.relative(g.owner.cwd, entry),
                             @TypeOf(w),
                             w,
                             .utf8,
-                        ) catch unreachable;
-                        w.writeAll("\n});") catch unreachable;
+                        );
+                        switch (side) {
+                            .client => {
+                                if (fw.react_fast_refresh) |rfr| {
+                                    try w.writeAll(",\n  refresh: ");
+                                    try bun.js_printer.writeJSONString(
+                                        bun.path.relative(g.owner.cwd, rfr.import_source),
+                                        @TypeOf(w),
+                                        w,
+                                        .utf8,
+                                    );
+                                }
+                            },
+                            .server => {
+                                if (fw.server_components) |sc| {
+                                    if (sc.separate_ssr_graph) {
+                                        try w.writeAll(",\n  separateSSRGraph: true");
+                                    }
+                                }
+                            },
+                        }
+                        try w.writeAll("\n})");
                     },
                     .hmr_chunk => {
-                        w.writeAll("\n})") catch unreachable;
+                        try w.writeAll("\n})");
                     },
                 }
-                break :end fbs.getWritten();
+                break :end end_list.items;
             };
 
             const files = g.bundled_files.values();
@@ -812,7 +929,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
                 });
             }
             chunk.appendSliceAssumeCapacity(end);
-            assert(chunk.capacity == chunk.items.len);
+            // bun.assert_eql(chunk.capacity, chunk.items.len);
 
             if (g.owner.dump_dir) |dump_dir| {
                 const rel_path_escaped = "latest_chunk.js";
@@ -829,6 +946,11 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
     };
 }
+
+const ChunkKind = enum {
+    initial_response,
+    hmr_chunk,
+};
 
 /// Represents an error from loading or server sided runtime. Information on
 /// what this error is from, such as the associated Route, is inferred from
@@ -863,6 +985,7 @@ const Failure = union(enum) {
     // style with ansi codes, and the other has to style with HTML.
 
     fn printToConsole(fail: *const Failure, route: *const Route) void {
+        // TODO: remove dependency on `route`
         defer Output.flush();
 
         Output.prettyErrorln("", .{});
@@ -989,21 +1112,6 @@ fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Renderer, rel_path: []const u8, ch
     try bufw.flush();
 }
 
-pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Renderer) bool {
-    switch (side) {
-        inline else => |side_comptime| {
-            const g = switch (side_comptime) {
-                .client => &dev.client_graph,
-                .server => &dev.server_graph,
-                .ssr => &dev.server_graph,
-            };
-            const index = g.bundled_files.getIndex(path) orelse
-                return true; // non-existent files are considered stale
-            return g.stale_files.isSet(index);
-        },
-    }
-}
-
 /// This function is required by `HotReloader`
 pub fn eventLoop(dev: *DevServer) *JSC.EventLoop {
     return dev.vm.eventLoop();
@@ -1034,8 +1142,9 @@ const DevWebSocket = struct {
 
     pub fn onOpen(dw: *DevWebSocket, ws: AnyWebSocket) void {
         _ = dw; // autofix
-        _ = ws.send("bun!", .text, false, true);
-        _ = ws.subscribe("TODO");
+        // TODO: append hash of the framework config
+        _ = ws.send("V" ++ bun.Global.package_json_version_with_revision, .binary, false, true);
+        _ = ws.subscribe("*");
     }
 
     pub fn onMessage(dw: *DevWebSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
@@ -1067,21 +1176,50 @@ pub const DevGlobalObject = opaque {
 
 pub const KitSourceProvider = opaque {};
 
-pub const c = struct {
+const c = struct {
     // KitDevGlobalObject.cpp
     extern fn KitCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
 
     // KitSourceProvider.cpp
-    const LoadServerCodeResult = extern struct { promise: *JSInternalPromise, key: *JSC.JSString };
-    extern fn KitLoadServerCode(global: *DevGlobalObject, code: bun.String) LoadServerCodeResult;
     extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
+
+    const LoadServerCodeResult = struct {
+        promise: *JSInternalPromise,
+        key: *JSC.JSString,
+    };
+
+    fn KitLoadServerHmrPatch(global: *DevGlobalObject, code: bun.String) !JSValue {
+        const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) JSValue, .{
+            .name = "KitLoadServerHmrPatch",
+        });
+        const result = f(global, code);
+        if (result == .zero) {
+            if (Environment.allow_assert) assert(global.js().hasException());
+            return error.JSError;
+        }
+        return result;
+    }
+
+    fn KitLoadInitialServerCode(global: *DevGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
+        const Return = extern struct {
+            promise: ?*JSInternalPromise,
+            key: *JSC.JSString,
+        };
+        const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) Return, .{
+            .name = "KitLoadInitialServerCode",
+        });
+        const result = f(global, code);
+        return .{
+            .promise = result.promise orelse {
+                if (Environment.allow_assert) assert(global.js().hasException());
+                return error.JSError;
+            },
+            .key = result.key,
+        };
+    }
 };
 
 pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
-    dev.reloadWrap(reload_task) catch bun.todoPanic(@src(), "handle hot-reloading error", .{});
-}
-
-pub fn reloadWrap(dev: *DevServer, reload_task: *const HotReloadTask) !void {
     const sfb = default_allocator;
 
     const changed_file_paths = reload_task.paths[0..reload_task.count];
@@ -1089,26 +1227,30 @@ pub fn reloadWrap(dev: *DevServer, reload_task: *const HotReloadTask) !void {
 
     defer for (changed_file_paths) |path| default_allocator.free(path);
 
-    var files_to_bundle = try DualArray([]const u8).initCapacity(sfb, changed_file_paths.len * 2);
+    var files_to_bundle = DualArray([]const u8).initCapacity(sfb, changed_file_paths.len * 2) catch bun.outOfMemory();
     defer files_to_bundle.deinit(sfb);
     inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
         g.invalidate(changed_file_paths, changed_hashes, &files_to_bundle);
     }
 
-    bun.todoPanic(@src(), "rewire hot-bundling code", .{});
+    // TODO: workaround a known bug when a reload comes before a bundle
+    if (files_to_bundle.left().len == 0 and files_to_bundle.right().len == 0) {
+        return;
+    }
 
-    // const route = &dev.routes[0];
-
-    // const bundle_task = bun.new(BundleTask, .{
-    //     .owner = dev,
-    //     .route = route,
-    //     .kind = .client,
-    //     .plugins = null,
-    //     .handlers = .{ .first = null },
-    // });
-    // assert(route.client_bundle != .pending); // todo: rapid reloads
-    // route.client_bundle = .{ .pending = bundle_task };
-    // dev.bundle_thread.enqueue(bundle_task);
+    var fail: Failure = undefined;
+    const bundle = dev.theRealBundlingFunction(
+        files_to_bundle.right(),
+        files_to_bundle.left(),
+        null,
+        .hmr_chunk,
+        &fail,
+    ) catch |err| {
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+        fail.printToConsole(&dev.routes[0]);
+        return;
+    };
+    _ = bundle; // already sent to client
 }
 
 pub fn bustDirCache(dev: *DevServer, path: []const u8) bool {

@@ -115,6 +115,10 @@ const Bundle = struct {
 };
 
 pub fn init(options: Options) !*DevServer {
+    {
+        @panic("Behavior Regressed due to Watcher Changes");
+    }
+
     bun.analytics.Features.kit_dev +|= 1;
     if (JSC.VirtualMachine.VMHolder.vm != null)
         @panic("Cannot initialize kit.DevServer on a thread with an active JSC.VirtualMachine");
@@ -161,10 +165,10 @@ pub fn init(options: Options) !*DevServer {
     dev.server_graph = .{ .owner = dev };
     dev.client_graph = .{ .owner = dev };
 
-    const fs = try bun.fs.FileSystem.init(options.cwd);
-    dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
-    dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    // const fs = try bun.fs.FileSystem.init(options.cwd);
+    // dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
+    // dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    // dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
     try dev.initBundler(&dev.server_bundler, .server);
     try dev.initBundler(&dev.client_bundler, .client);

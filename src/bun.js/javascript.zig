@@ -624,8 +624,8 @@ pub const WebWorker = @import("./web_worker.zig").WebWorker;
 
 pub const ImportWatcher = union(enum) {
     none: void,
-    hot: *GenericWatcher.GenericWatcher,
-    watch: *GenericWatcher.GenericWatcher,
+    hot: *HotReloader.Watcher,
+    watch: *WatchReloader.Watcher,
 
     pub fn start(this: ImportWatcher) !void {
         switch (this) {
@@ -4027,11 +4027,12 @@ pub const VirtualMachine = struct {
 
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
 pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
-pub const Watcher = GenericWatcher.GenericWatcher;
+pub const Watcher = HotReloader.Watcher;
 extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
+        pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
         ctx: *Ctx,
@@ -4040,7 +4041,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
-        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *GenericWatcher.GenericWatcher {
+        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *@This().Watcher {
             const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = ctx,
@@ -4048,7 +4049,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             };
 
             clear_screen = clear_screen_flag;
-            const watcher = GenericWatcher.GenericWatcher.init(Reloader, reloader, fs, bun.default_allocator) catch |err| {
+            const watcher = @This().Watcher.init(reloader, fs, bun.default_allocator) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
             };
@@ -4080,16 +4081,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub var clear_screen = false;
 
-        const is_kit = Ctx == bun.kit.DevServer;
-
         pub const HotReloadTask = struct {
             reloader: *Reloader,
             count: u8 = 0,
-            hashes: [8]u32 = .{0} ** 8,
-            paths: if (is_kit) [8][]const u8 else void = if (is_kit) .{""} ** 8,
+            hashes: [8]u32 = [_]u32{0} ** 8,
             concurrent_task: JSC.ConcurrentTask = undefined,
 
-            pub fn append(this: *HotReloadTask, hash: u32, path: []const u8) void {
+            pub fn append(this: *HotReloadTask, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
                     const reloader = this.reloader;
@@ -4099,16 +4097,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     };
                 }
 
-                this.hashes[this.count] = hash;
-                if (is_kit) {
-                    // TODO: use a much smarter allocation strategy.
-                    // likely something stored on DevServer where all strings
-                    // share a large buffer with a large pre-allocation
-                    //
-                    // paths + hashes are needed since u32 is not collision resistant,
-                    // so this will make looking up in the hash table much more reliable.
-                    this.paths[this.count] = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory();
-                }
+                this.hashes[this.count] = id;
                 this.count += 1;
             }
 
@@ -4175,8 +4164,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 this.bun_watcher = if (reload_immediately)
-                    .{ .watch = GenericWatcher.GenericWatcher.init(
-                        @This(),
+                    .{ .watch = @This().Watcher.init(
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
@@ -4185,8 +4173,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
                     } }
                 else
-                    .{ .hot = GenericWatcher.GenericWatcher.init(
-                        @This(),
+                    .{ .hot = @This().Watcher.init(
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
@@ -4196,13 +4183,12 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     } };
 
                 if (reload_immediately) {
-                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*GenericWatcher.GenericWatcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
                 } else {
-                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*GenericWatcher.GenericWatcher, onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.hot);
                 }
             } else {
-                this.bun_watcher = GenericWatcher.GenericWatcher.init(
-                    @This(),
+                this.bun_watcher = @This().Watcher.init(
                     reloader,
                     this.bundler.fs,
                     bun.default_allocator,
@@ -4210,7 +4196,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
                 };
-                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*GenericWatcher.GenericWatcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
             clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
@@ -4218,7 +4204,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
 
-        pub fn onMaybeWatchDirectory(watch: *GenericWatcher.GenericWatcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
+        pub fn onMaybeWatchDirectory(watch: *@This().Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
             // We don't want to watch:
             // - Directories outside the root directory
             // - Directories inside node_modules
@@ -4245,7 +4231,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
 
-        pub fn getContext(this: *@This()) *GenericWatcher.GenericWatcher {
+        pub fn getContext(this: *@This()) *@This().Watcher {
             if (comptime @TypeOf(this.ctx.bun_watcher) == ImportWatcher) {
                 if (reload_immediately) {
                     return this.ctx.bun_watcher.watch;
@@ -4276,9 +4262,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer ctx.flushEvictions();
             defer Output.flush();
 
-            const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
-            const rfs = &fs.fs;
-            bun.assert(Fs.FileSystem.instance_loaded);
+            const bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
+                this.ctx.bundler
+            else
+                &this.ctx.bundler;
+
+            var fs: *Fs.FileSystem = bundler.fs;
+            var rfs: *Fs.FileSystem.RealFS = &fs.fs;
+            var resolver = &bundler.resolver;
             var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
             var current_task: HotReloadTask = .{
@@ -4296,7 +4287,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // if we use .extname we might run into an issue with whether or not the "." is included.
                 // const path = Fs.PathName.init(file_path);
                 const id = hashes[event.index];
-                const path = file_paths[event.index];
 
                 if (this.verbose)
                     debug("onFileUpdate {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
@@ -4316,7 +4306,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
-                            current_task.append(id, path);
+                            current_task.append(id);
                         }
                     },
                     .directory => {
@@ -4324,7 +4314,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                            _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -4374,7 +4364,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                        _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
@@ -4386,7 +4376,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     bun.asByteSlice(changed_name_.?);
                                 if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                                const loader = (this.ctx.getLoaders().get(Fs.PathName.init(changed_name).ext) orelse .file);
+                                const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
@@ -4402,7 +4392,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
-                                                            current_task.append(hashes[entry_id], file_paths[entry_id]);
+                                                            current_task.append(@as(u32, @truncate(entry_id)));
                                                             ctx.removeAtIndex(
                                                                 @as(u16, @truncate(entry_id)),
                                                                 0,

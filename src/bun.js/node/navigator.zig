@@ -28,7 +28,11 @@ pub const Navigator = struct {
                 return JSC.jsNumber(cpu_count);
             },
             .linux => {
-                const cpu_count = std.c.sysconf(std.c._SC_NPROCESSORS_ONLN);
+                const c = struct {
+                    extern "c" fn sysconf(sc: c_int) i64;
+                    const _SC_NPROCESSORS_ONLN = 84;
+                };
+                const cpu_count = c.sysconf(c._SC_NPROCESSORS_ONLN);
                 return JSC.jsNumber(cpu_count);
             },
             .windows => {

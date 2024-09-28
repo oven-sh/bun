@@ -7551,6 +7551,7 @@ pub const LinkerContext = struct {
     pub fn validateTLA(c: *LinkerContext, source_index: Index.Int) js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &c.parse_graph.ast.items(.tla_check).ptr[source_index];
         const result = c.parse_graph.ast.get(source_index);
+        const input_files = c.parse_graph.input_files.items(.source);
 
         if (result_tla_check.depth == 0) {
             result_tla_check.depth = 1;
@@ -7585,7 +7586,7 @@ pub const LinkerContext = struct {
                             const parent_source_index = other_source_index;
 
                             if (parent_result.top_level_await_keyword.len > 0) {
-                                tla_pretty_path = c.parse_graph.input_files.items(.source)[other_source_index].path.pretty;
+                                tla_pretty_path = input_files[other_source_index].path.pretty;
                                 notes.append(Logger.Data{
                                     .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
                                 }) catch bun.outOfMemory();
@@ -7603,19 +7604,19 @@ pub const LinkerContext = struct {
 
                             notes.append(Logger.Data{
                                 .text = std.fmt.allocPrint(c.allocator, "The file {s} imports the file {s} here:", .{
-                                    c.parse_graph.input_files.items(.source)[parent_source_index].path.pretty,
-                                    c.parse_graph.input_files.items(.source)[other_source_index].path.pretty,
+                                    input_files[parent_source_index].path.pretty,
+                                    input_files[other_source_index].path.pretty,
                                 }) catch bun.outOfMemory(),
                             }) catch bun.outOfMemory();
                         }
 
-                        const imported_pretty_path = c.parse_graph.input_files.items(.source)[source_index].path.pretty;
+                        const imported_pretty_path = input_files[source_index].path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
                             std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory()
                         else
                             std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
 
-                        const source: Logger.Source = c.parse_graph.input_files.items(.source)[source_index];
+                        const source: Logger.Source = input_files[source_index];
                         c.log.addRangeErrorWithNotes(&source, record.range, text, notes.items) catch bun.outOfMemory();
                     }
                 }

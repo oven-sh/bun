@@ -205,5 +205,52 @@ module.exports = debugMode => {
 
       console.log("after setting, onlyGetter.foo is", onlyGetter.foo);
     },
+
+    test_v8_value_to_string() {
+      for (const value of [
+        null,
+        undefined,
+        true,
+        false,
+        5.0,
+        190n,
+        "foo bar",
+        {},
+        [],
+        {
+          toString() {
+            return "abc";
+          },
+          [Symbol.toPrimitive]() {
+            return "123";
+          },
+        },
+      ]) {
+        console.log(nativeModule.call_value_to_string(value));
+      }
+    },
+
+    test_v8_value_to_string_exceptions() {
+      for (const value of [
+        Symbol("abc"),
+        {
+          toString() {
+            throw new TypeError("oops");
+          },
+        },
+        {
+          [Symbol.toPrimitive]() {
+            throw new RangeError("oops");
+          },
+        },
+      ]) {
+        try {
+          const string = nativeModule.call_value_to_string(value);
+          console.log(`returned '${string}' instead of throwing`);
+        } catch (e) {
+          console.log("threw", e.name);
+        }
+      }
+    },
   };
 };

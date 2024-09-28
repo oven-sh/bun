@@ -1,5 +1,6 @@
 #include "V8Value.h"
 #include "V8Isolate.h"
+#include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Value)
@@ -88,6 +89,17 @@ Maybe<double> Value::NumberValue(Local<Context> context) const
     double num = js_value.toNumber(context->globalObject());
     RETURN_IF_EXCEPTION(scope, Nothing<double>());
     RELEASE_AND_RETURN(scope, Just(num));
+}
+
+MaybeLocal<String> Value::ToString(Local<Context> context) const
+{
+    auto js_value = localToJSValue();
+    auto& vm = context->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSString* string = js_value.toStringOrNull(context->globalObject());
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
+    RELEASE_AND_RETURN(scope,
+        MaybeLocal<String>(context->currentHandleScope()->createLocal<String>(vm, string)));
 }
 
 bool Value::FullIsTrue() const

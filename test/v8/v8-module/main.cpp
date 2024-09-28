@@ -757,6 +757,16 @@ void test_uv_os_getppid(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void call_value_to_string(const FunctionCallbackInfo<Value> &info) {
+  Local<Context> context = info.GetIsolate()->GetCurrentContext();
+  Local<Value> value = info[0];
+  MaybeLocal<String> str = value->ToString(context);
+  LOG_EXPR(str.IsEmpty());
+  if (!str.IsEmpty()) {
+    info.GetReturnValue().Set(str.ToLocalChecked());
+  }
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -798,6 +808,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
+  NODE_SET_METHOD(exports, "call_value_to_string", call_value_to_string);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

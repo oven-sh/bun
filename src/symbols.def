@@ -645,3 +645,4 @@ EXPORTS
   ?FromJustIsNothing@api_internal@v8@@YAXXZ
   ?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z
   ?IsArray@Value@v8@@QEBA_NXZ
+  ?ToString@Value@v8@@QEBA?AV?$MaybeLocal@VString@v8@@@2@V?$Local@VContext@v8@@@2@@Z

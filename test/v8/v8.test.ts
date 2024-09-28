@@ -143,6 +143,14 @@ describe("Value", () => {
       checkSameOutput("test_v8_value_uint32value_and_numbervalue_throw", []);
     });
   });
+  describe("ToString", () => {
+    it("returns the right result", () => {
+      checkSameOutput("test_v8_value_to_string", []);
+    });
+    it("handles exceptions", () => {
+      checkSameOutput("test_v8_value_to_string_exceptions", []);
+    });
+  });
 });
 
 describe("String", () => {

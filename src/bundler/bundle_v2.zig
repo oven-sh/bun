@@ -7623,7 +7623,7 @@ pub const LinkerContext = struct {
                             }) catch bun.outOfMemory();
                         }
 
-                        const source: *Logger.Source = &input_files[source_index];
+                        const source: *const Logger.Source = &input_files[source_index];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
                             std.fmt.allocPrint(c.allocator, "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path}) catch bun.outOfMemory()

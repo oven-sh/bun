@@ -4081,15 +4081,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub var clear_screen = false;
 
         pub const HotReloadTask = struct {
-            magic: Magic = .valid,
             count: u8 = 0,
             hashes: [8]u32 = [_]u32{0} ** 8,
             concurrent_task: JSC.ConcurrentTask = undefined,
             reloader: *Reloader,
-
-            const Magic = enum(u128) {
-                valid = 0x60db931825632ac97445c59294a878,
-            };
 
             pub fn append(this: *HotReloadTask, id: u32) void {
                 if (this.count == 8) {
@@ -4102,10 +4097,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn run(this: *HotReloadTask) void {
-                std.mem.doNotOptimizeAway(&this.magic);
-                std.mem.doNotOptimizeAway(&this.reloader);
-                std.debug.print("second 0x{x}\n", .{@intFromPtr(this)});
-                bun.assertWithLocation(this.magic == .valid, @src());
                 // Since we rely on the event loop for hot reloads, there can be
                 // a delay before the next reload begins. In the time between the
                 // last reload and the next one, we shouldn't schedule any more

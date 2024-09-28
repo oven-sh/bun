@@ -52,12 +52,15 @@
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "[c]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "[h]": {
+    "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
   "clangd.arguments": ["-header-insertion=never"],

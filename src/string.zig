@@ -742,6 +742,7 @@ pub const String = extern struct {
         len: usize,
     ) JSC.JSValue;
 
+    /// calls toJS on all elements of `array`.
     pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
         JSC.markBinding(@src());
 

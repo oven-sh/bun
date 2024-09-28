@@ -27,6 +27,7 @@ test("exists", () => {
   expect(typeof PerformanceMeasure !== "undefined").toBe(true);
   expect(typeof PerformanceObserver !== "undefined").toBe(true);
   expect(typeof PerformanceObserverEntryList !== "undefined").toBe(true);
+  expect(typeof Navigator !== "undefined").toBe(true);
 });
 
 const globalSetters = [
@@ -236,7 +237,7 @@ test("navigator", () => {
   } else if (isWindows) {
     expect(navigator.platform).toBe("Win32");
   } else if (isLinux) {
-    expect(navigator.platform).toBe("Linux x86_64");
+    expect(navigator.platform).toBe(`Linux ${process.arch === "x64" ? "x86_64" : process.arch}`);
   }
 });
 

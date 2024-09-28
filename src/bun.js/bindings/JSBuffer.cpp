@@ -601,6 +601,11 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             }
             auto startPtr = uint8Array->typedVector() + start;
             auto str_ = value.toWTFString(lexicalGlobalObject);
+            if (str_.isEmpty()) {
+                memset(startPtr, 0, length);
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
+            }
+
             ZigString str = Zig::toZigString(str_);
 
             if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {

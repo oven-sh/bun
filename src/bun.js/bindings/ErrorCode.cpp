@@ -7,7 +7,6 @@
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/WriteBarrier.h"
-#include "root.h"
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include "helpers.h"

@@ -4136,7 +4136,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .concurrent_task = undefined,
                 });
                 that.concurrent_task = .{ .task = Task.init(that), .auto_delete = false };
-                std.debug.print("first 0x{x}\n", .{@intFromPtr(that)});
                 that.reloader.enqueueTaskConcurrent(&that.concurrent_task);
                 this.count = 0;
             }

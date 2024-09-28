@@ -137,10 +137,10 @@ pub const Action = union(enum) {
                     \\  part range: {d}..{d}
                 ,
                     .{
-                        data.linkerContext().graph.bundler_graph.input_files
+                        data.linkerContext().parse_graph.input_files
                             .items(.source)[data.chunk.entry_point.source_index]
                             .path.text,
-                        data.linkerContext().graph.bundler_graph.input_files
+                        data.linkerContext().parse_graph.input_files
                             .items(.source)[data.part_range.source_index.get()]
                             .path.text,
                         data.part_range.part_index_begin,

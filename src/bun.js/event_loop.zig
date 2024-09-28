@@ -480,10 +480,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
-
-    bun.kit.DevServer.BundleTask,
-    bun.kit.DevServer.HotReloadTask,
-
+    // bun.kit.DevServer.HotReloadTask,
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
@@ -1026,13 +1023,13 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                    transform_task.*.run();
-                    transform_task.deinit();
-                    // special case: we return
-                    return 0;
-                },
+                // @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
+                //     const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
+                //     transform_task.*.run();
+                //     transform_task.deinit();
+                //     // special case: we return
+                //     return 0;
+                // },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
@@ -1245,15 +1242,9 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
-                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
-                },
 
-                else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else {
-                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                    unreachable;
+                else => {
+                    bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
                 },
             }
 
@@ -1702,8 +1693,7 @@ pub const MiniVM = struct {
     }
 
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {
-        _ = this; // autofix
-
+        _ = this;
         @panic("FIXME TODO");
     }
 

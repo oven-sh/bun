@@ -1178,7 +1178,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn reload(this: *VirtualMachine) void {
+    pub fn reload(this: *VirtualMachine, _: *HotReloader.HotReloadTask) void {
         Output.debug("Reloading...", .{});
         const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
         if (this.hot_reload == .watch) {
@@ -1620,7 +1620,6 @@ pub const VirtualMachine = struct {
 
         // Avoid reading from tsconfig.json & package.json when we're in standalone mode
         vm.bundler.configureLinkerWithAutoJSX(false);
-        try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
@@ -1725,13 +1724,8 @@ pub const VirtualMachine = struct {
         };
 
         vm.bundler.configureLinker();
-        try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
-        if (opts.args.serve orelse false) {
-            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
-        }
 
         vm.global = ZigGlobalObject.create(
             vm.console,
@@ -1873,13 +1867,8 @@ pub const VirtualMachine = struct {
             vm.bundler.configureLinkerWithAutoJSX(false);
         }
 
-        try vm.bundler.configureFramework(false);
         vm.smol = opts.smol;
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
-        if (opts.args.serve orelse false) {
-            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
-        }
 
         vm.global = ZigGlobalObject.create(
             vm.console,
@@ -1964,13 +1953,8 @@ pub const VirtualMachine = struct {
         };
 
         vm.bundler.configureLinker();
-        try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
-
-        if (opts.args.serve orelse false) {
-            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
-        }
 
         vm.regular_event_loop.virtual_machine = vm;
         vm.smol = opts.smol;
@@ -2423,18 +2407,18 @@ pub const VirtualMachine = struct {
         }
 
         if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime, jsc_vm.bundler.options.target)) |hardcoded| {
-            if (hardcoded.tag == .none) {
-                resolveMaybeNeedsTrailingSlash(
-                    res,
-                    global,
-                    bun.String.init(hardcoded.path),
-                    source,
-                    query_string,
-                    is_esm,
-                    is_a_file_path,
-                );
-                return;
-            }
+            // if (hardcoded.tag == .none) {
+            //     resolveMaybeNeedsTrailingSlash(
+            //         res,
+            //         global,
+            //         bun.String.init(hardcoded.path),
+            //         source,
+            //         query_string,
+            //         is_esm,
+            //         is_a_file_path,
+            //     );
+            //     return;
+            // }
 
             res.* = ErrorableString.ok(bun.String.init(hardcoded.path));
             return;
@@ -2674,8 +2658,7 @@ pub const VirtualMachine = struct {
             )) {
                 .success => |r| r,
                 .failure => |e| {
-                    {
-                    }
+                    {}
                     this.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
@@ -4027,9 +4010,18 @@ pub const VirtualMachine = struct {
         return instance;
     }
 
+    /// To satisfy the interface from NewHotReloader()
+    pub fn getLoaders(vm: *VirtualMachine) *bun.options.Loader.HashTable {
+        return &vm.bundler.options.loaders;
+    }
+
+    /// To satisfy the interface from NewHotReloader()
+    pub fn bustDirCache(vm: *VirtualMachine, path: []const u8) bool {
+        return vm.bundler.resolver.bustDirCache(path);
+    }
+
     comptime {
-        if (!JSC.is_bindgen)
-            _ = Bun__remapStackFramePositions;
+        _ = Bun__remapStackFramePositions;
     }
 };
 
@@ -4120,7 +4112,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // get another hot reload request while we're reloading, we'll
                 // still enqueue it.
                 while (this.reloader.pending_count.swap(0, .monotonic) > 0) {
-                    this.reloader.ctx.reload();
+                    this.reloader.ctx.reload(this);
                 }
             }
 

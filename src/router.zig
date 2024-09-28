@@ -997,7 +997,6 @@ pub const Test = struct {
         }
 
         const opts = Options.BundleOptions{
-            .resolve_mode = .lazy,
             .target = .browser,
             .loaders = undefined,
             .define = undefined,
@@ -1054,7 +1053,6 @@ pub const Test = struct {
         }
 
         const opts = Options.BundleOptions{
-            .resolve_mode = .lazy,
             .target = .browser,
             .loaders = undefined,
             .define = undefined,

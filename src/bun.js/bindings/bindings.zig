@@ -1764,6 +1764,10 @@ pub const JSString = extern struct {
     pub const name = "JSC::JSString";
     pub const namespace = "JSC";
 
+    pub fn toJS(str: *JSString) JSValue {
+        return JSValue.fromCell(str);
+    }
+
     pub fn toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject {
         return shim.cppFn("toObject", .{ this, global });
     }
@@ -6025,7 +6029,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     /// For native C++ classes extending JSCell, this retrieves s_info's name
     pub fn getClassInfoName(this: JSValue) ?bun.String {
-        if (!this.isObject()) return null;
+        if (!this.isCell()) return null;
         var out: bun.String = bun.String.empty;
         if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
         return out;

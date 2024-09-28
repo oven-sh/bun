@@ -3554,6 +3554,52 @@ describe("bundler", () => {
       stdout: "5",
     },
   });
+  itBundled("default/TopLevelAwaitWithStaticImport", {
+    // Test static import of a module that uses top-level await
+    files: {
+      "/entry.js": `
+        import { a } from './a.js';
+        console.log('Entry', a);
+      `,
+      "/a.js": `
+        async function getValue() {
+          return await Promise.resolve('value from a');
+        }
+        export const a = await getValue();
+        console.log('a.js loaded');
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "a.js loaded\nEntry value from a",
+    },
+  });
+  itBundled("default/TopLevelAwaitWithNestedDynamicImport", {
+    // Test nested dynamic imports with top-level await
+    files: {
+      "/entry.js": `
+        console.log('Start Entry');
+        const res = await import('./a.js');
+        console.log('Entry', res.a);
+      `,
+      "/a.js": `
+        console.log('Start a.js');
+        const { b } = await import('./b.js');
+        export const a = 'a.js plus ' + b;
+      `,
+      "/b.js": `
+        console.log('Start b.js');
+        export const b = 'value from b.js';
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `Start Entry
+  Start a.js
+  Start b.js
+  Entry a.js plus value from b.js`,
+    },
+  });
   itBundled("default/TopLevelAwaitAllowedImportWithSplitting", {
     files: {
       "/entry.js": /* js */ `

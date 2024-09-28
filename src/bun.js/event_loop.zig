@@ -1017,8 +1017,8 @@ pub const EventLoop = struct {
                     transform_task.deinit();
                 },
                 @field(Task.Tag, @typeName(HotReloadTask)) => {
-                    var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
-                    transform_task.*.run();
+                    const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.run();
                     transform_task.deinit();
                     // special case: we return
                     return 0;

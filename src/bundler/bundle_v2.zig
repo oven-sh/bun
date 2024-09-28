@@ -4323,8 +4323,10 @@ pub const LinkerContext = struct {
         defer arena.deinit();
 
         var temp_allocator = arena.allocator();
-        var js_chunks = bun.StringArrayHashMap(Chunk).init(this.allocator);
+        var js_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
         try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
+        var css_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
+        // try css_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
 
         const entry_source_indices = this.graph.entry_points.items(.source_index);
 
@@ -4335,14 +4337,17 @@ pub const LinkerContext = struct {
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
-            // Create a chunk for the entry point here to ensure that the chunk is
-            // always generated even if the resulting file is empty
-            const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+            const key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+            _ = key; // autofix
 
             if (this.graph.ast.items(.css)[source_index]) |*css| {
                 _ = css; // autofix
+                // Create a chunk for the entry point here to ensure that the chunk is
+                // always generated even if the resulting file is empty
+                const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                // const css_chunk_entry = try js_chunks.getOrPut();
                 const order = this.findImportedFilesInCSSOrder(&[_]Index{Index.init(source_index)});
-                js_chunk_entry.value_ptr.* = .{
+                css_chunk_entry.value_ptr.* = .{
                     .entry_point = .{
                         .entry_point_id = entry_bit,
                         .source_index = source_index,
@@ -4357,6 +4362,9 @@ pub const LinkerContext = struct {
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                 };
             } else {
+                // Create a chunk for the entry point here to ensure that the chunk is
+                // always generated even if the resulting file is empty
+                const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
                 js_chunk_entry.value_ptr.* = .{
                     .entry_point = .{
                         .entry_point_id = entry_bit,
@@ -4369,6 +4377,42 @@ pub const LinkerContext = struct {
                     },
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                 };
+
+                // If this JS entry point has an associated CSS entry point, generate it
+                // now. This is essentially done by generating a virtual CSS file that
+                // only contains "@import" statements in the order that the files were
+                // discovered in JS source order, where JS source order is arbitrary but
+                // consistent for dynamic imports. Then we run the CSS import order
+                // algorithm to determine the final CSS file order for the chunk.
+                const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, &[_]Index{Index.init(source_index)});
+                if (css_source_indices.len > 0) {
+                    const order = this.findImportedFilesInCSSOrder(css_source_indices.slice());
+                    var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                    for (order.slice()) |entry| {
+                        if (entry.kind == .source_index) {
+                            css_files_wth_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                        }
+                    }
+                    const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                    // const css_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                    css_chunk_entry.value_ptr.* = .{
+                        .entry_point = .{
+                            .entry_point_id = entry_bit,
+                            .source_index = source_index,
+                            .is_entry_point = true,
+                        },
+                        .entry_bits = entry_bits.*,
+                        .content = .{
+                            .css = .{
+                                .imports_in_chunk_in_order = order,
+                            },
+                        },
+                        .files_with_parts_in_chunk = css_files_wth_parts_in_chunk,
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    };
+                }
+
+                js_chunk_entry.value_ptr.content.javascript.has_css_chunk = true;
             }
         }
         var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
@@ -4383,10 +4427,13 @@ pub const LinkerContext = struct {
             }
         };
 
+        const css_reprs = this.graph.ast.items(.css);
+
         // Figure out which JS files are in which chunk
         for (this.graph.reachable_files) |source_index| {
             if (this.graph.files_live.isSet(source_index.get())) {
                 const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
+                if (css_reprs[source_index.get()] != null) continue;
 
                 if (this.graph.code_splitting) {
                     var js_chunk_entry = try js_chunks.getOrPut(
@@ -4418,9 +4465,41 @@ pub const LinkerContext = struct {
             }
         }
 
-        js_chunks.sort(strings.StringArrayByIndexSorter.init(try temp_allocator.dupe(string, js_chunks.keys())));
+        // Sort the chunks for determinism. This matters because we use chunk indices
+        // as sorting keys in a few places.
+        var sorted_chunks = BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count()) catch bun.outOfMemory();
+        var sorted_keys = BabyList(string).initCapacity(temp_allocator, @max(js_chunks.count(), css_chunks.count())) catch bun.outOfMemory();
+        sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
+        sorted_keys.sortAsc();
+        var js_chunk_indices_for_css = std.StringArrayHashMap(u32).init(temp_allocator);
+        js_chunk_indices_for_css.ensureTotalCapacity(brk: {
+            var count: u32 = 0;
+            for (js_chunks.values()) |*chunk| {
+                if (chunk.content.javascript.has_css_chunk) count += 1;
+            }
+            break :brk count;
+        }) catch bun.outOfMemory();
+        for (sorted_keys.slice()) |key| {
+            const chunk = js_chunks.get(key) orelse unreachable;
+            if (chunk.content.javascript.has_css_chunk) {
+                js_chunk_indices_for_css.put(key, sorted_chunks.len) catch unreachable;
+            }
+            sorted_chunks.appendAssumeCapacity(chunk);
+        }
+        sorted_keys.clearRetainingCapacity();
+        for (css_chunks.keys()) |key| {
+            sorted_keys.appendAssumeCapacity(key);
+        }
+        sorted_keys.sortAsc();
+        for (sorted_keys.slice()) |key| {
+            const chunk = css_chunks.get(key) orelse unreachable;
+            if (js_chunk_indices_for_css.get(key)) |js_chunk_index| {
+                sorted_chunks.mut(js_chunk_index).content.javascript.css_chunk_index = Index.init(sorted_chunks.len);
+            }
+            sorted_chunks.appendAssumeCapacity(chunk);
+        }
 
-        const chunks: []Chunk = js_chunks.values();
+        const chunks: []Chunk = sorted_chunks.slice();
 
         const entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
         // Map from the entry point file to this chunk. We will need this later if
@@ -4792,6 +4871,48 @@ pub const LinkerContext = struct {
         }
         for (worklist.slice()) |source_index| {
             impl(this, source_index, &worklist, &order, import_records, css_parts);
+        }
+
+        return order;
+    }
+
+    // JavaScript modules are traversed in depth-first postorder. This is the
+    // order that JavaScript modules were evaluated in before the top-level await
+    // feature was introduced.
+    //
+    //	  A
+    //	 / \
+    //	B   C
+    //	 \ /
+    //	  D
+    //
+    // If A imports B and then C, B imports D, and C imports D, then the JavaScript
+    // traversal order is D B C A.
+    //
+    // This function may deviate from ESM import order for dynamic imports (both
+    // "require()" and "import()"). This is because the import order is impossible
+    // to determine since the imports happen at run-time instead of compile-time.
+    // In this case we just pick an arbitrary but consistent order.
+    pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, entry_points: []const Index) BabyList(Index) {
+        // TODO: do this properly, not the dumb way
+        var order: BabyList(Index) = .{};
+
+        const visit = struct {
+            fn visit(c: *LinkerContext, temp: std.mem.Allocator, o: *BabyList(Index), source_index: Index, is_css: bool) void {
+                const records: []ImportRecord = c.graph.ast.items(.import_records)[source_index.get()].slice();
+
+                for (records) |record| {
+                    visit(c, temp, o, record.source_index, record.tag == .css or strings.hasSuffixComptime(record.path.text, ".css"));
+                }
+
+                if (is_css) {
+                    o.push(temp, source_index) catch bun.outOfMemory();
+                }
+            }
+        }.visit;
+
+        for (entry_points) |source_index| {
+            visit(this, temp_allocator, &order, source_index, false);
         }
 
         return order;
@@ -12422,6 +12543,9 @@ pub const Chunk = struct {
         imports_from_other_chunks: ImportsFromOtherChunks = .{},
         cross_chunk_prefix_stmts: BabyList(Stmt) = .{},
         cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
+
+        css_chunk_index: Index = Index.invalid,
+        has_css_chunk: bool = false,
     };
 
     pub const CssChunk = struct {

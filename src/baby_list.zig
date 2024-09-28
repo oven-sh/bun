@@ -41,6 +41,12 @@ pub fn BabyList(comptime Type: type) type {
             return l.swapRemove(index);
         }
 
+        pub fn sortAsc(
+            this: *@This(),
+        ) void {
+            bun.strings.sortAsc(this.slice());
+        }
+
         pub fn contains(this: @This(), item: []const Type) bool {
             return this.len > 0 and @intFromPtr(item.ptr) >= @intFromPtr(this.ptr) and @intFromPtr(item.ptr) < @intFromPtr(this.ptr) + this.len;
         }

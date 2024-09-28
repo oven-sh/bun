@@ -1,15 +1,15 @@
-/// <reference path="../kit.d.ts" />
-import type { PassThrough } from 'node:stream';
 // @ts-ignore
 import { use } from "react";
 // @ts-ignore
-import { createFromNodeStream } from "react-server-dom-webpack/client";
+import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
+// @ts-ignore
 import { renderToReadableStream } from "react-dom/server";
+// @ts-ignore
 import { clientManifest } from 'bun:kit/server';
 
-export function renderToHtml(rscPayload: PassThrough): Promise<ReadableStream> {
+export function renderToHtml(rscPayload: ReadableStream): Promise<ReadableStream> {
   // TODO: this does not implement proper streaming
-  const promise = createFromNodeStream(rscPayload, {
+  const promise = createFromReadableStream(rscPayload, {
     moduleMap: clientManifest,
     moduleLoading: {
       prefix: ""

@@ -1,10 +1,18 @@
 declare module 'bun' {
+  declare function wipDevServerExpectHugeBreakingChanges(options: Kit.Options): never;
+
   declare namespace Kit {
     interface Options {
       /**
-       * Use "react" to use the built-in React framework preset.
+       * Bun provides built-in support for using React as a framework by
+       * passing 'react-server-components' as the framework name.
+       * 
+       * Has external dependencies:
+       * ```
+       * bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
+       * ```
        */
-      framework?: Framework | 'react' | undefined;
+      framework: Framework | 'react-server-components';
 
       /**
        * Route patterns must be statically known.
@@ -12,7 +20,7 @@ declare module 'bun' {
        */
       routes: Record<RoutePattern, RouteOptions>;
 
-      // TODO: expose bundler options. things like minifySyntax may not be disabled
+      // TODO: many other options
     }
   
     /**
@@ -44,6 +52,10 @@ declare module 'bun' {
        */
       clientEntryPoint: ImportSource;
       /**
+       * Add extra modules
+       */
+      builtInModules: Record<string, BuiltInModule>;
+      /**
        * Bun offers integration for React's Server Components with an
        * interface that is generic enough to adapt to any framework.
        */
@@ -52,8 +64,10 @@ declare module 'bun' {
        * While it is unlikely that Fast Refresh is useful outside of
        * React, it can be enabled regardless.
        */
-      reactFastRefresh?: ReactFastRefreshOptions | undefined;
+      reactFastRefresh?: ReactFastRefreshOptions | true | undefined;
     }
+
+    type BuiltInModule = { code: string } | { path: string };
   
     /**
      * A high-level overview of what server components means exists

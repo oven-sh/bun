@@ -273,7 +273,9 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Render
     bundler.options.minify_syntax = true; // required for DCE
     bundler.options.minify_identifiers = false;
     bundler.options.minify_whitespace = false;
+
     bundler.options.kit = dev;
+    bundler.options.framework = &dev.framework;
 
     bundler.configureLinker();
     try bundler.configureDefines();
@@ -366,12 +368,19 @@ fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
 }
 
 fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bundle {
-    return dev.theRealBundlingFunction(&.{
-        dev.framework.entry_server.?,
-        route.entry_point,
-    }, &.{
-        dev.framework.entry_client.?,
-    }, route, .initial_response, fail);
+    return dev.theRealBundlingFunction(
+        &.{
+            dev.framework.entry_server.?,
+            route.entry_point,
+        },
+        &.{
+            dev.framework.entry_client.?,
+        },
+        &.{},
+        route,
+        .initial_response,
+        fail,
+    );
 }
 
 /// Error handling is done either by writing to `fail` with a specific failure,
@@ -379,8 +388,10 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
 /// error, including replying to the request as well as console logging.
 fn theRealBundlingFunction(
     dev: *DevServer,
+    // TODO: the way these params are passed in is very sloppy
     server_requirements: []const []const u8,
     client_requirements: []const []const u8,
+    ssr_requirements: []const []const u8,
     dependant_route: ?*Route,
     comptime client_chunk_kind: ChunkKind,
     fail: *Failure,
@@ -395,7 +406,7 @@ fn theRealBundlingFunction(
         }
     };
 
-    assert(server_requirements.len > 0 or client_requirements.len > 0);
+    assert(server_requirements.len > 0 or client_requirements.len > 0 or ssr_requirements.len > 0);
 
     dev.main_thread_lock.assertOwningThread();
 
@@ -452,7 +463,7 @@ fn theRealBundlingFunction(
         dev.client_graph.reset();
     }
 
-    const output_files = try bv2.runFromJSInNewThread(server_requirements, client_requirements);
+    const output_files = try bv2.runFromJSInNewThread(server_requirements, client_requirements, ssr_requirements);
 
     try dev.client_graph.ensureStaleBitCapacity();
     try dev.server_graph.ensureStaleBitCapacity();
@@ -809,7 +820,9 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     try g.current_incremental_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
                 },
                 .server => {
-                    // TODO: THIS ALLOCATION STRATEGY SUCKS. IT DOESNT DESERVE TO SHIP
+                    // TODO: Heavily revise this allocation strategy. Right now
+                    // this calls so many re-allocations for no reason. Two
+                    // separate bitsets isnt even good for memory locality.
                     if (!gop.found_existing) {
                         try g.server_is_ssr.resize(default_allocator, gop.index + 1, false);
                         try g.server_is_rsc.resize(default_allocator, gop.index + 1, false);
@@ -830,7 +843,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
             try g.stale_files.resize(default_allocator, g.bundled_files.count(), false);
         }
 
-        pub fn invalidate(g: *@This(), paths: []const []const u8, hashes: []const u32, out_paths: *DualArray([]const u8)) void {
+        pub fn invalidate(g: *@This(), paths: []const []const u8, hashes: []const u32, out_paths: *FileLists, file_list_alloc: Allocator) !void {
             for (paths, hashes) |path, hash| {
                 const ctx: bun.StringArrayHashMapContext.Prehashed = .{
                     .value = hash,
@@ -840,8 +853,13 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     continue;
                 g.stale_files.set(index);
                 switch (side) {
-                    .client => out_paths.appendLeft(path),
-                    .server => out_paths.appendRight(path),
+                    .client => try out_paths.client.append(file_list_alloc, path),
+                    .server => {
+                        if (g.server_is_rsc.isSet(index))
+                            try out_paths.server.append(file_list_alloc, path);
+                        if (g.server_is_ssr.isSet(index))
+                            try out_paths.ssr.append(file_list_alloc, path);
+                    },
                 }
             }
         }
@@ -1219,29 +1237,44 @@ const c = struct {
     }
 };
 
+const FileLists = struct {
+    client: std.ArrayListUnmanaged([]const u8),
+    server: std.ArrayListUnmanaged([]const u8),
+    ssr: std.ArrayListUnmanaged([]const u8),
+};
+
 pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
-    const sfb = default_allocator;
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const temp_alloc = sfb.get();
 
     const changed_file_paths = reload_task.paths[0..reload_task.count];
     const changed_hashes = reload_task.hashes[0..reload_task.count];
 
     defer for (changed_file_paths) |path| default_allocator.free(path);
 
-    var files_to_bundle = DualArray([]const u8).initCapacity(sfb, changed_file_paths.len * 2) catch bun.outOfMemory();
-    defer files_to_bundle.deinit(sfb);
+    var files: FileLists = .{
+        .client = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
+        .server = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
+        .ssr = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
+    };
+    defer files.client.deinit(temp_alloc);
+    defer files.server.deinit(temp_alloc);
+    defer files.ssr.deinit(temp_alloc);
+
     inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-        g.invalidate(changed_file_paths, changed_hashes, &files_to_bundle);
+        g.invalidate(changed_file_paths, changed_hashes, &files, temp_alloc) catch bun.outOfMemory();
     }
 
     // TODO: workaround a known bug when a reload comes before a bundle
-    if (files_to_bundle.left().len == 0 and files_to_bundle.right().len == 0) {
+    if (files.server.items.len == 0 and files.client.items.len == 0 and files.ssr.items.len == 0) {
         return;
     }
 
     var fail: Failure = undefined;
     const bundle = dev.theRealBundlingFunction(
-        files_to_bundle.right(),
-        files_to_bundle.left(),
+        files.server.items,
+        files.client.items,
+        files.ssr.items,
         null,
         .hmr_chunk,
         &fail,

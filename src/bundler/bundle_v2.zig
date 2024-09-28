@@ -852,7 +852,7 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8) !ThreadPoolLib.Batch {
+    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8, ssr_entry_points: []const []const u8) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
 
         {
@@ -899,6 +899,13 @@ pub const BundleV2 = struct {
             for (client_entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved, true, .browser)) |source_index| {
+                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
+                } else {}
+            }
+
+            for (ssr_entry_points) |entry_point| {
+                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
+                if (try this.enqueueItem(null, &batch, resolved, true, .kit_server_components_ssr)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -1188,7 +1195,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}, &.{}));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1785,6 +1792,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
         entry_points: []const []const u8,
         client_entry_points: []const []const u8,
+        ssr_entry_points: []const []const u8,
     ) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
@@ -1797,7 +1805,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points, ssr_entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2109,7 +2117,7 @@ pub const BundleV2 = struct {
                 ast.target,
             };
 
-            var resolve_result = bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+            var resolve_result = bundler.resolver.resolveWithFramework(source_dir, import_record.path.text, import_record.kind) catch |err| {
                 // Disable failing packages from being printed.
                 // This may cause broken code to write.
                 // However, doing this means we tell them all the resolve errors
@@ -2185,11 +2193,13 @@ pub const BundleV2 = struct {
             }
 
             if (this.bundler.options.kit) |dev_server| {
+                // TODO(paperdave/kit): this relative can be done without a clone in most cases
                 if (!dev_server.isFileStale(path.text, renderer)) {
                     import_record.source_index = Index.invalid;
-                    // TODO(paperdave/kit): this relative can be done without a clone in most cases
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                    import_record.path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
+                    import_record.path.text = rel;
+                    import_record.path.pretty = rel;
+                    import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
                     continue;
                 }
             }
@@ -2673,7 +2683,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             completion.result = .{
                 .value = .{
-                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}),
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}, &.{}),
                 },
             };
 
@@ -3142,10 +3152,24 @@ pub const ParseTask = struct {
             .fd => brk: {
                 const trace = tracer(@src(), "readFile");
                 defer trace.end();
-                if (strings.eqlComptime(file_path.namespace, "node"))
+
+                if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
+                    if (task.ctx.framework) |f| {
+                        if (f.built_in_modules.get(file_path.text)) |file| {
+                            switch (file) {
+                                .code => |code| break :brk .{ .contents = code },
+                                .import => |path| {
+                                    file_path = Fs.Path.init(path);
+                                    break :lookup_builtin;
+                                },
+                            }
+                        }
+                    }
+
                     break :brk CacheEntry{
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
                     };
+                }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
                     if (loader.shouldCopyForBundling())
@@ -4721,6 +4745,42 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "computeChunks");
         defer trace.end();
 
+        // The dev server never compiles chunks, and requires every reachable
+        // file to be printed, So the logic is special-cased.
+        if (this.kit_dev_server != null) {
+            var js_chunks = try std.ArrayListUnmanaged(Chunk).initCapacity(this.allocator, 1);
+            const entry_bits = &this.graph.files.items(.entry_bits)[0];
+
+            const part_ranges = try this.allocator.alloc(PartRange, this.graph.reachable_files.len);
+
+            const parts = this.parse_graph.ast.items(.parts);
+            for (this.graph.reachable_files, part_ranges) |source_index, *part_range| {
+                part_range.* = .{
+                    .source_index = source_index,
+                    .part_index_begin = 0,
+                    .part_index_end = parts[source_index.get()].len,
+                };
+            }
+
+            js_chunks.appendAssumeCapacity(.{
+                .entry_point = .{
+                    .entry_point_id = 0,
+                    .source_index = 0,
+                    .is_entry_point = true,
+                },
+                .entry_bits = entry_bits.*,
+                .content = .{
+                    .javascript = .{
+                        // TODO(@paperdave): this ptrCast should not be needed.
+                        .files_in_chunk_order = @ptrCast(this.graph.reachable_files),
+                        .parts_in_chunk_in_order = part_ranges,
+                    },
+                },
+                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+            });
+            return js_chunks.items;
+        }
+
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         const stack_all = stack_fallback.get();
         var arena = bun.ArenaAllocator.init(stack_all);
@@ -4874,27 +4934,6 @@ pub const LinkerContext = struct {
     pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
         const trace = tracer(@src(), "findAllImportedPartsInJSOrder");
         defer trace.end();
-
-        // The dev server never compiles chunks, and requires every reachable
-        // file to be printed, So the logic is special-cased.
-        if (this.kit_dev_server != null) {
-            const chunk = &chunks[0];
-            const part_ranges = try this.allocator.alloc(PartRange, this.graph.reachable_files.len);
-
-            const parts = this.parse_graph.ast.items(.parts);
-            for (this.graph.reachable_files, part_ranges) |source_index, *part_range| {
-                part_range.* = .{
-                    .source_index = source_index,
-                    .part_index_begin = 0,
-                    .part_index_end = parts[source_index.get()].len,
-                };
-            }
-
-            // TODO(@paperdave): this ptrCast should not be needed.
-            chunk.content.javascript.files_in_chunk_order = @ptrCast(this.graph.reachable_files);
-            chunk.content.javascript.parts_in_chunk_in_order = part_ranges;
-            return;
-        }
 
         var part_ranges_shared = std.ArrayList(PartRange).init(temp_allocator);
         var parts_prefix_shared = std.ArrayList(PartRange).init(temp_allocator);

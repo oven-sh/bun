@@ -560,7 +560,6 @@ pub const Arguments = struct {
         else
             null;
 
-        opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");

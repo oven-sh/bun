@@ -54,7 +54,12 @@ pub const Framework = struct {
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
 
-    /// Bun provides built-in support for using React as a framework
+    built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
+
+    /// Bun provides built-in support for using React as a framework.
+    /// Depends on externally provided React
+    ///
+    /// $ bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
     pub fn react() Framework {
         return .{
             .server_components = .{
@@ -62,14 +67,29 @@ pub const Framework = struct {
                 .server_runtime_import = "react-server-dom-webpack/server",
                 .client_runtime_import = "react-server-dom-webpack/client",
             },
-            .react_fast_refresh = .{
-                .import_source = "react-refresh/runtime",
-            },
-            // TODO: embed these in bun
-            .entry_client = "./framework/client.tsx",
-            .entry_server = "./framework/server.tsx",
+            .react_fast_refresh = .{},
+            .entry_client = "bun-framework-rsc/client.tsx",
+            .entry_server = "bun-framework-rsc/server.tsx",
+            .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(bun.default_allocator, &.{
+                "bun-framework-rsc/client.tsx",
+                "bun-framework-rsc/server.tsx",
+                "bun-framework-rsc/ssr.tsx",
+            }, if (Environment.embed_code) &.{
+                .{ .code = @embedFile("./bun-framework-rsc/client.tsx") },
+                .{ .code = @embedFile("./bun-framework-rsc/server.tsx") },
+                .{ .code = @embedFile("./bun-framework-rsc/ssr.tsx") },
+            } else &.{
+                .{ .code = bun.runtimeEmbedFile(.src, "kit/bun-framework-rsc/client.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "kit/bun-framework-rsc/server.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "kit/bun-framework-rsc/ssr.tsx") },
+            }) catch bun.outOfMemory(),
         };
     }
+
+    const BuiltInModule = union(enum) {
+        import: []const u8,
+        code: []const u8,
+    };
 
     const ServerComponents = struct {
         separate_ssr_graph: bool = false,
@@ -81,7 +101,7 @@ pub const Framework = struct {
     };
 
     const ReactFastRefresh = struct {
-        import_source: []const u8,
+        import_source: []const u8 = "react-refresh/runtime",
     };
 
     /// Given a Framework configuration, this returns another one with all modules resolved.
@@ -92,16 +112,16 @@ pub const Framework = struct {
         var clone = f;
         var had_errors: bool = false;
 
-        if (clone.entry_client) |*path| resolveHelper(client, path, &had_errors);
-        if (clone.entry_server) |*path| resolveHelper(server, path, &had_errors);
+        if (clone.entry_client) |*path| f.resolveHelper(client, path, &had_errors);
+        if (clone.entry_server) |*path| f.resolveHelper(server, path, &had_errors);
 
         if (clone.react_fast_refresh) |*react_fast_refresh| {
-            resolveHelper(client, &react_fast_refresh.import_source, &had_errors);
+            f.resolveHelper(client, &react_fast_refresh.import_source, &had_errors);
         }
 
         if (clone.server_components) |*sc| {
-            resolveHelper(server, &sc.server_runtime_import, &had_errors);
-            resolveHelper(client, &sc.client_runtime_import, &had_errors);
+            f.resolveHelper(server, &sc.server_runtime_import, &had_errors);
+            f.resolveHelper(client, &sc.client_runtime_import, &had_errors);
         }
 
         if (had_errors) return error.ModuleNotFound;
@@ -109,7 +129,15 @@ pub const Framework = struct {
         return clone;
     }
 
-    inline fn resolveHelper(r: *bun.resolver.Resolver, path: *[]const u8, had_errors: *bool) void {
+    inline fn resolveHelper(f: *const Framework, r: *bun.resolver.Resolver, path: *[]const u8, had_errors: *bool) void {
+        if (f.built_in_modules.get(path.*)) |mod| {
+            switch (mod) {
+                .import => |p| path.* = p,
+                .code => {},
+            }
+            return;
+        }
+
         var result = r.resolve(r.fs.top_level_dir, path.*, .stmt) catch |err| {
             bun.Output.err(err, "Failed to resolve '{s}' for framework", .{path.*});
             had_errors.* = true;
@@ -117,6 +145,122 @@ pub const Framework = struct {
             return;
         };
         path.* = result.path().?.text; // TODO: what is the lifetime of this string
+    }
+
+    // TODO: This function always leaks memory.
+    // `Framework` has no way to specify what is allocated, nor should it.
+    fn fromJS(opts: JSValue, global: JSC.JSGlobalObject) !Framework {
+        if (opts.isString()) {
+            const str = opts.toBunString(global);
+            defer str.deref();
+            if (str.eqlComptime("react-server-components")) {
+                return Framework.react();
+            }
+        }
+
+        if (!opts.isObject()) {
+            global.throwInvalidArguments("Framework must be an object", .{});
+            return error.JSError;
+        }
+        return .{
+            .entry_server = brk: {
+                const prop: JSValue = opts.get(global, "serverEntryPoint") orelse {
+                    if (!global.hasException())
+                        global.throwInvalidArguments("Missing 'framework.serverEntryPoint'", .{});
+                    return error.JSError;
+                };
+                const str = prop.toBunString();
+                defer str.deref();
+
+                if (global.hasException())
+                    return error.JSError;
+
+                // Leak
+                break :brk str.toUTF8(bun.default_allocator).slice();
+            },
+            .entry_client = brk: {
+                const prop: JSValue = opts.get(global, "clientEntryPoint") orelse {
+                    if (!global.hasException())
+                        global.throwInvalidArguments("Missing 'framework.clientEntryPoint'", .{});
+                    return error.JSError;
+                };
+                const str = prop.toBunString();
+                defer str.deref();
+
+                if (global.hasException())
+                    return error.JSError;
+
+                // Leak
+                break :brk str.toUTF8(bun.default_allocator).slice();
+            },
+            .react_fast_refresh = brk: {
+                const rfr: JSValue = opts.get(global, "reactFastRefresh") orelse {
+                    if (global.hasException())
+                        return error.JSError;
+                    break :brk null;
+                };
+                if (rfr == .true) break :brk .{};
+                if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
+                if (!rfr.isObject()) {
+                    global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
+                    return error.JSError;
+                }
+                // in addition to here, this import isnt actually wired up to js_parser where the default is hardcoded.
+                bun.todoPanic(@src(), "custom react-fast-refresh import source", .{});
+            },
+            .server_components = sc: {
+                const rfr: JSValue = opts.get(global, "serverComponents") orelse {
+                    if (global.hasException())
+                        return error.JSError;
+                    break :sc null;
+                };
+                if (rfr == .null or rfr == .undefined) break :sc null;
+
+                break :sc .{
+                    .separate_ssr_graph = brk: {
+                        const prop: JSValue = opts.get(global, "separateSSRGraph") orelse {
+                            if (!global.hasException())
+                                global.throwInvalidArguments("Missing 'framework.serverComponents.separateSSRGraph'", .{});
+                            return error.JSError;
+                        };
+                        if (prop == .true) break :brk true;
+                        if (prop == .false) break :brk false;
+                        global.throwInvalidArguments("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
+                        return error.JSError;
+                    },
+                    .server_runtime_import = brk: {
+                        const prop: JSValue = opts.get(global, "serverRuntimeImportSource") orelse {
+                            if (!global.hasException())
+                                global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
+                            return error.JSError;
+                        };
+                        const str = prop.toBunString();
+                        defer str.deref();
+
+                        if (global.hasException())
+                            return error.JSError;
+
+                        // Leak
+                        break :brk str.toUTF8(bun.default_allocator).slice();
+                    },
+                    .server_register_client_reference = brk: {
+                        const prop: JSValue = opts.get(global, "serverRegisterClientReferenceExport") orelse {
+                            if (!global.hasException())
+                                global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
+                            return error.JSError;
+                        };
+                        const str = prop.toBunString();
+                        defer str.deref();
+
+                        if (global.hasException())
+                            return error.JSError;
+
+                        // Leak
+                        break :brk str.toUTF8(bun.default_allocator).slice();
+                    },
+                };
+            },
+        };
     }
 };
 

@@ -332,7 +332,9 @@ pub const Archive = opaque {
 
     extern fn archive_error_string(*Archive) [*c]const u8;
     pub fn errorString(archive: *Archive) []const u8 {
-        return bun.sliceTo(archive_error_string(archive), 0);
+        const err_str = archive_error_string(archive);
+        if (err_str == null) return "";
+        return bun.sliceTo(err_str, 0);
     }
 
     extern fn archive_write_new() *Archive;

@@ -2356,7 +2356,7 @@ pub const bindings = struct {
 
                     if (kind == .file) {
                         const size: usize = @intCast(archive_entry.size());
-                        read_buf.ensureTotalCapacity(size) catch bun.outOfMemory();
+                        read_buf.resize(size) catch bun.outOfMemory();
                         defer read_buf.clearRetainingCapacity();
 
                         const read = archive.readData(read_buf.items);

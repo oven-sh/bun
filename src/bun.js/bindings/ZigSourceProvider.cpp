@@ -12,6 +12,9 @@
 #include <wtf/Scope.h>
 #include <wtf/text/StringHash.h>
 #include <sys/stat.h>
+#include <JavaScriptCore/SourceCodeKey.h>
+#include <mimalloc.h>
+#include <JavaScriptCore/CodeCache.h>
 
 extern "C" void RefString__free(void*, void*, unsigned);
 
@@ -100,6 +103,19 @@ Ref<SourceProvider> SourceProvider::create(
         sourceURLString.impl(), TextPosition(),
         sourceType));
 
+    if (resolvedSource.bytecode_cache != nullptr) {
+        WTF::MallocPtr<uint8_t, VMMalloc> mallocPtr = WTF::MallocPtr<uint8_t, VMMalloc>::malloc(resolvedSource.bytecode_cache_size);
+        memcpy(mallocPtr.get(), resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size);
+        provider->m_cachedBytecode = JSC::CachedBytecode::create(WTFMove(mallocPtr), resolvedSource.bytecode_cache_size, {});
+        JSC::SourceCodeKey key = JSC::sourceCodeKeyForSerializedModule(globalObject->vm(), SourceCode(provider));
+        if (JSC::isCachedBytecodeStillValid(globalObject->vm(), *provider->cachedBytecode().get(), key, JSC::SourceCodeType::ProgramType)) {
+            printf("Valid!\n");
+        } else {
+            printf("Invalid!\n");
+        }
+        mi_free(resolvedSource.bytecode_cache);
+    }
+
     if (shouldGenerateCodeCoverage) {
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
     }
@@ -117,6 +133,40 @@ SourceProvider::~SourceProvider()
         BunString str = Bun::toString(sourceURL());
         Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
     }
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize)
+{
+    std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    auto heapSize = JSC::HeapType::Small;
+
+    JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
+    // This must happen before JSVMClientData::create
+    vm.heap.acquireAccess();
+    JSC::JSLockHolder locker(vm);
+    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+    JSParserScriptMode scriptMode = JSParserScriptMode::Module;
+    EvalContextType evalContextType = EvalContextType::None;
+
+    ParserError parserError;
+    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+    if (parserError.isValid())
+        return false;
+    if (!unlinkedCodeBlock)
+        return false;
+
+    auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
+
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
+    if (!cachedBytecode)
+        return false;
+
+    cachedBytecode->ref();
+    *outputByteCode = cachedBytecode->span().data();
+    *outputByteCodeSize = cachedBytecode->span().size();
+
+    return true;
 }
 
 unsigned SourceProvider::hash() const

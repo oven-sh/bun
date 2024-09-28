@@ -70,12 +70,18 @@ pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
-    already_bundled: bool = false,
+    already_bundled: AlreadyBundled = .none,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+    pub const AlreadyBundled = union(enum) {
+        none: void,
+        source_code: void,
+        bytecode: []u8,
+    };
 
     pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
         const import_record_ids = this.pending_imports.items(.import_record_id);
@@ -1218,6 +1224,7 @@ pub const Bundler = struct {
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
         keep_json_and_toml_as_one_statement: bool = false,
+        allow_bytecode_cache: bool = false,
     };
 
     pub fn parse(
@@ -1399,9 +1406,24 @@ pub const Bundler = struct {
                         .loader = loader,
                         .input_fd = input_fd,
                     },
-                    .already_bundled => ParseResult{
+                    .already_bundled => |already_bundled| ParseResult{
                         .ast = undefined,
-                        .already_bundled = true,
+                        .already_bundled = switch (already_bundled) {
+                            .bun => .source_code,
+                            .bytecode => brk: {
+                                if (this_parse.virtual_source == null and this_parse.allow_bytecode_cache) {
+                                    var path_buf2: bun.PathBuffer = undefined;
+                                    @memcpy(path_buf2[0..path.text.len], path.text);
+                                    path_buf2[path.text.len..][0..5].* = ".boom".*;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + ".boom".len], bun.default_allocator).asValue() orelse break :brk .source_code;
+                                    if (bytecode.contents.len == 0) {
+                                        break :brk .source_code;
+                                    }
+                                    break :brk .{ .bytecode = @constCast(bytecode.contents) };
+                                }
+                                break :brk .source_code;
+                            },
+                        },
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,

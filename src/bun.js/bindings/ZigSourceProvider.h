@@ -45,9 +45,9 @@ public:
     unsigned hash() const override;
     StringView source() const override { return StringView(m_source.get()); }
 
-    RefPtr<JSC::CachedBytecode> cachedBytecode()
+    RefPtr<JSC::CachedBytecode> cachedBytecode() const final
     {
-        return nullptr;
+        return m_cachedBytecode.copyRef();
     };
 
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,

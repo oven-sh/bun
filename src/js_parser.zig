@@ -3226,9 +3226,13 @@ pub const Parser = struct {
         }
 
         // Detect a leading "// @bun" pragma
-        if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
+        if (p.lexer.bun_pragma != .none and p.options.features.dont_bundle_twice) {
             return js_ast.Result{
-                .already_bundled = {},
+                .already_bundled = switch (p.lexer.bun_pragma) {
+                    .bun => .bun,
+                    .bytecode => .bytecode,
+                    else => unreachable,
+                },
             };
         }
 

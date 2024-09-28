@@ -7496,9 +7496,14 @@ pub const Part = struct {
 };
 
 pub const Result = union(enum) {
-    already_bundled: void,
+    already_bundled: AlreadyBundled,
     cached: void,
     ast: Ast,
+
+    pub const AlreadyBundled = enum {
+        bun,
+        bytecode,
+    };
 };
 
 pub const StmtOrExpr = union(enum) {

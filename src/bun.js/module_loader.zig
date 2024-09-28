@@ -479,6 +479,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .allow_bytecode_cache = true,
             };
 
             defer {
@@ -573,7 +574,7 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (parse_result.already_bundled) {
+            if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
@@ -582,6 +583,8 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
+                    .bytecode_cache = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.ptr else null,
+                    .bytecode_cache_size = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.len else 0,
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -1615,6 +1618,7 @@ pub const ModuleLoader = struct {
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
+                    .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1760,7 +1764,7 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (parse_result.already_bundled) {
+                if (parse_result.already_bundled != .none) {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1768,6 +1772,8 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
+                        .bytecode_cache = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.ptr else null,
+                        .bytecode_cache_size = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.len else 0,
                     };
                 }
 

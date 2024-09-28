@@ -172,7 +172,11 @@ fn NewLexer_(
         code_point: CodePoint = -1,
         identifier: []const u8 = "",
         jsx_pragma: JSXPragma = .{},
-        bun_pragma: bool = false,
+        bun_pragma: enum {
+            none,
+            bun,
+            bytecode,
+        } = .none,
         source_mapping_url: ?js_ast.Span = null,
         number: f64 = 0.0,
         rescan_close_brace_as_template_token: bool = false,
@@ -2024,7 +2028,7 @@ fn NewLexer_(
                                     }
 
                                     if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                                        lexer.bun_pragma = true;
+                                        lexer.bun_pragma = .bun;
                                     } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                                         if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                             lexer.jsx_pragma._jsx = span;
@@ -2045,6 +2049,8 @@ fn NewLexer_(
                                         if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                             lexer.source_mapping_url = span;
                                         }
+                                    } else if (lexer.bun_pragma == .bun and strings.hasPrefixWithWordBoundary(chunk, "bytecode")) {
+                                        lexer.bun_pragma = .bytecode;
                                     }
                                 },
                                 else => {},
@@ -2075,7 +2081,7 @@ fn NewLexer_(
                         }
 
                         if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {
-                            lexer.bun_pragma = true;
+                            lexer.bun_pragma = .bun;
                         } else if (strings.hasPrefixWithWordBoundary(chunk, "jsx")) {
                             if (PragmaArg.scan(.skip_space_first, lexer.start + i + 1, "jsx", chunk)) |span| {
                                 lexer.jsx_pragma._jsx = span;
@@ -2096,6 +2102,8 @@ fn NewLexer_(
                             if (PragmaArg.scan(.no_space_first, lexer.start + i + 1, " sourceMappingURL=", chunk)) |span| {
                                 lexer.source_mapping_url = span;
                             }
+                        } else if (lexer.bun_pragma == .bun and strings.hasPrefixWithWordBoundary(chunk, "bytecode")) {
+                            lexer.bun_pragma = .bytecode;
                         }
                     },
                     else => {},

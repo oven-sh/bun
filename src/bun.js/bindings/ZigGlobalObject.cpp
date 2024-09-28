@@ -149,6 +149,7 @@
 #include "ErrorCode.h"
 #include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
+#include <JavaScriptCore/WasmStreamingCompiler.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -949,9 +950,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
     {                                                                                                                                                               \
         return WebCore::JS##ConstructorName::getConstructor(vm, JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject));                                              \
     }                                                                                                                                                               \
-    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                                                                                              \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                                                                                  \
-            JSC::PropertyName))                                                                                                                                     \
+    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))               \
     {                                                                                                                                                               \
         return JSC::JSValue::encode(WebCore::JS##ConstructorName::getConstructor(lexicalGlobalObject->vm(), JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject))); \
     }
@@ -1016,8 +1015,8 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &scriptExecutionStatus,
     nullptr, // reportViolationForUnsafeEval
     nullptr, // defaultLanguage
-    nullptr, // compileStreaming
-    nullptr, // instantiateStreaming
+    &compileStreaming,
+    &instantiateStreaming,
     &Zig::deriveShadowRealmGlobalObject,
     nullptr, // codeForEval
     nullptr, // canCompileStrings
@@ -1041,8 +1040,8 @@ const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable =
     &scriptExecutionStatus,
     nullptr, // reportViolationForUnsafeEval
     nullptr, // defaultLanguage
-    nullptr, // compileStreaming
-    nullptr, // instantiateStreaming
+    &compileStreaming,
+    &instantiateStreaming,
     &Zig::deriveShadowRealmGlobalObject,
     nullptr, // codeForEval
     nullptr, // canCompileStrings
@@ -1107,6 +1106,37 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext()
 WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 {
     return m_scriptExecutionContext;
+}
+
+// https://webassembly.github.io/spec/web-api/index.html#compile-a-potential-webassembly-response
+static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* globalObject, JSC::JSValue source, JSC::Wasm::CompilerMode compilerMode, JSC::JSObject* importObject)
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+
+    auto prom = JSPromise::create(vm, globalObject->promiseStructure());
+
+    switch (compilerMode) {
+    case JSC::Wasm::CompilerMode::Validation:
+        prom->reject(globalObject, createError(globalObject, ErrorCode::ERR_NOT_IMPLEMENTED, String("WebAssembly.compileStreaming is not yet implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/14219"_s)));
+        break;
+    case JSC::Wasm::CompilerMode::FullCompile:
+        prom->reject(globalObject, createError(globalObject, ErrorCode::ERR_NOT_IMPLEMENTED, String("WebAssembly.instantiateStreaming is not yet implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/14219"_s)));
+        break;
+    }
+    return prom;
+}
+
+JSC::JSPromise* JSDOMGlobalObject::compileStreaming(JSC::JSGlobalObject* globalObject, JSC::JSValue source)
+{
+    ASSERT(source);
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::Validation, nullptr);
+}
+
+JSC::JSPromise* JSDOMGlobalObject::instantiateStreaming(JSC::JSGlobalObject* globalObject, JSC::JSValue source, JSC::JSObject* importObject)
+{
+    ASSERT(source);
+    return handleResponseOnStreamingAction(globalObject, source, JSC::Wasm::CompilerMode::FullCompile, importObject);
 }
 
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,

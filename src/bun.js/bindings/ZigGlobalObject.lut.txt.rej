@@ -1,0 +1,9 @@
+diff a/src/bun.js/bindings/ZigGlobalObject.lut.txt b/src/bun.js/bindings/ZigGlobalObject.lut.txt	(rejected hunks)
+@@ -38,6 +38,7 @@
+   BuildMessage                    GlobalObject::m_JSBuildMessage                       ClassStructure
+   Crypto                          GlobalObject::m_JSCrypto                             ClassStructure
+   HTMLRewriter                    GlobalObject::m_JSHTMLRewriter                       ClassStructure
++  Navigator                       GlobalObject::m_JSNavigator                          ClassStructure
+   Request                         GlobalObject::m_JSRequest                            ClassStructure
+   ResolveError                    GlobalObject::m_JSResolveMessage                     ClassStructure
+   ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure

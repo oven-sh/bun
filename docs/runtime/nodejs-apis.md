@@ -311,6 +311,14 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 🟢 Fully implemented.
 
+### [`Navigator`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator)
+
+🟢 Fully implemented.
+
+### [`navigator`](https://nodejs.org/api/globals.html#navigator_1)
+
+🟢 Fully implemented.
+
 ### [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry)
 
 🟢 Fully implemented.

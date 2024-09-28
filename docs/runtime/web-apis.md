@@ -86,6 +86,7 @@ The following Web APIs are partially or completely supported.
 - Debugging
 
 - [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
+  [`navigator`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator)
   [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/Performance)
 
 ---

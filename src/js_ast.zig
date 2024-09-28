@@ -6915,10 +6915,10 @@ pub const Ast = struct {
     }
 };
 
-pub const tlaCheck = struct {
+pub const TlaCheck = struct {
     depth: u32 = 0,
     parent: Index.Int = Index.invalid.get(),
-    importRecordIndex: Index.Int = Index.invalid.get(),
+    import_record_index: Index.Int = Index.invalid.get(),
 };
 
 /// Like Ast but slimmer and for bundling only.
@@ -6952,7 +6952,7 @@ pub const BundledAst = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
     top_level_await_keyword: logger.Range,
-    tla_check: tlaCheck = .{},
+    tla_check: TlaCheck = .{},
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass

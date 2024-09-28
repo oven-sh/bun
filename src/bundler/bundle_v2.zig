@@ -7548,9 +7548,9 @@ pub const LinkerContext = struct {
         return hasher.digest();
     }
 
-    pub fn validateTLA(c: *LinkerContext, source_index: Index.Int) js_ast.tlaCheck {
-        var result_tla_check: *js_ast.tlaCheck = &c.parse_graph.ast.items(.tla_check).ptr[source_index];
-        var result = c.parse_graph.ast.get(source_index);
+    pub fn validateTLA(c: *LinkerContext, source_index: Index.Int) js_ast.TlaCheck {
+        var result_tla_check: *js_ast.TlaCheck = &c.parse_graph.ast.items(.tla_check).ptr[source_index];
+        const result = c.parse_graph.ast.get(source_index);
 
         if (result_tla_check.depth == 0) {
             result_tla_check.depth = 1;
@@ -7558,8 +7558,7 @@ pub const LinkerContext = struct {
                 result_tla_check.parent = source_index;
             }
 
-            for (0..result.import_records.len) |import_record_index| {
-                var record = result.import_records.at(import_record_index);
+            for (result.import_records.slice(), 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
                     const parent = c.validateTLA(record.source_index.get());
                     if (Index.isInvalid(Index.init(parent.parent))) {
@@ -7570,7 +7569,7 @@ pub const LinkerContext = struct {
                     if (record.kind == .stmt and (Index.isInvalid(Index.init(result.tla_check.parent)) or parent.depth < result.tla_check.depth)) {
                         result_tla_check.depth = parent.depth + 1;
                         result_tla_check.parent = record.source_index.get();
-                        result_tla_check.importRecordIndex = @intCast(import_record_index);
+                        result_tla_check.import_record_index = @intCast(import_record_index);
                         continue;
                     }
 

@@ -554,14 +554,14 @@ pub const Archiver = struct {
                                         C.preallocate_file(
                                             file_handle.cast(),
                                             0,
-                                            size,
+                                            @intCast(size),
                                         ) catch {};
                                     }
                                 }
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (archive.readDataIntoFd(file_handle)) {
+                                    switch (archive.readDataIntoFd(bun.uvfdcast(file_handle))) {
                                         .eof => break :loop,
                                         .ok => break :possibly_retry,
                                         .retry => {

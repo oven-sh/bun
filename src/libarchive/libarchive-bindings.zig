@@ -683,8 +683,8 @@ pub const Archive = opaque {
         return archive_read_data(archive, buf.ptr, buf.len);
     }
     extern fn archive_read_data_into_fd(*Archive, fd: c_int) Result;
-    pub fn readDataIntoFd(archive: *Archive, fd: bun.FileDescriptor) Result {
-        return archive_read_data_into_fd(archive, fd.cast());
+    pub fn readDataIntoFd(archive: *Archive, fd: c_int) Result {
+        return archive_read_data_into_fd(archive, fd);
     }
 
     extern fn archive_read_support_filter_all(*Archive) Result;
@@ -824,11 +824,11 @@ pub const Archive = opaque {
         }
         extern fn archive_entry_pathname_utf8(*Entry) [*c]const u8;
         pub fn pathnameUtf8(entry: *Entry) [:0]const u8 {
-            return bun.sliceTo(archive_entry_pathname(entry), 0);
+            return bun.sliceTo(archive_entry_pathname_utf8(entry), 0);
         }
         extern fn archive_entry_pathname_w(*Entry) [*c]const u16;
         pub fn pathnameW(entry: *Entry) [:0]const u16 {
-            return bun.sliceTo(archive_entry_pathname(entry), 0);
+            return bun.sliceTo(archive_entry_pathname_w(entry), 0);
         }
         extern fn archive_entry_filetype(*Entry) bun.Mode;
         pub fn filetype(entry: *Entry) bun.Mode {

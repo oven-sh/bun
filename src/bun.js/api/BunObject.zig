@@ -1190,6 +1190,58 @@ pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
     const BoringSSL = bun.BoringSSL;
+    pub const HMAC = struct {
+        ctx: BoringSSL.HMAC_CTX,
+        algorithm: EVP.Algorithm,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn init(algorithm: EVP.Algorithm, key: []const u8) ?*HMAC {
+            var ctx: BoringSSL.HMAC_CTX = undefined;
+            BoringSSL.HMAC_CTX_init(&ctx);
+            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), algorithm.md(), null) != 1) {
+                BoringSSL.HMAC_CTX_cleanup(&ctx);
+                return null;
+            }
+            return HMAC.new(.{
+                .ctx = ctx,
+                .algorithm = algorithm,
+            });
+        }
+
+        pub fn update(this: *HMAC, data: []const u8) void {
+            _ = BoringSSL.HMAC_Update(&this.ctx, data.ptr, data.len);
+        }
+
+        pub fn size(this: *const HMAC) usize {
+            return BoringSSL.HMAC_size(&this.ctx);
+        }
+
+        pub fn copy(this: *HMAC) !*HMAC {
+            var ctx: BoringSSL.HMAC_CTX = undefined;
+            BoringSSL.HMAC_CTX_init(&ctx);
+            if (BoringSSL.HMAC_CTX_copy(&ctx, &this.ctx) != 1) {
+                BoringSSL.HMAC_CTX_cleanup(&ctx);
+                return error.BoringSSLError;
+            }
+            return HMAC.new(.{
+                .ctx = ctx,
+                .algorithm = this.algorithm,
+            });
+        }
+
+        pub fn final(this: *HMAC, out: []u8) []u8 {
+            var outlen: c_uint = undefined;
+            _ = BoringSSL.HMAC_Final(&this.ctx, out.ptr, &outlen);
+            return out[0..outlen];
+        }
+
+        pub fn deinit(this: *HMAC) void {
+            BoringSSL.HMAC_CTX_cleanup(&this.ctx);
+            this.destroy();
+        }
+    };
+
     pub const EVP = struct {
         ctx: BoringSSL.EVP_MD_CTX = undefined,
         md: *const BoringSSL.EVP_MD = undefined,
@@ -2433,6 +2485,9 @@ pub const Crypto = struct {
     };
 
     pub const CryptoHasher = union(enum) {
+        // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
+        hmac: ?*HMAC,
+
         evp: EVP,
         zig: CryptoHasherZig,
 
@@ -2444,12 +2499,20 @@ pub const Crypto = struct {
         pub const digest = JSC.wrapInstanceMethod(CryptoHasher, "digest_", false);
         pub const hash = JSC.wrapStaticMethod(CryptoHasher, "hash_", false);
 
+        fn throwHmacConsumed(globalThis: *JSC.JSGlobalObject) void {
+            globalThis.throw("HMAC has been consumed and is no longer usable", .{});
+        }
+
         pub fn getByteLength(
             this: *CryptoHasher,
-            _: *JSC.JSGlobalObject,
+            globalThis: *JSC.JSGlobalObject,
         ) JSC.JSValue {
             return JSC.JSValue.jsNumber(switch (this.*) {
                 .evp => |*inner| inner.size(),
+                .hmac => |inner| if (inner) |hmac| hmac.size() else {
+                    throwHmacConsumed(globalThis);
+                    return JSC.JSValue.zero;
+                },
                 .zig => |*inner| inner.digest_length,
             });
         }
@@ -2459,7 +2522,11 @@ pub const Crypto = struct {
             globalObject: *JSC.JSGlobalObject,
         ) JSC.JSValue {
             return switch (this.*) {
-                inline else => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
+                inline .evp, .zig => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
+                .hmac => |inner| if (inner) |hmac| ZigString.fromUTF8(bun.asByteSlice(@tagName(hmac.algorithm))).toJS(globalObject) else {
+                    throwHmacConsumed(globalObject);
+                    return JSC.JSValue.zero;
+                },
             };
         }
 
@@ -2569,6 +2636,7 @@ pub const Crypto = struct {
             }
         }
 
+        // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
         pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*CryptoHasher {
             const arguments = callframe.arguments(2);
             if (arguments.len == 0) {
@@ -2589,13 +2657,54 @@ pub const Crypto = struct {
                 return null;
             }
 
-            var this: CryptoHasher = undefined;
-            const evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
-                globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
-                return null;
-            };
-            this = .{ .evp = evp };
-            return CryptoHasher.new(this);
+            const hmac_value = arguments.ptr[1];
+            var hmac_key: ?JSC.Node.StringOrBuffer = null;
+            defer {
+                if (hmac_key) |*key| {
+                    key.deinit();
+                }
+            }
+
+            if (!hmac_value.isEmptyOrUndefinedOrNull()) {
+                hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
+                    globalThis.throwInvalidArguments("key must be a string or buffer", .{});
+                    return null;
+                };
+            }
+
+            return CryptoHasher.new(brk: {
+                if (hmac_key) |*key| {
+                    const chosen_algorithm = algorithm_name.toEnumFromMap(globalThis, "algorithm", EVP.Algorithm, EVP.Algorithm.map) catch return null;
+                    if (chosen_algorithm == .ripemd160) {
+                        // crashes at runtime.
+                        globalThis.throw("ripemd160 is not supported", .{});
+                        return null;
+                    }
+
+                    break :brk .{
+                        .hmac = HMAC.init(chosen_algorithm, key.slice()) orelse {
+                            if (!globalThis.hasException()) {
+                                const err = BoringSSL.ERR_get_error();
+                                if (err != 0) {
+                                    const instance = createCryptoError(globalThis, err);
+                                    BoringSSL.ERR_clear_error();
+                                    globalThis.throwValue(instance);
+                                } else {
+                                    globalThis.throwTODO("HMAC is not supported for this algorithm");
+                                }
+                            }
+                            return null;
+                        },
+                    };
+                }
+
+                break :brk .{
+                    .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
+                        globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
+                        return null;
+                    },
+                };
+            });
         }
 
         pub fn getter(
@@ -2635,6 +2744,21 @@ pub const Crypto = struct {
                         return .zero;
                     }
                 },
+                .hmac => |inner| {
+                    const hmac = inner orelse {
+                        throwHmacConsumed(globalThis);
+                        return JSC.JSValue.zero;
+                    };
+
+                    hmac.update(buffer.slice());
+                    const err = BoringSSL.ERR_get_error();
+                    if (err != 0) {
+                        const instance = createCryptoError(globalThis, err);
+                        BoringSSL.ERR_clear_error();
+                        globalThis.throwValue(instance);
+                        return .zero;
+                    }
+                },
                 .zig => |*inner| {
                     inner.update(buffer.slice());
                     return thisValue;
@@ -2653,6 +2777,20 @@ pub const Crypto = struct {
             switch (this.*) {
                 .evp => |*inner| {
                     new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
+                },
+                .hmac => |inner| {
+                    const hmac = inner orelse {
+                        throwHmacConsumed(globalObject);
+                        return JSC.JSValue.zero;
+                    };
+                    new = .{
+                        .hmac = hmac.copy() catch {
+                            const err = createCryptoError(globalObject, BoringSSL.ERR_get_error());
+                            BoringSSL.ERR_clear_error();
+                            globalObject.throwValue(err);
+                            return JSC.JSValue.zero;
+                        },
+                    };
                 },
                 .zig => |*inner| {
                     new = .{ .zig = inner.copy() };
@@ -2704,6 +2842,9 @@ pub const Crypto = struct {
             }
 
             const result = this.final(globalThis, output_digest_slice);
+            if (globalThis.hasException()) {
+                return JSC.JSValue.zero;
+            }
 
             if (output) |output_buf| {
                 return output_buf.value;
@@ -2717,11 +2858,23 @@ pub const Crypto = struct {
             var output_digest_buf: EVP.Digest = std.mem.zeroes(EVP.Digest);
             const output_digest_slice: []u8 = &output_digest_buf;
             const out = this.final(globalThis, output_digest_slice);
+            if (globalThis.hasException()) {
+                return JSC.JSValue.zero;
+            }
             return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, out);
         }
 
         fn final(this: *CryptoHasher, globalThis: *JSGlobalObject, output_digest_slice: []u8) []u8 {
             return switch (this.*) {
+                .hmac => |inner| brk: {
+                    const hmac: *HMAC = inner orelse {
+                        throwHmacConsumed(globalThis);
+                        return &.{};
+                    };
+                    this.hmac = null;
+                    defer hmac.deinit();
+                    break :brk hmac.final(output_digest_slice);
+                },
                 .evp => |*inner| inner.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice),
                 .zig => |*inner| inner.final(output_digest_slice),
             };
@@ -2735,6 +2888,11 @@ pub const Crypto = struct {
                 },
                 .zig => |*inner| {
                     inner.deinit();
+                },
+                .hmac => |inner| {
+                    if (inner) |hmac| {
+                        hmac.deinit();
+                    }
                 },
             }
             this.destroy();

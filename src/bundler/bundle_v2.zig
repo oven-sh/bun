@@ -834,6 +834,8 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = bundler.options.output_format;
         this.linker.kit_dev_server = bundler.options.kit;
 
+        this.graph.generate_bytecode_cache = bundler.options.bytecode;
+
         var pool = try this.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
             Watcher.enableHotModuleReloading(this);
@@ -3246,6 +3248,7 @@ pub const ParseTask = struct {
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
+        opts.features.auto_polyfill_require = bundler.options.output_format == .esm and !target.isBun();
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = true;
@@ -3748,7 +3751,7 @@ pub const JSMeta = struct {
 };
 
 pub const Graph = struct {
-    // TODO: consider removing references to this in favor of bundler.options.code_splitting
+    generate_bytecode_cache: bool = false,
     code_splitting: bool = false,
 
     pool: *ThreadPool,
@@ -5630,7 +5633,7 @@ pub const LinkerContext = struct {
 
                 const string_buffer_len: usize = brk: {
                     var count: usize = 0;
-                    if (is_entry_point and this.options.output_format == .esm) {
+                    if (is_entry_point and output_format == .esm) {
                         for (aliases) |alias| {
                             count += std.fmt.count("export_{}", .{bun.fmt.fmtIdentifier(alias)});
                         }
@@ -5645,7 +5648,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
+                    if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -5665,7 +5668,7 @@ pub const LinkerContext = struct {
                 // Pre-generate symbols for re-exports CommonJS symbols in case they
                 // are necessary later. This is done now because the symbols map cannot be
                 // mutated later due to parallelism.
-                if (is_entry_point and this.options.output_format == .esm) {
+                if (is_entry_point and output_format == .esm) {
                     const copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
 
                     for (aliases, copies) |alias, *copy| {
@@ -5693,7 +5696,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
+                if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -5841,7 +5844,7 @@ pub const LinkerContext = struct {
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
-                    if (force_include_exports and this.options.output_format != .internal_kit_dev) {
+                    if (force_include_exports and output_format != .internal_kit_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             Index.part(entry_point_part_index),
@@ -5868,7 +5871,7 @@ pub const LinkerContext = struct {
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
-                            if (this.options.output_format == .internal_kit_dev) continue;
+                            if (output_format == .internal_kit_dev) continue;
 
                             // This is an external import. Check if it will be a "require()" call.
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
@@ -5941,7 +5944,7 @@ pub const LinkerContext = struct {
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
-                            if (kind != .require and other_export_kind == .cjs and this.options.output_format != .internal_kit_dev) {
+                            if (kind != .require and other_export_kind == .cjs and output_format != .internal_kit_dev) {
                                 record.wrap_with_to_esm = true;
                                 to_esm_uses += 1;
                             }
@@ -6037,7 +6040,7 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    if (this.options.output_format != .internal_kit_dev) {
+                    if (output_format != .internal_kit_dev) {
                         // If there's an ES6 import of a CommonJS module, then we're going to need the
                         // "__toESM" symbol from the runtime to wrap the result of "require()"
                         this.graph.generateRuntimeSymbolImportAndUse(
@@ -7570,8 +7573,21 @@ pub const LinkerContext = struct {
             }
 
             if (is_bun) {
-                j.pushStatic("// @bun\n");
-                line_offset.advance("// @bun\n");
+                const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
+                if (ctx.c.parse_graph.generate_bytecode_cache and ctx.c.options.output_format == .cjs) {
+                    const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
+                    j.pushStatic(input);
+                    line_offset.advance(input);
+                } else if (ctx.c.parse_graph.generate_bytecode_cache) {
+                    j.pushStatic("// @bun @bytecode\n");
+                    line_offset.advance("// @bun @bytecode\n");
+                } else if (ctx.c.options.output_format == .cjs) {
+                    j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+                    line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+                } else {
+                    j.pushStatic("// @bun\n");
+                    line_offset.advance("// @bun\n");
+                }
             }
         }
 
@@ -7620,6 +7636,8 @@ pub const LinkerContext = struct {
         const show_comments = c.options.mode == .bundle and
             !c.options.minify_whitespace;
 
+        const output_format = c.options.output_format;
+
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
         for (compile_results) |compile_result| {
             const source_index = compile_result.sourceIndex();
@@ -7651,7 +7669,7 @@ pub const LinkerContext = struct {
                     CommentType.single;
 
                 if (!c.options.minify_whitespace and
-                    (c.options.output_format == .iife or c.options.output_format == .internal_kit_dev))
+                    (output_format == .iife or output_format == .internal_kit_dev))
                 {
                     j.pushStatic("  ");
                     line_offset.advance("  ");
@@ -7727,7 +7745,7 @@ pub const LinkerContext = struct {
             j.push(cross_chunk_suffix, bun.default_allocator);
         }
 
-        switch (c.options.output_format) {
+        switch (output_format) {
             .iife => {
                 const without_newline = "})();";
 
@@ -7761,6 +7779,15 @@ pub const LinkerContext = struct {
                     const str = "\n});";
                     j.pushStatic(str);
                     line_offset.advance(str);
+                }
+            },
+            .cjs => {
+                if (chunk.isEntryPoint()) {
+                    const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
+                    if (is_bun) {
+                        j.pushStatic("})\n");
+                        line_offset.advance("})\n");
+                    }
                 }
             },
             else => {},
@@ -8731,6 +8758,7 @@ pub const LinkerContext = struct {
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
         const flags = c.graph.meta.items(.flags);
+        const output_format = c.options.output_format;
 
         // If this file is a CommonJS entry point, double-write re-exports to the
         // external CommonJS "module.exports" object in addition to our internal ESM
@@ -8740,7 +8768,7 @@ pub const LinkerContext = struct {
         // importing itself should not see the "__esModule" marker but a CommonJS module
         // importing us should see the "__esModule" marker.
         var module_exports_for_export: ?Expr = null;
-        if (c.options.output_format == .cjs and chunk.isEntryPoint()) {
+        if (output_format == .cjs and chunk.isEntryPoint()) {
             module_exports_for_export = Expr.init(
                 E.Dot,
                 E.Dot{
@@ -9911,7 +9939,11 @@ pub const LinkerContext = struct {
             .allocator = allocator,
             .to_esm_ref = toESMRef,
             .to_commonjs_ref = toCommonJSRef,
-            .require_ref = if (c.options.output_format == .internal_kit_dev) ast.require_ref else runtimeRequireRef,
+            .require_ref = switch (c.options.output_format) {
+                .internal_kit_dev => ast.require_ref,
+                .cjs => null,
+                else => runtimeRequireRef,
+            },
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
@@ -10204,7 +10236,7 @@ pub const LinkerContext = struct {
 
         const root_path = c.resolver.opts.output_dir;
 
-        if (root_path.len == 0 and c.parse_graph.additional_output_files.items.len > 0 and !c.resolver.opts.compile) {
+        if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache) and !c.resolver.opts.compile) {
             try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
             return error.MultipleOutputFilesWithoutOutputDir;
         }
@@ -10393,6 +10425,8 @@ pub const LinkerContext = struct {
         hash.write(std.mem.asBytes(&chunk.isolated_hash));
     }
 
+    extern fn generateCachedModuleByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize) bool;
+    extern fn generateCachedCommonJSProgramByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize) bool;
     fn writeOutputFilesToDisk(
         c: *LinkerContext,
         root_path: string,
@@ -10567,6 +10601,84 @@ pub const LinkerContext = struct {
                 .none => {},
             }
 
+            if (c.parse_graph.generate_bytecode_cache) {
+                const loader: Loader = if (chunk.entry_point.is_entry_point)
+                    c.parse_graph.input_files.items(.loader)[
+                        chunk.entry_point.source_index
+                    ]
+                else
+                    .js;
+
+                if (loader.isJavaScriptLike()) {
+                    JSC.initialize(false);
+                    var fdpath: bun.PathBuffer = undefined;
+                    var source_provider_url = try bun.String.createFormat("{s}." ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                    source_provider_url.ref();
+
+                    defer source_provider_url.deref();
+                    var output_bytecode: ?[*]u8 = null;
+                    var output_bytecode_size: usize = 0;
+
+                    const FnToCall = @TypeOf(generateCachedCommonJSProgramByteCodeFromSourceCode);
+                    const fn_ptr: *const FnToCall = switch (c.options.output_format) {
+                        .esm => &generateCachedModuleByteCodeFromSourceCode,
+                        else => &generateCachedCommonJSProgramByteCodeFromSourceCode,
+                    };
+
+                    if (fn_ptr(&source_provider_url, code_result.buffer.ptr, code_result.buffer.len, &output_bytecode, &output_bytecode_size)) {
+                        const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                        defer source_provider_url_str.deinit();
+                        debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(output_bytecode_size, .{ .space_between_number_and_unit = true }) });
+                        @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                        fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                        const output_file = JSC.Node.NodeFS.writeFileWithPathBuffer(
+                            &pathbuf,
+                            JSC.Node.Arguments.WriteFile{
+                                .data = JSC.Node.StringOrBuffer{
+                                    .buffer = JSC.Buffer{
+                                        .buffer = .{
+                                            .ptr = output_bytecode.?,
+                                            .len = @as(u32, @truncate(output_bytecode_size)),
+                                            .byte_len = @as(u32, @truncate(output_bytecode_size)),
+                                        },
+                                    },
+                                },
+                                .encoding = .buffer,
+                                .mode = if (chunk.is_executable) 0o755 else 0o644,
+
+                                .dirfd = bun.toFD(root_dir.fd),
+                                .file = .{
+                                    .path = JSC.Node.PathLike{
+                                        .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
+                                    },
+                                },
+                            },
+                        );
+                        _ = output_file; // autofix
+
+                        try output_files.append(
+                            options.OutputFile.init(
+                                options.OutputFile.Options{
+                                    .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}." ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                    .input_loader = .file,
+                                    .hash = chunk.template.placeholder.hash,
+                                    .output_kind = .chunk,
+                                    .loader = .file,
+                                    .source_map_index = null,
+                                    .size = @as(u32, @truncate(output_bytecode_size)),
+                                    .display_size = @as(u32, @truncate(output_bytecode_size)),
+                                    .is_executable = chunk.is_executable,
+                                    .data = .{
+                                        .saved = 0,
+                                    },
+                                },
+                            ),
+                        );
+                    }
+                }
+            }
+
             switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
                 JSC.Node.Arguments.WriteFile{
@@ -10603,7 +10715,7 @@ pub const LinkerContext = struct {
                 .result => {},
             }
 
-            output_files.appendAssumeCapacity(
+            try output_files.append(
                 options.OutputFile.init(
                     options.OutputFile.Options{
                         .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
@@ -10633,7 +10745,7 @@ pub const LinkerContext = struct {
             );
 
             if (source_map_output_file) |sourcemap_file| {
-                output_files.appendAssumeCapacity(sourcemap_file);
+                try output_files.append(sourcemap_file);
             }
         }
 

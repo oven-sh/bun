@@ -2895,6 +2895,7 @@ pub const Parser = struct {
         warn_about_unbundled_modules: bool = true,
 
         module_type: options.ModuleType = .unknown,
+        output_format: options.Format = .esm,
 
         transform_only: bool = false,
 
@@ -3231,6 +3232,8 @@ pub const Parser = struct {
                 .already_bundled = switch (p.lexer.bun_pragma) {
                     .bun => .bun,
                     .bytecode => .bytecode,
+                    .bytecode_cjs => .bytecode_cjs,
+                    .bun_cjs => .bun_cjs,
                     else => unreachable,
                 },
             };
@@ -17641,7 +17644,7 @@ fn NewParser_(
         /// If --target=bun, this does nothing.
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
-            if (!p.options.features.use_import_meta_require) {
+            if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
@@ -17650,9 +17653,7 @@ fn NewParser_(
         }
 
         fn ignoreUsageOfRuntimeRequire(p: *P) void {
-            if (!p.options.features.use_import_meta_require and
-                p.options.features.allow_runtime)
-            {
+            if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.runtime_imports.__require != null);
                 p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
                 p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;

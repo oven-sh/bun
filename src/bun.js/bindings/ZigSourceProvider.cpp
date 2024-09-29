@@ -94,27 +94,40 @@ Ref<SourceProvider> SourceProvider::create(
         // https://github.com/oven-sh/bun/issues/9521
     }
 
-    auto provider = adoptRef(*new SourceProvider(
-        globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
-        resolvedSource,
-        string.isNull() ? *StringImpl::empty() : *string.impl(),
-        JSC::SourceTaintedOrigin::Untainted,
-        toSourceOrigin(sourceURLString, isBuiltin),
-        sourceURLString.impl(), TextPosition(),
-        sourceType));
+    const auto getProvider = [&]() -> Ref<SourceProvider> {
+        if (resolvedSource.bytecode_cache != nullptr) {
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), [](const void* ptr) {
+                mi_free(const_cast<void*>(ptr));
+            },
+                {});
+            std::optional<JSC::SourceCodeKey> optionalSourceCodeKey = JSC::decodeSourceCodeKey(globalObject->vm(), bytecode.copyRef());
 
-    if (resolvedSource.bytecode_cache != nullptr) {
-        WTF::MallocPtr<uint8_t, VMMalloc> mallocPtr = WTF::MallocPtr<uint8_t, VMMalloc>::malloc(resolvedSource.bytecode_cache_size);
-        memcpy(mallocPtr.get(), resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size);
-        provider->m_cachedBytecode = JSC::CachedBytecode::create(WTFMove(mallocPtr), resolvedSource.bytecode_cache_size, {});
-        JSC::SourceCodeKey key = JSC::sourceCodeKeyForSerializedModule(globalObject->vm(), SourceCode(provider));
-        if (JSC::isCachedBytecodeStillValid(globalObject->vm(), *provider->cachedBytecode().get(), key, JSC::SourceCodeType::ProgramType)) {
-            printf("Valid!\n");
-        } else {
-            printf("Invalid!\n");
+            if (optionalSourceCodeKey.has_value()) {
+                JSC::SourceCodeKey sourceCodeKey = optionalSourceCodeKey.value();
+                auto provider = adoptRef(*new SourceProvider(
+                    globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+                    resolvedSource,
+                    string.isNull() ? *StringImpl::empty() : *string.impl(),
+                    JSC::SourceTaintedOrigin::Untainted,
+                    toSourceOrigin(sourceURLString, isBuiltin),
+                    sourceURLString.impl(), TextPosition(),
+                    sourceCodeKey.source().provider().sourceType()));
+                provider->m_cachedBytecode = WTFMove(bytecode);
+                return provider;
+            }
         }
-        mi_free(resolvedSource.bytecode_cache);
-    }
+
+        return adoptRef(*new SourceProvider(
+            globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+            resolvedSource,
+            string.isNull() ? *StringImpl::empty() : *string.impl(),
+            JSC::SourceTaintedOrigin::Untainted,
+            toSourceOrigin(sourceURLString, isBuiltin),
+            sourceURLString.impl(), TextPosition(),
+            sourceType));
+    };
+
+    auto provider = getProvider();
 
     if (shouldGenerateCodeCoverage) {
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
@@ -125,6 +138,11 @@ Ref<SourceProvider> SourceProvider::create(
     }
 
     return provider;
+}
+
+StringView SourceProvider::source() const
+{
+    return StringView(m_source.get());
 }
 
 SourceProvider::~SourceProvider()
@@ -157,6 +175,41 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
         return false;
 
     auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
+
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
+    if (!cachedBytecode)
+        return false;
+
+    cachedBytecode->ref();
+    *outputByteCode = cachedBytecode->span().data();
+    *outputByteCodeSize = cachedBytecode->span().size();
+
+    return true;
+}
+
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize)
+{
+    std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
+
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    auto heapSize = JSC::HeapType::Small;
+
+    JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
+    // This must happen before JSVMClientData::create
+    vm.heap.acquireAccess();
+    JSC::JSLockHolder locker(vm);
+    LexicallyScopedFeatures lexicallyScopedFeatures = NoLexicallyScopedFeatures;
+    JSParserScriptMode scriptMode = JSParserScriptMode::Classic;
+    EvalContextType evalContextType = EvalContextType::None;
+
+    ParserError parserError;
+    UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+    if (parserError.isValid())
+        return false;
+    if (!unlinkedCodeBlock)
+        return false;
+
+    auto key = JSC::sourceCodeKeyForSerializedProgram(vm, sourceCode);
 
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
     if (!cachedBytecode)

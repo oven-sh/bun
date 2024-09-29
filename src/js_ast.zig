@@ -7502,7 +7502,9 @@ pub const Result = union(enum) {
 
     pub const AlreadyBundled = enum {
         bun,
+        bun_cjs,
         bytecode,
+        bytecode_cjs,
     };
 };
 

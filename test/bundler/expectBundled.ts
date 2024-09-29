@@ -479,9 +479,7 @@ function expectBundled(
   if (bundling === false && entryPoints.length > 1) {
     throw new Error("bundling:false only supports a single entry point");
   }
-  if (!ESBUILD && (format === "cjs" || format === "iife")) {
-    throw new Error(`format ${format} not implemented in bun build`);
-  }
+
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun build");
   }
@@ -1546,7 +1544,7 @@ for (const [key, blob] of build.outputs) {
     return testRef(id, opts);
   })();
 }
-
+let anyOnly = false;
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
@@ -1584,6 +1582,17 @@ export function itBundled(
   }
   return ref;
 }
+itBundled.only = (id: string, opts: BundlerTestInput) => {
+  const { it } = testForFile(currentFile ?? callerSourceOrigin());
+
+  it.only(
+    id,
+    () => expectBundled(id, opts as any),
+    // sourcemap code is slow
+    isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
+  );
+};
+
 itBundled.skip = (id: string, opts: BundlerTestInput) => {
   if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);

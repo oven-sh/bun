@@ -576,6 +576,7 @@ pub const RuntimeTranspilerStore = struct {
 
             if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
+                const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -583,8 +584,9 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
-                    .bytecode_cache = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.ptr else null,
-                    .bytecode_cache_size = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.len else 0,
+                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                    .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -1765,6 +1767,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (parse_result.already_bundled != .none) {
+                    const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1772,8 +1775,9 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
-                        .bytecode_cache = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.ptr else null,
-                        .bytecode_cache_size = if (parse_result.already_bundled == .bytecode) parse_result.already_bundled.bytecode.len else 0,
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
 

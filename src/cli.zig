@@ -829,12 +829,8 @@ pub const Arguments = struct {
                         bun.Output.flush();
                     },
                     .cjs => {
-                        // Make this a soft error in debug to allow experimenting with these flags.
-                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
-                        function("Format '{s}' are not implemented", .{@tagName(format)});
-                        if (!Environment.isDebug) {
-                            Global.crash();
-                        }
+                        bun.Output.warn("--format={s} is highly experimental and may experience breaking changes at any moment", .{format_str});
+                        bun.Output.flush();
                     },
                     else => {},
                 }

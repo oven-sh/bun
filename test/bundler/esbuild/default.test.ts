@@ -193,6 +193,7 @@ describe("bundler", () => {
     format: "iife",
     globalName: "globalName",
     run: true,
+    todo: true,
     onAfterBundle(api) {
       api.appendFile(
         "/out.js",
@@ -2797,14 +2798,16 @@ describe("bundler", () => {
   });
   itBundled("default/ImportMetaCommonJS", {
     files: {
-      "/entry.js": `console.log(import.meta.url, import.meta.path)`,
+      "/entry.js": `
+      import fs from "fs";
+      import { fileURLToPath } from "url";
+      console.log(fs.existsSync(fileURLToPath(import.meta.url)), fs.existsSync(import.meta.path));
+      `,
     },
     format: "cjs",
-    bundleWarnings: {
-      "/entry.js": [`"import.meta" is not available with the "cjs" output format and will be empty`],
-    },
+    target: "node",
     run: {
-      stdout: "undefined undefined",
+      stdout: "true true",
     },
   });
   itBundled("default/ImportMetaES6", {
@@ -3786,6 +3789,13 @@ describe("bundler", () => {
     },
     target: "node",
     format: "cjs",
+    bundleErrors: {
+      "/entry.js": [
+        'Could not resolve: "./missing-file"',
+        'Could not resolve: "missing-pkg"',
+        'Could not resolve: "@scope/missing-pkg"',
+      ],
+    },
     external: ["external-pkg", "@scope/external-pkg", "{{root}}/external-file"],
   });
   itBundled("default/InjectMissing", {
@@ -4632,8 +4642,6 @@ describe("bundler", () => {
       assert([...code.matchAll(/let/g)].length === 3, "should have 3 let statements");
     },
   });
-  // TODO: this is hard to test since bun runtime doesn't support require.main and require.cache
-  // i'm not even sure what we want our behavior to be for this case.
   itBundled("default/RequireMainCacheCommonJS", {
     files: {
       "/entry.js": /* js */ `

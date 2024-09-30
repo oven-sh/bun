@@ -1393,6 +1393,8 @@ pub const BundleV2 = struct {
             bundler.options.asset_naming = config.names.asset.data;
 
             bundler.options.public_path = config.public_path.list.items;
+            bundler.options.output_format = config.format;
+            bundler.options.bytecode = config.bytecode;
 
             bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
             bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
@@ -2645,6 +2647,8 @@ pub fn BundleThread(CompletionStruct: type) type {
                 JSC.WorkPool.get(),
                 heap,
             );
+
+            this.graph.generate_bytecode_cache = bundler.options.bytecode;
 
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
@@ -10354,7 +10358,7 @@ pub const LinkerContext = struct {
                     &display_size,
                     c.options.source_maps != .none,
                 );
-
+                var bytecode_index: ?u32 = null;
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
                 var sourcemap_output_file: ?options.OutputFile = null;
@@ -10430,7 +10434,58 @@ pub const LinkerContext = struct {
                     .none => {},
                 }
 
-                output_files.appendAssumeCapacity(
+                if (c.parse_graph.generate_bytecode_cache) {
+                    const loader: Loader = if (chunk.entry_point.is_entry_point)
+                        c.parse_graph.input_files.items(.loader)[
+                            chunk.entry_point.source_index
+                        ]
+                    else
+                        .js;
+
+                    if (loader.isJavaScriptLike()) {
+                        JSC.initialize(false);
+                        var fdpath: bun.PathBuffer = undefined;
+                        var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                        source_provider_url.ref();
+
+                        defer source_provider_url.deref();
+
+                        if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                            const bytecode, const cached_bytecode = result;
+                            const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                            defer source_provider_url_str.deinit();
+                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                            @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                            fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                            bytecode_index = @truncate(output_files.items.len);
+                            try output_files.append(
+                                options.OutputFile.init(
+                                    options.OutputFile.Options{
+                                        .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                        .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                        .input_loader = .js,
+                                        .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                        .output_kind = .bytecode,
+                                        .loader = .file,
+                                        .source_map_index = null,
+                                        .size = @as(u32, @truncate(bytecode.len)),
+                                        .display_size = @as(u32, @truncate(bytecode.len)),
+                                        .data = .{
+                                            .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
+                                        },
+                                    },
+                                ),
+                            );
+                        } else {
+                            // an error
+                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
+                                chunk.final_rel_path,
+                            }) catch unreachable;
+                        }
+                    }
+                }
+
+                try output_files.append(
                     options.OutputFile.init(
                         options.OutputFile.Options{
                             .data = .{
@@ -10454,15 +10509,16 @@ pub const LinkerContext = struct {
                                 @as(u32, @truncate(output_files.items.len + 1))
                             else
                                 null,
+                            .bytecode_index = bytecode_index,
                         },
                     ),
                 );
                 if (sourcemap_output_file) |sourcemap_file| {
-                    output_files.appendAssumeCapacity(sourcemap_file);
+                    try output_files.append(sourcemap_file);
                 }
             }
 
-            output_files.appendSliceAssumeCapacity(c.parse_graph.additional_output_files.items);
+            try output_files.appendSlice(c.parse_graph.additional_output_files.items);
         }
 
         return output_files;
@@ -10521,8 +10577,6 @@ pub const LinkerContext = struct {
         hash.write(std.mem.asBytes(&chunk.isolated_hash));
     }
 
-    extern fn generateCachedModuleByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize) bool;
-    extern fn generateCachedCommonJSProgramByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize) bool;
     fn writeOutputFilesToDisk(
         c: *LinkerContext,
         root_path: string,
@@ -10696,7 +10750,7 @@ pub const LinkerContext = struct {
                 },
                 .none => {},
             }
-
+            var bytecode_index: ?u32 = null;
             if (c.parse_graph.generate_bytecode_cache) {
                 const loader: Loader = if (chunk.entry_point.is_entry_point)
                     c.parse_graph.input_files.items(.loader)[
@@ -10708,34 +10762,28 @@ pub const LinkerContext = struct {
                 if (loader.isJavaScriptLike()) {
                     JSC.initialize(false);
                     var fdpath: bun.PathBuffer = undefined;
-                    var source_provider_url = try bun.String.createFormat("{s}." ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                    var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                     source_provider_url.ref();
 
                     defer source_provider_url.deref();
-                    var output_bytecode: ?[*]u8 = null;
-                    var output_bytecode_size: usize = 0;
 
-                    const FnToCall = @TypeOf(generateCachedCommonJSProgramByteCodeFromSourceCode);
-                    const fn_ptr: *const FnToCall = switch (c.options.output_format) {
-                        .esm => &generateCachedModuleByteCodeFromSourceCode,
-                        else => &generateCachedCommonJSProgramByteCodeFromSourceCode,
-                    };
-
-                    if (fn_ptr(&source_provider_url, code_result.buffer.ptr, code_result.buffer.len, &output_bytecode, &output_bytecode_size)) {
+                    if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
                         const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                         defer source_provider_url_str.deinit();
-                        debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(output_bytecode_size, .{ .space_between_number_and_unit = true }) });
+                        const bytecode, const cached_bytecode = result;
+                        debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
                         @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                         fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                        const output_file = JSC.Node.NodeFS.writeFileWithPathBuffer(
+                        defer cached_bytecode.deref();
+                        switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                             &pathbuf,
                             JSC.Node.Arguments.WriteFile{
                                 .data = JSC.Node.StringOrBuffer{
                                     .buffer = JSC.Buffer{
                                         .buffer = .{
-                                            .ptr = output_bytecode.?,
-                                            .len = @as(u32, @truncate(output_bytecode_size)),
-                                            .byte_len = @as(u32, @truncate(output_bytecode_size)),
+                                            .ptr = @constCast(bytecode.ptr),
+                                            .len = @as(u32, @truncate(bytecode.len)),
+                                            .byte_len = @as(u32, @truncate(bytecode.len)),
                                         },
                                     },
                                 },
@@ -10749,22 +10797,29 @@ pub const LinkerContext = struct {
                                     },
                                 },
                             },
-                        );
-                        _ = output_file; // autofix
+                        )) {
+                            .result => {},
+                            .err => |err| {
+                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {}", .{
+                                    err,
+                                    bun.fmt.quote(chunk.final_rel_path),
+                                }) catch unreachable;
+                                return error.WriteFailed;
+                            },
+                        }
 
+                        bytecode_index = @truncate(output_files.items.len);
                         try output_files.append(
                             options.OutputFile.init(
                                 options.OutputFile.Options{
                                     .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}." ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
                                     .input_loader = .file,
-                                    .hash = chunk.template.placeholder.hash,
-                                    .output_kind = .chunk,
+                                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                    .output_kind = .bytecode,
                                     .loader = .file,
-                                    .source_map_index = null,
-                                    .size = @as(u32, @truncate(output_bytecode_size)),
-                                    .display_size = @as(u32, @truncate(output_bytecode_size)),
-                                    .is_executable = chunk.is_executable,
+                                    .size = @as(u32, @truncate(bytecode.len)),
+                                    .display_size = @as(u32, @truncate(bytecode.len)),
                                     .data = .{
                                         .saved = 0,
                                     },
@@ -10831,6 +10886,7 @@ pub const LinkerContext = struct {
                         else
                             null,
                         .size = @as(u32, @truncate(code_result.buffer.len)),
+                        .bytecode_index = bytecode_index,
                         .display_size = @as(u32, @truncate(display_size)),
                         .is_executable = chunk.is_executable,
                         .data = .{

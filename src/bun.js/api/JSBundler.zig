@@ -70,6 +70,8 @@ pub const JSBundler = struct {
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         packages: options.PackagesOption = .bundle,
+        format: options.Format = .esm,
+        bytecode: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -151,8 +153,23 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnOptional(globalThis, "bytecode", bool)) |bytecode| {
+                this.bytecode = bytecode;
+
+                if (bytecode) {
+                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    this.format = .cjs;
+                    this.target = .bun;
+                }
+            }
+
             if (try config.getOwnOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
+
+                if (this.target != .bun and this.bytecode) {
+                    globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    return error.JSError;
+                }
             }
 
             var has_out_dir = false;
@@ -184,12 +201,11 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnOptionalEnum(globalThis, "format", options.Format)) |format| {
-                switch (format) {
-                    .esm => {},
-                    else => {
-                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
-                        return error.JSError;
-                    },
+                this.format = format;
+
+                if (this.bytecode and !(this.format == .esm or this.format == .cjs)) {
+                    globalThis.throwInvalidArguments("format must be 'esm' or 'cjs' when bytecode is true", .{});
+                    return error.JSError;
                 }
             }
 
@@ -1042,6 +1058,11 @@ pub const BuildArtifact = struct {
         @"use client",
         @"use server",
         sourcemap,
+        bytecode,
+
+        pub fn isFileInStandaloneMode(this: OutputKind) bool {
+            return this != .sourcemap and this != .bytecode;
+        }
     };
 
     pub fn deinit(this: *BuildArtifact) void {

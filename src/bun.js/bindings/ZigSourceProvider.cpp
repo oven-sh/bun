@@ -96,10 +96,15 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), [](const void* ptr) {
+            const auto destructorPtr = [](const void* ptr) {
                 mi_free(const_cast<void*>(ptr));
-            },
-                {});
+            };
+            const auto destructorNoOp = [](const void* ptr) {
+                // no-op, for bun build --compile.
+            };
+            const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             std::optional<JSC::SourceCodeKey> optionalSourceCodeKey = JSC::decodeSourceCodeKey(globalObject->vm(), bytecode.copyRef());
 
             if (optionalSourceCodeKey.has_value()) {
@@ -153,14 +158,29 @@ SourceProvider::~SourceProvider()
     }
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize)
+extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
+{
+    cachedBytecode->deref();
+}
+
+static JSC::VM& getVMForBytecodeCache()
+{
+    static thread_local JSC::VM* vmForBytecodeCache = nullptr;
+    if (!vmForBytecodeCache) {
+        const auto heapSize = JSC::HeapType::Small;
+        auto& vm = JSC::VM::create(heapSize).leakRef();
+        vm.ref();
+        vmForBytecodeCache = &vm;
+    }
+    return *vmForBytecodeCache;
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    auto heapSize = JSC::HeapType::Small;
 
-    JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
-    // This must happen before JSVMClientData::create
+    JSC::VM& vm = getVMForBytecodeCache();
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
@@ -181,22 +201,21 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
         return false;
 
     cachedBytecode->ref();
+    *cachedBytecodePtr = cachedBytecode.get();
     *outputByteCode = cachedBytecode->span().data();
     *outputByteCodeSize = cachedBytecode->span().size();
 
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
-    auto heapSize = JSC::HeapType::Small;
-
-    JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
-    // This must happen before JSVMClientData::create
+    JSC::VM& vm = getVMForBytecodeCache();
     vm.heap.acquireAccess();
+
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = NoLexicallyScopedFeatures;
     JSParserScriptMode scriptMode = JSParserScriptMode::Classic;
@@ -216,6 +235,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
         return false;
 
     cachedBytecode->ref();
+    *cachedBytecodePtr = cachedBytecode.get();
     *outputByteCode = cachedBytecode->span().data();
     *outputByteCodeSize = cachedBytecode->span().size();
 

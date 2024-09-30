@@ -2578,6 +2578,9 @@ pub const ModuleLoader = struct {
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
                     .source_code_needs_deref = false,
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_size = file.bytecode.len,
+                    .is_commonjs_module = file.module_format == .cjs,
                 };
             }
         }

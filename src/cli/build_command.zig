@@ -392,6 +392,7 @@ pub const BuildCommand = struct {
                             this_bundler.options.public_path,
                             outfile,
                             this_bundler.env,
+                            this_bundler.options.output_format,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {

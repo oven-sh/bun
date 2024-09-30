@@ -139,7 +139,7 @@ SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/vendor
-BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/bun-deps
+BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/release
 CPU_COUNT = 2
 ifeq ($(OS_NAME),darwin)
 CPU_COUNT = $(shell sysctl -n hw.logicalcpu)
@@ -1256,7 +1256,7 @@ jsc-build-mac-compile:
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
-			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_BUILD_TYPE=RelWithDebInfo \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
@@ -1268,7 +1268,7 @@ jsc-build-mac-compile:
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS)  -ffat-lto-objects" \
-		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
+		cmake --build $(WEBKIT_RELEASE_DIR) --config RelWithDebInfo --target jsc
 
 .PHONY: jsc-build-mac-compile-lto
 jsc-build-mac-compile-lto:

@@ -5344,9 +5344,8 @@ fn NewParser_(
             }
         }
 
-        pub fn shouldUnwrapCommonJSToESM(p: *P) bool {
-            // hot module loading opts out of this because we want to produce a cjs bundle at the end
-            return FeatureFlags.unwrap_commonjs_to_esm and !p.options.features.hot_module_reloading;
+        pub inline fn shouldUnwrapCommonJSToESM(p: *const P) bool {
+            return p.options.features.unwrap_commonjs_to_esm;
         }
 
         fn isBindingUsed(p: *P, binding: Binding, default_export_ref: Ref) bool {

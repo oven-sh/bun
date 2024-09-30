@@ -260,6 +260,7 @@ pub const Runtime = struct {
         unwrap_commonjs_packages: []const string = &.{},
 
         commonjs_at_runtime: bool = false,
+        unwrap_commonjs_to_esm: bool = bun.FeatureFlags.unwrap_commonjs_to_esm,
 
         emit_decorator_metadata: bool = false,
 

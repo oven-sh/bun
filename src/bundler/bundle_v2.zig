@@ -3242,25 +3242,28 @@ pub const ParseTask = struct {
         else
             bundler.options.target;
 
+        const output_format = bundler.options.output_format;
+
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
-        opts.features.auto_polyfill_require = bundler.options.output_format == .esm and !target.isBun();
+        opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
         opts.features.allow_runtime = !source.index.isRuntime();
+        opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.use_import_meta_require = target.isBun();
         opts.features.top_level_await = true;
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
-        opts.output_format = bundler.options.output_format;
+        opts.output_format = output_format;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
-        opts.features.hot_module_reloading = bundler.options.output_format == .internal_kit_dev and !source.index.isRuntime();
+        opts.features.hot_module_reloading = output_format == .internal_kit_dev and !source.index.isRuntime();
         opts.features.react_fast_refresh = target == .browser and
             bundler.options.react_fast_refresh and
             loader.isJSX() and

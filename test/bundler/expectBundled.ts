@@ -1539,7 +1539,7 @@ for (const [key, blob] of build.outputs) {
               console.log(result);
               console.log(`---`);
             }
-            expect(result).toMatch(out);
+            expect(result).toMatch(expected);
           }
         }
 

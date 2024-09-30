@@ -834,7 +834,11 @@ pub const Arguments = struct {
                         bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
                         bun.Output.flush();
                     },
-                    .cjs => {},
+                    .cjs => {
+                        if (ctx.args.target == null) {
+                            ctx.args.target = .node;
+                        }
+                    },
                     else => {},
                 }
 

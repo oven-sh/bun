@@ -4831,16 +4831,21 @@ pub const LinkerContext = struct {
             css_asts: []?*bun.css.BundlerStyleSheet,
             all_import_records: []const BabyList(ImportRecord),
 
+            graph: *LinkerGraph,
+
             has_external_import: bool = false,
             visited: BabyList(Index),
             order: BabyList(Chunk.CssImportOrder) = .{},
 
             pub fn visit(
                 visitor: *@This(),
+                len_: usize,
                 source_index: Index,
                 wrapping_conditions: *BabyList(*const bun.css.ImportRule),
                 wrapping_import_records: *BabyList(*const ImportRecord),
             ) void {
+                var len = len_;
+
                 // The CSS specification strangely does not describe what to do when there
                 // is a cycle. So we are left with reverse-engineering the behavior from a
                 // real browser. Here's what the WebKit code base has to say about this:
@@ -4860,6 +4865,7 @@ pub const LinkerContext = struct {
                     visitor.temp_allocator,
                     source_index,
                 ) catch bun.outOfMemory();
+                len += 1;
 
                 const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()].?;
                 const top_level_rules = &repr.rules;
@@ -4874,6 +4880,10 @@ pub const LinkerContext = struct {
                 // 		conditionImportRecords: wrappingImportRecords,
                 // 	})
                 // }
+
+                defer {
+                    _ = visitor.visited.popOrNull();
+                }
 
                 // Iterate over the top-level "@import" rules
                 var import_record_idx: usize = 0;
@@ -4897,7 +4907,7 @@ pub const LinkerContext = struct {
                                 // Clone these import conditions and append them to the state
                                 // nested_conditoins.append
                             }
-                            visitor.visit(record.source_index, wrapping_conditions, wrapping_import_records);
+                            visitor.visit(len, record.source_index, wrapping_conditions, wrapping_import_records);
                             continue;
                         }
 
@@ -4908,6 +4918,18 @@ pub const LinkerContext = struct {
 
                 // TODO: composes?
 
+                // fmt.Printf("Lookin' at file: %d=%s\n", sourceIndex, c.graph.Files[sourceIndex].InputFile.Source.PrettyPath)
+                // fmt.Printf("  Visit: %v\n", visited)
+                std.debug.print(
+                    "Lookin' at file: {d}={s}\n",
+                    .{ source_index.get(), visitor.graph.bundler_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                );
+                for (visitor.visited.slice()) |idx| {
+                    std.debug.print(
+                        "  Visit: {d}\n",
+                        .{idx.get()},
+                    );
+                }
                 // Accumulate imports in depth-first postorder
                 visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
                     .kind = .{ .source_index = source_index },
@@ -4918,6 +4940,7 @@ pub const LinkerContext = struct {
         var visitor = Visitor{
             .allocator = this.allocator,
             .temp_allocator = temp_allocator,
+            .graph = &this.graph,
             .visited = BabyList(Index).initCapacity(temp_allocator, 16) catch bun.outOfMemory(),
             .css_asts = this.graph.ast.items(.css),
             .all_import_records = this.graph.ast.items(.import_records),
@@ -4926,7 +4949,7 @@ pub const LinkerContext = struct {
         var wrapping_import_records: BabyList(*const ImportRecord) = .{};
         // Include all files reachable from any entry point
         for (entry_points) |entry_point| {
-            visitor.visit(entry_point, &wrapping_conditions, &wrapping_import_records);
+            visitor.visit(0, entry_point, &wrapping_conditions, &wrapping_import_records);
         }
 
         const order = visitor.order;
@@ -4954,8 +4977,11 @@ pub const LinkerContext = struct {
                         }
                         for (gop.value_ptr.slice()) |j| {
                             _ = j; // autofix
-                            // TODO: conditions
+                            // TODO: check conditions are redundant
                             // if (isConditionalImportRedundant()) {}
+                            order.mut(i).kind = .{
+                                .layers = &.{},
+                            };
                             continue :next_backward;
                         }
                         gop.value_ptr.push(temp_allocator, idx.get()) catch bun.outOfMemory();
@@ -4973,6 +4999,11 @@ pub const LinkerContext = struct {
 
         // TODO: layers
         // Finally, merge adjacent "@layer" rules with identical conditions together.
+
+        if (bun.Environment.isDebug) {
+            debug("CSS order:\n", .{});
+            // for (
+        }
 
         return order;
     }
@@ -7308,7 +7339,17 @@ pub const LinkerContext = struct {
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
 
         switch (css_import.kind) {
-            .layers => @panic("TODO:"),
+            .layers => |layers| {
+                if (layers.len > 0) {
+                    @panic("TODO: layers");
+                }
+                return CompileResult{
+                    .css = .{
+                        .code = &.{},
+                        .source_index = Index.invalid.get(),
+                    },
+                };
+            },
             .external_path => {
                 @panic("TODO: ");
             },
@@ -7424,7 +7465,12 @@ pub const LinkerContext = struct {
                 i -= 1;
                 const entry = chunk.content.css.imports_in_chunk_in_order.at(i);
                 switch (entry.kind) {
-                    .layers => @panic("TODO: layers"),
+                    .layers => |layers| {
+                        if (layers.len > 0) {
+                            @panic("TODO: external path");
+                        }
+                        // asts[entry.source_index.get()].?.rules.v.len = 0;
+                    },
                     .external_path => @panic("TODO: external path"),
                     .source_index => |source_index| {
                         const ast = asts[source_index.get()].?;

@@ -330,6 +330,8 @@ Depending on the target, Bun will apply different module resolution rules and op
 
   If any entrypoints contains a Bun shebang (`#!/usr/bin/env bun`) the bundler will default to `target: "bun"` instead of `"browser"`.
 
+  When using `target: "bun"` and `format: "cjs"` together, the `// @bun @bun-cjs` pragma is added and the CommonJS wrapper function is not compatible with Node.js.
+
 ---
 
 - `node`
@@ -1158,7 +1160,7 @@ Each artifact also contains the following properties:
 ---
 
 - `bytecode`
-- Generate bytecode for any JavaScript/TypeScript entrypoints. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+- Generate bytecode for any JavaScript/TypeScript entrypoints. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint
 
 ---
 

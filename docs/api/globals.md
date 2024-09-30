@@ -212,6 +212,12 @@ Bun implements the following globals.
 
 ---
 
+- [`Navigator`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator)
+- Node.js
+- See [Node.js > `Navigator`](https://nodejs.org/docs/latest/api/globals.html#navigator).
+
+---
+
 - [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
 - Web
 - &nbsp;

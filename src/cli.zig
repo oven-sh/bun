@@ -728,6 +728,11 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
+            // TODO: support --format=esm
+            if (ctx.bundler_options.bytecode) {
+                ctx.bundler_options.output_format = .cjs;
+            }
+
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
             }

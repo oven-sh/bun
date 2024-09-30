@@ -3254,7 +3254,7 @@ pub const ParseTask = struct {
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.use_import_meta_require = target.isBun();
-        opts.features.top_level_await = true;
+        opts.features.top_level_await = output_format == .esm or output_format == .internal_kit_dev;
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;

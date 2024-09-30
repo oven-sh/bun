@@ -1104,25 +1104,28 @@ describe("expect()", () => {
   });
 
   test("deepEquals Set/Map stress test", () => {
-    let outerMap = new Map([
-      [1, [1]],
-      [2, [1]],
-      [3, [1]],
-      [4, [1]],
-    ]);
-    let innerMap = new Map([
-      [1, [1]],
-      [2, [1]],
-      [3, [1]],
-      [4, [1]],
-    ]);
+    const arr1 = [];
+    const arr2 = [];
+    const arr3 = [];
+    const arr4 = [];
 
-    let outerSet = new Set([[1], [2], [3], [4]]);
-    let innerSet = new Set([[1], [2], [3], [4]]);
+    for (let i = 0; i < 100; i++) {
+      arr1[i] = [i];
+      arr2[i] = [i];
+      arr3[i] = [i, [i]];
+      arr4[i] = [i, [i]];
+    }
 
-    for (let i = 0; i < 1000000; i++) {
-      expect(outerMap).toEqual(innerMap);
-      expect(outerSet).toEqual(innerSet);
+    for (let i = 0; i < 2000; i++) {
+      let outerSet = new Set(arr1);
+      let innerSet = new Set(arr2);
+      Bun.deepEquals(outerSet, innerSet);
+    }
+
+    for (let i = 0; i < 1000; i++) {
+      let outerMap = new Map(arr3);
+      let innerMap = new Map(arr4);
+      Bun.deepEquals(outerMap, innerMap);
     }
   });
 

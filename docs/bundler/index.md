@@ -1160,7 +1160,7 @@ Each artifact also contains the following properties:
 ---
 
 - `bytecode`
-- Generate bytecode for any JavaScript/TypeScript entrypoints. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint
+- Generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint
 
 ---
 

@@ -102,13 +102,17 @@ bun build --compile --minify --sourcemap ./path/to/my/app.ts --outfile myapp
 
 ### Bytecode compilation
 
-To improve startup time further, you can enable bytecode compilation:
+To improve startup time, enable bytecode compilation:
 
 ```sh
 bun build --compile --minify --sourcemap --bytecode ./path/to/my/app.ts --outfile myapp
 ```
 
-Bytecode compilation moves moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
+Using bytecode compilation, `tsc` starts 2x faster:
+
+{% image src="https://github.com/user-attachments/assets/dc8913db-01d2-48f8-a8ef-ac4e984f9763" width="689" /%}
+
+Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
 
 **Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30. Only `cjs` format is supported (which means no top-level-await). Let us know if you run into any issues!
 

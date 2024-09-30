@@ -7570,8 +7570,6 @@ pub const LinkerContext = struct {
                 result_tla_check.parent = source_index;
             }
 
-            var notes = std.ArrayList(Logger.Data).init(c.allocator);
-            defer notes.deinit();
             for (import_records, 0..) |record, import_record_index| {
                 if (Index.isValid(record.source_index) and (record.kind == .require or record.kind == .stmt)) {
                     const parent = c.validateTLA(record.source_index.get(), tla_keywords, tla_checks, input_files, import_records, meta_flags);
@@ -7589,6 +7587,8 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
+                        var notes = std.ArrayList(Logger.Data).init(c.allocator);
+
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
 
@@ -7631,8 +7631,6 @@ pub const LinkerContext = struct {
                             std.fmt.allocPrint(c.allocator, "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path}) catch bun.outOfMemory();
 
                         c.log.addRangeErrorWithNotes(source, record.range, text, notes.items) catch bun.outOfMemory();
-
-                        notes.clearRetainingCapacity();
                     }
                 }
             }

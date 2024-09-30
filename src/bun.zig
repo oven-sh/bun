@@ -3821,4 +3821,4 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
     };
 }
 
-pub const bytecode_extension = ".bun";
+pub const bytecode_extension = ".jsc";

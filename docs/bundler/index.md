@@ -1157,6 +1157,11 @@ Each artifact also contains the following properties:
 
 ---
 
+- `bytecode`
+- Generate bytecode for any JavaScript/TypeScript entrypoints. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+
+---
+
 - `sourcemap`
 - The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.
 
@@ -1266,33 +1271,104 @@ interface Bun {
   build(options: BuildOptions): Promise<BuildOutput>;
 }
 
-interface BuildOptions {
-  entrypoints: string[]; // required
-  outdir?: string; // default: no write (in-memory only)
-  format?: "esm"; // later: "cjs" | "iife"
-  target?: "browser" | "bun" | "node"; // "browser"
-  splitting?: boolean; // true
-  plugins?: BunPlugin[]; // [] // See https://bun.sh/docs/bundler/plugins
-  loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
-  manifest?: boolean; // false
-  external?: string[]; // []
-  sourcemap?: "none" | "inline" | "linked" | "external" | "linked" | boolean; // "none"
-  root?: string; // computed from entrypoints
+interface BuildConfig {
+  entrypoints: string[]; // list of file path
+  outdir?: string; // output directory
+  target?: Target; // default: "browser"
+  /**
+   * Output module format. Top-level await is only supported for `"esm"`.
+   *
+   * Can be:
+   * - `"esm"`
+   * - `"cjs"` (**experimental**)
+   * - `"iife"` (**experimental**)
+   *
+   * @default "esm"
+   */
+  format?: /**
+
+     * ECMAScript Module format
+     */
+  | "esm"
+    /**
+     * CommonJS format
+     * **Experimental**
+     */
+    | "cjs"
+    /**
+     * IIFE format
+     * **Experimental**
+     */
+    | "iife";
   naming?:
     | string
     | {
-        entry?: string; // '[dir]/[name].[ext]'
-        chunk?: string; // '[name]-[hash].[ext]'
-        asset?: string; // '[name]-[hash].[ext]'
-      };
-  publicPath?: string; // e.g. http://mydomain.com/
+        chunk?: string;
+        entry?: string;
+        asset?: string;
+      }; // | string;
+  root?: string; // project root
+  splitting?: boolean; // default true, enable code splitting
+  plugins?: BunPlugin[];
+  // manifest?: boolean; // whether to return manifest
+  external?: string[];
+  packages?: "bundle" | "external";
+  publicPath?: string;
+  define?: Record<string, string>;
+  // origin?: string; // e.g. http://mydomain.com
+  loader?: { [k in string]: Loader };
+  sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
+  /**
+   * package.json `exports` conditions used when resolving imports
+   *
+   * Equivalent to `--conditions` in `bun build` or `bun run`.
+   *
+   * https://nodejs.org/api/packages.html#exports
+   */
+  conditions?: Array<string> | string;
   minify?:
-    | boolean // false
+    | boolean
     | {
-        identifiers?: boolean;
         whitespace?: boolean;
         syntax?: boolean;
+        identifiers?: boolean;
       };
+  /**
+   * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
+   * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
+   * annotations in libraries.
+   */
+  ignoreDCEAnnotations?: boolean;
+  /**
+   * Force emitting @__PURE__ annotations even if minify.whitespace is true.
+   */
+  emitDCEAnnotations?: boolean;
+  // treeshaking?: boolean;
+
+  // jsx?:
+  //   | "automatic"
+  //   | "classic"
+  //   | /* later: "preserve" */ {
+  //       runtime?: "automatic" | "classic"; // later: "preserve"
+  //       /** Only works when runtime=classic */
+  //       factory?: string; // default: "React.createElement"
+  //       /** Only works when runtime=classic */
+  //       fragment?: string; // default: "React.Fragment"
+  //       /** Only works when runtime=automatic */
+  //       importSource?: string; // default: "react"
+  //     };
+
+  /**
+   * Generate bytecode for the output. This can dramatically improve cold
+   * start times, but will make the final output larger and slightly increase
+   * memory usage.
+   *
+   * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+   *
+   * Must be `target: "bun"`
+   * @default false
+   */
+  bytecode?: boolean;
 }
 
 interface BuildOutput {
@@ -1304,9 +1380,9 @@ interface BuildOutput {
 interface BuildArtifact extends Blob {
   path: string;
   loader: Loader;
-  hash?: string;
-  kind: "entry-point" | "chunk" | "asset" | "sourcemap";
-  sourcemap?: BuildArtifact;
+  hash: string | null;
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+  sourcemap: BuildArtifact | null;
 }
 
 type Loader =

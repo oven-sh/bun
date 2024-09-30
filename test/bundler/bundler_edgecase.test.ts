@@ -1883,6 +1883,27 @@ describe("bundler", () => {
     target: "browser",
     run: { stdout: `123` },
   });
+  itBundled("edgecase/LetBeforeUsingBecomesVar", {
+    files: {
+      "/entry.ts": `
+        const foo = {
+                [Symbol.dispose]: () => {
+                        console.log("disposed");
+                }
+        }
+
+        let a = 1;
+        function b() {
+                return a;
+        }
+        using bar = foo;
+        console.log(b());
+      `,
+    },
+    run: {
+      stdout: "1\ndisposed",
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

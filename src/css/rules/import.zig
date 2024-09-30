@@ -39,6 +39,10 @@ pub const ImportRule = struct {
 
     const This = @This();
 
+    pub fn hasConditions(this: *const This) bool {
+        return this.layer != null or this.supports != null or this.media.media_queries.items.len > 0;
+    }
+
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const dep = if (dest.dependencies != null) dependencies.ImportDependency.new(
             dest.allocator,

@@ -4346,7 +4346,7 @@ pub const LinkerContext = struct {
                 // always generated even if the resulting file is empty
                 const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
                 // const css_chunk_entry = try js_chunks.getOrPut();
-                const order = this.findImportedFilesInCSSOrder(&[_]Index{Index.init(source_index)});
+                const order = this.findImportedFilesInCSSOrder(temp_allocator, &[_]Index{Index.init(source_index)});
                 css_chunk_entry.value_ptr.* = .{
                     .entry_point = .{
                         .entry_point_id = entry_bit,
@@ -4384,9 +4384,9 @@ pub const LinkerContext = struct {
                 // discovered in JS source order, where JS source order is arbitrary but
                 // consistent for dynamic imports. Then we run the CSS import order
                 // algorithm to determine the final CSS file order for the chunk.
-                const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, &[_]Index{Index.init(source_index)});
+                const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
                 if (css_source_indices.len > 0) {
-                    const order = this.findImportedFilesInCSSOrder(css_source_indices.slice());
+                    const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
                     var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
@@ -4824,54 +4824,155 @@ pub const LinkerContext = struct {
     // as far as "@layer" is concerned. So we may in some cases keep both the
     // first and last locations and only write out the "@layer" information
     // for the first location.
-    pub fn findImportedFilesInCSSOrder(this: *LinkerContext, entry_points: []const Index) BabyList(Chunk.CssImportOrder) {
-        // const Visit = struct {
-        //     c: *LinkerContext,
-        //     has_external_import: bool,
+    pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, entry_points: []const Index) BabyList(Chunk.CssImportOrder) {
+        const Visitor = struct {
+            allocator: std.mem.Allocator,
+            temp_allocator: std.mem.Allocator,
+            css_asts: []?*bun.css.BundlerStyleSheet,
+            all_import_records: []const BabyList(ImportRecord),
 
-        //     pub fn visit(this: *Visit, source_index: Index, visited: BabyList(Index), wrapping_conditions:
-        // };
+            has_external_import: bool = false,
+            visited: BabyList(Index),
+            order: BabyList(Chunk.CssImportOrder) = .{},
 
-        // TODO: do this actually properly
-        // doing dumb way for now to get things working
-
-        const impl = struct {
-            pub fn impl(
-                c: *LinkerContext,
+            pub fn visit(
+                visitor: *@This(),
                 source_index: Index,
-                worklist: *BabyList(Index),
-                order: *BabyList(Chunk.CssImportOrder),
-                import_records: []const BabyList(ImportRecord),
-                css_parts: []?*bun.css.BundlerStyleSheet,
+                wrapping_conditions: *BabyList(*const bun.css.ImportRule),
+                wrapping_import_records: *BabyList(*const ImportRecord),
             ) void {
-                if (css_parts[source_index.get()]) |css| {
-                    _ = css; // autofix
-                    order.push(c.allocator, Chunk.CssImportOrder{
-                        // TODO: compute this properly
-                        .kind = .{ .source_index = source_index },
-                    }) catch bun.outOfMemory();
-
-                    const records = import_records[source_index.get()];
-                    for (records.slice()) |rec| {
-                        // this doesn't handle cycles
-                        worklist.push(c.allocator, rec.source_index) catch bun.outOfMemory();
+                // The CSS specification strangely does not describe what to do when there
+                // is a cycle. So we are left with reverse-engineering the behavior from a
+                // real browser. Here's what the WebKit code base has to say about this:
+                //
+                //   "Check for a cycle in our import chain. If we encounter a stylesheet
+                //   in our parent chain with the same URL, then just bail."
+                //
+                // So that's what we do here. See "StyleRuleImport::requestStyleSheet()" in
+                // WebKit for more information.
+                for (visitor.visited.slice()) |visitedSourceIndex| {
+                    if (visitedSourceIndex.get() == source_index.get()) {
+                        return;
                     }
                 }
-            }
-        }.impl;
 
-        const import_records = this.graph.ast.items(.import_records);
-        const css_parts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
-        var order = BabyList(Chunk.CssImportOrder){};
-        // TODO: stack fallback
-        var worklist = BabyList(Index){};
-        defer worklist.deinitWithAllocator(this.allocator);
-        for (entry_points) |source_index| {
-            impl(this, source_index, &worklist, &order, import_records, css_parts);
+                visitor.visited.push(
+                    visitor.temp_allocator,
+                    source_index,
+                ) catch bun.outOfMemory();
+
+                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()].?;
+                const top_level_rules = &repr.rules;
+
+                // TODO:
+                // Any pre-import layers come first
+                // if len(repr.AST.LayersPreImport) > 0 {
+                // 	order = append(order, cssImportOrder{
+                // 		kind:                   cssImportLayers,
+                // 		layers:                 repr.AST.LayersPreImport,
+                // 		conditions:             wrappingConditions,
+                // 		conditionImportRecords: wrappingImportRecords,
+                // 	})
+                // }
+
+                // Iterate over the top-level "@import" rules
+                var import_record_idx: usize = 0;
+                for (top_level_rules.v.items) |*rule| {
+                    if (rule.* == .import) {
+                        defer import_record_idx += 1;
+                        const record = visitor.all_import_records[source_index.get()].at(import_record_idx);
+
+                        // Follow internal dependencies
+                        if (record.source_index.isValid()) {
+                            // TODO: conditions
+                            // If this import has conditions, fork our state so that the entire
+                            // imported stylesheet subtree is wrapped in all of the conditions
+                            if (rule.import.hasConditions()) {
+                                // Fork our state
+                                // var nested_conditions = wrapping_conditions.deepClone(temp_allocator) catch bun.outOfMemory();
+                                // _ = nested_conditions; // autofix
+                                // var nested_import_records = wrapping_import_records.deepClone(temp_allocator) catch bun.outOfMemory();
+                                // _ = nested_import_records; // autofix
+
+                                // Clone these import conditions and append them to the state
+                                // nested_conditoins.append
+                            }
+                            visitor.visit(record.source_index, wrapping_conditions, wrapping_import_records);
+                            continue;
+                        }
+
+                        // TODO
+                        // Record external depednencies
+                    }
+                }
+
+                // TODO: composes?
+
+                // Accumulate imports in depth-first postorder
+                visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
+                    .kind = .{ .source_index = source_index },
+                }) catch bun.outOfMemory();
+            }
+        };
+
+        var visitor = Visitor{
+            .allocator = this.allocator,
+            .temp_allocator = temp_allocator,
+            .visited = BabyList(Index).initCapacity(temp_allocator, 16) catch bun.outOfMemory(),
+            .css_asts = this.graph.ast.items(.css),
+            .all_import_records = this.graph.ast.items(.import_records),
+        };
+        var wrapping_conditions: BabyList(*const bun.css.ImportRule) = .{};
+        var wrapping_import_records: BabyList(*const ImportRecord) = .{};
+        // Include all files reachable from any entry point
+        for (entry_points) |entry_point| {
+            visitor.visit(entry_point, &wrapping_conditions, &wrapping_import_records);
         }
-        for (worklist.slice()) |source_index| {
-            impl(this, source_index, &worklist, &order, import_records, css_parts);
+
+        const order = visitor.order;
+
+        // TODO: external imports
+        if (visitor.has_external_import) {}
+
+        // Next, optimize import order. If there are duplicate copies of an imported
+        // file, replace all but the last copy with just the layers that are in that
+        // file. This works because in CSS, the last instance of a declaration
+        // overrides all previous instances of that declaration.
+        {
+            var source_index_duplicates = std.AutoArrayHashMap(u32, BabyList(u32)).init(temp_allocator);
+            // var external_path_duplicates = std.StringArrayHashMap(BabyList(u32)).init(temp_allocator);
+
+            var i: u32 = visitor.order.len;
+            next_backward: while (i != 0) {
+                i -= 1;
+                const entry = visitor.order.at(i);
+                switch (entry.kind) {
+                    .source_index => |idx| {
+                        const gop = source_index_duplicates.getOrPut(idx.get()) catch bun.outOfMemory();
+                        if (!gop.found_existing) {
+                            gop.value_ptr.* = BabyList(u32){};
+                        }
+                        for (gop.value_ptr.slice()) |j| {
+                            _ = j; // autofix
+                            // TODO: conditions
+                            // if (isConditionalImportRedundant()) {}
+                            continue :next_backward;
+                        }
+                        gop.value_ptr.push(temp_allocator, idx.get()) catch bun.outOfMemory();
+                    },
+                    .external_path => @panic("TODO: this"),
+                    .layers => {},
+                }
+            }
         }
+
+        // TODO: layers
+        // Then optimize "@layer" rules by removing redundant ones. This loop goes
+        // forward instead of backward because "@layer" takes effect at the first
+        // copy instead of the last copy like other things in CSS.
+
+        // TODO: layers
+        // Finally, merge adjacent "@layer" rules with identical conditions together.
 
         return order;
     }
@@ -4893,16 +4994,43 @@ pub const LinkerContext = struct {
     // "require()" and "import()"). This is because the import order is impossible
     // to determine since the imports happen at run-time instead of compile-time.
     // In this case we just pick an arbitrary but consistent order.
-    pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, entry_points: []const Index) BabyList(Index) {
-        // TODO: do this properly, not the dumb way
+    pub fn findImportedCSSFilesInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, entry_point: Index) BabyList(Index) {
+        var visited = BitSet.initEmpty(temp_allocator, this.graph.files.len) catch bun.outOfMemory();
         var order: BabyList(Index) = .{};
 
+        const all_import_records = this.graph.ast.items(.import_records);
+
         const visit = struct {
-            fn visit(c: *LinkerContext, temp: std.mem.Allocator, o: *BabyList(Index), source_index: Index, is_css: bool) void {
-                const records: []ImportRecord = c.graph.ast.items(.import_records)[source_index.get()].slice();
+            fn visit(
+                c: *LinkerContext,
+                import_records: []const BabyList(ImportRecord),
+                temp: std.mem.Allocator,
+                visits: *BitSet,
+                o: *BabyList(Index),
+                source_index: Index,
+                is_css: bool,
+            ) void {
+                if (visits.isSet(source_index.get())) return;
+                visits.set(source_index.get());
+
+                const records: []ImportRecord = import_records[source_index.get()].slice();
 
                 for (records) |record| {
-                    visit(c, temp, o, record.source_index, record.tag == .css or strings.hasSuffixComptime(record.path.text, ".css"));
+                    // Traverse any files imported by this part. Note that CommonJS calls
+                    // to "require()" count as imports too, sort of as if the part has an
+                    // ESM "import" statement in it. This may seem weird because ESM imports
+                    // are a compile-time concept while CommonJS imports are a run-time
+                    // concept. But we don't want to manipulate <style> tags at run-time so
+                    // this is the only way to do it.
+                    visit(
+                        c,
+                        import_records,
+                        temp,
+                        visits,
+                        o,
+                        record.source_index,
+                        record.tag == .css or strings.hasSuffixComptime(record.path.text, ".css"),
+                    );
                 }
 
                 if (is_css) {
@@ -4911,9 +5039,16 @@ pub const LinkerContext = struct {
             }
         }.visit;
 
-        for (entry_points) |source_index| {
-            visit(this, temp_allocator, &order, source_index, false);
-        }
+        // Include all files reachable from the entry point
+        visit(
+            this,
+            all_import_records,
+            temp_allocator,
+            &visited,
+            &order,
+            entry_point,
+            false,
+        );
 
         return order;
     }
@@ -7162,7 +7297,7 @@ pub const LinkerContext = struct {
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForCssChunkImpl(worker, ctx.c, ctx.chunk, part_range.i);
     }
 
-    fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, chunk_index: u32) CompileResult {
+    fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerContext, chunk: *Chunk, imports_in_chunk_index: u32) CompileResult {
         const trace = tracer(@src(), "generateCodeForFileInChunkCss");
         defer trace.end();
 
@@ -7170,7 +7305,7 @@ pub const LinkerContext = struct {
         var buffer_writer = js_printer.BufferWriter.init(worker.allocator) catch unreachable;
         defer _ = arena.reset(.retain_capacity);
 
-        const css_import = chunk.content.css.imports_in_chunk_in_order.at(chunk_index);
+        const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
 
         switch (css_import.kind) {
             .layers => @panic("TODO:"),
@@ -7249,6 +7384,74 @@ pub const LinkerContext = struct {
                 .source_index = part_range.source_index.get(),
             },
         };
+    }
+
+    const PrepareCssAstTask = struct {
+        task: ThreadPoolLib.Task,
+        chunk: *Chunk,
+        linker: *LinkerContext,
+        wg: *sync.WaitGroup,
+    };
+
+    fn prepareCssAstsForChunk(task: *ThreadPoolLib.Task) void {
+        const prepare_css_asts: *const PrepareCssAstTask = @fieldParentPtr("task", task);
+        defer prepare_css_asts.wg.finish();
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", prepare_css_asts.linker));
+        defer worker.unget();
+
+        // const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
+        // defer if (Environment.isDebug) {
+        //     bun.crash_handler.current_action = prev_action;
+        // };
+        // if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        //     .chunk = chunk,
+        //     .context = ctx.c,
+        //     .part_range = &prepare_css_asts.part_range,
+        // } };
+
+        prepareCssAstsForChunkImpl(prepare_css_asts.linker, prepare_css_asts.chunk);
+    }
+
+    fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk) void {
+        const asts: []?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
+        // Prepare CSS asts
+        // TODO:
+        // Remove duplicate rules across files. This must be done in serial, not
+        // in parallel, and must be done from the last rule to the first rule.
+        {
+            var i: usize = chunk.content.css.imports_in_chunk_in_order.len;
+            while (i != 0) {
+                i -= 1;
+                const entry = chunk.content.css.imports_in_chunk_in_order.at(i);
+                switch (entry.kind) {
+                    .layers => @panic("TODO: layers"),
+                    .external_path => @panic("TODO: external path"),
+                    .source_index => |source_index| {
+                        const ast = asts[source_index.get()].?;
+
+                        filter: {
+                            // Filter out "@charset", "@import", and leading "@layer" rules
+                            // TODO: we are doing simple version rn, only @import
+                            for (ast.rules.v.items, 0..) |*rule, ruleidx| {
+                                if (rule.* == .import or rule.* == .ignored) {} else {
+                                    // It's okay to do this because AST is allocated into arena
+                                    const reslice = ast.rules.v.items[ruleidx..];
+                                    ast.rules.v = .{
+                                        .items = reslice,
+                                        .capacity = ast.rules.v.capacity - (ast.rules.v.items.len - reslice.len),
+                                    };
+                                    break :filter;
+                                }
+                            }
+                            ast.rules.v.items.len = 0;
+                        }
+
+                        // TODO: wrapRulesWithConditions
+                        // TODO: Remove top-level duplicate rules across files
+                    },
+                }
+            }
+        }
     }
 
     // This runs after we've already populated the compile results
@@ -9925,6 +10128,53 @@ pub const LinkerContext = struct {
             c.allocator.free(c.source_maps.line_offset_tasks);
             c.source_maps.line_offset_tasks.len = 0;
         }
+
+        if (brk: {
+            // TODO: Have count of chunks with css
+            for (chunks) |*chunk| {
+                if (chunk.content == .css) break :brk true;
+            }
+            break :brk false;
+        }) {
+            var wait_group = try c.allocator.create(sync.WaitGroup);
+            wait_group.init();
+            defer {
+                wait_group.deinit();
+                c.allocator.destroy(wait_group);
+            }
+            const total_count = total_count: {
+                var total_count: usize = 0;
+                for (chunks) |*chunk| {
+                    if (chunk.content == .css) total_count += 1;
+                }
+                break :total_count total_count;
+            };
+
+            debug(" START {d} prepare CSS ast (total count)", .{total_count});
+            defer debug("  DONE {d} prepare CSS ast (total count)", .{total_count});
+
+            var batch = ThreadPoolLib.Batch{};
+            const tasks = c.allocator.alloc(PrepareCssAstTask, total_count) catch bun.outOfMemory();
+            var i: usize = 0;
+            for (chunks) |*chunk| {
+                if (chunk.content == .css) {
+                    tasks[i] = PrepareCssAstTask{
+                        .task = ThreadPoolLib.Task{
+                            .callback = &prepareCssAstsForChunk,
+                        },
+                        .chunk = chunk,
+                        .linker = c,
+                        .wg = wait_group,
+                    };
+                    batch.push(ThreadPoolLib.Batch.from(&tasks[i].task));
+                    i += 1;
+                }
+            }
+            wait_group.counter = @as(u32, @truncate(total_count));
+            c.parse_graph.pool.pool.schedule(batch);
+            wait_group.wait();
+        }
+
         {
             const chunk_contexts = c.allocator.alloc(GenerateChunkCtx, chunks.len) catch unreachable;
             defer c.allocator.free(chunk_contexts);

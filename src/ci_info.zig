@@ -85,7 +85,7 @@ const CI = enum {
 
             // Special case Heroku
             if (bun.getenvZ("NODE")) |node| {
-                if (strings.includes(node, "/app/.heroku/node/bin/node")) {
+                if (strings.containsComptime(node, "/app/.heroku/node/bin/node")) {
                     name = "heroku";
                     return;
                 }

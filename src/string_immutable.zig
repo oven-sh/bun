@@ -229,9 +229,79 @@ pub fn isNpmSecret(str: string) bool {
 
 }
 
-// TODO: copy https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L25
-pub fn isUUID(str: string) bool {
-    _ = str;
+pub fn startsWithUUID(str: string) bool {
+    const uuid_len = 36;
+    if (str.len < uuid_len) return false;
+    for (0..8) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f' => {},
+            else => return false,
+        }
+    }
+    if (str[8] != '-') return false;
+    for (9..13) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f' => {},
+            else => return false,
+        }
+    }
+    if (str[13] != '-') return false;
+    for (14..18) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f' => {},
+            else => return false,
+        }
+    }
+    if (str[18] != '-') return false;
+    for (19..23) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f' => {},
+            else => return false,
+        }
+    }
+    if (str[23] != '-') return false;
+    for (24..36) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f' => {},
+            else => return false,
+        }
+    }
+    return true;
+}
+
+// Returns the length of the secret if one exist.
+pub fn startsWithNpmSecret(str: string) u8 {
+    if (str.len < "npm_".len + 36) return 0;
+
+    if (!strings.hasPrefixCaseInsensitive(str, "npm")) return 0;
+
+    var i: u8 = "npm".len;
+
+    if (str[i] == '_') {
+        i += 1;
+    } else if (str[i] == 's' or str[i] == 'S') {
+        i += 1;
+        if (str[i] != '_') return 0;
+        i += 1;
+    } else {
+        return 0;
+    }
+
+    const min_len = i + 36;
+    const max_len = i + 48;
+
+    while (i < max_len) : (i += 1) {
+        if (i == str.len) {
+            return if (i >= min_len) i else 0;
+        }
+
+        switch (str[i]) {
+            '0'...'9', 'a'...'z', 'A'...'Z' => {},
+            else => return if (i >= min_len) i else 0,
+        }
+    }
+
+    return i;
 }
 
 pub fn indexAnyComptime(target: string, comptime chars: string) ?usize {

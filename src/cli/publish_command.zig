@@ -31,6 +31,7 @@ const prompt = bun.CLI.InitCommand.prompt;
 const Npm = install.Npm;
 const Run = bun.CLI.RunCommand;
 const DotEnv = bun.DotEnv;
+const Open = @import("../open.zig");
 
 pub const PublishCommand = struct {
     pub fn Context(comptime directory_publish: bool) type {
@@ -321,6 +322,10 @@ pub const PublishCommand = struct {
             publish(false, &context) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
+                        Global.crash();
+                    },
                 }
             };
 
@@ -358,11 +363,17 @@ pub const PublishCommand = struct {
         publish(true, &context) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
+                error.NeedAuth => {
+                    Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
+                    Global.crash();
+                },
             }
         };
     }
 
-    const PublishError = OOM || error{};
+    const PublishError = OOM || error{
+        NeedAuth,
+    };
 
     pub fn publish(
         comptime directory_publish: bool,
@@ -370,18 +381,22 @@ pub const PublishCommand = struct {
     ) PublishError!void {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
+        if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
+            return error.NeedAuth;
+        }
+
         const publish_req_body = try constructPublishRequestBody(directory_publish, ctx, registry);
 
         var print_buf: std.ArrayListUnmanaged(u8) = .{};
         defer print_buf.deinit(ctx.allocator);
         var print_writer = print_buf.writer(ctx.allocator);
 
-        var headers = try constructPublishHeaders(
+        const publish_headers = try constructPublishHeaders(
             ctx.allocator,
             &print_buf,
             registry,
             publish_req_body.len,
-            null,
+            if (ctx.manager.options.publish_config.otp.len > 0) ctx.manager.options.publish_config.otp else null,
             ctx.uses_workspaces,
         );
 
@@ -398,8 +413,8 @@ pub const PublishCommand = struct {
             ctx.allocator,
             .PUT,
             publish_url,
-            headers.entries,
-            headers.content.ptr.?[0..headers.content.len],
+            publish_headers.entries,
+            publish_headers.content.ptr.?[0..publish_headers.content.len],
             &response_buf,
             publish_req_body,
             null,
@@ -417,12 +432,11 @@ pub const PublishCommand = struct {
             }
         };
 
-        // std.debug.print("res:\n{}\n", .{res});
-        // std.debug.print("res body:\n{s}\n", .{response_buf.list.items});
-
         switch (res.status_code) {
             400...std.math.maxInt(@TypeOf(res.status_code)) => {
-                const prompt_for_otp = res.status_code != 401 or prompt_for_otp: {
+                const prompt_for_otp = prompt_for_otp: {
+                    if (res.status_code != 401) break :prompt_for_otp false;
+
                     if (authenticate: {
                         for (res.headers) |header| {
                             if (strings.eqlCaseInsensitiveASCII(header.name, "www-authenticate", true)) {
@@ -454,12 +468,12 @@ pub const PublishCommand = struct {
 
                 if (!prompt_for_otp) {
                     // general error
-                    return handleResponseErrors(res.status_code);
+                    return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, true);
                 }
 
                 const otp = try getOTP(directory_publish, ctx, registry, &response_buf, &print_buf);
 
-                headers = try constructPublishHeaders(
+                const otp_headers = try constructPublishHeaders(
                     ctx.allocator,
                     &print_buf,
                     registry,
@@ -470,12 +484,12 @@ pub const PublishCommand = struct {
 
                 response_buf.reset();
 
-                var req_with_otp = http.AsyncHTTP.initSync(
+                var otp_req = http.AsyncHTTP.initSync(
                     ctx.allocator,
                     .PUT,
                     publish_url,
-                    headers.entries,
-                    headers.content.ptr.?[0..headers.content.len],
+                    otp_headers.entries,
+                    otp_headers.content.ptr.?[0..otp_headers.content.len],
                     &response_buf,
                     publish_req_body,
                     null,
@@ -483,7 +497,7 @@ pub const PublishCommand = struct {
                     .follow,
                 );
 
-                const otp_res = req_with_otp.sendSync() catch |err| {
+                const otp_res = otp_req.sendSync() catch |err| {
                     switch (err) {
                         error.OutOfMemory => |oom| return oom,
                         else => {
@@ -493,12 +507,9 @@ pub const PublishCommand = struct {
                     }
                 };
 
-                // std.debug.print("otp res:\n{}\n", .{res});
-                // std.debug.print("otp res body:\n{s}\n", .{response_buf.list.items});
-
                 switch (otp_res.status_code) {
-                    400...std.math.maxInt(@TypeOf(otp_res.status_code)) => |code| {
-                        handleResponseErrors(code);
+                    400...std.math.maxInt(@TypeOf(otp_res.status_code)) => {
+                        return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, true);
                     },
                     else => try success(directory_publish, ctx),
                 }
@@ -560,13 +571,75 @@ pub const PublishCommand = struct {
             }
         }
 
-        Output.prettyln("<green>{s}@{s}<r>", .{
+        Output.prettyln("\n<green>{s}@{s}<r>", .{
             ctx.package_name,
             ctx.package_version,
         });
     }
 
+    fn handleResponseErrors(
+        comptime directory_publish: bool,
+        ctx: *const Context(directory_publish),
+        req: *const http.AsyncHTTP,
+        res: *const bun.picohttp.Response,
+        response_body: *MutableString,
+        comptime check_for_success: bool,
+    ) OOM!void {
+        const message = message: {
+            const source = logger.Source.initPathString("???", response_body.list.items);
+            const json = JSON.parseJSONUTF8(&source, ctx.manager.log, ctx.allocator) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => |oom| return oom,
+                    else => break :message null,
+                }
+            };
+
+            if (comptime check_for_success) {
+                if (json.get("success")) |success_expr| {
+                    if (success_expr.asBool()) |successful| {
+                        if (successful) {
+                            // possible to hit this with otp responses
+                            return success(directory_publish, ctx);
+                        }
+                    }
+                }
+            }
+
+            const @"error", _ = try json.getString(ctx.allocator, "error") orelse break :message null;
+            break :message @"error";
+        };
+
+        Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n{s}{s}", .{
+            res.status_code,
+            if (res.status.len > 0) " " else "",
+            res.status,
+            bun.fmt.redactedNpmUrl(req.url.href),
+            if (message != null) " - " else "",
+            message orelse "",
+        });
+        Global.crash();
+    }
+
     const GetOTPError = OOM || error{};
+
+    fn pressEnterToOpenInBrowser(auth_url: stringZ) void {
+        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
+        // deleting the entire line
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
+        else {};
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
+        while ('\n' != Output.buffered_stdin.reader().readByte() catch return) {}
+
+        var child = std.process.Child.init(&.{ Open.opener, auth_url }, bun.default_allocator);
+        _ = child.spawnAndWait() catch return;
+    }
 
     fn getOTP(
         comptime directory_publish: bool,
@@ -586,17 +659,52 @@ pub const PublishCommand = struct {
                 else => break :res_json null,
             }
         }) |json| try_web: {
-            const auth_url_str, _ = try json.getString(ctx.allocator, "authUrl") orelse break :try_web;
+            const auth_url_str = try json.getStringClonedZ(ctx.allocator, "authUrl") orelse break :try_web;
 
             // important to clone because it belongs to `response_buf`, and `response_buf` will be
             // reused with the following requests
             const done_url_str = try json.getStringCloned(ctx.allocator, "doneUrl") orelse break :try_web;
             const done_url = URL.parse(done_url_str);
 
-            Output.prettyln("Authenticate your account at:\n{s}", .{auth_url_str});
+            Output.prettyln("\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n\n", .{});
+
+            const offset = 0;
+            const padding = 1;
+
+            const horizontal = if (Output.enable_ansi_colors) "─" else "-";
+            const vertical = if (Output.enable_ansi_colors) "│" else "|";
+            const top_left = if (Output.enable_ansi_colors) "┌" else "|";
+            const top_right = if (Output.enable_ansi_colors) "┐" else "|";
+            const bottom_left = if (Output.enable_ansi_colors) "└" else "|";
+            const bottom_right = if (Output.enable_ansi_colors) "┘" else "|";
+
+            const width = (padding * 2) + auth_url_str.len;
+
+            for (0..offset) |_| Output.print(" ", .{});
+            Output.print("{s}", .{top_left});
+            for (0..width) |_| Output.print("{s}", .{horizontal});
+            Output.println("{s}", .{top_right});
+
+            for (0..offset) |_| Output.print(" ", .{});
+            Output.print("{s}", .{vertical});
+            for (0..padding) |_| Output.print(" ", .{});
+            Output.pretty("<b>{s}<r>", .{auth_url_str});
+            for (0..padding) |_| Output.print(" ", .{});
+            Output.println("{s}", .{vertical});
+
+            for (0..offset) |_| Output.print(" ", .{});
+            Output.print("{s}", .{bottom_left});
+            for (0..width) |_| Output.print("{s}", .{horizontal});
+            Output.println("{s}", .{bottom_right});
             Output.flush();
 
-            const auth_headers = try constructPublishHeaders(
+            // on another thread because pressing enter is not required
+            (std.Thread.spawn(.{}, pressEnterToOpenInBrowser, .{auth_url_str}) catch |err| {
+                Output.err(err, "failed to spawn thread for opening auth url", .{});
+                Global.crash();
+            }).detach();
+
+            var auth_headers = try constructPublishHeaders(
                 ctx.allocator,
                 print_buf,
                 registry,
@@ -608,7 +716,7 @@ pub const PublishCommand = struct {
             while (true) {
                 response_buf.reset();
 
-                var done_req = http.AsyncHTTP.initSync(
+                var req = http.AsyncHTTP.initSync(
                     ctx.allocator,
                     .GET,
                     done_url,
@@ -621,7 +729,7 @@ pub const PublishCommand = struct {
                     .follow,
                 );
 
-                const done_res = done_req.sendSync() catch |err| {
+                const res = req.sendSync() catch |err| {
                     switch (err) {
                         error.OutOfMemory => |oom| return oom,
                         else => {
@@ -631,14 +739,11 @@ pub const PublishCommand = struct {
                     }
                 };
 
-                // std.debug.print("otp done res:\n{}\n", .{done_res});
-                // std.debug.print("otp done res body:\n{s}\n", .{response_buf.list.items});
-
-                switch (done_res.status_code) {
+                switch (res.status_code) {
                     202 => {
                         // retry
                         const nanoseconds = nanoseconds: {
-                            default: for (done_res.headers) |header| {
+                            default: for (res.headers) |header| {
                                 if (strings.eqlCaseInsensitiveASCII(header.name, "retry-after", true)) {
                                     const trimmed = strings.trim(header.value, &strings.whitespace_chars);
                                     const seconds = bun.fmt.parseInt(u32, trimmed, 10) catch break :default;
@@ -670,9 +775,8 @@ pub const PublishCommand = struct {
                             Global.crash();
                         };
                     },
-                    else => |code| {
-                        Output.err("WebLogin", "unexpected status code: {d}", .{code});
-                        Global.crash();
+                    else => {
+                        try handleResponseErrors(directory_publish, ctx, &req, &res, response_buf, false);
                     },
                 }
             }
@@ -892,11 +996,5 @@ pub const PublishCommand = struct {
         }
 
         return buf.items;
-    }
-
-    fn handleResponseErrors(status_code: u32) noreturn {
-        _ = status_code;
-        Output.errGeneric("oops", .{});
-        Global.crash();
     }
 };

@@ -107,6 +107,37 @@ pub fn Table(
     };
 }
 
+pub const RedactedNpmUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (i < this.url.len) {
+            if (strings.startsWithUUID(this.url[i..])) {
+                try writer.writeAll("***");
+                i += 36;
+                continue;
+            }
+
+            const npm_secret_len = strings.startsWithNpmSecret(this.url[i..]);
+            if (npm_secret_len > 0) {
+                try writer.writeAll("***");
+                i += npm_secret_len;
+                continue;
+            }
+
+            try writer.writeByte(this.url[i]);
+            i += 1;
+        }
+    }
+};
+
+pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
+    return .{
+        .url = str,
+    };
+}
+
 const IntegrityFormatStyle = enum {
     short,
     full,

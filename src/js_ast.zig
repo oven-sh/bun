@@ -3467,6 +3467,10 @@ pub const Expr = struct {
         return if (asProperty(expr, name)) |q| q.expr.asStringCloned(allocator) else null;
     }
 
+    pub fn getStringClonedZ(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?stringZ {
+        return if (asProperty(expr, name)) |q| q.expr.asStringZ(allocator) else null;
+    }
+
     pub fn getArray(expr: *const Expr, name: string) ?ArrayIterator {
         return if (asProperty(expr, name)) |q| q.expr.asArray() else null;
     }

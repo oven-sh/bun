@@ -1189,9 +1189,9 @@ pub const HelpCommand = struct {
         printWithReason(reason, false);
 
         if (reason == .invalid_command) {
-            std.process.exit(1);
+            Global.exit(1);
         }
-        std.process.exit(0);
+        Global.exit(0);
     }
 };
 
@@ -1367,7 +1367,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]const u8 = undefined,
+        buf: [][:0]const u8,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1430,7 +1430,7 @@ pub const Command = struct {
         }
 
         const first_arg_name = next_arg;
-        const RootCommandMatcher = strings.ExactSizeMatcher(16);
+        const RootCommandMatcher = strings.ExactSizeMatcher(12);
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
             RootCommandMatcher.case("init") => .InitCommand,
@@ -1670,6 +1670,20 @@ pub const Command = struct {
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PackageManagerCommand);
+
+                // const maybe_subcommand, const maybe_arg = PackageManagerCommand.which(command_index);
+                // if (maybe_subcommand) |subcommand| {
+                //     return switch (subcommand) {
+                //         inline else => |tag| try PackageManagerCommand.exec(ctx, tag),
+                //     };
+                // }
+
+                // PackageManagerCommand.printHelp();
+
+                // if (maybe_arg) |arg| {
+                //     Output.errGeneric("\"{s}\" unknown command", .{arg});
+                //     Global.crash();
+                // }
 
                 try PackageManagerCommand.exec(ctx);
                 return;

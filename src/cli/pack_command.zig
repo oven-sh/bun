@@ -1615,15 +1615,22 @@ pub const PackCommand = struct {
             package_json.len,
         );
 
-        if (manager.options.pack_destination.len == 0) {
-            Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
-        } else {
-            Output.pretty("\n{s}\n", .{abs_tarball_dest});
+        if (comptime !for_publish) {
+            if (manager.options.pack_destination.len == 0) {
+                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
+            } else {
+                Output.pretty("\n{s}\n", .{abs_tarball_dest});
+            }
         }
 
         ctx.printSummary(shasum, integrity, log_level);
 
+        if (comptime for_publish) {
+            Output.flush();
+        }
+
         if (postpack_script) |postpack_script_str| {
+            Output.pretty("\n", .{});
             _ = RunCommand.runPackageScriptForeground(
                 ctx.command_ctx,
                 ctx.allocator,

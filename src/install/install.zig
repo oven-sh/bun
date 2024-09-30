@@ -6941,10 +6941,24 @@ pub const PackageManager = struct {
 
         max_concurrent_lifecycle_scripts: usize,
 
-        publish_config: struct {
-            access: ?CommandLineArguments.Access = null,
+        publish_config: PublishConfig = .{},
+
+        pub const PublishConfig = struct {
+            access: ?Access = null,
             tag: string = "",
-        } = .{},
+            otp: string = "",
+        };
+
+        pub const Access = enum {
+            public,
+            restricted,
+
+            const map = bun.ComptimeEnumMap(Access);
+
+            pub fn fromStr(str: string) ?Access {
+                return map.get(str);
+            }
+        };
 
         pub fn shouldPrintCommandName(this: *const Options) bool {
             return this.log_level != .silent and this.do.summary;
@@ -7354,8 +7368,15 @@ pub const PackageManager = struct {
                     },
                 }
 
-                this.publish_config.access = cli.publish_config.access;
-                this.publish_config.tag = cli.publish_config.tag;
+                if (cli.publish_config.access) |cli_access| {
+                    this.publish_config.access = cli_access;
+                }
+                if (cli.publish_config.tag.len > 0) {
+                    this.publish_config.tag = cli.publish_config.tag;
+                }
+                if (cli.publish_config.otp.len > 0) {
+                    this.publish_config.otp = cli.publish_config.otp;
+                }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
                 PackageManager.verbose_install = false;
@@ -8258,6 +8279,17 @@ pub const PackageManager = struct {
         pack,
         publish,
 
+        // bin,
+        // hash,
+        // @"hash-print",
+        // @"hash-string",
+        // cache,
+        // @"default-trusted",
+        // untrusted,
+        // trust,
+        // ls,
+        // migrate,
+
         pub fn canGloballyInstallPackages(this: Subcommand) bool {
             return switch (this) {
                 .install, .update, .add => true,
@@ -8270,6 +8302,14 @@ pub const PackageManager = struct {
                 .outdated => true,
                 // .pack => true,
                 else => false,
+            };
+        }
+
+        // TODO: make all subcommands find root and chdir
+        pub fn shouldChdirToRoot(this: Subcommand) bool {
+            return switch (this) {
+                .link => false,
+                else => true,
             };
         }
     };
@@ -8396,7 +8436,7 @@ pub const PackageManager = struct {
 
             // Check if this is a workspace; if so, use root package
             var found = false;
-            if (subcommand != .link) {
+            if (subcommand.shouldChdirToRoot()) {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
@@ -9146,7 +9186,7 @@ pub const PackageManager = struct {
     else
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
-    const install_params_ = [_]ParamType{
+    const shared_params = [_]ParamType{
         clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
@@ -9172,7 +9212,7 @@ pub const PackageManager = struct {
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
-    pub const install_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -9180,12 +9220,12 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
-    pub const update_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     });
 
-    pub const pm_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
@@ -9193,7 +9233,7 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
-    pub const add_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -9201,46 +9241,47 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
 
-    pub const remove_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const remove_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
     });
 
-    pub const link_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const link_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
     });
 
-    pub const unlink_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const unlink_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     });
 
-    const patch_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const patch_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
         clap.parseParam("--commit                         Install a package containing modifications in `dir`") catch unreachable,
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)") catch unreachable,
     });
 
-    const patch_commit_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"dir\" containing changes to a package") catch unreachable,
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
     });
 
-    const outdated_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
         clap.parseParam("--filter <STR>...                            Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
-    const pack_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                              ") catch unreachable,
     });
 
-    const publish_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                              Package tarball to publish") catch unreachable,
         clap.parseParam("--access <STR>                         Set access level for scoped packages") catch unreachable,
         clap.parseParam("--tag <STR>                            Tag the release. Default is \"latest\"") catch unreachable,
+        clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
     });
 
     pub const CommandLineArguments = struct {
@@ -9289,21 +9330,7 @@ pub const PackageManager = struct {
 
         registry: string = "",
 
-        publish_config: struct {
-            tag: string = "",
-            access: ?Access = null,
-        } = .{},
-
-        pub const Access = enum {
-            public,
-            restricted,
-
-            const map = bun.ComptimeEnumMap(Access);
-
-            pub fn fromStr(str: string) ?Access {
-                return map.get(str);
-            }
-        };
+        publish_config: Options.PublishConfig = .{},
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9665,10 +9692,14 @@ pub const PackageManager = struct {
                 }
 
                 if (args.option("--access")) |access| {
-                    cli.publish_config.access = Access.fromStr(access) orelse {
+                    cli.publish_config.access = Options.Access.fromStr(access) orelse {
                         Output.errGeneric("invalid `access` value: '{s}'", .{access});
                         Global.crash();
                     };
+                }
+
+                if (args.option("--otp")) |otp| {
+                    cli.publish_config.otp = otp;
                 }
             }
 

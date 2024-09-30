@@ -3600,6 +3600,66 @@ describe("bundler", () => {
   Entry a.js plus value from b.js`,
     },
   });
+  itBundled("default/TopLevelAwaitWithNestedRequire", {
+    // Test nested dynamic imports with top-level await
+    files: {
+      "/entry.js": `
+        console.log('Start Entry');
+        const res = await import('./a.js');
+        console.log('Entry', res.a);
+      `,
+      "/a.js": `
+        console.log('Start a.js');
+        const { b } = require('./b.js');
+        export const a = 'a.js plus ' + b;
+      `,
+      "/b.js": `
+        console.log('Start b.js');
+        export const b = 'value from b.js';
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `Start Entry
+  Start a.js
+  Start b.js
+  Entry a.js plus value from b.js`,
+    },
+  });
+  itBundled("default/TopLevelAwaitWithNestedImportAndRequire", {
+    // Test nested dynamic imports with top-level await
+    files: {
+      "/entry.js": `
+        console.log('Start Entry');
+        const res = await import('./a.js');
+        console.log('Entry', res.a);
+      `,
+      "/a.js": `
+        console.log('Start a.js');
+        const { b } = require('./b.js');
+        async function getValue() {
+          return 'value from a.js plus ' + b;
+        }
+        export const a = await getValue();
+      `,
+      "/b.js": `
+        console.log('Start b.js');
+        import { c } from './c.js';
+        export const b = 'value from b.js plus ' + c;
+      `,
+      "/c.js": `
+        console.log('Start c.js');
+        async function getValue() {
+          return 'value from c.js';
+        }
+        export const c = await getValue();
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/a.js": ['This require call is not allowed because the transitive dependency "c.js" contains a top-level await'],
+    },
+  });
   itBundled("default/TopLevelAwaitAllowedImportWithSplitting", {
     files: {
       "/entry.js": /* js */ `

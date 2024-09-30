@@ -256,7 +256,8 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
-        clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--server-components              Enable Server Components (experimental)") catch unreachable,
+        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
@@ -859,7 +860,19 @@ pub const Arguments = struct {
             }
 
             if (args.flag("--server-components")) {
-                ctx.bundler_options.react_server_components = true;
+                if (!bun.FeatureFlags.cli_server_components) {
+                    // TODO: i want to disable this in non-canary
+                    // but i also want to have tests that can run for PRs
+                }
+                ctx.bundler_options.server_components = true;
+                if (opts.target) |target| {
+                    if (!bun.options.Target.from(target).isServerSide()) {
+                        bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                        Global.crash();
+                    }
+                } else {
+                    opts.target = .bun;
+                }
             }
 
             if (args.flag("--react-fast-refresh")) {
@@ -989,7 +1002,7 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0 and opts.framework == null) {
+            if (opts.entry_points.len == 0) {
                 Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
                 Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
@@ -1322,7 +1335,7 @@ pub const Command = struct {
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
-            react_server_components: bool = false,
+            server_components: bool = false,
             react_fast_refresh: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,

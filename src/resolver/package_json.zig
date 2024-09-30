@@ -148,9 +148,9 @@ pub const PackageJSON = struct {
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
-        unspecified: void,
+        unspecified,
         /// "sideEffects": false
-        false: void,
+        false,
         /// "sideEffects": ["file.js", "other.js"]
         map: Map,
         // /// "sideEffects": ["side_effects/*.js"]
@@ -727,7 +727,7 @@ pub const PackageJSON = struct {
             }
 
             // Read the "browser" property, but only when targeting the browser
-            if (r.opts.target.supportsBrowserField()) {
+            if (r.opts.target == .browser) {
                 // We both want the ability to have the option of CJS vs. ESM and the
                 // option of having node vs. browser. The way to do this is to use the
                 // object literal form of the "browser" field like this:

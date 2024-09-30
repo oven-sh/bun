@@ -555,6 +555,13 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+napi_value eval_wrapper(const Napi::CallbackInfo &info) {
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(info.Env(), info[1], &ret);
+  return ret;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -605,6 +612,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, create_ref_with_finalizer));
   exports.Set("was_finalize_called",
               Napi::Function::New(env, was_finalize_called));
+  exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
 
   return exports;
 }

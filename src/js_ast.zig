@@ -6977,8 +6977,7 @@ pub const BundledAst = struct {
         force_cjs_to_esm: bool = false,
         has_lazy_export: bool = false,
         commonjs_module_exports_assigned_deoptimized: bool = false,
-
-        _: u1 = 0,
+        has_explicit_use_strict_directive: bool = false,
     };
 
     pub const empty = BundledAst.init(Ast.empty);
@@ -7028,6 +7027,7 @@ pub const BundledAst = struct {
             .force_cjs_to_esm = this.flags.force_cjs_to_esm,
             .has_lazy_export = this.flags.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
+            .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
         };
     }
 
@@ -7080,6 +7080,7 @@ pub const BundledAst = struct {
                 .force_cjs_to_esm = ast.force_cjs_to_esm,
                 .has_lazy_export = ast.has_lazy_export,
                 .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
+                .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
             },
         };
     }

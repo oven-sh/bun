@@ -7620,6 +7620,7 @@ pub const LinkerContext = struct {
                 .input = chunk.unique_key,
             },
         };
+        const output_format = c.options.output_format;
 
         var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
@@ -7645,14 +7646,14 @@ pub const LinkerContext = struct {
 
             if (is_bun) {
                 const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
-                if (ctx.c.parse_graph.generate_bytecode_cache and ctx.c.options.output_format == .cjs) {
+                if (ctx.c.parse_graph.generate_bytecode_cache and output_format == .cjs) {
                     const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
                     j.pushStatic(input);
                     line_offset.advance(input);
                 } else if (ctx.c.parse_graph.generate_bytecode_cache) {
                     j.pushStatic("// @bun @bytecode\n");
                     line_offset.advance("// @bun @bytecode\n");
-                } else if (ctx.c.options.output_format == .cjs) {
+                } else if (output_format == .cjs) {
                     j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
                     line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
                 } else {
@@ -7664,7 +7665,17 @@ pub const LinkerContext = struct {
 
         // TODO: banner
 
-        // TODO: directive
+        // Add the top-level directive if present (but omit "use strict" in ES
+        // modules because all ES modules are automatically in strict mode)
+        if (chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
+            const flags: JSAst.Flags = c.graph.ast.items(.flags)[chunk.entry_point.source_index];
+
+            if (flags.has_explicit_use_strict_directive) {
+                j.pushStatic("\"use strict\";\n");
+                line_offset.advance("\"use strict\";\n");
+                newline_before_comment = true;
+            }
+        }
 
         // For Kit, hoist runtime.js outside of the IIFE
         const compile_results = chunk.compile_results_for_chunk;
@@ -7706,8 +7717,6 @@ pub const LinkerContext = struct {
 
         const show_comments = c.options.mode == .bundle and
             !c.options.minify_whitespace;
-
-        const output_format = c.options.output_format;
 
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
         for (compile_results) |compile_result| {
@@ -9463,6 +9472,16 @@ pub const LinkerContext = struct {
             break :brk std.math.maxInt(u32);
         };
 
+        const output_format = c.options.output_format;
+
+        // The top-level directive must come first (the non-wrapped case is handled
+        // by the chunk generation code, although only for the entry point)
+        if (flags.wrap != .none and ast.flags.has_explicit_use_strict_directive and !chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
+            stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Directive, .{
+                .value = "use strict",
+            }, Logger.Loc.Empty)) catch unreachable;
+        }
+
         // TODO: handle directive
         if (namespace_export_part_index >= part_range.part_index_begin and
             namespace_export_part_index < part_range.part_index_end and
@@ -9635,7 +9654,7 @@ pub const LinkerContext = struct {
 
         // Turn each module into a function if this is Kit
         var stmt_storage: Stmt = undefined;
-        if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
+        if (output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
             if (stmts.all_stmts.items.len == 0) {
                 // TODO: these chunks should just not exist in the first place
                 // they seem to happen on the entry point? or JSX? not clear
@@ -9992,7 +10011,7 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_kit_dev)
+            .commonjs_module_ref = if (ast.flags.uses_module_ref or output_format == .internal_kit_dev)
                 ast.module_ref
             else
                 Ref.None,
@@ -10003,7 +10022,7 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .module_type = switch (c.options.output_format) {
+            .module_type = switch (output_format) {
                 else => |format| format,
                 .internal_kit_dev => if (part_range.source_index.isRuntime()) .esm else .internal_kit_dev,
             },
@@ -10026,7 +10045,7 @@ pub const LinkerContext = struct {
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
+            .input_files_for_kit = if (output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
                 c.parse_graph.input_files.items(.source)
             else
                 null,

@@ -599,6 +599,10 @@ pub const Format = enum {
         return this == .esm;
     }
 
+    pub inline fn isAlwaysStrictMode(this: Format) bool {
+        return this == .esm;
+    }
+
     pub const Map = bun.ComptimeStringMap(Format, .{
         .{ "esm", .esm },
         .{ "cjs", .cjs },

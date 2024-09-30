@@ -23516,6 +23516,7 @@ fn NewParser_(
                 .export_keyword = p.esm_export_keyword,
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
                 .char_freq = p.computeCharacterFrequency(),
+                .directive = if (p.module_scope.strict_mode == .explicit_strict_mode) "use strict" else null,
 
                 // Assign slots to symbols in nested scopes. This is some precomputation for
                 // the symbol renaming pass that will happen later in the linker. It's done

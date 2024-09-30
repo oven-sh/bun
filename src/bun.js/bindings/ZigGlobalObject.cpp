@@ -194,6 +194,10 @@ Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* glob
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 
 #ifndef BUN_WEBKIT_VERSION
+#ifndef ASSERT_ENABLED
+#warning "BUN_WEBKIT_VERSION is not defined. WebKit's cmakeconfig.h is supposed to define that. If you're building a release build locally, ignore this warning. If you're seeing this warning in CI, please file an issue."
+#endif
+
 #define WEBKIT_BYTECODE_CACHE_HASH_KEY __TIMESTAMP__
 #else
 #define WEBKIT_BYTECODE_CACHE_HASH_KEY BUN_WEBKIT_VERSION

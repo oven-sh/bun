@@ -731,6 +731,7 @@ pub const Arguments = struct {
             // TODO: support --format=esm
             if (ctx.bundler_options.bytecode) {
                 ctx.bundler_options.output_format = .cjs;
+                ctx.args.target = .bun;
             }
 
             if (args.option("--public-path")) |public_path| {

@@ -19450,6 +19450,7 @@ fn NewParser_(
                         }
                     }
 
+                    data.kind = kind;
                     try stmts.append(stmt.*);
 
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {

@@ -1103,6 +1103,29 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
+  test("deepEquals Set/Map stress test", () => {
+    let outerMap = new Map([
+      [1, [1]],
+      [2, [1]],
+      [3, [1]],
+      [4, [1]],
+    ]);
+    let innerMap = new Map([
+      [1, [1]],
+      [2, [1]],
+      [3, [1]],
+      [4, [1]],
+    ]);
+
+    let outerSet = new Set([[1], [2], [3], [4]]);
+    let innerSet = new Set([[1], [2], [3], [4]]);
+
+    for (let i = 0; i < 1000000; i++) {
+      expect(outerMap).toEqual(innerMap);
+      expect(outerSet).toEqual(innerSet);
+    }
+  });
+
   test("deepEquals - Date", () => {
     let d = new Date();
     expect(d).toEqual(d);

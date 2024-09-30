@@ -110,7 +110,7 @@ bun build --compile --minify --sourcemap --bytecode ./path/to/my/app.ts --outfil
 
 Bytecode compilation moves moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
 
-**Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30
+**Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30. Only `cjs` format is supported (which means no top-level-await). Let us know if you run into any issues!
 
 ### What do these flags do?
 

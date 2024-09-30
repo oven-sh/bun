@@ -1939,6 +1939,7 @@ fn NewPrinter(
 
             assert(p.import_records.len > import_record_index);
             const record = p.importRecord(import_record_index);
+            const module_type = p.options.module_type;
 
             if (comptime is_bun_platform) {
                 // "bun" is not a real module. It's just globalThis.Bun.
@@ -1962,13 +1963,13 @@ fn NewPrinter(
                     },
                     .bun_test => {
                         if (record.kind == .dynamic) {
-                            if (p.options.module_type == .cjs) {
+                            if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
-                            if (p.options.module_type == .cjs) {
+                            if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
                                 p.print("globalThis.Bun.jest(import.meta.path)");
@@ -2027,7 +2028,7 @@ fn NewPrinter(
                 }
 
                 if (p.options.input_files_for_kit) |input_files| {
-                    bun.assert(p.options.module_type == .internal_kit_dev);
+                    bun.assert(module_type == .internal_kit_dev);
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.commonjs_module_ref);
                     p.print(".require(");
@@ -2070,7 +2071,7 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    if (p.options.module_type.isESM()) {
+                    if (module_type.isESM()) {
                         p.print(",");
                         p.printSpace();
                         p.print("1");
@@ -2097,7 +2098,9 @@ fn NewPrinter(
                     }
                 }
 
-                if (p.options.module_type == .internal_kit_dev) {
+                const wrap_with_to_esm = record.wrap_with_to_esm;
+
+                if (module_type == .internal_kit_dev) {
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.commonjs_module_ref);
                     if (record.tag == .builtin)
@@ -2112,9 +2115,13 @@ fn NewPrinter(
                     }
                     p.print(")");
                     return;
+                } else if (wrap_with_to_esm) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.to_esm_ref);
+                    p.print("(");
                 }
 
-                if (p.options.module_type == .esm and is_bun_platform) {
+                if (module_type == .esm and is_bun_platform) {
                     p.print("import.meta.require");
                 } else if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
@@ -2125,6 +2132,10 @@ fn NewPrinter(
                 p.print("(");
                 p.printImportRecordPath(record);
                 p.print(")");
+
+                if (wrap_with_to_esm) {
+                    p.print(")");
+                }
                 return;
             }
 
@@ -6059,7 +6070,7 @@ pub fn printAst(
     var module_scope = tree.module_scope;
     if (opts.minify_identifiers) {
         const allocator = opts.allocator;
-        var reserved_names = try rename.computeInitialReservedNames(allocator);
+        var reserved_names = try rename.computeInitialReservedNames(allocator, opts.module_type);
         for (module_scope.children.slice()) |child| {
             child.parent = &module_scope;
         }

@@ -1320,6 +1320,7 @@ pub const ImportScanner = struct {
                         ) catch bun.outOfMemory();
 
                         if (st.star_name_loc) |loc| {
+                            record.contains_import_star = true;
                             p.named_imports.putAssumeCapacity(
                                 namespace_ref,
                                 js_ast.NamedImport{
@@ -1333,6 +1334,7 @@ pub const ImportScanner = struct {
                         }
 
                         if (st.default_name) |default| {
+                            record.contains_default_alias = true;
                             p.named_imports.putAssumeCapacity(
                                 default.ref.?,
                                 .{
@@ -1366,8 +1368,7 @@ pub const ImportScanner = struct {
                         // We do not know at this stage whether or not the import statement is bundled
                         // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
                         for (st.items) |item| {
-                            const is_default = strings.eqlComptime(item.alias, "default");
-                            record.contains_default_alias = record.contains_default_alias or is_default;
+                            record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(item.alias, "default");
 
                             const name: LocRef = item.name;
                             const name_ref = name.ref.?;
@@ -12464,8 +12465,7 @@ fn NewParser_(
         }
 
         pub inline fn isStrictModeOutputFormat(p: *P) bool {
-            // TODO: once CJS or IIFE is supported, this will need to be updated
-            return p.options.bundle;
+            return p.options.bundle and p.options.output_format.isESM();
         }
 
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {

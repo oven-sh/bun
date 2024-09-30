@@ -125,7 +125,7 @@ const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
-
+const Loc = Logger.Loc;
 const kit = bun.kit;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -3255,6 +3255,7 @@ pub const ParseTask = struct {
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
+        opts.output_format = bundler.options.output_format;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
@@ -4614,6 +4615,37 @@ pub const LinkerContext = struct {
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+
+        if (this.options.output_format == .cjs) {
+            this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
+        }
+
+        if (this.options.output_format == .cjs or this.options.output_format == .iife) {
+            const exports_kind = this.graph.ast.items(.exports_kind);
+            const ast_flags_list = this.graph.ast.items(.flags);
+            const meta_flags_ist = this.graph.meta.items(.flags);
+
+            for (entry_points) |entry_point| {
+                var ast_flags: js_ast.BundledAst.Flags = ast_flags_list[entry_point.get()];
+
+                // Loaders default to CommonJS when they are the entry point and the output
+                // format is not ESM-compatible since that avoids generating the ESM-to-CJS
+                // machinery.
+                if (ast_flags.has_lazy_export) {
+                    exports_kind[entry_point.get()] = .cjs;
+                }
+
+                // Entry points with ES6 exports must generate an exports object when
+                // targeting non-ES6 formats. Note that the IIFE format only needs this
+                // when the global name is present, since that's the only way the exports
+                // can actually be observed externally.
+                if (ast_flags.uses_export_keyword) {
+                    ast_flags.uses_exports_ref = true;
+                    ast_flags_list[entry_point.get()] = ast_flags;
+                    meta_flags_ist[entry_point.get()].force_include_exports_for_entry_point = true;
+                }
+            }
+        }
     }
 
     pub fn computeDataForSourceMap(
@@ -5910,7 +5942,6 @@ pub const LinkerContext = struct {
                                     // - The "default" and "__esModule" exports must not be accessed
                                     //
                                     if (kind != .require and
-                                        false and // TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
                                         (kind != .stmt or
                                         record.contains_import_star or
                                         record.contains_default_alias or
@@ -6106,7 +6137,9 @@ pub const LinkerContext = struct {
         var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
         ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
 
-        const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
+        const initial_flags = c.graph.meta.items(.flags)[id];
+        const needs_exports_variable = initial_flags.needs_exports_variable;
+        const force_include_exports_for_entry_point = c.options.output_format == .cjs and initial_flags.force_include_exports_for_entry_point;
 
         const stmts_count =
             // 1 statement for every export
@@ -6114,7 +6147,9 @@ pub const LinkerContext = struct {
             // + 1 if there are non-zero exports
             @as(usize, @intFromBool(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
-            @as(usize, @intFromBool(needs_exports_variable));
+            @as(usize, @intFromBool(needs_exports_variable)) +
+            // + 1 if we need to do module.exports = __toCommonJS(exports)
+            @as(usize, @intFromBool(force_include_exports_for_entry_point));
 
         var stmts = js_ast.Stmt.Batcher.init(allocator, stmts_count) catch bun.outOfMemory();
         defer stmts.done();
@@ -6206,7 +6241,9 @@ pub const LinkerContext = struct {
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         const exports_ref = c.graph.ast.items(.exports_ref)[id];
-        const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) + @as(usize, @intFromBool(properties.items.len > 0))];
+        const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) +
+            @as(usize, @intFromBool(properties.items.len > 0) +
+            @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer bun.assert(remaining_stmts.len == 0); // all must be used
@@ -6239,7 +6276,7 @@ pub const LinkerContext = struct {
         // "__export(exports, { foo: () => foo })"
         var export_ref = Ref.None;
         if (properties.items.len > 0) {
-            export_ref = c.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
+            export_ref = c.runtimeFunction("__export");
             var args = allocator.alloc(js_ast.Expr, 2) catch unreachable;
             args[0..2].* = [_]js_ast.Expr{
                 js_ast.Expr.initIdentifier(exports_ref, loc),
@@ -6273,6 +6310,40 @@ pub const LinkerContext = struct {
 
             // Make sure the CommonJS closure, if there is one, includes "exports"
             c.graph.ast.items(.flags)[id].uses_exports_ref = true;
+        }
+
+        // Decorate "module.exports" with the "__esModule" flag to indicate that
+        // we used to be an ES module. This is done by wrapping the exports object
+        // instead of by mutating the exports object because other modules in the
+        // bundle (including the entry point module) may do "import * as" to get
+        // access to the exports object and should NOT see the "__esModule" flag.
+        if (force_include_exports_for_entry_point) {
+            const toCommonJSRef = c.runtimeFunction("__toCommonJS");
+
+            var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
+            call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
+            remaining_stmts[0] = js_ast.Stmt.assign(
+                Expr.allocate(
+                    allocator,
+                    E.Dot,
+                    E.Dot{
+                        .name = "exports",
+                        .name_loc = Loc.Empty,
+                        .target = Expr.initIdentifier(c.unbound_module_ref, Loc.Empty),
+                    },
+                    Loc.Empty,
+                ),
+                Expr.allocate(
+                    allocator,
+                    E.Call,
+                    E.Call{
+                        .target = Expr.initIdentifier(toCommonJSRef, Loc.Empty),
+                        .args = js_ast.ExprNodeList.init(call_args),
+                    },
+                    Loc.Empty,
+                ),
+            );
+            remaining_stmts = remaining_stmts[1..];
         }
 
         // No need to generate a part if it'll be empty
@@ -7126,7 +7197,7 @@ pub const LinkerContext = struct {
         const all_wrapper_refs: []const Ref = c.graph.ast.items(.wrapper_ref);
         const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
 
-        var reserved_names = try renamer.computeInitialReservedNames(allocator);
+        var reserved_names = try renamer.computeInitialReservedNames(allocator, c.options.output_format);
         for (files_in_order) |source_index| {
             renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
         }
@@ -8769,10 +8840,12 @@ pub const LinkerContext = struct {
         // importing us should see the "__esModule" marker.
         var module_exports_for_export: ?Expr = null;
         if (output_format == .cjs and chunk.isEntryPoint()) {
-            module_exports_for_export = Expr.init(
+            module_exports_for_export = Expr.allocate(
+                allocator,
                 E.Dot,
                 E.Dot{
-                    .target = Expr.init(
+                    .target = Expr.allocate(
+                        allocator,
                         E.Identifier,
                         E.Identifier{
                             .ref = c.unbound_module_ref,
@@ -8895,10 +8968,12 @@ pub const LinkerContext = struct {
                                     Stmt.alloc(
                                         S.SExpr,
                                         S.SExpr{
-                                            .value = Expr.init(
+                                            .value = Expr.allocate(
+                                                allocator,
                                                 E.Call,
                                                 E.Call{
-                                                    .target = Expr.init(
+                                                    .target = Expr.allocate(
+                                                        allocator,
                                                         E.Identifier,
                                                         E.Identifier{
                                                             .ref = export_star_ref,
@@ -8942,11 +9017,10 @@ pub const LinkerContext = struct {
                             }
 
                             if (record.calls_runtime_re_export_fn) {
-                                const other_source_index = record.source_index.get();
                                 const target: Expr = brk: {
-                                    if (c.graph.ast.items(.exports_kind)[other_source_index].isESMWithDynamicFallback()) {
+                                    if (record.source_index.isValid() and c.graph.ast.items(.exports_kind)[record.source_index.get()].isESMWithDynamicFallback()) {
                                         // Prefix this module with "__reExport(exports, otherExports, module.exports)"
-                                        break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[other_source_index], stmt.loc);
+                                        break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[record.source_index.get()], stmt.loc);
                                     }
 
                                     break :brk Expr.init(
@@ -8973,7 +9047,7 @@ pub const LinkerContext = struct {
                                 };
 
                                 if (module_exports_for_export) |mod| {
-                                    args[3] = mod;
+                                    args[2] = mod;
                                 }
 
                                 try stmts.inside_wrapper_prefix.append(

@@ -1318,7 +1318,7 @@ describe("bundler", () => {
         console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    target: "node",
+    target: "bun",
     format: "cjs",
     run: {
       stdout: "true [Function: readFileSync] true",
@@ -4632,18 +4632,18 @@ describe("bundler", () => {
   });
   // TODO: this is hard to test since bun runtime doesn't support require.main and require.cache
   // i'm not even sure what we want our behavior to be for this case.
-  // itBundled("default/RequireMainCacheCommonJS", {
-  //   files: {
-  //     "/entry.js": /* js */ `
-  //       console.log('is main:', require.main === module)
-  //       console.log(require('./is-main'))
-  //       console.log('cache:', require.cache);
-  //     `,
-  //     "/is-main.js": `module.exports = require.main === module`,
-  //   },
-  //   format: "cjs",
-  //   platform: "node",
-  // });
+  itBundled("default/RequireMainCacheCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log('is main:', require.main === module)
+        console.log(require('./is-main'))
+        console.log('cache:', require.cache);
+      `,
+      "/is-main.js": `module.exports = require.main === module`,
+    },
+    format: "cjs",
+    platform: "node",
+  });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
     todo: true,
     files: {

@@ -736,7 +736,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto iter1 = JSSetIterator::create(globalObject, set1->structure(), set1, IterationKind::Keys);
+        auto iter1 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
             if (set2->has(globalObject, key1)) {
@@ -745,7 +745,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(globalObject, set2->structure(), set2, IterationKind::Keys);
+            auto iter2 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
@@ -775,7 +775,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto iter1 = JSMapIterator::create(globalObject, map1->structure(), map1, IterationKind::Entries);
+        auto iter1 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {
             JSValue value2 = map2->get(globalObject, key1);
@@ -783,7 +783,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // We couldn't find the key in the second map. This may be a false positive due to
                 // how JSValues are represented in JSC, so we need to fall back to a linear search
                 // to be sure.
-                auto iter2 = JSMapIterator::create(globalObject, map2->structure(), map2, IterationKind::Entries);
+                auto iter2 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {

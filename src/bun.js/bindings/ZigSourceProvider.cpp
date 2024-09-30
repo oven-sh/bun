@@ -105,21 +105,16 @@ Ref<SourceProvider> SourceProvider::create(
             const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
-            std::optional<JSC::SourceCodeKey> optionalSourceCodeKey = JSC::decodeSourceCodeKey(globalObject->vm(), bytecode.copyRef());
-
-            if (optionalSourceCodeKey.has_value()) {
-                JSC::SourceCodeKey sourceCodeKey = optionalSourceCodeKey.value();
-                auto provider = adoptRef(*new SourceProvider(
-                    globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
-                    resolvedSource,
-                    string.isNull() ? *StringImpl::empty() : *string.impl(),
-                    JSC::SourceTaintedOrigin::Untainted,
-                    toSourceOrigin(sourceURLString, isBuiltin),
-                    sourceURLString.impl(), TextPosition(),
-                    sourceCodeKey.source().provider().sourceType()));
-                provider->m_cachedBytecode = WTFMove(bytecode);
-                return provider;
-            }
+            auto provider = adoptRef(*new SourceProvider(
+                globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+                resolvedSource,
+                string.isNull() ? *StringImpl::empty() : *string.impl(),
+                JSC::SourceTaintedOrigin::Untainted,
+                toSourceOrigin(sourceURLString, isBuiltin),
+                sourceURLString.impl(), TextPosition(),
+                sourceType));
+            provider->m_cachedBytecode = WTFMove(bytecode);
+            return provider;
         }
 
         return adoptRef(*new SourceProvider(
@@ -171,6 +166,7 @@ static JSC::VM& getVMForBytecodeCache()
         auto& vm = JSC::VM::create(heapSize).leakRef();
         vm.ref();
         vmForBytecodeCache = &vm;
+        vm.heap.acquireAccess();
     }
     return *vmForBytecodeCache;
 }
@@ -181,7 +177,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
-    vm.heap.acquireAccess();
+
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
     JSParserScriptMode scriptMode = JSParserScriptMode::Module;
@@ -214,7 +210,6 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
 
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
-    vm.heap.acquireAccess();
 
     JSC::JSLockHolder locker(vm);
     LexicallyScopedFeatures lexicallyScopedFeatures = NoLexicallyScopedFeatures;

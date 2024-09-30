@@ -326,6 +326,7 @@ export interface BundlerTestRunOptions {
   bunArgs?: string[];
   /** match exact stdout */
   stdout?: string | RegExp;
+  stderr?: string;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
   /** match exact error message, example "ReferenceError: Can't find variable: bar" */
@@ -444,6 +445,7 @@ function expectBundled(
     unsupportedJSFeatures,
     useDefineForClassFields,
     ignoreDCEAnnotations,
+    bytecode = false,
     emitDCEAnnotations,
     // @ts-expect-error
     _referenceFn,
@@ -468,7 +470,13 @@ function expectBundled(
   // Resolve defaults for options and some related things
   bundling ??= true;
   target ??= "browser";
+
+  if (bytecode) {
+    format ??= "cjs";
+  }
+
   format ??= "esm";
+
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};
   if (metafile === true) metafile = "/metafile.json";
@@ -511,6 +519,9 @@ function expectBundled(
     if (unsupportedLoaderTypes.length) {
       throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
     }
+  }
+  if (ESBUILD && bytecode) {
+    throw new Error("bytecode not implemented in esbuild");
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
@@ -658,6 +669,7 @@ function expectBundled(
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
+              bytecode && "--bytecode",
             ]
           : [
               ESBUILD_PATH,
@@ -961,6 +973,7 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           target,
+          bytecode,
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
@@ -1417,7 +1430,6 @@ for (const [key, blob] of build.outputs) {
         } else {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
-
         const args = [
           ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
           ...(run.bunArgs ?? []),
@@ -1429,6 +1441,7 @@ for (const [key, blob] of build.outputs) {
           cmd: args,
           env: {
             ...bunEnv,
+            ...(run.env || {}),
             FORCE_COLOR: "0",
             IS_TEST_RUNNER: "1",
           },
@@ -1502,28 +1515,31 @@ for (const [key, blob] of build.outputs) {
           run.validate({ stderr: stderr.toUnixString(), stdout: stdout.toUnixString() });
         }
 
-        if (run.stdout !== undefined) {
-          const result = stdout!.toUnixString().trim();
-          if (typeof run.stdout === "string") {
-            const expected = dedent(run.stdout).trim();
+        for (let [name, expected, out] of [
+          ["stdout", run.stdout, stdout],
+          ["stderr", run.stderr, stderr],
+        ].filter(([, v]) => v !== undefined)) {
+          const result = out!.toUnixString().trim();
+          if (typeof expected === "string") {
+            expected = dedent(expected).trim();
             if (expected !== result) {
               console.log(`runtime failed file: ${file}`);
-              console.log(`reference stdout:`);
+              console.log(`${name} output:`);
               console.log(result);
               console.log(`---`);
-              console.log(`expected stdout:`);
+              console.log(`expected ${name}:`);
               console.log(expected);
               console.log(`---`);
             }
             expect(result).toBe(expected);
           } else {
-            if (!run.stdout.test(result)) {
+            if (!expected.test(result)) {
               console.log(`runtime failed file: ${file}`);
-              console.log(`reference stdout:`);
+              console.log(`${name} output:`);
               console.log(result);
               console.log(`---`);
             }
-            expect(result).toMatch(run.stdout);
+            expect(result).toMatch(out);
           }
         }
 

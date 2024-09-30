@@ -10358,7 +10358,6 @@ pub const LinkerContext = struct {
                     &display_size,
                     c.options.source_maps != .none,
                 );
-                var bytecode_index: ?u32 = null;
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
                 var sourcemap_output_file: ?options.OutputFile = null;
@@ -10434,32 +10433,32 @@ pub const LinkerContext = struct {
                     .none => {},
                 }
 
-                if (c.parse_graph.generate_bytecode_cache) {
-                    const loader: Loader = if (chunk.entry_point.is_entry_point)
-                        c.parse_graph.input_files.items(.loader)[
-                            chunk.entry_point.source_index
-                        ]
-                    else
-                        .js;
+                const bytecode_output_file: ?options.OutputFile = brk: {
+                    if (c.parse_graph.generate_bytecode_cache) {
+                        const loader: Loader = if (chunk.entry_point.is_entry_point)
+                            c.parse_graph.input_files.items(.loader)[
+                                chunk.entry_point.source_index
+                            ]
+                        else
+                            .js;
 
-                    if (loader.isJavaScriptLike()) {
-                        JSC.initialize(false);
-                        var fdpath: bun.PathBuffer = undefined;
-                        var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
-                        source_provider_url.ref();
+                        if (loader.isJavaScriptLike()) {
+                            JSC.initialize(false);
+                            var fdpath: bun.PathBuffer = undefined;
+                            var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                            source_provider_url.ref();
 
-                        defer source_provider_url.deref();
+                            defer source_provider_url.deref();
 
-                        if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
-                            const bytecode, const cached_bytecode = result;
-                            const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
-                            defer source_provider_url_str.deinit();
-                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
-                            @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
-                            fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                            bytecode_index = @truncate(output_files.items.len);
-                            try output_files.append(
-                                options.OutputFile.init(
+                            if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                                const bytecode, const cached_bytecode = result;
+                                const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                                defer source_provider_url_str.deinit();
+                                debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                                @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                                fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+
+                                break :brk options.OutputFile.init(
                                     options.OutputFile.Options{
                                         .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
                                         .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
@@ -10467,23 +10466,36 @@ pub const LinkerContext = struct {
                                         .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                                         .output_kind = .bytecode,
                                         .loader = .file,
-                                        .source_map_index = null,
                                         .size = @as(u32, @truncate(bytecode.len)),
                                         .display_size = @as(u32, @truncate(bytecode.len)),
                                         .data = .{
                                             .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
                                         },
                                     },
-                                ),
-                            );
-                        } else {
-                            // an error
-                            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
-                                chunk.final_rel_path,
-                            }) catch unreachable;
+                                );
+                            } else {
+                                // an error
+                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
+                                    chunk.final_rel_path,
+                                }) catch unreachable;
+                            }
                         }
                     }
-                }
+
+                    break :brk null;
+                };
+
+                const source_map_index: ?u32 = if (sourcemap_output_file != null)
+                    @as(u32, @truncate(output_files.items.len + 1))
+                else
+                    null;
+
+                const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
+                    @as(u32, @truncate(output_files.items.len + 2))
+                else if (bytecode_output_file != null)
+                    @as(u32, @truncate(output_files.items.len + 1))
+                else
+                    null;
 
                 try output_files.append(
                     options.OutputFile.init(
@@ -10505,16 +10517,16 @@ pub const LinkerContext = struct {
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                             .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
                             .is_executable = chunk.is_executable,
-                            .source_map_index = if (sourcemap_output_file != null)
-                                @as(u32, @truncate(output_files.items.len + 1))
-                            else
-                                null,
+                            .source_map_index = source_map_index,
                             .bytecode_index = bytecode_index,
                         },
                     ),
                 );
                 if (sourcemap_output_file) |sourcemap_file| {
                     try output_files.append(sourcemap_file);
+                }
+                if (bytecode_output_file) |bytecode_file| {
+                    try output_files.append(bytecode_file);
                 }
             }
 
@@ -10750,67 +10762,65 @@ pub const LinkerContext = struct {
                 },
                 .none => {},
             }
-            var bytecode_index: ?u32 = null;
-            if (c.parse_graph.generate_bytecode_cache) {
-                const loader: Loader = if (chunk.entry_point.is_entry_point)
-                    c.parse_graph.input_files.items(.loader)[
-                        chunk.entry_point.source_index
-                    ]
-                else
-                    .js;
+            const bytecode_output_file: ?options.OutputFile = brk: {
+                if (c.parse_graph.generate_bytecode_cache) {
+                    const loader: Loader = if (chunk.entry_point.is_entry_point)
+                        c.parse_graph.input_files.items(.loader)[
+                            chunk.entry_point.source_index
+                        ]
+                    else
+                        .js;
 
-                if (loader.isJavaScriptLike()) {
-                    JSC.initialize(false);
-                    var fdpath: bun.PathBuffer = undefined;
-                    var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
-                    source_provider_url.ref();
+                    if (loader.isJavaScriptLike()) {
+                        JSC.initialize(false);
+                        var fdpath: bun.PathBuffer = undefined;
+                        var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                        source_provider_url.ref();
 
-                    defer source_provider_url.deref();
+                        defer source_provider_url.deref();
 
-                    if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
-                        const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
-                        defer source_provider_url_str.deinit();
-                        const bytecode, const cached_bytecode = result;
-                        debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
-                        @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
-                        fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                        defer cached_bytecode.deref();
-                        switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-                            &pathbuf,
-                            JSC.Node.Arguments.WriteFile{
-                                .data = JSC.Node.StringOrBuffer{
-                                    .buffer = JSC.Buffer{
-                                        .buffer = .{
-                                            .ptr = @constCast(bytecode.ptr),
-                                            .len = @as(u32, @truncate(bytecode.len)),
-                                            .byte_len = @as(u32, @truncate(bytecode.len)),
+                        if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                            const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                            defer source_provider_url_str.deinit();
+                            const bytecode, const cached_bytecode = result;
+                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                            @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                            fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                            defer cached_bytecode.deref();
+                            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                                &pathbuf,
+                                JSC.Node.Arguments.WriteFile{
+                                    .data = JSC.Node.StringOrBuffer{
+                                        .buffer = JSC.Buffer{
+                                            .buffer = .{
+                                                .ptr = @constCast(bytecode.ptr),
+                                                .len = @as(u32, @truncate(bytecode.len)),
+                                                .byte_len = @as(u32, @truncate(bytecode.len)),
+                                            },
+                                        },
+                                    },
+                                    .encoding = .buffer,
+                                    .mode = if (chunk.is_executable) 0o755 else 0o644,
+
+                                    .dirfd = bun.toFD(root_dir.fd),
+                                    .file = .{
+                                        .path = JSC.Node.PathLike{
+                                            .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
                                         },
                                     },
                                 },
-                                .encoding = .buffer,
-                                .mode = if (chunk.is_executable) 0o755 else 0o644,
-
-                                .dirfd = bun.toFD(root_dir.fd),
-                                .file = .{
-                                    .path = JSC.Node.PathLike{
-                                        .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
-                                    },
+                            )) {
+                                .result => {},
+                                .err => |err| {
+                                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {}", .{
+                                        err,
+                                        bun.fmt.quote(chunk.final_rel_path),
+                                    }) catch unreachable;
+                                    return error.WriteFailed;
                                 },
-                            },
-                        )) {
-                            .result => {},
-                            .err => |err| {
-                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {}", .{
-                                    err,
-                                    bun.fmt.quote(chunk.final_rel_path),
-                                }) catch unreachable;
-                                return error.WriteFailed;
-                            },
-                        }
+                            }
 
-                        bytecode_index = @truncate(output_files.items.len);
-                        try output_files.append(
-                            options.OutputFile.init(
+                            break :brk options.OutputFile.init(
                                 options.OutputFile.Options{
                                     .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
                                     .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
@@ -10824,11 +10834,13 @@ pub const LinkerContext = struct {
                                         .saved = 0,
                                     },
                                 },
-                            ),
-                        );
+                            );
+                        }
                     }
                 }
-            }
+
+                break :brk null;
+            };
 
             switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
@@ -10866,6 +10878,18 @@ pub const LinkerContext = struct {
                 .result => {},
             }
 
+            const source_map_index: ?u32 = if (source_map_output_file != null)
+                @as(u32, @truncate(output_files.items.len + 1))
+            else
+                null;
+
+            const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
+                @as(u32, @truncate(output_files.items.len + 2))
+            else if (bytecode_output_file != null)
+                @as(u32, @truncate(output_files.items.len + 1))
+            else
+                null;
+
             try output_files.append(
                 options.OutputFile.init(
                     options.OutputFile.Options{
@@ -10881,12 +10905,9 @@ pub const LinkerContext = struct {
                         else
                             .chunk,
                         .loader = .js,
-                        .source_map_index = if (source_map_output_file != null)
-                            @as(u32, @truncate(output_files.items.len + 1))
-                        else
-                            null,
-                        .size = @as(u32, @truncate(code_result.buffer.len)),
+                        .source_map_index = source_map_index,
                         .bytecode_index = bytecode_index,
+                        .size = @as(u32, @truncate(code_result.buffer.len)),
                         .display_size = @as(u32, @truncate(display_size)),
                         .is_executable = chunk.is_executable,
                         .data = .{
@@ -10898,6 +10919,10 @@ pub const LinkerContext = struct {
 
             if (source_map_output_file) |sourcemap_file| {
                 try output_files.append(sourcemap_file);
+            }
+
+            if (bytecode_output_file) |bytecode_file| {
+                try output_files.append(bytecode_file);
             }
         }
 

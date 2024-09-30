@@ -301,8 +301,8 @@ pub const StandaloneModuleGraph = struct {
                     // involves a JSON parser.
                     string_builder.cap += output_file.value.buffer.bytes.len * 2;
                 } else if (output_file.output_kind == .bytecode) {
-                    // Allocate up to 128 byte alignment for bytecode
-                    string_builder.cap += (output_file.value.buffer.bytes.len + 127) / 128 * 128;
+                    // Allocate up to 256 byte alignment for bytecode
+                    string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
@@ -347,13 +347,14 @@ pub const StandaloneModuleGraph = struct {
 
             const bytecode: StringPointer = brk: {
                 if (output_file.bytecode_index != std.math.maxInt(u32)) {
-                    // Use up to 64 byte alignment for bytecode
-                    // Not aligning it correctly will cause a runtime assertion error.
+                    // Use up to 256 byte alignment for bytecode
+                    // Not aligning it correctly will cause a runtime assertion error, or a segfault.
                     const bytecode = output_files[output_file.bytecode_index].value.buffer.bytes;
-                    const aligned = std.mem.alignInSlice(string_builder.writable(), 64).?;
+                    const aligned = std.mem.alignInSlice(string_builder.writable(), 128).?;
                     @memcpy(aligned[0..bytecode.len], bytecode[0..bytecode.len]);
+                    const unaligned_space = aligned[bytecode.len..];
                     const offset = @intFromPtr(aligned.ptr) - @intFromPtr(string_builder.ptr.?);
-                    const len = bytecode.len;
+                    const len = bytecode.len + @min(unaligned_space.len, 128);
                     string_builder.len += len;
                     break :brk StringPointer{ .offset = @truncate(offset), .length = @truncate(len) };
                 } else {

@@ -23532,7 +23532,7 @@ fn NewParser_(
                 .uses_require_ref = p.runtime_imports.__require != null and
                     p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
                 .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
-                // .top_Level_await_keyword = p.top_level_await_keyword,
+                .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
 

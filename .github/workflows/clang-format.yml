@@ -55,7 +55,7 @@ jobs:
           ENABLE_CCACHE: OFF
           LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
-          bun run clang-format:diff
+          bun run clang-format
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

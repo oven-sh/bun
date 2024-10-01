@@ -755,7 +755,7 @@ class Http2ServerResponse extends Stream {
 
     if (!stream.headersSent) this.writeHead(this[kState].statusCode);
 
-    if (this[kState].closed || stream.destroyed) ReflectApply(onStreamCloseResponse, stream, []);
+    if (this[kState].closed || stream.destroyed) onStreamCloseResponse.$call(stream);
     else stream.end();
 
     return this;
@@ -1584,17 +1584,17 @@ function emitConnectNT(self, socket) {
 }
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
-  // if (stream) {
-  //   stream.rstCode = error;
-  //   stream[bunHTTP2Closed] = true;
-  //   stream[bunHTTP2Session] = null;
-  //   const error_instance = streamErrorFromCode(error);
-  //   stream.emit("error", error_instance);
-  //   stream.emit("close");
-  //   stream.emit("end");
-  //   if (destroy) stream.destroy(error_instance, error);
-  //   if (destroy_self) self.destroy();
-  // }
+  if (stream) {
+    stream.rstCode = error;
+    stream[bunHTTP2Closed] = true;
+    stream[bunHTTP2Session] = null;
+    const error_instance = streamErrorFromCode(error);
+    stream.emit("error", error_instance);
+    stream.emit("end");
+    stream.emit("close");
+    if (destroy) stream.destroy(error_instance, error);
+    if (destroy_self) self.destroy();
+  }
 }
 
 function emitAbortedNT(self, streams, streamId, error) {
@@ -1651,17 +1651,22 @@ class ServerHttp2Session extends Http2Session {
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
-    streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream) {
+    streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self) return;
-      self.#connections--;
-      stream[bunHTTP2Closed] = true;
-      stream[bunHTTP2Session] = null;
-      stream.rstCode = 0;
-      stream.emit("end");
-      stream.emit("close");
-      stream.destroy();
-      if (self.#connections === 0 && self.#closed) {
-        self.destroy();
+      if (stream.rstCode === undefined) {
+        stream.rstCode = 0;
+        stream.emit("end");
+      }
+      // 7 = closed, in this case we already send everything and received everything
+      if (state === 7) {
+        stream[bunHTTP2Closed] = true;
+        stream[bunHTTP2Session] = null;
+        self.#connections--;
+        stream.emit("close");
+        stream.destroy();
+        if (self.#connections === 0 && self.#closed) {
+          self.destroy();
+        }
       }
     },
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
@@ -1727,7 +1732,7 @@ class ServerHttp2Session extends Http2Session {
     error(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       const error_instance = streamErrorFromCode(errorCode);
-      // self.emit("error", error_instance);
+      self.emit("error", error_instance);
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
       self.#parser = null;
@@ -2060,19 +2065,22 @@ class ClientHttp2Session extends Http2Session {
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
-    streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream) {
+    streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
       if (!self) return;
-
-      self.#connections--;
-      stream[bunHTTP2Closed] = true;
-      stream[bunHTTP2Session] = null;
-      stream.rstCode = 0;
-      stream.emit("end");
-      stream.emit("close");
-      stream.destroy();
-
-      if (self.#connections === 0 && self.#closed) {
-        self.destroy();
+      if (stream.rstCode === undefined) {
+        stream.rstCode = 0;
+        stream.emit("end");
+      }
+      // 7 = closed, in this case we already send everything and received everything
+      if (state === 7) {
+        stream[bunHTTP2Closed] = true;
+        stream[bunHTTP2Session] = null;
+        self.#connections--;
+        stream.emit("close");
+        stream.destroy();
+        if (self.#connections === 0 && self.#closed) {
+          self.destroy();
+        }
       }
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
@@ -2148,7 +2156,7 @@ class ClientHttp2Session extends Http2Session {
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       const error_instance = streamErrorFromCode(errorCode);
-      // self.emit("error", error_instance);
+      self.emit("error", error_instance);
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
       self.#parser = null;
@@ -2231,7 +2239,10 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#alpnProtocol = "h2c";
     }
-
+    const nativeSocket = socket[bunSocketInternal];
+    if (nativeSocket) {
+      this.#parser.setNativeSocket(nativeSocket);
+    }
     // we can just use native to read data when possible
     if (!this.#parser.hasNativeRead()) {
       socket.on("data", this.#onRead.bind(this));
@@ -2242,6 +2253,7 @@ class ClientHttp2Session extends Http2Session {
     while (queue.length) {
       socket.write(queue.shift());
     }
+    this.#parser.flush();
     process.nextTick(emitConnectNT, this, socket);
   }
 

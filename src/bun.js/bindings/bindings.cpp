@@ -4212,7 +4212,7 @@ public:
             end = offset;
         }
 
-        if (end == start || start == WTF::notFound) {
+        if (start >= end || start == WTF::notFound) {
             return false;
         }
 
@@ -4463,42 +4463,44 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
+                if (!stack.isEmpty()) {
 
-                V8StackTraceIterator iterator(stack);
-                const uint8_t frame_count = except->stack.frames_len;
+                    V8StackTraceIterator iterator(stack);
+                    const uint8_t frame_count = except->stack.frames_len;
 
-                except->stack.frames_len = 0;
+                    except->stack.frames_len = 0;
 
-                iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
-                    ASSERT(except->stack.frames_len < frame_count);
-                    auto& current = except->stack.frames_ptr[except->stack.frames_len];
-                    current = {};
+                    iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                        ASSERT(except->stack.frames_len < frame_count);
+                        auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                        current = {};
 
-                    String functionName = frame.functionName.toString();
-                    String sourceURL = frame.sourceURL.toString();
-                    current.function_name = Bun::toStringRef(functionName);
-                    current.source_url = Bun::toStringRef(sourceURL);
-                    current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
-                    current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        String functionName = frame.functionName.toString();
+                        String sourceURL = frame.sourceURL.toString();
+                        current.function_name = Bun::toStringRef(functionName);
+                        current.source_url = Bun::toStringRef(sourceURL);
+                        current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                        current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
-                    current.remapped = true;
+                        current.remapped = true;
 
-                    if (frame.isConstructor) {
-                        current.code_type = ZigStackFrameCodeConstructor;
-                    } else if (frame.isGlobalCode) {
-                        current.code_type = ZigStackFrameCodeGlobal;
+                        if (frame.isConstructor) {
+                            current.code_type = ZigStackFrameCodeConstructor;
+                        } else if (frame.isGlobalCode) {
+                            current.code_type = ZigStackFrameCodeGlobal;
+                        }
+
+                        except->stack.frames_len += 1;
+
+                        stop = except->stack.frames_len >= frame_count;
+                    });
+
+                    if (except->stack.frames_len > 0) {
+                        getFromSourceURL = false;
+                        except->remapped = true;
+                    } else {
+                        except->stack.frames_len = frame_count;
                     }
-
-                    except->stack.frames_len += 1;
-
-                    stop = except->stack.frames_len >= frame_count;
-                });
-
-                if (except->stack.frames_len > 0) {
-                    getFromSourceURL = false;
-                    except->remapped = true;
-                } else {
-                    except->stack.frames_len = frame_count;
                 }
             }
         }

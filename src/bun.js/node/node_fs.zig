@@ -1283,7 +1283,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Rename {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "oldPath must be a string or TypedArray",
                         .{},
@@ -1295,7 +1295,7 @@ pub const Arguments = struct {
             };
 
             const new_path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "newPath must be a string or TypedArray",
                         .{},
@@ -1330,7 +1330,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
             const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -1359,7 +1359,7 @@ pub const Arguments = struct {
     pub const Writev = struct {
         fd: FileDescriptor,
         buffers: JSC.Node.VectorArrayBuffer,
-        position: ?u52 = 0,
+        position: ?i64 = 0,
 
         pub fn deinit(_: *const @This()) void {}
 
@@ -1380,7 +1380,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Writev {
             const fd_value = arguments.nextEat() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor is required",
                         .{},
@@ -1392,7 +1392,7 @@ pub const Arguments = struct {
             };
 
             const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
                         .{},
@@ -1412,7 +1412,7 @@ pub const Arguments = struct {
                 exception,
                 arguments.arena.allocator(),
             ) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "buffers must be an array of TypedArray",
                         .{},
@@ -1423,21 +1423,11 @@ pub const Arguments = struct {
                 return null;
             };
 
-            var position: ?u52 = null;
+            var position: ?i64 = null;
 
             if (arguments.nextEat()) |pos_value| {
                 if (!pos_value.isUndefinedOrNull()) {
-                    if (pos_value.isNumber()) {
-                        position = pos_value.to(u52);
-                    } else {
-                        JSC.throwInvalidArguments(
-                            "position must be a number",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-                        return null;
-                    }
+                    position = validatePosition(ctx.ptr(), pos_value) orelse return null;
                 }
             }
 
@@ -1448,7 +1438,7 @@ pub const Arguments = struct {
     pub const Readv = struct {
         fd: FileDescriptor,
         buffers: JSC.Node.VectorArrayBuffer,
-        position: ?u52 = 0,
+        position: ?i64 = 0,
 
         pub fn deinit(this: *const @This()) void {
             _ = this;
@@ -1471,7 +1461,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readv {
             const fd_value = arguments.nextEat() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor is required",
                         .{},
@@ -1483,7 +1473,7 @@ pub const Arguments = struct {
             };
 
             const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
                         .{},
@@ -1503,7 +1493,7 @@ pub const Arguments = struct {
                 exception,
                 arguments.arena.allocator(),
             ) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "buffers must be an array of TypedArray",
                         .{},
@@ -1514,21 +1504,12 @@ pub const Arguments = struct {
                 return null;
             };
 
-            var position: ?u52 = null;
+            var position: ?i64 = null;
 
             if (arguments.nextEat()) |pos_value| {
-                if (!pos_value.isUndefinedOrNull()) {
-                    if (pos_value.isNumber()) {
-                        position = pos_value.to(u52);
-                    } else {
-                        JSC.throwInvalidArguments(
-                            "position must be a number",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-                        return null;
-                    }
+                // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/fs.js#L782-L784
+                if (pos_value.isNumber()) {
+                    position = validatePosition(ctx.ptr(), pos_value) orelse return null;
                 }
             }
 
@@ -1538,7 +1519,7 @@ pub const Arguments = struct {
 
     pub const FTruncate = struct {
         fd: FileDescriptor,
-        len: ?JSC.WebCore.Blob.SizeType = null,
+        len: ?i64 = null,
 
         pub fn deinit(this: @This()) void {
             _ = this;
@@ -1554,7 +1535,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FTruncate {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor is required",
                         .{},
@@ -1564,7 +1545,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
                         .{},
@@ -1577,19 +1558,19 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
-            const len: JSC.WebCore.Blob.SizeType = brk: {
-                const len_value = arguments.next() orelse break :brk 0;
-                if (len_value.isNumber()) {
-                    arguments.eat();
-                    break :brk len_value.to(JSC.WebCore.Blob.SizeType);
-                }
+            return FTruncate{
+                .fd = fd,
+                .len = brk: {
+                    const len_value = arguments.next() orelse break :brk 0;
+                    if (len_value.isUndefined()) {
+                        break :brk 0;
+                    }
 
-                break :brk 0;
+                    break :brk @intCast(validateLength(ctx.ptr(), len_value) orelse return null);
+                },
             };
-
-            return FTruncate{ .fd = fd, .len = len };
         }
     };
 
@@ -1612,7 +1593,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Chown {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -1625,7 +1606,7 @@ pub const Arguments = struct {
 
             const uid: uid_t = brk: {
                 const uid_value = arguments.next() orelse break :brk {
-                    if (exception.* == null) {
+                    if (!hasPendingException(ctx, exception)) {
                         JSC.throwInvalidArguments(
                             "uid is required",
                             .{},
@@ -1650,7 +1631,7 @@ pub const Arguments = struct {
 
             const gid: gid_t = brk: {
                 const gid_value = arguments.next() orelse break :brk {
-                    if (exception.* == null) {
+                    if (!hasPendingException(ctx, exception)) {
                         JSC.throwInvalidArguments(
                             "gid is required",
                             .{},
@@ -1688,7 +1669,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fchown {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor is required",
                         .{},
@@ -1698,7 +1679,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
                         .{},
@@ -1709,11 +1690,11 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const uid: uid_t = brk: {
                 const uid_value = arguments.next() orelse break :brk {
-                    if (exception.* == null) {
+                    if (!hasPendingException(ctx, exception)) {
                         JSC.throwInvalidArguments(
                             "uid is required",
                             .{},
@@ -1730,7 +1711,7 @@ pub const Arguments = struct {
 
             const gid: gid_t = brk: {
                 const gid_value = arguments.next() orelse break :brk {
-                    if (exception.* == null) {
+                    if (!hasPendingException(ctx, exception)) {
                         JSC.throwInvalidArguments(
                             "gid is required",
                             .{},
@@ -1770,7 +1751,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Lutimes {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -1782,7 +1763,7 @@ pub const Arguments = struct {
             };
 
             const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "atime is required",
                         .{},
@@ -1793,7 +1774,7 @@ pub const Arguments = struct {
 
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "atime must be a number or a Date",
                         .{},
@@ -1807,7 +1788,7 @@ pub const Arguments = struct {
             arguments.eat();
 
             const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mtime is required",
                         .{},
@@ -1818,7 +1799,7 @@ pub const Arguments = struct {
 
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mtime must be a number or a Date",
                         .{},
@@ -1853,7 +1834,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Chmod {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -1865,7 +1846,7 @@ pub const Arguments = struct {
             };
 
             const mode: Mode = JSC.Node.modeFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mode is required",
                         .{},
@@ -1875,7 +1856,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mode must be a string or integer",
                         .{},
@@ -1902,7 +1883,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FChmod {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor is required",
                         .{},
@@ -1912,7 +1893,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
                         .{},
@@ -1923,11 +1904,11 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
             arguments.eat();
 
             const mode: Mode = JSC.Node.modeFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mode is required",
                         .{},
@@ -1937,7 +1918,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mode must be a string or integer",
                         .{},
@@ -1975,7 +1956,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stat {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -1986,7 +1967,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var throw_if_no_entry = true;
 
@@ -2014,7 +1995,7 @@ pub const Arguments = struct {
                 break :brk false;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Stat{ .path = path, .big_int = big_int, .throw_if_no_entry = throw_if_no_entry };
         }
@@ -2030,7 +2011,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fstat {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor is required",
                         .{},
@@ -2040,7 +2021,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
                         .{},
@@ -2051,7 +2032,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
@@ -2067,7 +2048,7 @@ pub const Arguments = struct {
                 break :brk false;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Fstat{ .fd = fd, .big_int = big_int };
         }
@@ -2096,7 +2077,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Link {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "oldPath must be a string or TypedArray",
                         .{},
@@ -2107,10 +2088,10 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const new_path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "newPath must be a string or TypedArray",
                         .{},
@@ -2121,7 +2102,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Link{ .old_path = old_path, .new_path = new_path };
         }
@@ -2160,7 +2141,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Symlink {
             const old_path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "target must be a string or TypedArray",
                         .{},
@@ -2171,10 +2152,10 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const new_path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2185,7 +2166,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const link_type: LinkType = if (!Environment.isWindows)
                 0
@@ -2206,7 +2187,7 @@ pub const Arguments = struct {
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
                         if (str.eqlComptime("junction")) break :link_type .junction;
-                        if (exception.* == null) {
+                        if (!hasPendingException(ctx, exception)) {
                             JSC.throwInvalidArguments(
                                 "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"",
                                 .{str},
@@ -2253,7 +2234,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readlink {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2264,7 +2245,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
             var encoding = Encoding.utf8;
             if (arguments.next()) |val| {
                 arguments.eat();
@@ -2305,7 +2286,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Realpath {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2316,7 +2297,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
             var encoding = Encoding.utf8;
             if (arguments.next()) |val| {
                 arguments.eat();
@@ -2356,7 +2337,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Unlink {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2367,7 +2348,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Unlink{
                 .path = path,
@@ -2400,7 +2381,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?RmDir {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2411,7 +2392,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var recursive = false;
             var force = false;
@@ -2471,7 +2452,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: *JSC.JSGlobalObject, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Mkdir {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2482,7 +2463,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var recursive = false;
             var mode: Mode = 0o777;
@@ -2500,7 +2481,7 @@ pub const Arguments = struct {
 
                     if (val.get(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
-                        if (exception.* != null) return null;
+                        if (hasPendingException(ctx, exception)) return null;
                     }
                 }
             }
@@ -2533,7 +2514,7 @@ pub const Arguments = struct {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
             const prefix = StringOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "prefix must be a string or TypedArray",
                         .{},
@@ -2544,7 +2525,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             arguments.eat();
 
@@ -2604,7 +2585,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readdir {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2615,7 +2596,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var encoding = Encoding.utf8;
             var with_file_types = false;
@@ -2669,7 +2650,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Close {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "File descriptor is required",
                         .{},
@@ -2679,7 +2660,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
                         .{},
@@ -2690,7 +2671,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Close{ .fd = fd };
         }
@@ -2715,7 +2696,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Open {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
                         .{},
@@ -2726,7 +2707,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var flags = FileSystemFlags.r;
             var mode: Mode = default_permission;
@@ -2737,28 +2718,28 @@ pub const Arguments = struct {
                 if (val.isObject()) {
                     if (val.getTruthy(ctx.ptr(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
-                        if (exception.* != null) return null;
+                        if (hasPendingException(ctx, exception)) return null;
                     }
 
                     if (val.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
-                        if (exception.* != null) return null;
+                        if (hasPendingException(ctx, exception)) return null;
                     }
                 } else if (!val.isEmpty()) {
                     if (!val.isUndefinedOrNull()) {
                         // error is handled below
                         flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
-                        if (exception.* != null) return null;
+                        if (hasPendingException(ctx, exception)) return null;
                     }
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
-                        if (exception.* != null) return null;
+                        if (hasPendingException(ctx, exception)) return null;
                     }
                 }
             }
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Open{
                 .path = path,
@@ -2790,7 +2771,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Futimes {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "File descriptor is required",
                         .{},
@@ -2800,7 +2781,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
                         .{},
@@ -2811,10 +2792,10 @@ pub const Arguments = struct {
                 return null;
             };
             arguments.eat();
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const atime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "atime is required",
                         .{},
@@ -2824,7 +2805,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "atime must be a number, Date or string",
                         .{},
@@ -2835,10 +2816,10 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const mtime = JSC.Node.timeLikeFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mtime is required",
                         .{},
@@ -2848,7 +2829,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "mtime must be a number, Date or string",
                         .{},
@@ -2859,7 +2840,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Futimes{
                 .fd = fd,
@@ -2916,7 +2897,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Write {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "File descriptor is required",
                         .{},
@@ -2926,7 +2907,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
                         .{},
@@ -2939,10 +2920,10 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "data is required",
                         .{},
@@ -2952,7 +2933,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "data must be a string or TypedArray",
                         .{},
@@ -2962,11 +2943,14 @@ pub const Arguments = struct {
                 }
                 return null;
             };
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
+
+            const max_length = buffer.slice().len;
 
             var args = Write{
                 .fd = fd,
                 .buffer = buffer,
+                .length = max_length,
                 .encoding = switch (buffer) {
                     .buffer => Encoding.buffer,
                     inline else => Encoding.utf8,
@@ -2983,7 +2967,7 @@ pub const Arguments = struct {
                         // fs.write(fd, string[, position[, encoding]], callback)
                         else => {
                             if (current.isNumber()) {
-                                args.position = current.to(i52);
+                                args.position = validatePosition(ctx.ptr(), current) orelse return null;
                                 arguments.eat();
                                 current = arguments.next() orelse break :parse;
                             }
@@ -3000,21 +2984,31 @@ pub const Arguments = struct {
                             }
 
                             if (!(current.isNumber() or current.isBigInt())) break :parse;
-                            args.offset = current.to(u52);
+                            args.offset = validateOffset(ctx.ptr(), current) orelse return null;
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 
                             if (!(current.isNumber() or current.isBigInt())) break :parse;
-                            args.length = current.to(u52);
+                            args.length = validateLength(ctx.ptr(), current) orelse return null;
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 
                             if (!(current.isNumber() or current.isBigInt())) break :parse;
-                            args.position = current.to(i52);
+                            args.position = validatePosition(ctx.ptr(), current) orelse return null;
                             arguments.eat();
                         },
                     }
                 }
+            }
+
+            if (args.offset > max_length) {
+                ctx.ERR_OUT_OF_RANGE("offset > buffer.length ({d} > {d})", .{}).throw();
+                return null;
+            }
+
+            if (args.length > max_length -| args.offset) {
+                ctx.ERR_OUT_OF_RANGE("length <= {d}", .{max_length -| args.offset}).throw();
+                return null;
             }
 
             return args;
@@ -3040,7 +3034,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Read {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "File descriptor is required",
                         .{},
@@ -3050,7 +3044,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
                         .{},
@@ -3063,10 +3057,10 @@ pub const Arguments = struct {
 
             arguments.eat();
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const buffer = Buffer.fromJS(ctx.ptr(), arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "buffer is required",
                         .{},
@@ -3076,7 +3070,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "buffer must be a TypedArray",
                         .{},
@@ -3087,66 +3081,133 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             arguments.eat();
+
+            const max_length = buffer.slice().len;
 
             var args = Read{
                 .fd = fd,
                 .buffer = buffer,
+                .length = max_length,
             };
 
-            if (arguments.next()) |current| {
-                arguments.eat();
+            if (arguments.nextEat()) |current| {
                 if (current.isNumber() or current.isBigInt()) {
-                    args.offset = current.to(u52);
+                    args.offset = validateOffset(ctx.ptr(), current) orelse return null;
 
-                    if (arguments.remaining.len < 1) {
-                        JSC.throwInvalidArguments("length is required", .{}, ctx, exception);
+                    const arg_length = arguments.nextEat() orelse .undefined;
+
+                    if (arg_length.isUndefined()) {
+                        ctx.ERR_MISSING_ARGS("length is required", .{}).throw();
                         return null;
                     }
 
-                    const arg_length = arguments.next().?;
-                    arguments.eat();
+                    args.length = validateLength(ctx.ptr(), arg_length) orelse return null;
 
-                    if (arg_length.isNumber() or arg_length.isBigInt()) {
-                        args.length = arg_length.to(u52);
-                    }
-                    if (args.length == 0) {
-                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
-                        return null;
-                    }
-
-                    if (arguments.next()) |arg_position| {
-                        arguments.eat();
-                        if (arg_position.isNumber() or arg_position.isBigInt()) {
-                            args.position = @as(ReadPosition, @intCast(arg_position.to(i52)));
+                    if (arguments.nextEat()) |arg_position| {
+                        if (!arg_position.isUndefinedOrNull()) {
+                            args.position = validatePosition(ctx.ptr(), arg_position) orelse return null;
                         }
                     }
                 } else if (current.isObject()) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.offset = num.to(u52);
-                        }
+                        args.offset = validateOffset(ctx.ptr(), num) orelse return null;
                     }
+
+                    if (ctx.hasException()) return null;
 
                     if (current.getTruthy(ctx.ptr(), "length")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.length = num.to(u52);
-                        }
+                        args.length = validateLength(ctx.ptr(), num) orelse return null;
                     }
 
+                    if (ctx.hasException()) return null;
+
                     if (current.getTruthy(ctx.ptr(), "position")) |num| {
-                        if (num.isNumber() or num.isBigInt()) {
-                            args.position = num.to(i52);
-                        }
+                        args.position = validatePosition(ctx.ptr(), num) orelse return null;
                     }
+
+                    if (ctx.hasException()) return null;
                 }
+            }
+
+            if (args.offset > max_length) {
+                ctx.ERR_OUT_OF_RANGE("offset <= {d}", .{max_length}).throw();
+                return null;
+            }
+
+            if (args.length > max_length -| args.offset) {
+                ctx.ERR_OUT_OF_RANGE("length <= {d}", .{max_length -| args.offset}).throw();
+                return null;
             }
 
             return args;
         }
     };
+
+    fn validatePosition(globalObject: *JSC.JSGlobalObject, num: JSC.JSValue) ?i64 {
+        if (num.isInt32()) {
+            return num.asInt32();
+        } else if (num.isNumber()) {
+            const as_double = num.asDouble();
+            if (as_double < JSC.MIN_SAFE_INTEGER or as_double > JSC.MAX_SAFE_INTEGER or std.math.isNan(as_double)) {
+                // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_file.cc#L90-L92
+                return -1;
+            }
+
+            return @intFromFloat(as_double);
+        } else if (num.isBigInt()) {
+            return num.toInt64();
+        } else {
+            _ = globalObject.throwInvalidArgumentTypeValue("position", "number or bigint", num);
+            return null;
+        }
+    }
+
+    fn validateLength(globalObject: *JSC.JSGlobalObject, num: JSC.JSValue) ?u64 {
+        if (num.isNumber()) {
+            const val = globalObject.validateIntegerRange(num, u64, 0, .{
+                .field_name = "length",
+                .min = 1,
+                .max = std.math.maxInt(u64),
+                .always_allow_zero = false,
+            }) orelse {
+                return null;
+            };
+            return val;
+        } else if (num.isBigInt()) {
+            return num.toUInt64NoTruncate();
+        } else {
+            _ = globalObject.throwInvalidArgumentTypeValue("length", "number or bigint", num);
+            return null;
+        }
+    }
+
+    fn validateOffset(globalObject: *JSC.JSGlobalObject, num: JSC.JSValue) ?u64 {
+        if (num.isNumber()) {
+            const val = globalObject.validateIntegerRange(num, u64, 0, .{
+                .field_name = "offset",
+                .min = 0,
+                .max = std.math.maxInt(u64),
+                .always_allow_zero = true,
+            }) orelse {
+                return null;
+            };
+            return val;
+        } else if (num.isBigInt()) {
+            return num.toUInt64NoTruncate();
+        } else {
+            _ = globalObject.throwInvalidArgumentTypeValue("offset", "number or bigint", num);
+            return null;
+        }
+    }
+
+    fn hasPendingException(ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+        if (exception.* != null) return true;
+        if (ctx.hasException()) return true;
+        return false;
+    }
 
     /// Asynchronously reads the entire contents of a file.
     /// @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
@@ -3177,7 +3238,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
             const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
                         .{},
@@ -3188,7 +3249,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var encoding = Encoding.buffer;
             var flag = FileSystemFlags.r;
@@ -3197,7 +3258,7 @@ pub const Arguments = struct {
                 arguments.eat();
                 if (arg.isString()) {
                     encoding = Encoding.fromJS(arg, ctx.ptr()) orelse {
-                        if (exception.* == null) {
+                        if (!hasPendingException(ctx, exception)) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
                                 .{},
@@ -3211,7 +3272,7 @@ pub const Arguments = struct {
                     if (arg.get(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse {
-                                if (exception.* == null) {
+                                if (!hasPendingException(ctx, exception)) {
                                     JSC.throwInvalidArguments(
                                         "Invalid encoding",
                                         .{},
@@ -3226,7 +3287,7 @@ pub const Arguments = struct {
 
                     if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
                                     .{},
@@ -3279,7 +3340,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
             const file = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
                         .{},
@@ -3290,11 +3351,11 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const data_value = arguments.nextEat() orelse {
                 defer file.deinit();
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "data is required",
                         .{},
@@ -3318,7 +3379,7 @@ pub const Arguments = struct {
                 if (arg.isString()) {
                     encoding = Encoding.fromJS(arg, ctx.ptr()) orelse {
                         defer file.deinit();
-                        if (exception.* == null) {
+                        if (!hasPendingException(ctx, exception)) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
                                 .{},
@@ -3332,7 +3393,7 @@ pub const Arguments = struct {
                     if (arg.getTruthy(ctx.ptr(), "encoding")) |encoding_| {
                         encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse {
                             defer file.deinit();
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid encoding",
                                     .{},
@@ -3347,7 +3408,7 @@ pub const Arguments = struct {
                     if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             defer file.deinit();
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
                                     .{},
@@ -3362,7 +3423,7 @@ pub const Arguments = struct {
                     if (arg.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             defer file.deinit();
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
                                     .{},
@@ -3378,7 +3439,7 @@ pub const Arguments = struct {
 
             const data = StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx.ptr(), bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
                 defer file.deinit();
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "data must be a string or TypedArray",
                         .{},
@@ -3416,7 +3477,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?OpenDir {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
                         .{},
@@ -3427,7 +3488,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var encoding = Encoding.buffer;
             var buffer_size: c_int = 32;
@@ -3436,7 +3497,7 @@ pub const Arguments = struct {
                 arguments.eat();
                 if (arg.isString()) {
                     encoding = Encoding.fromJS(arg, ctx.ptr()) orelse {
-                        if (exception.* == null) {
+                        if (!hasPendingException(ctx, exception)) {
                             JSC.throwInvalidArguments(
                                 "Invalid encoding",
                                 .{},
@@ -3450,7 +3511,7 @@ pub const Arguments = struct {
                     if (arg.get(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse {
-                                if (exception.* == null) {
+                                if (!hasPendingException(ctx, exception)) {
                                     JSC.throwInvalidArguments(
                                         "Invalid encoding",
                                         .{},
@@ -3466,7 +3527,7 @@ pub const Arguments = struct {
                     if (arg.get(ctx.ptr(), "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "bufferSize must be > 0",
                                     .{},
@@ -3534,7 +3595,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Access {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "path must be a string or buffer",
                         .{},
@@ -3545,7 +3606,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var mode = FileSystemFlags.r;
 
@@ -3553,7 +3614,7 @@ pub const Arguments = struct {
                 arguments.eat();
                 if (arg.isString()) {
                     mode = FileSystemFlags.fromJS(ctx, arg, exception) orelse {
-                        if (exception.* == null) {
+                        if (!hasPendingException(ctx, exception)) {
                             JSC.throwInvalidArguments(
                                 "Invalid mode",
                                 .{},
@@ -3598,7 +3659,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateReadStream {
             const path = PathLike.fromJS(ctx, arguments, exception);
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
             if (path == null) arguments.eat();
 
             var stream = CreateReadStream{
@@ -3638,7 +3699,7 @@ pub const Arguments = struct {
 
                     if (arg.get(ctx.ptr(), "encoding")) |encoding| {
                         stream.encoding = Encoding.fromJS(encoding, ctx.ptr()) orelse {
-                            if (exception.* != null) {
+                            if (hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid encoding",
                                     .{},
@@ -3652,7 +3713,7 @@ pub const Arguments = struct {
 
                     if (arg.getTruthy(ctx.ptr(), "flags")) |flags| {
                         stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flags",
                                     .{},
@@ -3736,7 +3797,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateWriteStream {
             const path = PathLike.fromJS(ctx, arguments, exception);
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
             if (path == null) arguments.eat();
 
             var stream = CreateWriteStream{
@@ -3790,7 +3851,7 @@ pub const Arguments = struct {
 
                     if (arg.getTruthy(ctx.ptr(), "flags")) |flags| {
                         stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* == null) {
+                            if (!hasPendingException(ctx, exception)) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flags",
                                     .{},
@@ -3852,7 +3913,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?FdataSync {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "File descriptor is required",
                         .{},
@@ -3862,7 +3923,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
                         .{},
@@ -3873,7 +3934,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return FdataSync{ .fd = fd };
         }
@@ -3901,7 +3962,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CopyFile {
             const src = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "src must be a string or buffer",
                         .{},
@@ -3912,12 +3973,12 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const dest = PathLike.fromJS(ctx, arguments, exception) orelse {
                 src.deinit();
 
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "dest must be a string or buffer",
                         .{},
@@ -3928,7 +3989,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var mode: i32 = 0;
             if (arguments.next()) |arg| {
@@ -3968,7 +4029,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Cp {
             const src = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "src must be a string or buffer",
                         .{},
@@ -3979,11 +4040,11 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             const dest = PathLike.fromJS(ctx, arguments, exception) orelse {
                 defer src.deinit();
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "dest must be a string or buffer",
                         .{},
@@ -3994,7 +4055,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             var recursive: bool = false;
             var errorOnExist: bool = false;
@@ -4062,7 +4123,7 @@ pub const Arguments = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Fsync {
             const fd = JSC.Node.fileDescriptorFromJS(ctx, arguments.next() orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "File descriptor is required",
                         .{},
@@ -4072,7 +4133,7 @@ pub const Arguments = struct {
                 }
                 return null;
             }, exception) orelse {
-                if (exception.* == null) {
+                if (!hasPendingException(ctx, exception)) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
                         .{},
@@ -4083,7 +4144,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            if (exception.* != null) return null;
+            if (hasPendingException(ctx, exception)) return null;
 
             return Fsync{ .fd = fd };
         }

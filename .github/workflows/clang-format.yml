@@ -50,6 +50,12 @@ jobs:
       - name: Install LLVM
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
+      - name: Clang Format Version
+        env:
+          ENABLE_CCACHE: OFF
+          LLVM_VERSION: ${{ env.LLVM_VERSION }}
+        run: |
+          bun run clang-format-version
       - name: Clang Format
         env:
           ENABLE_CCACHE: OFF

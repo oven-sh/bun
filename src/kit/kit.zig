@@ -18,6 +18,8 @@
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     if (!bun.FeatureFlags.kit) return .undefined;
 
+    KitInitProcessIdentifier();
+
     bun.Output.warn(
         \\Be advised that Bun Kit is highly experimental, and its API will have
         \\breaking changes. Join the <magenta>#kit<r> Discord channel to help us find bugs
@@ -42,6 +44,8 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
         while (true) std.Thread.Futex.wait(&futex, 0);
     }
 }
+
+extern fn KitInitProcessIdentifier() void;
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.

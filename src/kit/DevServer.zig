@@ -780,7 +780,18 @@ pub fn IncrementalGraph(side: kit.Side) type {
             is_ssr_graph: bool,
         ) !void {
             const code = chunk.code();
-            if (code.len == 0) return; // TODO: these should never even be emitted
+            if (Environment.allow_assert) {
+                if (bun.strings.isAllWhitespace(code)) {
+                    // Should at least contain the function wrapper
+                    bun.Output.panic("Empty chunk is impossible: {s} {s}", .{
+                        abs_path,
+                        switch (side) {
+                            .client => "client",
+                            .server => if (is_ssr_graph) "ssr" else "server",
+                        },
+                    });
+                }
+            }
 
             g.current_incremental_chunk_len += code.len;
 

@@ -526,9 +526,21 @@ pub const BundleV2 = struct {
             },
         }
 
-        // if (comptime Environment.allow_assert) {
-        //     Output.prettyln("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
-        // }
+        const DebugLog = bun.Output.Scoped(.ReachableFiles, false);
+        if (DebugLog.isVisible()) {
+            DebugLog.log("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
+            const sources: []Logger.Source = this.graph.input_files.items(.source);
+            const targets: []options.Target = this.graph.ast.items(.target);
+            for (visitor.reachable.items) |idx| {
+                const source = sources[idx.get()];
+                DebugLog.log("reachable file: #{d} {} ({s}) target=.{s}", .{
+                    source.index.get(),
+                    bun.fmt.quote(source.path.pretty),
+                    source.path.text,
+                    @tagName(targets[idx.get()]),
+                });
+            }
+        }
 
         return visitor.reachable.toOwnedSlice();
     }
@@ -4751,10 +4763,16 @@ pub const LinkerContext = struct {
             var js_chunks = try std.ArrayListUnmanaged(Chunk).initCapacity(this.allocator, 1);
             const entry_bits = &this.graph.files.items(.entry_bits)[0];
 
-            const part_ranges = try this.allocator.alloc(PartRange, this.graph.reachable_files.len);
+            // Exclude runtime because it is already embedded
+            const reachable_files = if (this.graph.reachable_files[0].isRuntime())
+                this.graph.reachable_files[1..]
+            else
+                this.graph.reachable_files;
+
+            const part_ranges = try this.allocator.alloc(PartRange, reachable_files.len);
 
             const parts = this.parse_graph.ast.items(.parts);
-            for (this.graph.reachable_files, part_ranges) |source_index, *part_range| {
+            for (reachable_files, part_ranges) |source_index, *part_range| {
                 part_range.* = .{
                     .source_index = source_index,
                     .part_index_begin = 0,
@@ -7430,6 +7448,13 @@ pub const LinkerContext = struct {
             .part_range = &part_range.part_range,
         } };
 
+        if (Environment.isDebug) {
+            const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
+            if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
+                @breakpoint();
+            }
+        }
+
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
     }
 
@@ -8757,12 +8782,6 @@ pub const LinkerContext = struct {
         wrap: WrapKind,
         ast: *const JSAst,
     ) !void {
-        // for Bun Kit, export wrapping is already done. Import wrapping is special cased.
-        if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
-            try c.convertStmtsForChunkForKit(source_index, stmts, part_stmts, allocator, ast);
-            return;
-        }
-
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
@@ -9382,6 +9401,65 @@ pub const LinkerContext = struct {
         // referencing everything by array makes the code a lot more annoying :(
         const ast: JSAst = c.graph.ast.get(part_range.source_index.get());
 
+        // For Bun Kit, part generation is entirely special cased.
+        // - export wrapping is already done.
+        // - import wrapping needs to know resolved paths
+        // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
+        if (c.options.output_format == .internal_kit_dev) {
+            bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
+
+            for (parts) |part| {
+                c.convertStmtsForChunkForKit(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
+                    return .{ .err = err };
+            }
+
+            stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch bun.outOfMemory();
+            stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+            stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
+
+            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
+                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
+                    .ref = ast.module_ref,
+                }, Logger.Loc.Empty) },
+            }) catch unreachable; // is within bounds
+
+            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
+                clousure_args.appendAssumeCapacity(
+                    .{
+                        .binding = Binding.alloc(temp_allocator, B.Identifier{
+                            .ref = ast.exports_ref,
+                        }, Logger.Loc.Empty),
+                        .default = Expr.allocate(temp_allocator, E.Dot, .{
+                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                            .name = "exports",
+                            .name_loc = Logger.Loc.Empty,
+                        }, Logger.Loc.Empty),
+                    },
+                );
+            }
+
+            var single_stmt = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
+                .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
+                .body = .{
+                    .stmts = stmts.all_stmts.items,
+                    .loc = Logger.Loc.Empty,
+                },
+            } }, Logger.Loc.Empty));
+
+            return c.printCodeForFileInChunkJS(
+                r,
+                allocator,
+                writer,
+                (&single_stmt)[0..1],
+                &ast,
+                flags,
+                toESMRef,
+                toCommonJSRef,
+                runtimeRequireRef,
+                part_range.source_index,
+            );
+        }
+
         var needs_wrapper = false;
 
         const namespace_export_part_index = js_ast.namespace_export_part_index;
@@ -9568,50 +9646,8 @@ pub const LinkerContext = struct {
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
 
         // Turn each module into a function if this is Kit
-        var stmt_storage: Stmt = undefined;
-        if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
-            if (stmts.all_stmts.items.len == 0) {
-                // TODO: these chunks should just not exist in the first place
-                // they seem to happen on the entry point? or JSX? not clear
-                // removing the chunk in the parser breaks the liveness analysis.
-                //
-                // The workaround is to end early on empty files, and filter out
-                // empty files later.
-                return .{ .result = .{ .code = "", .source_map = null } };
-            }
-
-            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
-                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
-                    .ref = ast.module_ref,
-                }, Logger.Loc.Empty) },
-            }) catch unreachable; // is within bounds
-
-            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
-                    .{
-                        .binding = Binding.alloc(temp_allocator, B.Identifier{
-                            .ref = ast.exports_ref,
-                        }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
-                    },
-                );
-            }
-
-            stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
-                .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
-                .body = .{
-                    .stmts = stmts.all_stmts.items,
-                    .loc = Logger.Loc.Empty,
-                },
-            } }, Logger.Loc.Empty));
-            out_stmts = (&stmt_storage)[0..1];
-        }
         // Optionally wrap all statements in a closure
-        else if (needs_wrapper) {
+        if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
                     // Only include the arguments that are actually used
@@ -9914,11 +9950,35 @@ pub const LinkerContext = struct {
             };
         }
 
+        return c.printCodeForFileInChunkJS(
+            r,
+            allocator,
+            writer,
+            out_stmts,
+            &ast,
+            flags,
+            toESMRef,
+            toCommonJSRef,
+            runtimeRequireRef,
+            part_range.source_index,
+        );
+    }
+
+    fn printCodeForFileInChunkJS(
+        c: *LinkerContext,
+        r: renamer.Renamer,
+        allocator: std.mem.Allocator,
+        writer: *js_printer.BufferWriter,
+        out_stmts: []Stmt,
+        ast: *const js_ast.BundledAst,
+        flags: JSMeta.Flags,
+        to_esm_ref: Ref,
+        to_commonjs_ref: Ref,
+        runtime_require_ref: ?Ref,
+        source_index: Index,
+    ) js_printer.PrintResult {
         const parts_to_print = &[_]js_ast.Part{
-            js_ast.Part{
-                // .tag = .stmts,
-                .stmts = out_stmts,
-            },
+            js_ast.Part{ .stmts = out_stmts },
         };
 
         const print_options = js_printer.Options{
@@ -9937,26 +9997,23 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .module_type = switch (c.options.output_format) {
-                else => |format| format,
-                .internal_kit_dev => if (part_range.source_index.isRuntime()) .esm else .internal_kit_dev,
-            },
+            .module_type = c.options.output_format,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
-            .to_esm_ref = toESMRef,
-            .to_commonjs_ref = toCommonJSRef,
-            .require_ref = if (c.options.output_format == .internal_kit_dev) ast.require_ref else runtimeRequireRef,
+            .to_esm_ref = to_esm_ref,
+            .to_commonjs_ref = to_commonjs_ref,
+            .require_ref = if (c.options.output_format == .internal_kit_dev) ast.require_ref else runtime_require_ref,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
                 c,
             ),
-            .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
+            .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
+            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev)
                 c.parse_graph.input_files.items(.source)
             else
                 null,
@@ -9968,14 +10025,14 @@ pub const LinkerContext = struct {
         );
         defer writer.* = printer.ctx;
 
-        switch (c.options.source_maps != .none and !part_range.source_index.isRuntime()) {
+        switch (c.options.source_maps != .none and !source_index.isRuntime()) {
             inline else => |enable_source_maps| {
                 return js_printer.printWithWriter(
                     *js_printer.BufferPrinter,
                     &printer,
                     ast.target,
                     ast.toAST(),
-                    c.source_(part_range.source_index.get()),
+                    c.source_(source_index.get()),
                     print_options,
                     ast.import_records.slice(),
                     parts_to_print,
@@ -10112,8 +10169,8 @@ pub const LinkerContext = struct {
             // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
             // - Send only the newly changed code through a socket.
             //
-            // When this isnt the initial bundle, the data we would get concatenating
-            // everything here would be useless.
+            // When this isnt the initial bundle, concatenation as usual would produce a
+            // broken module. It is DevServer's job to create and send HMR patches.
             if (c.kit_dev_server) |dev_server| {
                 const input_file_sources = c.parse_graph.input_files.items(.source);
                 const targets = c.parse_graph.ast.items(.target);
@@ -10122,6 +10179,18 @@ pub const LinkerContext = struct {
                         chunk.content.javascript.parts_in_chunk_in_order,
                         chunk.compile_results_for_chunk,
                     ) |part_range, compile_result| {
+                        if (Environment.enable_logs) {
+                            debugPartRanges(
+                                "Part Range for Kit: {s} {s} ({d}..{d})",
+                                .{
+                                    c.parse_graph.input_files.items(.source)[part_range.source_index.get()].path.pretty,
+                                    @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer()),
+                                    part_range.part_index_begin,
+                                    part_range.part_index_end,
+                                },
+                            );
+                        }
+
                         try dev_server.receiveChunk(
                             input_file_sources[part_range.source_index.get()].path.text,
                             targets[part_range.source_index.get()].kitRenderer(),

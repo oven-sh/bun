@@ -2,9 +2,15 @@
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
+#include "ProcessIdentifier.h"
 #include "headers-handwritten.h"
 
 namespace Kit {
+
+extern "C" void KitInitProcessIdentifier() {
+  // assert is on main thread
+  WebCore::Process::identifier();
+}
 
 JSC::JSInternalPromise* moduleLoaderImportModule(
     JSC::JSGlobalObject* jsGlobalObject,

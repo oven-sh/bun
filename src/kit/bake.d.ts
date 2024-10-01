@@ -1,7 +1,7 @@
 declare module 'bun' {
-  declare function wipDevServerExpectHugeBreakingChanges(options: Kit.Options): never;
+  declare function wipDevServerExpectHugeBreakingChanges(options: Bake.Options): never;
 
-  declare namespace Kit {
+  declare namespace Bake {
     interface Options {
       /**
        * Bun provides built-in support for using React as a framework by
@@ -37,18 +37,18 @@ declare module 'bun' {
        * bundled route module, and returns a response. See `ServerEntryPoint`
        * 
        * When `serverComponents` is configured, this can access the component
-       * manifest using the special 'bun:kit/server' import:
+       * manifest using the special 'bun:bake/server' import:
        * 
-       *     import { serverManifest } from 'bun:kit/server'
+       *     import { serverManifest } from 'bun:bake/server'
        */
       serverEntryPoint: ImportSource;
       /**
        * This file is the true entrypoint of the client application.
        * 
        * When `serverComponents` is configured, this can access the component
-       * manifest using the special 'bun:kit/client' import:
+       * manifest using the special 'bun:bake/client' import:
        * 
-       *     import { clientManifest } from 'bun:kit/client'
+       *     import { clientManifest } from 'bun:bake/client'
        */
       clientEntryPoint: ImportSource;
       /**
@@ -93,10 +93,10 @@ declare module 'bun' {
        * of the server and client react runtimes, such as `async` components only
        * being available on the server.
        * 
-       * To cross from the server graph to the SSR graph, use the bun_kit_graph
+       * To cross from the server graph to the SSR graph, use the bun_bake_graph
        * import attribute:
        * 
-       *     import * as ReactDOM from 'react-dom/server' with { bun_kit_graph: 'ssr' };
+       *     import * as ReactDOM from 'react-dom/server' with { bun_bake_graph: 'ssr' };
        *
        * Since these models are so subtley different, there is no default value
        * provided for this.
@@ -154,12 +154,12 @@ declare module 'bun' {
     }
   }
   
-  // declare class Kit {
-  //   constructor(options: Kit.Options);
+  // declare class Bake {
+  //   constructor(options: Bake.Options);
   // }
 }
 
-declare module 'bun:kit/server' {
+declare module 'bun:bake/server' {
   // NOTE: The format of these manifests will likely be customizable in the future.
 
   /**
@@ -179,7 +179,7 @@ declare module 'bun:kit/server' {
   declare const actionManifest: never;
 }
 
-declare module 'bun:kit/client' {
+declare module 'bun:bake/client' {
   /**
    * Entries in this manifest can be loaded by using dynamic `await import()` or
    * `require`. The bundler currently ensures that all modules are ready.

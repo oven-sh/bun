@@ -3753,7 +3753,9 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
+/// Deprecated: use `bun.bake`
 pub const kit = @import("kit/kit.zig");
+pub const bake = bun.kit;
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {

@@ -1,20 +1,12 @@
-//! Kit is the code name for the work-in-progress "Framework API [SOON]" for Bun.
+//! Bake is Bun's toolkit for building client+server web applications. It
+//! combines `Bun.build` and `Bun.serve`, providing a hot-reloading development
+//! server, server components, and other integrations. Instead of taking the
+//! role as a framework, Bake is tool for frameworks to build on top of.
+
+// TODO: rename bun.kit to bun.bake
 
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.
-///
-/// Requires one argument object for configuration. Very little is
-/// exposed over the JS api as it is not intended to be used for
-/// real applications yet.
-/// ```ts
-/// interface WipDevServerOptions {
-///     routes: WipDevServerRoute[]
-/// }
-/// interface WipDevServerRoute {
-///     pattern: string;
-///     entrypoint: string;
-/// }
-/// ```
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     if (!bun.FeatureFlags.kit) return .undefined;
 
@@ -340,7 +332,7 @@ pub const Side = enum { client, server };
 pub const Renderer = enum {
     client,
     server,
-    /// Only used Framework has .server_components.separate_ssr_graph set
+    /// Only used when Framework has .server_components.separate_ssr_graph set
     ssr,
 };
 

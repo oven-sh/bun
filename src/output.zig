@@ -703,7 +703,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),

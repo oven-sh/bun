@@ -9,7 +9,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/clang-format.yml"
-      - ".clang-format"
+      - "**.clang-format"
       - "package.json"
       - "scripts/**"
       - "cmake/**"
@@ -30,6 +30,7 @@ jobs:
     name: clang-format
     runs-on: ubuntu-latest
     steps:
+      - run: sudo rm /usr/bin/clang-format
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -48,12 +49,20 @@ jobs:
       - name: Install LLVM
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
+      - run: ls -l /usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin/
+      - run: echo "/usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin/" >> $GITHUB_PATH
+      - name: Clang Format Version
+        env:
+          ENABLE_CCACHE: OFF
+          LLVM_VERSION: ${{ env.LLVM_VERSION }}
+        run: |
+          bun run clang-format:version
       - name: Clang Format
         env:
           ENABLE_CCACHE: OFF
           LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
-          bun run clang-format:diff
+          bun run clang-format
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

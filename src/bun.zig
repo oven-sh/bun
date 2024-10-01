@@ -3849,25 +3849,4 @@ else
         }
     };
 
-pub fn assertIsDefaultAllocator(ptr: anytype) void {
-    if (!Environment.isDebug) return;
-    assert(isOwnedByDefaultAllocator(ptr)); // must use default_allocator
-}
-
-pub fn assertIsNotDefaultAllocator(ptr: anytype) void {
-    if (!Environment.isDebug) return;
-    assert(!isOwnedByDefaultAllocator(ptr)); // must not use default_allocator
-}
-
-pub fn isOwnedByDefaultAllocator(ptr: anytype) bool {
-    switch (@typeInfo(@TypeOf(ptr))) {
-        .Pointer => |info| {
-            const p: *const anyopaque = switch (info.size) {
-                .One, .C => ptr,
-                .Slice, .Many => &ptr[0],
-            };
-            return Mimalloc.mi_is_in_heap_region(p);
-        },
-        else => @compileError(@typeName(@TypeOf(ptr)) ++ "is not a pointer (cannot be an optional)"),
-    }
-}
+pub const bytecode_extension = ".jsc";

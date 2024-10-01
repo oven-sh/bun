@@ -19,7 +19,7 @@ JSC::JSInternalPromise* moduleLoaderImportModule(
     JSC::JSValue parameters,
     const JSC::SourceOrigin& sourceOrigin)
 {
-    // TODO: forward this to the runtime
+    // TODO: forward this to the runtime?
     JSC::VM&vm=jsGlobalObject->vm();
     auto err = JSC::createTypeError(jsGlobalObject, WTF::makeString("Dynamic import should have been replaced with a hook into the module runtime"_s));
     auto* promise = JSC::JSInternalPromise::create(vm, jsGlobalObject->internalPromiseStructure());
@@ -27,30 +27,32 @@ JSC::JSInternalPromise* moduleLoaderImportModule(
     return promise;
 }
 
-#define INHERIT_HOOK_METHOD(name) Zig::GlobalObject::s_globalObjectMethodTable. name
+#define INHERIT_HOOK_METHOD(name)                                              \
+  Zig::GlobalObject::s_globalObjectMethodTable.name
 
-const JSC::GlobalObjectMethodTable DevGlobalObject::s_globalObjectMethodTable = {
-  INHERIT_HOOK_METHOD(supportsRichSourceInfo),
-  INHERIT_HOOK_METHOD(shouldInterruptScript),
-  INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
-  INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
-  INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
-  moduleLoaderImportModule,
-  INHERIT_HOOK_METHOD(moduleLoaderResolve),
-  INHERIT_HOOK_METHOD(moduleLoaderFetch),
-  INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),
-  INHERIT_HOOK_METHOD(moduleLoaderEvaluate),
-  INHERIT_HOOK_METHOD(promiseRejectionTracker),
-  INHERIT_HOOK_METHOD(reportUncaughtExceptionAtEventLoop),
-  INHERIT_HOOK_METHOD(currentScriptExecutionOwner),
-  INHERIT_HOOK_METHOD(scriptExecutionStatus),
-  INHERIT_HOOK_METHOD(reportViolationForUnsafeEval),
-  INHERIT_HOOK_METHOD(defaultLanguage),
-  INHERIT_HOOK_METHOD(compileStreaming),
-  INHERIT_HOOK_METHOD(instantiateStreaming),
-  INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
-  INHERIT_HOOK_METHOD(codeForEval),
-  INHERIT_HOOK_METHOD(canCompileStrings),
+const JSC::GlobalObjectMethodTable DevGlobalObject::s_globalObjectMethodTable =
+    {
+        INHERIT_HOOK_METHOD(supportsRichSourceInfo),
+        INHERIT_HOOK_METHOD(shouldInterruptScript),
+        INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
+        INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
+        INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
+        moduleLoaderImportModule,
+        INHERIT_HOOK_METHOD(moduleLoaderResolve),
+        INHERIT_HOOK_METHOD(moduleLoaderFetch),
+        INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),
+        INHERIT_HOOK_METHOD(moduleLoaderEvaluate),
+        INHERIT_HOOK_METHOD(promiseRejectionTracker),
+        INHERIT_HOOK_METHOD(reportUncaughtExceptionAtEventLoop),
+        INHERIT_HOOK_METHOD(currentScriptExecutionOwner),
+        INHERIT_HOOK_METHOD(scriptExecutionStatus),
+        INHERIT_HOOK_METHOD(reportViolationForUnsafeEval),
+        INHERIT_HOOK_METHOD(defaultLanguage),
+        INHERIT_HOOK_METHOD(compileStreaming),
+        INHERIT_HOOK_METHOD(instantiateStreaming),
+        INHERIT_HOOK_METHOD(deriveShadowRealmGlobalObject),
+        INHERIT_HOOK_METHOD(codeForEval),
+        INHERIT_HOOK_METHOD(canCompileStrings),
 };
 
 DevGlobalObject *

@@ -76,7 +76,6 @@ __asm__(".symver cosf,cosf@GLIBC_2.2.5");
 __asm__(".symver exp,exp@GLIBC_2.2.5");
 __asm__(".symver expf,expf@GLIBC_2.2.5");
 __asm__(".symver fcntl,fcntl@GLIBC_2.2.5");
-__asm__(".symver fcntl64,fcntl64@GLIBC_2.2.5");
 __asm__(".symver fmod,fmod@GLIBC_2.2.5");
 __asm__(".symver fmodf,fmodf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
@@ -93,7 +92,6 @@ __asm__(".symver cosf,cosf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
 __asm__(".symver expf,expf@GLIBC_2.17");
 __asm__(".symver fcntl,fcntl@GLIBC_2.17");
-__asm__(".symver fcntl64,fcntl64@GLIBC_2.17");
 __asm__(".symver fmod,fmod@GLIBC_2.17");
 __asm__(".symver fmodf,fmodf@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
@@ -130,6 +128,41 @@ float BUN_WRAP_GLIBC_SYMBOL(tanf)(float);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl)(int, int, ...);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
 void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
+}
+
+extern "C" {
+int __wrap_fcntl(int fd, int cmd, ...)
+{
+    va_list args;
+    va_start(args, cmd);
+    void* arg = va_arg(args, void*);
+    va_end(args);
+    return fcntl(fd, cmd, arg);
+}
+
+int __wrap_fcntl64(int fd, int cmd, ...)
+{
+    va_list args;
+    va_start(args, cmd);
+    void* arg = va_arg(args, void*);
+    va_end(args);
+    return fcntl(fd, cmd, arg);
+}
+
+double __wrap_exp(double x) { return exp(x); }
+double __wrap_fmod(double x, double y) { return fmod(x, y); }
+double __wrap_log(double x) { return log(x); }
+double __wrap_log2(double x) { return log2(x); }
+double __wrap_pow(double x, double y) { return pow(x, y); }
+float __wrap_cosf(float x) { return cosf(x); }
+float __wrap_expf(float x) { return expf(x); }
+float __wrap_fmodf(float x, float y) { return fmodf(x, y); }
+float __wrap_log10f(float x) { return log10f(x); }
+float __wrap_log2f(float x) { return log2f(x); }
+float __wrap_logf(float x) { return logf(x); }
+float __wrap_sinf(float x) { return sinf(x); }
+float __wrap_tanf(float x) { return tanf(x); }
+void __wrap_sincosf(float x, float* sin_x, float* cos_x) { sincosf(x, sin_x, cos_x); }
 }
 
 // ban statx, for now

@@ -875,6 +875,7 @@ pub const ExportRenamer = struct {
 
 pub fn computeInitialReservedNames(
     allocator: std.mem.Allocator,
+    output_format: bun.options.Format,
 ) !bun.StringHashMapUnmanaged(u32) {
     if (comptime bun.Environment.isWasm) {
         unreachable;
@@ -887,9 +888,17 @@ pub fn computeInitialReservedNames(
         "Require",
     };
 
+    const cjs_names = .{
+        "exports",
+        "module",
+    };
+
+    const cjs_names_len: u32 = if (output_format == .cjs) cjs_names.len else 0;
+
     try names.ensureTotalCapacityContext(
         allocator,
-        @as(u32, @truncate(JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len)),
+        cjs_names_len +
+            @as(u32, @truncate(JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len)),
         bun.StringHashMapContext{},
     );
 
@@ -899,6 +908,19 @@ pub fn computeInitialReservedNames(
 
     for (JSLexer.StrictModeReservedWords.keys()) |keyword| {
         names.putAssumeCapacity(keyword, 1);
+    }
+
+    // Node contains code that scans CommonJS modules in an attempt to statically
+    // detect the set of export names that a module will use. However, it doesn't
+    // do any scope analysis so it can be fooled by local variables with the same
+    // name as the CommonJS module-scope variables "exports" and "module". Avoid
+    // using these names in this case even if there is not a risk of a name
+    // collision because there is still a risk of node incorrectly detecting
+    // something in a nested scope as an top-level export.
+    if (output_format == .cjs) {
+        inline for (cjs_names) |name| {
+            names.putAssumeCapacity(name, 1);
+        }
     }
 
     inline for (comptime extras) |extra| {

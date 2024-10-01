@@ -237,6 +237,7 @@ pub const Arguments = struct {
 
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
@@ -725,6 +726,13 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
+            ctx.bundler_options.bytecode = args.flag("--bytecode");
+
+            // TODO: support --format=esm
+            if (ctx.bundler_options.bytecode) {
+                ctx.bundler_options.output_format = .cjs;
+                ctx.args.target = .bun;
+            }
 
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
@@ -783,6 +791,11 @@ pub const Arguments = struct {
 
                 if (opts.target.? == .bun)
                     ctx.debug.run_in_bun = opts.target.? == .bun;
+
+                if (opts.target.? != .bun and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--watch")) {
@@ -827,17 +840,18 @@ pub const Arguments = struct {
                         bun.Output.flush();
                     },
                     .cjs => {
-                        // Make this a soft error in debug to allow experimenting with these flags.
-                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
-                        function("Format '{s}' are not implemented", .{@tagName(format)});
-                        if (!Environment.isDebug) {
-                            Global.crash();
+                        if (ctx.args.target == null) {
+                            ctx.args.target = .node;
                         }
                     },
                     else => {},
                 }
 
                 ctx.bundler_options.output_format = format;
+                if (format != .cjs and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--splitting")) {
@@ -1344,6 +1358,7 @@ pub const Command = struct {
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
+            bytecode: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

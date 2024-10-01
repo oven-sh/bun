@@ -125,7 +125,7 @@ const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
-
+const Loc = Logger.Loc;
 const kit = bun.kit;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
@@ -834,6 +834,8 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = bundler.options.output_format;
         this.linker.kit_dev_server = bundler.options.kit;
 
+        this.graph.generate_bytecode_cache = bundler.options.bytecode;
+
         var pool = try this.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
             Watcher.enableHotModuleReloading(this);
@@ -1391,6 +1393,8 @@ pub const BundleV2 = struct {
             bundler.options.asset_naming = config.names.asset.data;
 
             bundler.options.public_path = config.public_path.list.items;
+            bundler.options.output_format = config.format;
+            bundler.options.bytecode = config.bytecode;
 
             bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
             bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
@@ -2644,6 +2648,8 @@ pub fn BundleThread(CompletionStruct: type) type {
                 heap,
             );
 
+            this.graph.generate_bytecode_cache = bundler.options.bytecode;
+
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
                 BundleV2.JSBundleCompletionTask => completion,
@@ -3240,23 +3246,28 @@ pub const ParseTask = struct {
         else
             bundler.options.target;
 
+        const output_format = bundler.options.output_format;
+
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
+        opts.features.auto_polyfill_require = output_format == .esm and !target.isBun();
         opts.features.allow_runtime = !source.index.isRuntime();
+        opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.use_import_meta_require = target.isBun();
-        opts.features.top_level_await = true;
+        opts.features.top_level_await = output_format == .esm or output_format == .internal_kit_dev;
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
+        opts.output_format = output_format;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
-        opts.features.hot_module_reloading = bundler.options.output_format == .internal_kit_dev and !source.index.isRuntime();
+        opts.features.hot_module_reloading = output_format == .internal_kit_dev and !source.index.isRuntime();
         opts.features.react_fast_refresh = target == .browser and
             bundler.options.react_fast_refresh and
             loader.isJSX() and
@@ -3748,6 +3759,8 @@ pub const JSMeta = struct {
 };
 
 pub const Graph = struct {
+    generate_bytecode_cache: bool = false,
+
     // TODO: consider removing references to this in favor of bundler.options.code_splitting
     code_splitting: bool = false,
 
@@ -4611,6 +4624,37 @@ pub const LinkerContext = struct {
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+
+        if (this.options.output_format == .cjs) {
+            this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
+        }
+
+        if (this.options.output_format == .cjs or this.options.output_format == .iife) {
+            const exports_kind = this.graph.ast.items(.exports_kind);
+            const ast_flags_list = this.graph.ast.items(.flags);
+            const meta_flags_ist = this.graph.meta.items(.flags);
+
+            for (entry_points) |entry_point| {
+                var ast_flags: js_ast.BundledAst.Flags = ast_flags_list[entry_point.get()];
+
+                // Loaders default to CommonJS when they are the entry point and the output
+                // format is not ESM-compatible since that avoids generating the ESM-to-CJS
+                // machinery.
+                if (ast_flags.has_lazy_export) {
+                    exports_kind[entry_point.get()] = .cjs;
+                }
+
+                // Entry points with ES6 exports must generate an exports object when
+                // targeting non-ES6 formats. Note that the IIFE format only needs this
+                // when the global name is present, since that's the only way the exports
+                // can actually be observed externally.
+                if (ast_flags.uses_export_keyword) {
+                    ast_flags.uses_exports_ref = true;
+                    ast_flags_list[entry_point.get()] = ast_flags;
+                    meta_flags_ist[entry_point.get()].force_include_exports_for_entry_point = true;
+                }
+            }
+        }
     }
 
     pub fn computeDataForSourceMap(
@@ -5637,7 +5681,7 @@ pub const LinkerContext = struct {
 
                 const string_buffer_len: usize = brk: {
                     var count: usize = 0;
-                    if (is_entry_point and this.options.output_format == .esm) {
+                    if (is_entry_point and output_format == .esm) {
                         for (aliases) |alias| {
                             count += std.fmt.count("export_{}", .{bun.fmt.fmtIdentifier(alias)});
                         }
@@ -5652,7 +5696,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
+                    if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -5672,7 +5716,7 @@ pub const LinkerContext = struct {
                 // Pre-generate symbols for re-exports CommonJS symbols in case they
                 // are necessary later. This is done now because the symbols map cannot be
                 // mutated later due to parallelism.
-                if (is_entry_point and this.options.output_format == .esm) {
+                if (is_entry_point and output_format == .esm) {
                     const copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
 
                     for (aliases, copies) |alias, *copy| {
@@ -5700,7 +5744,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs and this.options.output_format != .internal_kit_dev) {
+                if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -5848,7 +5892,7 @@ pub const LinkerContext = struct {
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
-                    if (force_include_exports and this.options.output_format != .internal_kit_dev) {
+                    if (force_include_exports and output_format != .internal_kit_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             Index.part(entry_point_part_index),
@@ -5875,7 +5919,7 @@ pub const LinkerContext = struct {
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
-                            if (this.options.output_format == .internal_kit_dev) continue;
+                            if (output_format == .internal_kit_dev) continue;
 
                             // This is an external import. Check if it will be a "require()" call.
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
@@ -5914,7 +5958,6 @@ pub const LinkerContext = struct {
                                     // - The "default" and "__esModule" exports must not be accessed
                                     //
                                     if (kind != .require and
-                                        false and // TODO: c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
                                         (kind != .stmt or
                                         record.contains_import_star or
                                         record.contains_default_alias or
@@ -5948,7 +5991,7 @@ pub const LinkerContext = struct {
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
-                            if (kind != .require and other_export_kind == .cjs and this.options.output_format != .internal_kit_dev) {
+                            if (kind != .require and other_export_kind == .cjs and output_format != .internal_kit_dev) {
                                 record.wrap_with_to_esm = true;
                                 to_esm_uses += 1;
                             }
@@ -6044,7 +6087,7 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    if (this.options.output_format != .internal_kit_dev) {
+                    if (output_format != .internal_kit_dev) {
                         // If there's an ES6 import of a CommonJS module, then we're going to need the
                         // "__toESM" symbol from the runtime to wrap the result of "require()"
                         this.graph.generateRuntimeSymbolImportAndUse(
@@ -6110,7 +6153,9 @@ pub const LinkerContext = struct {
         var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
         ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
 
-        const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
+        const initial_flags = c.graph.meta.items(.flags)[id];
+        const needs_exports_variable = initial_flags.needs_exports_variable;
+        const force_include_exports_for_entry_point = c.options.output_format == .cjs and initial_flags.force_include_exports_for_entry_point;
 
         const stmts_count =
             // 1 statement for every export
@@ -6118,7 +6163,9 @@ pub const LinkerContext = struct {
             // + 1 if there are non-zero exports
             @as(usize, @intFromBool(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
-            @as(usize, @intFromBool(needs_exports_variable));
+            @as(usize, @intFromBool(needs_exports_variable)) +
+            // + 1 if we need to do module.exports = __toCommonJS(exports)
+            @as(usize, @intFromBool(force_include_exports_for_entry_point));
 
         var stmts = js_ast.Stmt.Batcher.init(allocator, stmts_count) catch bun.outOfMemory();
         defer stmts.done();
@@ -6210,7 +6257,9 @@ pub const LinkerContext = struct {
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         const exports_ref = c.graph.ast.items(.exports_ref)[id];
-        const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) + @as(usize, @intFromBool(properties.items.len > 0))];
+        const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) +
+            @as(usize, @intFromBool(properties.items.len > 0) +
+            @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer bun.assert(remaining_stmts.len == 0); // all must be used
@@ -6243,7 +6292,7 @@ pub const LinkerContext = struct {
         // "__export(exports, { foo: () => foo })"
         var export_ref = Ref.None;
         if (properties.items.len > 0) {
-            export_ref = c.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
+            export_ref = c.runtimeFunction("__export");
             var args = allocator.alloc(js_ast.Expr, 2) catch unreachable;
             args[0..2].* = [_]js_ast.Expr{
                 js_ast.Expr.initIdentifier(exports_ref, loc),
@@ -6277,6 +6326,40 @@ pub const LinkerContext = struct {
 
             // Make sure the CommonJS closure, if there is one, includes "exports"
             c.graph.ast.items(.flags)[id].uses_exports_ref = true;
+        }
+
+        // Decorate "module.exports" with the "__esModule" flag to indicate that
+        // we used to be an ES module. This is done by wrapping the exports object
+        // instead of by mutating the exports object because other modules in the
+        // bundle (including the entry point module) may do "import * as" to get
+        // access to the exports object and should NOT see the "__esModule" flag.
+        if (force_include_exports_for_entry_point) {
+            const toCommonJSRef = c.runtimeFunction("__toCommonJS");
+
+            var call_args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
+            call_args[0] = Expr.initIdentifier(exports_ref, Loc.Empty);
+            remaining_stmts[0] = js_ast.Stmt.assign(
+                Expr.allocate(
+                    allocator,
+                    E.Dot,
+                    E.Dot{
+                        .name = "exports",
+                        .name_loc = Loc.Empty,
+                        .target = Expr.initIdentifier(c.unbound_module_ref, Loc.Empty),
+                    },
+                    Loc.Empty,
+                ),
+                Expr.allocate(
+                    allocator,
+                    E.Call,
+                    E.Call{
+                        .target = Expr.initIdentifier(toCommonJSRef, Loc.Empty),
+                        .args = js_ast.ExprNodeList.init(call_args),
+                    },
+                    Loc.Empty,
+                ),
+            );
+            remaining_stmts = remaining_stmts[1..];
         }
 
         // No need to generate a part if it'll be empty
@@ -7130,7 +7213,7 @@ pub const LinkerContext = struct {
         const all_wrapper_refs: []const Ref = c.graph.ast.items(.wrapper_ref);
         const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
 
-        var reserved_names = try renamer.computeInitialReservedNames(allocator);
+        var reserved_names = try renamer.computeInitialReservedNames(allocator, c.options.output_format);
         for (files_in_order) |source_index| {
             renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
         }
@@ -7553,6 +7636,7 @@ pub const LinkerContext = struct {
                 .input = chunk.unique_key,
             },
         };
+        const output_format = c.options.output_format;
 
         var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
@@ -7577,14 +7661,37 @@ pub const LinkerContext = struct {
             }
 
             if (is_bun) {
-                j.pushStatic("// @bun\n");
-                line_offset.advance("// @bun\n");
+                const cjs_entry_chunk = "(function(exports, require, module, __filename, __dirname) {";
+                if (ctx.c.parse_graph.generate_bytecode_cache and output_format == .cjs) {
+                    const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
+                    j.pushStatic(input);
+                    line_offset.advance(input);
+                } else if (ctx.c.parse_graph.generate_bytecode_cache) {
+                    j.pushStatic("// @bun @bytecode\n");
+                    line_offset.advance("// @bun @bytecode\n");
+                } else if (output_format == .cjs) {
+                    j.pushStatic("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+                    line_offset.advance("// @bun @bun-cjs\n" ++ cjs_entry_chunk);
+                } else {
+                    j.pushStatic("// @bun\n");
+                    line_offset.advance("// @bun\n");
+                }
             }
         }
 
         // TODO: banner
 
-        // TODO: directive
+        // Add the top-level directive if present (but omit "use strict" in ES
+        // modules because all ES modules are automatically in strict mode)
+        if (chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
+            const flags: JSAst.Flags = c.graph.ast.items(.flags)[chunk.entry_point.source_index];
+
+            if (flags.has_explicit_use_strict_directive) {
+                j.pushStatic("\"use strict\";\n");
+                line_offset.advance("\"use strict\";\n");
+                newline_before_comment = true;
+            }
+        }
 
         // For Kit, hoist runtime.js outside of the IIFE
         const compile_results = chunk.compile_results_for_chunk;
@@ -7658,7 +7765,7 @@ pub const LinkerContext = struct {
                     CommentType.single;
 
                 if (!c.options.minify_whitespace and
-                    (c.options.output_format == .iife or c.options.output_format == .internal_kit_dev))
+                    (output_format == .iife or output_format == .internal_kit_dev))
                 {
                     j.pushStatic("  ");
                     line_offset.advance("  ");
@@ -7734,7 +7841,7 @@ pub const LinkerContext = struct {
             j.push(cross_chunk_suffix, bun.default_allocator);
         }
 
-        switch (c.options.output_format) {
+        switch (output_format) {
             .iife => {
                 const without_newline = "})();";
 
@@ -7768,6 +7875,15 @@ pub const LinkerContext = struct {
                     const str = "\n});";
                     j.pushStatic(str);
                     line_offset.advance(str);
+                }
+            },
+            .cjs => {
+                if (chunk.isEntryPoint()) {
+                    const is_bun = ctx.c.graph.ast.items(.target)[chunk.entry_point.source_index].isBun();
+                    if (is_bun) {
+                        j.pushStatic("})\n");
+                        line_offset.advance("})\n");
+                    }
                 }
             },
             else => {},
@@ -8831,6 +8947,7 @@ pub const LinkerContext = struct {
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
         const flags = c.graph.meta.items(.flags);
+        const output_format = c.options.output_format;
 
         // If this file is a CommonJS entry point, double-write re-exports to the
         // external CommonJS "module.exports" object in addition to our internal ESM
@@ -8840,11 +8957,13 @@ pub const LinkerContext = struct {
         // importing itself should not see the "__esModule" marker but a CommonJS module
         // importing us should see the "__esModule" marker.
         var module_exports_for_export: ?Expr = null;
-        if (c.options.output_format == .cjs and chunk.isEntryPoint()) {
-            module_exports_for_export = Expr.init(
+        if (output_format == .cjs and chunk.isEntryPoint()) {
+            module_exports_for_export = Expr.allocate(
+                allocator,
                 E.Dot,
                 E.Dot{
-                    .target = Expr.init(
+                    .target = Expr.allocate(
+                        allocator,
                         E.Identifier,
                         E.Identifier{
                             .ref = c.unbound_module_ref,
@@ -8967,10 +9086,12 @@ pub const LinkerContext = struct {
                                     Stmt.alloc(
                                         S.SExpr,
                                         S.SExpr{
-                                            .value = Expr.init(
+                                            .value = Expr.allocate(
+                                                allocator,
                                                 E.Call,
                                                 E.Call{
-                                                    .target = Expr.init(
+                                                    .target = Expr.allocate(
+                                                        allocator,
                                                         E.Identifier,
                                                         E.Identifier{
                                                             .ref = export_star_ref,
@@ -9014,11 +9135,10 @@ pub const LinkerContext = struct {
                             }
 
                             if (record.calls_runtime_re_export_fn) {
-                                const other_source_index = record.source_index.get();
                                 const target: Expr = brk: {
-                                    if (c.graph.ast.items(.exports_kind)[other_source_index].isESMWithDynamicFallback()) {
+                                    if (record.source_index.isValid() and c.graph.ast.items(.exports_kind)[record.source_index.get()].isESMWithDynamicFallback()) {
                                         // Prefix this module with "__reExport(exports, otherExports, module.exports)"
-                                        break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[other_source_index], stmt.loc);
+                                        break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[record.source_index.get()], stmt.loc);
                                     }
 
                                     break :brk Expr.init(
@@ -9045,7 +9165,7 @@ pub const LinkerContext = struct {
                                 };
 
                                 if (module_exports_for_export) |mod| {
-                                    args[3] = mod;
+                                    args[2] = mod;
                                 }
 
                                 try stmts.inside_wrapper_prefix.append(
@@ -9461,6 +9581,16 @@ pub const LinkerContext = struct {
             break :brk std.math.maxInt(u32);
         };
 
+        const output_format = c.options.output_format;
+
+        // The top-level directive must come first (the non-wrapped case is handled
+        // by the chunk generation code, although only for the entry point)
+        if (flags.wrap != .none and ast.flags.has_explicit_use_strict_directive and !chunk.isEntryPoint() and !output_format.isAlwaysStrictMode()) {
+            stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Directive, .{
+                .value = "use strict",
+            }, Logger.Loc.Empty)) catch unreachable;
+        }
+
         // TODO: handle directive
         if (namespace_export_part_index >= part_range.part_index_begin and
             namespace_export_part_index < part_range.part_index_end and
@@ -9633,7 +9763,7 @@ pub const LinkerContext = struct {
 
         // Turn each module into a function if this is Kit
         var stmt_storage: Stmt = undefined;
-        if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
+        if (output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
             if (stmts.all_stmts.items.len == 0) {
                 // TODO: these chunks should just not exist in the first place
                 // they seem to happen on the entry point? or JSX? not clear
@@ -9990,7 +10120,7 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_kit_dev)
+            .commonjs_module_ref = if (ast.flags.uses_module_ref or output_format == .internal_kit_dev)
                 ast.module_ref
             else
                 Ref.None,
@@ -10001,7 +10131,7 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .module_type = switch (c.options.output_format) {
+            .module_type = switch (output_format) {
                 else => |format| format,
                 .internal_kit_dev => if (part_range.source_index.isRuntime()) .esm else .internal_kit_dev,
             },
@@ -10011,7 +10141,11 @@ pub const LinkerContext = struct {
             .allocator = allocator,
             .to_esm_ref = toESMRef,
             .to_commonjs_ref = toCommonJSRef,
-            .require_ref = if (c.options.output_format == .internal_kit_dev) ast.require_ref else runtimeRequireRef,
+            .require_ref = switch (c.options.output_format) {
+                .internal_kit_dev => ast.require_ref,
+                .cjs => null,
+                else => runtimeRequireRef,
+            },
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
@@ -10020,7 +10154,7 @@ pub const LinkerContext = struct {
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
+            .input_files_for_kit = if (output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
                 c.parse_graph.input_files.items(.source)
             else
                 null,
@@ -10306,7 +10440,7 @@ pub const LinkerContext = struct {
 
         const root_path = c.resolver.opts.output_dir;
 
-        if (root_path.len == 0 and c.parse_graph.additional_output_files.items.len > 0 and !c.resolver.opts.compile) {
+        if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache) and !c.resolver.opts.compile) {
             try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
             return error.MultipleOutputFilesWithoutOutputDir;
         }
@@ -10328,7 +10462,6 @@ pub const LinkerContext = struct {
                     &display_size,
                     c.options.source_maps != .none,
                 );
-
                 var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
                 var sourcemap_output_file: ?options.OutputFile = null;
@@ -10404,7 +10537,71 @@ pub const LinkerContext = struct {
                     .none => {},
                 }
 
-                output_files.appendAssumeCapacity(
+                const bytecode_output_file: ?options.OutputFile = brk: {
+                    if (c.parse_graph.generate_bytecode_cache) {
+                        const loader: Loader = if (chunk.entry_point.is_entry_point)
+                            c.parse_graph.input_files.items(.loader)[
+                                chunk.entry_point.source_index
+                            ]
+                        else
+                            .js;
+
+                        if (loader.isJavaScriptLike()) {
+                            JSC.initialize(false);
+                            var fdpath: bun.PathBuffer = undefined;
+                            var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                            source_provider_url.ref();
+
+                            defer source_provider_url.deref();
+
+                            if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                                const bytecode, const cached_bytecode = result;
+                                const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                                defer source_provider_url_str.deinit();
+                                debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                                @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                                fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+
+                                break :brk options.OutputFile.init(
+                                    options.OutputFile.Options{
+                                        .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                        .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                        .input_loader = .js,
+                                        .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                        .output_kind = .bytecode,
+                                        .loader = .file,
+                                        .size = @as(u32, @truncate(bytecode.len)),
+                                        .display_size = @as(u32, @truncate(bytecode.len)),
+                                        .data = .{
+                                            .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
+                                        },
+                                    },
+                                );
+                            } else {
+                                // an error
+                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
+                                    chunk.final_rel_path,
+                                }) catch unreachable;
+                            }
+                        }
+                    }
+
+                    break :brk null;
+                };
+
+                const source_map_index: ?u32 = if (sourcemap_output_file != null)
+                    @as(u32, @truncate(output_files.items.len + 1))
+                else
+                    null;
+
+                const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
+                    @as(u32, @truncate(output_files.items.len + 2))
+                else if (bytecode_output_file != null)
+                    @as(u32, @truncate(output_files.items.len + 1))
+                else
+                    null;
+
+                try output_files.append(
                     options.OutputFile.init(
                         options.OutputFile.Options{
                             .data = .{
@@ -10424,19 +10621,20 @@ pub const LinkerContext = struct {
                             .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                             .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
                             .is_executable = chunk.is_executable,
-                            .source_map_index = if (sourcemap_output_file != null)
-                                @as(u32, @truncate(output_files.items.len + 1))
-                            else
-                                null,
+                            .source_map_index = source_map_index,
+                            .bytecode_index = bytecode_index,
                         },
                     ),
                 );
                 if (sourcemap_output_file) |sourcemap_file| {
-                    output_files.appendAssumeCapacity(sourcemap_file);
+                    try output_files.append(sourcemap_file);
+                }
+                if (bytecode_output_file) |bytecode_file| {
+                    try output_files.append(bytecode_file);
                 }
             }
 
-            output_files.appendSliceAssumeCapacity(c.parse_graph.additional_output_files.items);
+            try output_files.appendSlice(c.parse_graph.additional_output_files.items);
         }
 
         return output_files;
@@ -10668,6 +10866,85 @@ pub const LinkerContext = struct {
                 },
                 .none => {},
             }
+            const bytecode_output_file: ?options.OutputFile = brk: {
+                if (c.parse_graph.generate_bytecode_cache) {
+                    const loader: Loader = if (chunk.entry_point.is_entry_point)
+                        c.parse_graph.input_files.items(.loader)[
+                            chunk.entry_point.source_index
+                        ]
+                    else
+                        .js;
+
+                    if (loader.isJavaScriptLike()) {
+                        JSC.initialize(false);
+                        var fdpath: bun.PathBuffer = undefined;
+                        var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                        source_provider_url.ref();
+
+                        defer source_provider_url.deref();
+
+                        if (JSC.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                            const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
+                            defer source_provider_url_str.deinit();
+                            const bytecode, const cached_bytecode = result;
+                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                            @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                            fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                            defer cached_bytecode.deref();
+                            switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+                                &pathbuf,
+                                JSC.Node.Arguments.WriteFile{
+                                    .data = JSC.Node.StringOrBuffer{
+                                        .buffer = JSC.Buffer{
+                                            .buffer = .{
+                                                .ptr = @constCast(bytecode.ptr),
+                                                .len = @as(u32, @truncate(bytecode.len)),
+                                                .byte_len = @as(u32, @truncate(bytecode.len)),
+                                            },
+                                        },
+                                    },
+                                    .encoding = .buffer,
+                                    .mode = if (chunk.is_executable) 0o755 else 0o644,
+
+                                    .dirfd = bun.toFD(root_dir.fd),
+                                    .file = .{
+                                        .path = JSC.Node.PathLike{
+                                            .string = JSC.PathString.init(fdpath[0 .. chunk.final_rel_path.len + bun.bytecode_extension.len]),
+                                        },
+                                    },
+                                },
+                            )) {
+                                .result => {},
+                                .err => |err| {
+                                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {}", .{
+                                        err,
+                                        bun.fmt.quote(chunk.final_rel_path),
+                                    }) catch unreachable;
+                                    return error.WriteFailed;
+                                },
+                            }
+
+                            break :brk options.OutputFile.init(
+                                options.OutputFile.Options{
+                                    .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                    .input_loader = .file,
+                                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                    .output_kind = .bytecode,
+                                    .loader = .file,
+                                    .size = @as(u32, @truncate(bytecode.len)),
+                                    .display_size = @as(u32, @truncate(bytecode.len)),
+                                    .data = .{
+                                        .saved = 0,
+                                    },
+                                },
+                            );
+                        }
+                    }
+                }
+
+                break :brk null;
+            };
 
             switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                 &pathbuf,
@@ -10705,7 +10982,19 @@ pub const LinkerContext = struct {
                 .result => {},
             }
 
-            output_files.appendAssumeCapacity(
+            const source_map_index: ?u32 = if (source_map_output_file != null)
+                @as(u32, @truncate(output_files.items.len + 1))
+            else
+                null;
+
+            const bytecode_index: ?u32 = if (bytecode_output_file != null and source_map_index != null)
+                @as(u32, @truncate(output_files.items.len + 2))
+            else if (bytecode_output_file != null)
+                @as(u32, @truncate(output_files.items.len + 1))
+            else
+                null;
+
+            try output_files.append(
                 options.OutputFile.init(
                     options.OutputFile.Options{
                         .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
@@ -10720,10 +11009,8 @@ pub const LinkerContext = struct {
                         else
                             .chunk,
                         .loader = .js,
-                        .source_map_index = if (source_map_output_file != null)
-                            @as(u32, @truncate(output_files.items.len + 1))
-                        else
-                            null,
+                        .source_map_index = source_map_index,
+                        .bytecode_index = bytecode_index,
                         .size = @as(u32, @truncate(code_result.buffer.len)),
                         .display_size = @as(u32, @truncate(display_size)),
                         .is_executable = chunk.is_executable,
@@ -10735,7 +11022,11 @@ pub const LinkerContext = struct {
             );
 
             if (source_map_output_file) |sourcemap_file| {
-                output_files.appendAssumeCapacity(sourcemap_file);
+                try output_files.append(sourcemap_file);
+            }
+
+            if (bytecode_output_file) |bytecode_file| {
+                try output_files.append(bytecode_file);
             }
         }
 
@@ -12991,6 +13282,7 @@ pub const AstBuilder = struct {
             .top_level_symbols_to_parts = top_level_symbols_to_parts,
             .char_freq = .{},
             .flags = .{},
+            .top_level_await_keyword = bun.logger.Range.None,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else

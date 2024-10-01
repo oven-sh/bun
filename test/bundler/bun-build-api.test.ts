@@ -4,6 +4,34 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
 
 describe("Bun.build", () => {
+  test("bytecode works", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode", {
+      "package.json": `{}`,
+      "index.ts": `
+        export function hello() {
+          return "world";
+        }
+
+        console.log(hello());
+      `,
+      out: {
+        "hmm.js": "hmm",
+      },
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      bytecode: true,
+    });
+
+    expect(build.outputs).toHaveLength(2);
+    expect(build.outputs[0].kind).toBe("entry-point");
+    expect(build.outputs[1].kind).toBe("bytecode");
+    expect([build.outputs[0].path]).toRun("world\n");
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

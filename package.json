@@ -68,9 +68,9 @@
     "zig-format": "bun run cmake --target zig-format",
     "zig-format:check": "bun run cmake --target zig-format-check",
     "zig-format:diff": "bun run cmake --target zig-format-diff",
-    "prettier": "bun run cmake --target prettier",
-    "prettier:check": "bun run cmake --target prettier-check",
-    "prettier:extra": "bun run cmake --target prettier-extra",
-    "prettier:diff": "bun run cmake --target prettier-diff"
+    "prettier": "bun run cmake -DENABLE_PRETTIER=ON --target prettier",
+    "prettier:check": "bun run cmake -DENABLE_PRETTIER=ON --target prettier-check",
+    "prettier:extra": "bun run cmake -DENABLE_PRETTIER=ON --target prettier-extra",
+    "prettier:diff": "bun run cmake -DENABLE_PRETTIER=ON --target prettier-diff"
   }
 }

@@ -42,7 +42,7 @@ pub const BuildCommand = struct {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
-        if (ctx.bundler_options.compile) {
+        if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
         }
@@ -96,12 +96,15 @@ pub const BuildCommand = struct {
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.options.output_format = ctx.bundler_options.output_format;
 
         if (ctx.bundler_options.output_format == .internal_kit_dev) {
             this_bundler.options.tree_shaking = false;
         }
+
+        this_bundler.options.bytecode = ctx.bundler_options.bytecode;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -389,6 +392,7 @@ pub const BuildCommand = struct {
                             this_bundler.options.public_path,
                             outfile,
                             this_bundler.env,
+                            this_bundler.options.output_format,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {

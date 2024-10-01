@@ -688,6 +688,18 @@ declare global {
         new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
       };
 
+  type CompressionFormat = "deflate" | "deflate-raw" | "gzip";
+  type CompressionStream<R = any, W = any> = import("stream/web").CompressionStream<R, W>;
+  const CompressionStream: {
+    prototype: CompressionStream;
+    new <R = any, W = any>(format: CompressionFormat): CompressionStream<R, W>;
+  };
+  type DecompressionStream<R = any, W = any> = import("stream/web").DecompressionStream<R, W>;
+  const DecompressionStream: {
+    prototype: DecompressionStream;
+    new <R = any, W = any>(format: CompressionFormat): DecompressionStream<R, W>;
+  };
+
   interface Worker extends _Worker {}
   var Worker: typeof globalThis extends {
     onerror: any;

@@ -116,6 +116,8 @@ ReadableStreamDefaultReader;
 ReadableStreamDefaultController;
 // ReadableByteStreamController;
 WritableStreamDefaultWriter;
+CompressionStream;
+DecompressionStream;
 
 function stuff(arg: Blob): any;
 function stuff(arg: WebSocket): any;
@@ -135,6 +137,8 @@ function stuff(arg: TextDecoder): any;
 function stuff(arg: ReadableStreamDefaultReader): any;
 function stuff(arg: ReadableStreamDefaultController): any;
 function stuff(arg: WritableStreamDefaultWriter): any;
+function stuff(arg: CompressionStream): any;
+function stuff(arg: DecompressionStream): any;
 function stuff(arg: any) {
   return "asfd";
 }
@@ -300,6 +304,16 @@ const writableStream = new WritableStream();
 {
   const ws = new WebSocket("ws://www.host.com/path");
   ws.send("asdf");
+}
+{
+  const a = new CompressionStream("gzip");
+  a.readable;
+  a.writable;
+}
+{
+  const a = new DecompressionStream("gzip");
+  a.readable;
+  a.writable;
 }
 
 atob("asf");

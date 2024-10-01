@@ -106,22 +106,6 @@ delete console.timeLog;
 delete console.assert;
 Bun.generateHeapSnapshot = () => {};
 
-const TODOs = [
-  "ByteLengthQueuingStrategy",
-  "CountQueuingStrategy",
-  "ReadableByteStreamController",
-  "ReadableStream",
-  "ReadableStreamBYOBReader",
-  "ReadableStreamBYOBRequest",
-  "ReadableStreamDefaultController",
-  "ReadableStreamDefaultReader",
-  "TransformStream",
-  "TransformStreamDefaultController",
-  "WritableStream",
-  "WritableStreamDefaultController",
-  "WritableStreamDefaultWriter",
-];
-
 const ignoreList = [
   Object.prototype,
   Function.prototype,
@@ -155,13 +139,10 @@ const ignoreList = [
   RegExp.prototype,
   Date.prototype,
   String.prototype,
-
-  // TODO: getFunctionRealm() on these.
-  ReadableStream.prototype,
 ];
 
 const constructBanned = banned;
-const callBanned = [...TODOs, ...banned];
+const callBanned = [...banned];
 
 function allThePropertyNames(object, banned) {
   if (!object) {

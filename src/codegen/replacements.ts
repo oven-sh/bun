@@ -53,6 +53,8 @@ export const globalsToPrefix = [
   "ReadableStreamDefaultReader",
   "TransformStream",
   "TransformStreamDefaultController",
+  "CompressionStream",
+  "DecompressionStream",
   "Uint8Array",
   "String",
   "Buffer",

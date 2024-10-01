@@ -2959,11 +2959,11 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: JSValue,
     ) JSValue {
-        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
-        defer ty_str.deinit();
-        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, bun.fmt.quote(ty_str.slice()) }).throw();
+        var formatter = ConsoleObject.Formatter{ .globalThis = this };
+        this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, value.toFmt(&formatter) }).throw();
         return .zero;
     }
+
     pub fn throwInvalidArgumentRangeValue(
         this: *JSGlobalObject,
         argname: []const u8,

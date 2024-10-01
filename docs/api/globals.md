@@ -104,6 +104,12 @@ Bun implements the following globals.
 
 ---
 
+- [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
+- Web
+- Also [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
+
+---
+
 - [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 - Web
 - &nbsp;
@@ -137,6 +143,12 @@ Bun implements the following globals.
 - [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent)
 - Web
 - &nbsp;
+
+---
+
+- [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
+- Web
+- Also [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
 
 ---
 

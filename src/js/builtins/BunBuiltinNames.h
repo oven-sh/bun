@@ -54,6 +54,7 @@ using namespace JSC;
     macro(closeRequest) \
     macro(closeRequested) \
     macro(code) \
+    macro(CompressionStream) \
     macro(connect) \
     macro(controlledReadableStream) \
     macro(controller) \
@@ -71,6 +72,7 @@ using namespace JSC;
     macro(data) \
     macro(dataView) \
     macro(decode) \
+    macro(DecompressionStream) \
     macro(delimiter) \
     macro(destroy) \
     macro(dir) \

@@ -18,6 +18,8 @@ test("Web Stream classes have correct Symbol.toStringTag", () => {
     CountQueuingStrategy,
     TransformStream,
     TransformStreamDefaultController,
+    CompressionStream,
+    DecompressionStream,
   ];
 
   classesToBeTested.forEach(cls => {

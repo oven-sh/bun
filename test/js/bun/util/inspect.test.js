@@ -17,6 +17,8 @@ it("prototype", () => {
     MessageEvent.prototype,
     CloseEvent.prototype,
     WebSocket.prototype,
+    CompressionStream.prototype,
+    DecompressionStream.prototype,
   ];
 
   for (let prototype of prototypes) {

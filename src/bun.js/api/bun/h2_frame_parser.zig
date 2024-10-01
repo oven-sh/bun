@@ -656,8 +656,13 @@ pub const H2FrameParser = struct {
     windowSize: u32 = 65535,
     // used window size for the connection
     usedWindowSize: u32 = 0,
-    maxOutstandingPings: u32 = 10,
-    outStandingPings: u32 = 0,
+    maxHeaderListPairs: u32 = 128,
+    maxRejectedStreams: u32 = 100,
+    rejectedStreams: u32 = 0,
+    maxSessionMemory: u32 = 10, //this limit is in MB
+    enqueedDataSize: u64 = 0, // this is in bytes
+    maxOutstandingPings: u64 = 10,
+    outStandingPings: u64 = 0,
     lastStreamID: u32 = 0,
     firstSettingsACK: bool = false,
     isServer: bool = false,
@@ -746,17 +751,19 @@ pub const H2FrameParser = struct {
             }
         }
         pub fn flushQueue(this: *Stream, written: *usize) bool {
+            const client = this.client;
             if (this.canSendData()) {
                 // flush one frame
                 if (this.dataFrameQueue.removeOrNull()) |frame| {
                     defer {
                         var _frame = frame;
-                        if (_frame.callback.get()) |callback_value| this.client.dispatchArbitrary(callback_value, .undefined);
-                        _frame.deinit(this.client.allocator);
+                        if (_frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value, .undefined);
+                        _frame.deinit(client.allocator);
                     }
-                    const has_backpressure = this.client.write(frame.buffer);
+                    const has_backpressure = client.write(frame.buffer);
                     written.* += frame.buffer.len;
-                    this.client.outboundQueueSize -= 1;
+                    client.outboundQueueSize -= 1;
+                    client.enqueedDataSize -= frame.buffer.len;
                     if (this.dataFrameQueue.count() == 0) {
                         if (this.closeAfterDrain) {
                             if (this.state == .HALF_CLOSED_REMOTE) {
@@ -764,7 +771,7 @@ pub const H2FrameParser = struct {
                             } else {
                                 this.state = .HALF_CLOSED_LOCAL;
                             }
-                            this.clearQueue();
+                            this.cleanQueue();
                             if (this.waitForTrailers) {
                                 this.client.dispatch(.onWantTrailers, this.getIdentifier());
                             }
@@ -778,12 +785,16 @@ pub const H2FrameParser = struct {
         }
 
         pub fn queueFrame(this: *Stream, bytes: []const u8, callback: JSC.JSValue) void {
-            this.dataFrameQueue.add(.{
+            const client = this.client;
+            const globalThis = client.globalThis;
+            const frame: PendingFrame = .{
                 // we need to clone this data to send it later
-                .buffer = this.client.allocator.dupe(u8, bytes) catch bun.outOfMemory(),
-                .callback = if (callback.isCallable(this.client.globalThis.vm())) JSC.Strong.create(callback, this.client.globalThis) else .{},
-            }) catch bun.outOfMemory();
-            this.client.outboundQueueSize += 1;
+                .buffer = client.allocator.dupe(u8, bytes) catch bun.outOfMemory(),
+                .callback = if (callback.isCallable(globalThis.vm())) JSC.Strong.create(callback, globalThis) else .{},
+            };
+            this.dataFrameQueue.add(frame) catch bun.outOfMemory();
+            client.outboundQueueSize += 1;
+            client.enqueedDataSize += frame.buffer.len;
         }
 
         pub fn init(streamIdentifier: u32, initialWindowSize: u32, client: *H2FrameParser) Stream {
@@ -843,23 +854,25 @@ pub const H2FrameParser = struct {
             }
         }
 
-        pub fn clearQueue(this: *Stream) void {
+        pub fn cleanQueue(this: *Stream) void {
             if (this.dataFrameQueue.cap > 0) {
+                const client = this.client;
                 var dataFrameQueue = this.dataFrameQueue;
-                this.dataFrameQueue = PendingQueue.init(this.client.allocator, 0);
+                this.dataFrameQueue = PendingQueue.init(client.allocator, 0);
 
                 defer dataFrameQueue.deinit();
 
                 var it = dataFrameQueue.iterator();
                 while (it.next()) |item| {
                     var frame = item;
-                    frame.deinit(this.client.allocator);
+                    client.enqueedDataSize -= item.buffer.len;
+                    frame.deinit(client.allocator);
                 }
             }
         }
         pub fn deinit(this: *Stream) void {
             this.detachContext();
-            this.clearQueue();
+            this.cleanQueue();
             if (this.signal) |signal| {
                 this.signal = null;
                 signal.detach(this);
@@ -954,7 +967,7 @@ pub const H2FrameParser = struct {
         _ = writer.write(std.mem.asBytes(&value)) catch 0;
 
         stream.state = .CLOSED;
-        stream.clearQueue();
+        stream.cleanQueue();
         if (rstCode == .NO_ERROR) {
             this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), .undefined);
         } else {
@@ -1364,7 +1377,9 @@ pub const H2FrameParser = struct {
         const headers = JSC.JSValue.createEmptyObject(globalObject, 0);
         headers.ensureStillAlive();
         const stream_id = stream.id;
+        var count: u32 = 0;
         while (true) {
+            count += 1;
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
             log("header {s} {s}", .{ header.name, header.value });
@@ -1401,7 +1416,7 @@ pub const H2FrameParser = struct {
                 headers.put(globalObject, &name, value);
             }
 
-            if (offset >= payload.len) {
+            if (offset >= payload.len or this.maxHeaderListPairs <= count) {
                 break;
             }
         }
@@ -2400,6 +2415,11 @@ pub const H2FrameParser = struct {
             return data.len;
         }
     };
+    // get memory usage in MB
+    fn getSessionMemoryUsage(this: *H2FrameParser) usize {
+        return (this.pendingBuffer.len + this.writeBuffer.len + this.enqueedDataSize) / 1024 / 1024;
+    }
+
     fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
         log("sendData({}, {}, {})", .{ stream.id, payload.len, close });
 
@@ -3051,7 +3071,18 @@ pub const H2FrameParser = struct {
                 }
             }
         }
-
+        // too much memory being use
+        if (this.maxSessionMemory > 0 and this.getSessionMemoryUsage() > this.maxSessionMemory) {
+            stream.state = .CLOSED;
+            stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
+            this.rejectedStreams += 1;
+            this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
+            if (this.rejectedStreams >= this.maxRejectedStreams) {
+                const chunk = this.handlers.binary_type.toJS("ENHANCE_YOUR_CALM", this.handlers.globalObject);
+                this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.ENHANCE_YOUR_CALM)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
+            }
+            return .zero;
+        }
         var length: usize = encoded_size;
         if (has_priority) {
             length += 5;
@@ -3255,9 +3286,24 @@ pub const H2FrameParser = struct {
         if (options.get(globalObject, "type")) |type_js| {
             is_server = type_js.isNumber() and type_js.to(u32) == 0;
         }
-        if (is_server) {
-            if (options.get(globalObject, "maxOutstandingPings")) |max_pings| {
-                this.maxOutstandingPings = max_pings.isNumber() and max_pings.to(u32);
+        if (options.get(globalObject, "maxOutstandingPings")) |max_pings| {
+            if (max_pings.isNumber()) {
+                this.maxOutstandingPings = max_pings.to(u64);
+            }
+        }
+        if (options.get(globalObject, "maxSessionMemory")) |max_memory| {
+            if (max_memory.isNumber()) {
+                this.maxSessionMemory = @truncate(max_memory.to(u64));
+            }
+        }
+        if (options.get(globalObject, "maxHeaderListPairs")) |max_header_list_pairs| {
+            if (max_header_list_pairs.isNumber()) {
+                this.maxHeaderListPairs = @truncate(max_header_list_pairs.to(u64));
+            }
+        }
+        if (options.get(globalObject, "maxSessionRejectedStreams")) |max_rejected_streams| {
+            if (max_rejected_streams.isNumber()) {
+                this.maxRejectedStreams = @truncate(max_rejected_streams.to(u64));
             }
         }
 

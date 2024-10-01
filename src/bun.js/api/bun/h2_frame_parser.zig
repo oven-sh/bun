@@ -20,6 +20,7 @@ const BunSocket = union(enum) {
     tcp: *TCPSocket,
     tcp_writeonly: *TCPSocket,
 };
+
 pub const WellKnowHeaders = bun.ComptimeStringMap(bun.String, .{
     .{ ":authority", bun.String.static(":authority") },
     .{ ":method", bun.String.static(":method") },
@@ -85,6 +86,11 @@ const WINDOW_INCREMENT_SIZE = 65536;
 const MAX_HPACK_HEADER_SIZE = 65536;
 const MAX_FRAME_SIZE = 16777215;
 
+const PaddingStrategy = enum {
+    none,
+    aligned,
+    max,
+};
 const FrameType = enum(u8) {
     HTTP_FRAME_DATA = 0x00,
     HTTP_FRAME_HEADERS = 0x01,
@@ -166,11 +172,11 @@ const UInt31WithReserved = packed struct(u32) {
         return @bitCast(dst);
     }
 
-    pub inline fn write(this: UInt31WithReserved, comptime Writer: type, writer: Writer) void {
+    pub inline fn write(this: UInt31WithReserved, comptime Writer: type, writer: Writer) bool {
         var value: u32 = @bitCast(this);
         value = @byteSwap(value);
 
-        _ = writer.write(std.mem.asBytes(&value)) catch 0;
+        return (writer.write(std.mem.asBytes(&value)) catch 0) != 0;
     }
 };
 
@@ -179,11 +185,11 @@ const StreamPriority = packed struct(u40) {
     weight: u8 = 0,
 
     pub const byteSize: usize = 5;
-    pub inline fn write(this: *StreamPriority, comptime Writer: type, writer: Writer) void {
+    pub inline fn write(this: *StreamPriority, comptime Writer: type, writer: Writer) bool {
         var swap = this.*;
         std.mem.byteSwapAllFields(StreamPriority, &swap);
 
-        _ = writer.write(std.mem.asBytes(&swap)[0..StreamPriority.byteSize]) catch 0;
+        return (writer.write(std.mem.asBytes(&swap)[0..StreamPriority.byteSize]) catch 0) != 0;
     }
 
     pub inline fn from(dst: *StreamPriority, src: []const u8) void {
@@ -199,11 +205,11 @@ const FrameHeader = packed struct(u72) {
     streamIdentifier: u32 = 0,
 
     pub const byteSize: usize = 9;
-    pub inline fn write(this: *FrameHeader, comptime Writer: type, writer: Writer) void {
+    pub inline fn write(this: *FrameHeader, comptime Writer: type, writer: Writer) bool {
         var swap = this.*;
         std.mem.byteSwapAllFields(FrameHeader, &swap);
 
-        _ = writer.write(std.mem.asBytes(&swap)[0..FrameHeader.byteSize]) catch 0;
+        return (writer.write(std.mem.asBytes(&swap)[0..FrameHeader.byteSize]) catch 0) != 0;
     }
 
     pub inline fn from(dst: *FrameHeader, src: []const u8, offset: usize, comptime end: bool) void {
@@ -266,11 +272,11 @@ const FullSettingsPayload = packed struct(u288) {
             else => {}, // we ignore unknown/unsupportd settings its not relevant if we dont apply them
         }
     }
-    pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) void {
+    pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) bool {
         var swap = this.*;
 
         std.mem.byteSwapAllFields(FullSettingsPayload, &swap);
-        _ = writer.write(std.mem.asBytes(&swap)[0..FullSettingsPayload.byteSize]) catch 0;
+        return (writer.write(std.mem.asBytes(&swap)[0..FullSettingsPayload.byteSize]) catch 0) != 0;
     }
 };
 const ValidPseudoHeaders = bun.ComptimeStringMap(void, .{
@@ -512,6 +518,21 @@ const Handlers = struct {
         return true;
     }
 
+    pub fn callArbitraryCallBack(this: *Handlers, callback: JSC.JSValue, thisValue: JSValue, data: []const JSValue) bool {
+        if (!callback.isCallable(this.globalObject.vm())) return false;
+        this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
+        return true;
+    }
+
+    pub fn callEventHandlerWithResult(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) JSValue {
+        const callback = @field(this, @tagName(event));
+        if (callback == .zero) {
+            return JSC.JSValue.zero;
+        }
+
+        return this.vm.eventLoop().runCallbackWithResult(callback, this.globalObject, thisValue, data);
+    }
+
     pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Handlers {
         var handlers = Handlers{
             .vm = globalObject.bunVM(),
@@ -635,6 +656,8 @@ pub const H2FrameParser = struct {
     windowSize: u32 = 65535,
     // used window size for the connection
     usedWindowSize: u32 = 0,
+    maxOutstandingPings: u32 = 10,
+    outStandingPings: u32 = 0,
     lastStreamID: u32 = 0,
     firstSettingsACK: bool = false,
     isServer: bool = false,
@@ -644,12 +667,14 @@ pub const H2FrameParser = struct {
     writeBufferOffset: usize = 0,
     // TODO: this will be removed when I re-add header and data priorization
     pendingBuffer: bun.ByteList = .{},
+    outboundQueueSize: usize = 0,
 
     streams: bun.U32HashMap(Stream),
 
     hpack: ?*lshpack.HPACK = null,
 
     autouncork_registered: bool = false,
+    has_nonnative_backpressure: bool = false,
     ref_count: u8 = 1,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
@@ -667,9 +692,11 @@ pub const H2FrameParser = struct {
         } = .IDLE,
         jsContext: JSC.Strong = .{},
         waitForTrailers: bool = false,
+        closeAfterDrain: bool = false,
         endAfterHeaders: bool = false,
         isWaitingMoreHeaders: bool = false,
         padding: ?u8 = 0,
+        paddingStrategy: PaddingStrategy = .none,
         rstCode: u32 = 0,
         streamDependency: u32 = 0,
         exclusive: bool = false,
@@ -682,6 +709,83 @@ pub const H2FrameParser = struct {
         signal: ?*JSC.WebCore.AbortSignal = null,
         client: *H2FrameParser,
 
+        // when we have backpressure we queue the data e round robin the Streams
+        dataFrameQueue: PendingQueue,
+        fn alwaysEqual(_: u0, _: PendingFrame, _: PendingFrame) std.math.Order {
+            return .eq;
+        }
+        const PendingQueue = std.PriorityQueue(PendingFrame, u0, alwaysEqual);
+        const PendingFrame = struct {
+            buffer: []const u8,
+            callback: JSC.Strong,
+
+            pub fn deinit(this: *PendingFrame, allocator: Allocator) void {
+                this.callback.deinit();
+                allocator.free(this.buffer);
+            }
+        };
+
+        pub fn getPadding(
+            this: *Stream,
+            frameLen: usize,
+            maxLen: usize,
+        ) u8 {
+            switch (this.paddingStrategy) {
+                .none => return 0,
+                .aligned => {
+                    const diff = (frameLen + 9) % 8;
+                    // already multiple of 8
+                    if (diff == 0) return 0;
+
+                    var paddedLen = frameLen + (8 - diff);
+                    // limit to maxLen
+                    paddedLen = @min(maxLen, paddedLen);
+                    return @min(paddedLen - frameLen, 255);
+                },
+                .max => return @min(maxLen - frameLen, 255),
+            }
+        }
+        pub fn flushQueue(this: *Stream, written: *usize) bool {
+            if (this.canSendData()) {
+                // flush one frame
+                if (this.dataFrameQueue.removeOrNull()) |frame| {
+                    defer {
+                        var _frame = frame;
+                        if (_frame.callback.get()) |callback_value| this.client.dispatchArbitrary(callback_value, .undefined);
+                        _frame.deinit(this.client.allocator);
+                    }
+                    const has_backpressure = this.client.write(frame.buffer);
+                    written.* += frame.buffer.len;
+                    this.client.outboundQueueSize -= 1;
+                    if (this.dataFrameQueue.count() == 0) {
+                        if (this.closeAfterDrain) {
+                            if (this.state == .HALF_CLOSED_REMOTE) {
+                                this.state = .CLOSED;
+                            } else {
+                                this.state = .HALF_CLOSED_LOCAL;
+                            }
+                            this.clearQueue();
+                            if (this.waitForTrailers) {
+                                this.client.dispatch(.onWantTrailers, this.getIdentifier());
+                            }
+                        }
+                    }
+                    return has_backpressure;
+                }
+            }
+            // empty or cannot send data
+            return true;
+        }
+
+        pub fn queueFrame(this: *Stream, bytes: []const u8, callback: JSC.JSValue) void {
+            this.dataFrameQueue.add(.{
+                // we need to clone this data to send it later
+                .buffer = this.client.allocator.dupe(u8, bytes) catch bun.outOfMemory(),
+                .callback = if (callback.isCallable(this.client.globalThis.vm())) JSC.Strong.create(callback, this.client.globalThis) else .{},
+            }) catch bun.outOfMemory();
+            this.client.outboundQueueSize += 1;
+        }
+
         pub fn init(streamIdentifier: u32, initialWindowSize: u32, client: *H2FrameParser) Stream {
             const stream = Stream{
                 .id = streamIdentifier,
@@ -690,6 +794,7 @@ pub const H2FrameParser = struct {
                 .usedWindowSize = 0,
                 .weight = 36,
                 .client = client,
+                .dataFrameQueue = PendingQueue.init(client.allocator, 0),
             };
             return stream;
         }
@@ -738,8 +843,23 @@ pub const H2FrameParser = struct {
             }
         }
 
+        pub fn clearQueue(this: *Stream) void {
+            if (this.dataFrameQueue.cap > 0) {
+                var dataFrameQueue = this.dataFrameQueue;
+                this.dataFrameQueue = PendingQueue.init(this.client.allocator, 0);
+
+                defer dataFrameQueue.deinit();
+
+                var it = dataFrameQueue.iterator();
+                while (it.next()) |item| {
+                    var frame = item;
+                    frame.deinit(this.client.allocator);
+                }
+            }
+        }
         pub fn deinit(this: *Stream) void {
             this.detachContext();
+            this.clearQueue();
             if (this.signal) |signal| {
                 this.signal = null;
                 signal.detach(this);
@@ -808,10 +928,10 @@ pub const H2FrameParser = struct {
             .streamIdentifier = 0,
             .length = 36,
         };
-        settingsHeader.write(@TypeOf(writer), writer);
+        _ = settingsHeader.write(@TypeOf(writer), writer);
         this.localSettings = settings;
-        this.localSettings.write(@TypeOf(writer), writer);
-        this.write(&buffer);
+        _ = this.localSettings.write(@TypeOf(writer), writer);
+        _ = this.write(&buffer);
         this.ajustWindowSize(null, @intCast(buffer.len));
     }
 
@@ -827,20 +947,21 @@ pub const H2FrameParser = struct {
             .streamIdentifier = stream.id,
             .length = 4,
         };
-        frame.write(@TypeOf(writer), writer);
+        _ = frame.write(@TypeOf(writer), writer);
         var value: u32 = @intFromEnum(rstCode);
         stream.rstCode = value;
         value = @byteSwap(value);
         _ = writer.write(std.mem.asBytes(&value)) catch 0;
 
         stream.state = .CLOSED;
+        stream.clearQueue();
         if (rstCode == .NO_ERROR) {
             this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), .undefined);
         } else {
             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
 
-        this.write(&buffer);
+        _ = this.write(&buffer);
     }
 
     pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32) void {
@@ -855,16 +976,16 @@ pub const H2FrameParser = struct {
             .streamIdentifier = streamIdentifier,
             .length = @intCast(8 + debug_data.len),
         };
-        frame.write(@TypeOf(writer), writer);
+        _ = frame.write(@TypeOf(writer), writer);
         var last_id = UInt31WithReserved.from(lastStreamID);
-        last_id.write(@TypeOf(writer), writer);
+        _ = last_id.write(@TypeOf(writer), writer);
         var value: u32 = @intFromEnum(rstCode);
         value = @byteSwap(value);
         _ = writer.write(std.mem.asBytes(&value)) catch 0;
 
-        this.write(&buffer);
+        _ = this.write(&buffer);
         if (debug_data.len > 0) {
-            this.write(debug_data);
+            _ = this.write(debug_data);
         }
         const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
         if (rstCode != .NO_ERROR) {
@@ -878,15 +999,18 @@ pub const H2FrameParser = struct {
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
         const writer = stream.writer();
+        if (!ack) {
+            this.outStandingPings += 1;
+        }
         var frame = FrameHeader{
             .type = @intFromEnum(FrameType.HTTP_FRAME_PING),
             .flags = if (ack) @intFromEnum(PingFrameFlags.ACK) else 0,
             .streamIdentifier = 0,
             .length = 8,
         };
-        frame.write(@TypeOf(writer), writer);
+        _ = frame.write(@TypeOf(writer), writer);
         _ = writer.write(payload) catch 0;
-        this.write(&buffer);
+        _ = this.write(&buffer);
     }
 
     pub fn sendPrefaceAndSettings(this: *H2FrameParser) void {
@@ -902,9 +1026,9 @@ pub const H2FrameParser = struct {
             .streamIdentifier = 0,
             .length = 36,
         };
-        settingsHeader.write(@TypeOf(writer), writer);
-        this.localSettings.write(@TypeOf(writer), writer);
-        this.write(&preface_buffer);
+        _ = settingsHeader.write(@TypeOf(writer), writer);
+        _ = this.localSettings.write(@TypeOf(writer), writer);
+        _ = this.write(&preface_buffer);
         this.ajustWindowSize(null, @intCast(preface_buffer.len));
     }
 
@@ -920,11 +1044,11 @@ pub const H2FrameParser = struct {
             .streamIdentifier = 0,
             .length = 0,
         };
-        settingsHeader.write(@TypeOf(writer), writer);
-        this.write(&buffer);
+        _ = settingsHeader.write(@TypeOf(writer), writer);
+        _ = this.write(&buffer);
         this.firstSettingsACK = true;
         this.ajustWindowSize(null, @intCast(buffer.len));
-        this.flush();
+        this.flushPending();
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
@@ -939,14 +1063,14 @@ pub const H2FrameParser = struct {
             .streamIdentifier = streamIdentifier,
             .length = 4,
         };
-        settingsHeader.write(@TypeOf(writer), writer);
+        _ = settingsHeader.write(@TypeOf(writer), writer);
         // always clear reserved bit
         const cleanWindowSize: UInt31WithReserved = .{
             .reserved = false,
             .uint31 = windowSize.uint31,
         };
-        cleanWindowSize.write(@TypeOf(writer), writer);
-        this.write(&buffer);
+        _ = cleanWindowSize.write(@TypeOf(writer), writer);
+        _ = this.write(&buffer);
     }
 
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
@@ -956,6 +1080,18 @@ pub const H2FrameParser = struct {
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
 
+    pub fn call(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) JSValue {
+        JSC.markBinding(@src());
+        const ctx_value = this.strong_ctx.get() orelse return .zero;
+        value.ensureStillAlive();
+        return this.handlers.callEventHandlerWithResult(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
+    }
+    pub fn dispatchArbitrary(this: *H2FrameParser, callback: JSC.JSValue, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        const ctx_value = this.strong_ctx.get() orelse return;
+        value.ensureStillAlive();
+        _ = this.handlers.callArbitraryCallBack(callback, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
+    }
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1010,7 +1146,7 @@ pub const H2FrameParser = struct {
         return buffer.len;
     }
 
-    pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) void {
+    pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
             {
@@ -1021,7 +1157,7 @@ pub const H2FrameParser = struct {
 
                     // we still have more to buffer and even more now
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                    return;
+                    return false;
                 }
             }
             // all the buffer was written!
@@ -1033,39 +1169,73 @@ pub const H2FrameParser = struct {
                 if (written < bytes.len) {
                     // ops not all data was sent, lets buffer again
                     _ = this.writeBuffer.write(this.allocator, bytes[written..]) catch bun.outOfMemory();
+                    return false;
                 }
             }
             // lets keep size under control
             if (this.writeBuffer.cap > MAX_BUFFER_SIZE and this.writeBuffer.len <= MAX_BUFFER_SIZE) {
                 this.writeBuffer.shrinkAndFree(this.allocator, MAX_BUFFER_SIZE);
             }
-            return;
+            return true;
         }
         const result: i32 = socket.writeMaybeCorked(bytes, false);
         const written: u32 = if (result < 0) 0 else @intCast(result);
         if (written < bytes.len) {
             // ops not all data was sent, lets buffer again
             _ = this.writeBuffer.write(this.allocator, bytes[written..]) catch bun.outOfMemory();
+            return false;
         }
+        return true;
     }
 
-    pub fn _flush(this: *H2FrameParser) usize {
-        return switch (this.native_socket) {
+    fn flushStreamQueue(this: *H2FrameParser) usize {
+        var it = this.streams.iterator();
+        var written: usize = 0;
+        while (it.next()) |*entry| {
+            var stream = entry.value_ptr.*;
+            if (!stream.flushQueue(&written)) break;
+        }
+        return written;
+    }
+
+    pub fn flush(this: *H2FrameParser) usize {
+        var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
-            else => 0,
+            else => {
+                // consider that backpressure is gone and flush data queue
+                this.has_nonnative_backpressure = false;
+                return this.flushStreamQueue();
+            },
         };
+        // if no backpressure flush data queue
+        if (!this.hasBackpressure()) {
+            written += this.flushStreamQueue();
+        }
+        return written;
     }
-    pub fn _write(this: *H2FrameParser, bytes: []const u8) void {
-        switch (this.native_socket) {
+
+    pub fn _write(this: *H2FrameParser, bytes: []const u8) bool {
+        return switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericWrite(*TLSSocket, socket, bytes),
             .tcp_writeonly, .tcp => |socket| this._genericWrite(*TCPSocket, socket, bytes),
             else => {
                 // fallback to onWrite non-native callback
                 const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
-                this.dispatch(.onWrite, output_value);
+                const result = this.call(.onWrite, output_value);
+                if (result.isBoolean() and result.toBoolean()) {
+                    this.has_nonnative_backpressure = false;
+                    return true;
+                }
+                // wait for flushing
+                this.has_nonnative_backpressure = true;
+                return false;
             },
-        }
+        };
+    }
+
+    fn hasBackpressure(this: *H2FrameParser) bool {
+        return this.pendingBuffer.len > 0 or this.writeBuffer.len > 0 or this.has_nonnative_backpressure;
     }
 
     fn flushCorked(this: *H2FrameParser) void {
@@ -1076,7 +1246,7 @@ pub const H2FrameParser = struct {
                 const bytes = CORK_BUFFER[0..CORK_OFFSET];
                 CORK_OFFSET = 0;
                 if (bytes.len > 0) {
-                    this._write(bytes);
+                    _ = this._write(bytes);
                 }
             }
         }
@@ -1088,7 +1258,7 @@ pub const H2FrameParser = struct {
         this.unref();
     }
 
-    pub fn write(this: *H2FrameParser, bytes: []const u8) void {
+    pub fn write(this: *H2FrameParser, bytes: []const u8) bool {
         JSC.markBinding(@src());
         log("write", .{});
         if (comptime ENABLE_AUTO_CORK) {
@@ -1100,7 +1270,7 @@ pub const H2FrameParser = struct {
                     // clean already corked data
                     this.flushCorked();
                 }
-                this._write(bytes);
+                return this._write(bytes);
             } else {
                 // write at the cork buffer
                 CORK_OFFSET += @truncate(bytes.len);
@@ -1112,9 +1282,11 @@ pub const H2FrameParser = struct {
                     this.ref();
                     bun.uws.Loop.get().nextTick(*H2FrameParser, this, H2FrameParser.onAutoUncork);
                 }
+                // corked
+                return true;
             }
         } else {
-            this._write(bytes);
+            return this._write(bytes);
         }
     }
 
@@ -1376,6 +1548,8 @@ pub const H2FrameParser = struct {
             // if is not ACK send response
             if (isNotACK) {
                 this.sendPing(true, payload);
+            } else {
+                this.outStandingPings -|= 1;
             }
             const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
             this.readBuffer.reset();
@@ -1524,7 +1698,7 @@ pub const H2FrameParser = struct {
 
                 // we can now write any request
                 this.firstSettingsACK = true;
-                this.flush();
+                this.flushPending();
                 this.remoteSettings = this.localSettings;
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             }
@@ -1690,13 +1864,11 @@ pub const H2FrameParser = struct {
     const DirectWriterStruct = struct {
         writer: *H2FrameParser,
         shouldBuffer: bool = true,
-        pub fn write(this: *const DirectWriterStruct, data: []const u8) !bool {
+        pub fn write(this: *const DirectWriterStruct, data: []const u8) !usize {
             if (this.shouldBuffer) {
-                _ = this.writer.pendingBuffer.write(this.writer.allocator, data) catch return false;
-                return true;
+                return this.writer.pendingBuffer.write(this.writer.allocator, data) catch 0;
             }
-            this.writer.write(data);
-            return true;
+            return if (this.writer.write(data)) data.len else 0;
         }
     };
 
@@ -1708,17 +1880,13 @@ pub const H2FrameParser = struct {
         return DirectWriterStruct{ .writer = this, .shouldBuffer = true };
     }
 
-    fn flush(this: *H2FrameParser) void {
+    fn flushPending(this: *H2FrameParser) void {
         if (this.pendingBuffer.len > 0) {
             const slice = this.pendingBuffer.slice();
-            this.write(slice);
+            _ = this.write(slice);
             // we will only flush one time
             this.pendingBuffer.deinitWithAllocator(this.allocator);
         }
-    }
-
-    fn backPressure(this: H2FrameParser) usize {
-        return this.pendingBuffer.len;
     }
 
     pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -1869,9 +2037,7 @@ pub const H2FrameParser = struct {
         result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
         result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
-
-        // TODO: make this  real?
-        result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(0));
+        result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(this.outboundQueueSize));
         return result;
     }
     pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -1929,6 +2095,12 @@ pub const H2FrameParser = struct {
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected payload argument", .{});
+            return .zero;
+        }
+
+        if (this.outStandingPings >= this.maxOutstandingPings) {
+            const exception = JSC.toTypeError(.ERR_HTTP2_PING_CANCEL, "HTTP2 ping cancelled", .{}, globalObject);
+            globalObject.throwValue(exception);
             return .zero;
         }
 
@@ -2164,8 +2336,8 @@ pub const H2FrameParser = struct {
             };
 
             const writer = this.toWriter();
-            frame.write(@TypeOf(writer), writer);
-            priority.write(@TypeOf(writer), writer);
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = priority.write(@TypeOf(writer), writer);
         }
         return JSC.JSValue.jsBoolean(true);
     }
@@ -2213,10 +2385,41 @@ pub const H2FrameParser = struct {
 
         return JSC.JSValue.jsBoolean(true);
     }
-    fn sendData(this: *H2FrameParser, stream_id: u32, payload: []const u8, close: bool) void {
-        log("sendData({}, {}, {})", .{ stream_id, payload.len, close });
+
+    const MemoryWriter = struct {
+        buffer: []u8,
+        offset: usize = 0,
+        pub fn slice(this: *MemoryWriter) []const u8 {
+            return this.buffer[0..this.offset];
+        }
+        pub fn write(this: *MemoryWriter, data: []const u8) !usize {
+            const pending = this.buffer[this.offset..];
+            bun.debugAssert(pending.len >= data.len);
+            @memcpy(pending[0..data.len], data);
+            this.offset += data.len;
+            return data.len;
+        }
+    };
+    fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
+        log("sendData({}, {}, {})", .{ stream.id, payload.len, close });
 
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
+        const stream_id = stream.id;
+        if (close) {
+            stream.closeAfterDrain = close;
+        }
+        var enqueued = false;
+        defer if (!enqueued) {
+            this.dispatchArbitrary(callback, .undefined);
+            if (close and stream.waitForTrailers) {
+                if (stream.state == .HALF_CLOSED_REMOTE) {
+                    stream.state = .CLOSED;
+                } else {
+                    stream.state = .HALF_CLOSED_LOCAL;
+                }
+                this.dispatch(.onWantTrailers, stream.getIdentifier());
+            }
+        };
 
         if (payload.len == 0) {
             // empty payload we still need to send a frame
@@ -2226,7 +2429,7 @@ pub const H2FrameParser = struct {
                 .streamIdentifier = @intCast(stream_id),
                 .length = 0,
             };
-            dataHeader.write(@TypeOf(writer), writer);
+            _ = dataHeader.write(@TypeOf(writer), writer);
         } else {
             // max frame size will always be at least 16384
             const max_size = 16384 - FrameHeader.byteSize - 1;
@@ -2237,14 +2440,40 @@ pub const H2FrameParser = struct {
                 const size = @min(payload.len - offset, max_size);
                 const slice = payload[offset..(size + offset)];
                 offset += size;
+                const padding = stream.getPadding(size, max_size - 1);
+                const payload_size = size + (if (padding != 0) padding + 1 else 0);
+                var flags: u8 = if (offset >= payload.len and close) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
+                if (padding != 0) {
+                    flags |= @intFromEnum(DataFrameFlags.PADDED);
+                }
                 var dataHeader: FrameHeader = .{
                     .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                    .flags = if (offset >= payload.len and close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                    .flags = flags,
                     .streamIdentifier = @intCast(stream_id),
-                    .length = size,
+                    .length = payload_size,
                 };
-                dataHeader.write(@TypeOf(writer), writer);
-                _ = writer.write(slice) catch 0;
+                if (this.hasBackpressure()) {
+                    enqueued = true;
+                    if (padding != 0) {
+
+                        // write the full frame in memory
+                        var memWriter: MemoryWriter = .{ .buffer = shared_request_buffer[0..] };
+                        _ = dataHeader.write(@TypeOf(&memWriter), &memWriter);
+                        _ = memWriter.write(&[_]u8{padding}) catch 0;
+                        _ = memWriter.write(slice) catch 0;
+                        // queueFrame
+                        stream.queueFrame(memWriter.buffer[0 .. FrameHeader.byteSize + payload_size], callback);
+                    }
+                } else {
+                    _ = dataHeader.write(@TypeOf(writer), writer);
+                    if (padding != 0) {
+                        bun.memmove(shared_request_buffer[1..size], shared_request_buffer[0..size]);
+                        shared_request_buffer[0] = padding;
+                        _ = writer.write(shared_request_buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0;
+                    } else {
+                        _ = writer.write(slice) catch 0;
+                    }
+                }
             }
         }
     }
@@ -2383,22 +2612,23 @@ pub const H2FrameParser = struct {
             .length = @intCast(encoded_size),
         };
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
-        frame.write(@TypeOf(writer), writer);
+        _ = frame.write(@TypeOf(writer), writer);
         _ = writer.write(buffer[0..encoded_size]) catch 0;
 
         return .undefined;
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(3);
-        if (args_list.len < 3) {
-            globalObject.throw("Expected stream, data and endStream arguments", .{});
+        const args_list = callframe.arguments(4);
+        if (args_list.len < 4) {
+            globalObject.throw("Expected stream, data, endStream and callback arguments", .{});
             return .zero;
         }
 
         const stream_arg = args_list.ptr[0];
         const data_arg = args_list.ptr[1];
         const close_arg = args_list.ptr[2];
+        const callback_arg = args_list.ptr[3];
 
         if (!stream_arg.isNumber()) {
             globalObject.throw("Expected stream to be a number", .{});
@@ -2416,7 +2646,8 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
-        if (stream.canSendData()) {
+        if (!stream.canSendData() or stream.closeAfterDrain) {
+            this.dispatchArbitrary(callback_arg, .undefined);
             return JSC.JSValue.jsBoolean(false);
         }
 
@@ -2424,26 +2655,20 @@ pub const H2FrameParser = struct {
 
         if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
             const payload = array_buffer.slice();
-            this.sendData(stream_id, payload, close and !stream.waitForTrailers);
+            this.sendData(stream, payload, close and !stream.waitForTrailers, callback_arg);
         } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
             defer bun_str.deref();
             var zig_str = bun_str.toUTF8WithoutRef(bun.default_allocator);
             defer zig_str.deinit();
             const payload = zig_str.slice();
-            this.sendData(stream_id, payload, close and !stream.waitForTrailers);
+            this.sendData(stream, payload, close and !stream.waitForTrailers, callback_arg);
         } else {
             if (!globalObject.hasException())
                 globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
             return .zero;
         }
 
-        if (close) {
-            if (stream.waitForTrailers) {
-                this.dispatch(.onWantTrailers, stream.getIdentifier());
-            }
-        }
-
-        return JSC.JSValue.jsBoolean(true);
+        return JSC.JSValue.jsBoolean(this.hasBackpressure());
     }
 
     fn getNextStreamID(this: *H2FrameParser) u32 {
@@ -2564,10 +2789,14 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
 
+    pub fn flushFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        JSC.markBinding(@src());
+
+        return JSC.JSValue.jsNumber(this.flush());
+    }
+
     pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
-        // we use PADDING_STRATEGY_NONE with is default
-        // TODO: PADDING_STRATEGY_MAX AND PADDING_STRATEGY_ALIGNED
 
         const args_list = callframe.arguments(5);
         if (args_list.len < 4) {
@@ -2735,6 +2964,16 @@ pub const H2FrameParser = struct {
                 return JSC.JSValue.jsNumber(stream.id);
             }
 
+            if (options.get(globalObject, "paddingStrategy")) |padding_js| {
+                if (padding_js.isNumber()) {
+                    stream.paddingStrategy = switch (padding_js.to(u32)) {
+                        1 => .aligned,
+                        2 => .max,
+                        else => .none,
+                    };
+                }
+            }
+
             if (options.get(globalObject, "waitForTrailers")) |trailes_js| {
                 if (trailes_js.isBoolean()) {
                     waitForTrailers = trailes_js.asBoolean();
@@ -2820,15 +3059,20 @@ pub const H2FrameParser = struct {
         }
 
         log("request encoded_size {}", .{encoded_size});
+        const padding = stream.getPadding(encoded_size, buffer.len - 1);
+        const payload_size = encoded_size + (if (padding != 0) padding + 1 else 0);
+        if (padding != 0) {
+            flags |= @intFromEnum(HeadersFrameFlags.PADDED);
+        }
         var frame: FrameHeader = .{
             .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
             .flags = flags,
             .streamIdentifier = stream.id,
-            .length = @intCast(encoded_size),
+            .length = @intCast(payload_size),
         };
 
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
-        frame.write(@TypeOf(writer), writer);
+        _ = frame.write(@TypeOf(writer), writer);
         //https://datatracker.ietf.org/doc/html/rfc7540#section-6.2
         if (has_priority) {
             var stream_identifier: UInt31WithReserved = .{
@@ -2841,10 +3085,13 @@ pub const H2FrameParser = struct {
                 .weight = @intCast(weight),
             };
 
-            priority.write(@TypeOf(writer), writer);
+            _ = priority.write(@TypeOf(writer), writer);
         }
-
-        _ = writer.write(buffer[0..encoded_size]) catch 0;
+        if (padding != 0) {
+            bun.memmove(buffer[1..encoded_size], buffer[0..encoded_size]);
+            buffer[0] = padding;
+        }
+        _ = writer.write(buffer[0..payload_size]) catch 0;
 
         if (end_stream) {
             stream.state = .HALF_CLOSED_LOCAL;
@@ -2894,7 +3141,7 @@ pub const H2FrameParser = struct {
     pub fn onNativeWritable(ctx: ?*anyopaque) void {
         const self = ctx orelse return;
         const this = bun.cast(*H2FrameParser, self);
-        _ = this._flush();
+        _ = this.flush();
     }
 
     pub fn onNativeClose(ctx: ?*anyopaque) void {
@@ -3007,6 +3254,11 @@ pub const H2FrameParser = struct {
         var is_server = false;
         if (options.get(globalObject, "type")) |type_js| {
             is_server = type_js.isNumber() and type_js.to(u32) == 0;
+        }
+        if (is_server) {
+            if (options.get(globalObject, "maxOutstandingPings")) |max_pings| {
+                this.maxOutstandingPings = max_pings.isNumber() and max_pings.to(u32);
+            }
         }
 
         this.isServer = is_server;

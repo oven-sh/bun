@@ -1109,7 +1109,7 @@ describe("expect()", () => {
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 150; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];

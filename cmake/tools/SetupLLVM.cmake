@@ -7,16 +7,13 @@ endif()
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
 string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match ${LLVM_VERSION})
-if(match)
-  set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
-  set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
-  set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
-else()
-  set(LLVM_VERSION_MAJOR 0)
-  set(LLVM_VERSION_MINOR 0)
-  set(LLVM_VERSION_PATCH 0)
+if(NOT match)
+  return()
 endif()
-
+  
+set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
+set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
 set(LLVM_PATHS)
 
 if(APPLE)

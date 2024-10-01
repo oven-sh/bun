@@ -948,7 +948,22 @@ const proxySocketHandler = {
     }
   },
 };
-
+const nameForErrorCode = [
+  "NGHTTP2_NO_ERROR",
+  "NGHTTP2_PROTOCOL_ERROR",
+  "NGHTTP2_INTERNAL_ERROR",
+  "NGHTTP2_FLOW_CONTROL_ERROR",
+  "NGHTTP2_SETTINGS_TIMEOUT",
+  "NGHTTP2_STREAM_CLOSED",
+  "NGHTTP2_FRAME_SIZE_ERROR",
+  "NGHTTP2_REFUSED_STREAM",
+  "NGHTTP2_CANCEL",
+  "NGHTTP2_COMPRESSION_ERROR",
+  "NGHTTP2_CONNECT_ERROR",
+  "NGHTTP2_ENHANCE_YOUR_CALM",
+  "NGHTTP2_INADEQUATE_SECURITY",
+  "NGHTTP2_HTTP_1_1_REQUIRED",
+];
 const constants = {
   NGHTTP2_ERR_FRAME_SIZE_ERROR: -522,
   NGHTTP2_SESSION_SERVER: 0,
@@ -1231,17 +1246,20 @@ type Settings = {
 class Http2Session extends EventEmitter {}
 
 function streamErrorFromCode(code: number) {
-  const error = new Error(`Stream closed with error code ${code}`);
+  const error = new Error(`Stream closed with error code ${nameForErrorCode[code] || code}`);
   error.code = "ERR_HTTP2_STREAM_ERROR";
   error.errno = code;
   return error;
 }
+hideFromStack(streamErrorFromCode);
 function sessionErrorFromCode(code: number) {
-  const error = new Error(`Session closed with error code ${code}`);
+  const error = new Error(`Session closed with error code ${nameForErrorCode[code] || code}`);
   error.code = "ERR_HTTP2_SESSION_ERROR";
   error.errno = code;
   return error;
 }
+hideFromStack(sessionErrorFromCode);
+
 function assertSession(session) {
   if (!session) {
     const error = new Error(`ERR_HTTP2_INVALID_SESSION: The session has been destroyed`);
@@ -1249,6 +1267,7 @@ function assertSession(session) {
     throw error;
   }
 }
+hideFromStack(assertSession);
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | null = null;
@@ -1322,6 +1341,10 @@ class Http2Stream extends Duplex {
       );
       error.code = "ERR_HTTP2_TRAILERS_NOT_READY";
       throw error;
+    }
+
+    if (headers == undefined) {
+      headers = {};
     }
 
     if (!$isObject(headers)) {
@@ -1467,7 +1490,8 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native?.writeStream(this.#id, chunk, this.#endStream, callback);
+        console.error("chunk", chunk?.toString());
+        native?.writeStream(this.#id, chunk, this.#endStream, undefined);
         return;
       }
       if (typeof callback == "function") {
@@ -1507,6 +1531,10 @@ class ServerHttp2Stream extends Http2Stream {
       const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
       error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
       throw error;
+    }
+
+    if (headers == undefined) {
+      headers = {};
     }
 
     if (!$isObject(headers)) {
@@ -1556,17 +1584,18 @@ function emitConnectNT(self, socket) {
   self.emit("connect", self, socket);
 }
 
-function emitStreamErrorNT(self, stream, error, destroy) {
-  if (stream) {
-    if (!stream[bunHTTP2Closed]) {
-      stream[bunHTTP2Closed] = true;
-    }
-    stream.rstCode = error;
-
-    const error_instance = streamErrorFromCode(error);
-    stream.emit("error", error_instance);
-    if (destroy) stream.destroy(error_instance, error);
-  }
+function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
+  // if (stream) {
+  //   stream.rstCode = error;
+  //   stream[bunHTTP2Closed] = true;
+  //   stream[bunHTTP2Session] = null;
+  //   const error_instance = streamErrorFromCode(error);
+  //   stream.emit("error", error_instance);
+  //   stream.emit("close");
+  //   stream.emit("end");
+  //   if (destroy) stream.destroy(error_instance, error);
+  //   if (destroy_self) self.destroy();
+  // }
 }
 
 function emitAbortedNT(self, streams, streamId, error) {
@@ -1621,17 +1650,7 @@ class ServerHttp2Session extends Http2Session {
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self) return;
       self.#connections--;
-      const error_instance = streamErrorFromCode(error);
-      stream.rstCode = error;
-      stream[bunHTTP2Closed] = true;
-      stream[bunHTTP2Session] = null;
-      stream.emit("error", error_instance);
-      stream.emit("end");
-      stream.emit("close");
-      stream.destroy();
-      if (self.#connections === 0 && self.#closed) {
-        self.destroy();
-      }
+      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream) {
       if (!self) return;
@@ -1674,7 +1693,7 @@ class ServerHttp2Session extends Http2Session {
         try {
           stream.emit("trailers", headers, flags);
         } catch {
-          process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true);
+          process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
@@ -1683,14 +1702,14 @@ class ServerHttp2Session extends Http2Session {
     },
     localSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
-      self.emit("localSettings", settings);
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
+      self.emit("localSettings", settings);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
-      self.emit("remoteSettings", settings);
       self.#remoteSettings = settings;
+      self.emit("remoteSettings", settings);
     },
     ping(self: ServerHttp2Session, payload: Buffer, isACK: boolean) {
       if (!self) return;
@@ -1708,8 +1727,8 @@ class ServerHttp2Session extends Http2Session {
     },
     error(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self.emit("error", sessionErrorFromCode(errorCode));
-
+      const error_instance = streamErrorFromCode(errorCode);
+      // self.emit("error", error_instance);
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
       self.#parser = null;
@@ -2040,18 +2059,7 @@ class ClientHttp2Session extends Http2Session {
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
       if (!self) return;
       self.#connections--;
-
-      const error_instance = streamErrorFromCode(error);
-      stream.rstCode = error;
-      stream[bunHTTP2Closed] = true;
-      stream[bunHTTP2Session] = null;
-      stream.emit("error", error_instance);
-      stream.emit("end");
-      stream.emit("close");
-      stream.destroy();
-      if (self.#connections === 0 && self.#closed) {
-        self.destroy();
-      }
+      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream) {
       if (!self) return;
@@ -2106,7 +2114,7 @@ class ClientHttp2Session extends Http2Session {
         try {
           stream.emit("trailers", headers, flags);
         } catch {
-          process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true);
+          process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
@@ -2115,14 +2123,14 @@ class ClientHttp2Session extends Http2Session {
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
-      self.emit("localSettings", settings);
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
+      self.emit("localSettings", settings);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
-      self.emit("remoteSettings", settings);
       self.#remoteSettings = settings;
+      self.emit("remoteSettings", settings);
     },
     ping(self: ClientHttp2Session, payload: Buffer, isACK: boolean) {
       if (!self) return;
@@ -2140,8 +2148,8 @@ class ClientHttp2Session extends Http2Session {
     },
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self.emit("error", sessionErrorFromCode(errorCode));
-
+      const error_instance = streamErrorFromCode(errorCode);
+      // self.emit("error", error_instance);
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
       self.#parser = null;
@@ -2490,6 +2498,10 @@ class ClientHttp2Session extends Http2Session {
       throw error;
     }
 
+    if (headers == undefined) {
+      headers = {};
+    }
+
     if (!$isObject(headers)) {
       throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
     }
@@ -2531,6 +2543,9 @@ class ClientHttp2Session extends Http2Session {
           scheme = protocol;
       }
       headers[":scheme"] = scheme;
+    }
+    if (headers[":path"] == undefined) {
+      headers[":path"] = "/";
     }
 
     if (NoPayloadMethods.has(method.toUpperCase())) {
@@ -2586,7 +2601,7 @@ class Http2Server extends net.Server {
       onRequestHandler = options;
       options = {};
     } else if (options == null || typeof options == "object") {
-      options = {};
+      options = { ...options };
     } else {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }
@@ -2608,7 +2623,7 @@ class Http2SecureServer extends tls.Server {
       onRequestHandler = options;
       options = {};
     } else if (options == null || typeof options == "object") {
-      options = {};
+      options = { ...options };
     } else {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }

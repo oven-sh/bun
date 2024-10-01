@@ -757,7 +757,7 @@ pub const H2FrameParser = struct {
                 if (this.dataFrameQueue.removeOrNull()) |frame| {
                     defer {
                         var _frame = frame;
-                        if (_frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value, .undefined);
+                        if (_frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value);
                         _frame.deinit(client.allocator);
                     }
                     const has_backpressure = client.write(frame.buffer);
@@ -1099,11 +1099,9 @@ pub const H2FrameParser = struct {
         value.ensureStillAlive();
         return this.handlers.callEventHandlerWithResult(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
-    pub fn dispatchArbitrary(this: *H2FrameParser, callback: JSC.JSValue, value: JSC.JSValue) void {
+    pub fn dispatchArbitrary(this: *H2FrameParser, callback: JSC.JSValue) void {
         JSC.markBinding(@src());
-        const ctx_value = this.strong_ctx.get() orelse return;
-        value.ensureStillAlive();
-        _ = this.handlers.callArbitraryCallBack(callback, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
+        _ = this.handlers.callArbitraryCallBack(callback, .undefined, &[_]JSC.JSValue{});
     }
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
@@ -1379,7 +1377,6 @@ pub const H2FrameParser = struct {
         const stream_id = stream.id;
         var count: u32 = 0;
         while (true) {
-            count += 1;
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
             log("header {s} {s}", .{ header.name, header.value });
@@ -1392,6 +1389,17 @@ pub const H2FrameParser = struct {
                 // Duplicated of single value headers are discarded
                 if (SingleValueHeaders.has(header.name)) {
                     continue;
+                }
+                count += 1;
+
+                if (this.maxHeaderListPairs < count) {
+                    this.rejectedStreams += 1;
+                    if (this.maxRejectedStreams <= this.rejectedStreams) {
+                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID);
+                    } else {
+                        this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
+                    }
+                    return;
                 }
 
                 var value_str = bun.String.fromUTF8(header.value);
@@ -1409,14 +1417,24 @@ pub const H2FrameParser = struct {
                     headers.put(globalObject, &name, array);
                 }
             } else {
+                count += 1;
+
+                if (this.maxHeaderListPairs < count) {
+                    this.rejectedStreams += 1;
+                    if (this.maxRejectedStreams <= this.rejectedStreams) {
+                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID);
+                    } else {
+                        this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
+                    }
+                    return;
+                }
                 const name = WellKnowHeaders.get(header.name) orelse bun.String.fromUTF8(header.name);
                 defer name.deref();
                 var value_str = bun.String.fromUTF8(header.value);
                 const value = value_str.transferToJS(globalObject);
                 headers.put(globalObject, &name, value);
             }
-
-            if (offset >= payload.len or this.maxHeaderListPairs <= count) {
+            if (offset >= payload.len) {
                 break;
             }
         }
@@ -2430,7 +2448,7 @@ pub const H2FrameParser = struct {
         }
         var enqueued = false;
         defer if (!enqueued) {
-            this.dispatchArbitrary(callback, .undefined);
+            this.dispatchArbitrary(callback);
             if (close and stream.waitForTrailers) {
                 if (stream.state == .HALF_CLOSED_REMOTE) {
                     stream.state = .CLOSED;
@@ -2474,15 +2492,21 @@ pub const H2FrameParser = struct {
                 };
                 if (this.hasBackpressure()) {
                     enqueued = true;
-                    if (padding != 0) {
+                    log("queued! {}", .{slice.len});
 
-                        // write the full frame in memory
+                    // write the full frame in memory and queue the frame
+                    if (padding != 0) {
+                        // for padding support we need one extra byte + padding bytes
                         var memWriter: MemoryWriter = .{ .buffer = shared_request_buffer[0..] };
                         _ = dataHeader.write(@TypeOf(&memWriter), &memWriter);
                         _ = memWriter.write(&[_]u8{padding}) catch 0;
                         _ = memWriter.write(slice) catch 0;
-                        // queueFrame
                         stream.queueFrame(memWriter.buffer[0 .. FrameHeader.byteSize + payload_size], callback);
+                    } else {
+                        var memWriter: MemoryWriter = .{ .buffer = shared_request_buffer[0..] };
+                        _ = dataHeader.write(@TypeOf(&memWriter), &memWriter);
+                        _ = memWriter.write(slice) catch 0;
+                        stream.queueFrame(memWriter.slice(), callback);
                     }
                 } else {
                     _ = dataHeader.write(@TypeOf(writer), writer);
@@ -2552,6 +2576,7 @@ pub const H2FrameParser = struct {
             const name_slice = header_name.toUTF8(bun.default_allocator);
             defer name_slice.deinit();
             const name = name_slice.slice();
+            if (header_name.length() == 0) continue;
 
             if (header_name.charAt(0) == ':') {
                 const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}, globalObject);
@@ -2667,11 +2692,9 @@ pub const H2FrameParser = struct {
             return .zero;
         };
         if (!stream.canSendData() or stream.closeAfterDrain) {
-            this.dispatchArbitrary(callback_arg, .undefined);
+            this.dispatchArbitrary(callback_arg);
             return JSC.JSValue.jsBoolean(false);
         }
-
-        // TODO: check padding strategy here
 
         if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
             const payload = array_buffer.slice();
@@ -2856,6 +2879,7 @@ pub const H2FrameParser = struct {
             .include_value = true,
         }).init(globalObject, headers_arg);
         defer iter.deinit();
+        var header_count: u32 = 0;
         for (0..2) |ignore_pseudo_headers| {
             iter.reset();
 
@@ -2863,6 +2887,20 @@ pub const H2FrameParser = struct {
                 const name_slice = header_name.toUTF8(bun.default_allocator);
                 defer name_slice.deinit();
                 const name = name_slice.slice();
+                defer header_count += 1;
+                if (this.maxHeaderListPairs < header_count) {
+                    this.rejectedStreams += 1;
+                    const stream = this.handleReceivedStreamID(stream_id) orelse {
+                        return JSC.JSValue.jsNumber(-1);
+                    };
+                    if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
+                        stream.setContext(stream_ctx_arg, globalObject);
+                    }
+                    stream.state = .CLOSED;
+                    stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
+                    this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(stream.rstCode));
+                    return JSC.JSValue.jsNumber(stream.id);
+                }
 
                 if (header_name.charAt(0) == ':') {
                     if (ignore_pseudo_headers == 1) continue;
@@ -3072,7 +3110,7 @@ pub const H2FrameParser = struct {
             }
         }
         // too much memory being use
-        if (this.maxSessionMemory > 0 and this.getSessionMemoryUsage() > this.maxSessionMemory) {
+        if (this.getSessionMemoryUsage() > this.maxSessionMemory) {
             stream.state = .CLOSED;
             stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
             this.rejectedStreams += 1;
@@ -3280,31 +3318,38 @@ pub const H2FrameParser = struct {
                     handlers.deinit();
                     return null;
                 }
+
+                if (settings_js.get(globalObject, "maxOutstandingPings")) |max_pings| {
+                    if (max_pings.isNumber()) {
+                        this.maxOutstandingPings = max_pings.to(u64);
+                    }
+                }
+                if (settings_js.get(globalObject, "maxSessionMemory")) |max_memory| {
+                    if (max_memory.isNumber()) {
+                        this.maxSessionMemory = @truncate(max_memory.to(u64));
+                        if (this.maxSessionMemory < 1) {
+                            this.maxSessionMemory = 1;
+                        }
+                    }
+                }
+                if (settings_js.get(globalObject, "maxHeaderListPairs")) |max_header_list_pairs| {
+                    if (max_header_list_pairs.isNumber()) {
+                        this.maxHeaderListPairs = @truncate(max_header_list_pairs.to(u64));
+                        if (this.maxHeaderListPairs < 4) {
+                            this.maxHeaderListPairs = 4;
+                        }
+                    }
+                }
+                if (settings_js.get(globalObject, "maxSessionRejectedStreams")) |max_rejected_streams| {
+                    if (max_rejected_streams.isNumber()) {
+                        this.maxRejectedStreams = @truncate(max_rejected_streams.to(u64));
+                    }
+                }
             }
         }
         var is_server = false;
         if (options.get(globalObject, "type")) |type_js| {
             is_server = type_js.isNumber() and type_js.to(u32) == 0;
-        }
-        if (options.get(globalObject, "maxOutstandingPings")) |max_pings| {
-            if (max_pings.isNumber()) {
-                this.maxOutstandingPings = max_pings.to(u64);
-            }
-        }
-        if (options.get(globalObject, "maxSessionMemory")) |max_memory| {
-            if (max_memory.isNumber()) {
-                this.maxSessionMemory = @truncate(max_memory.to(u64));
-            }
-        }
-        if (options.get(globalObject, "maxHeaderListPairs")) |max_header_list_pairs| {
-            if (max_header_list_pairs.isNumber()) {
-                this.maxHeaderListPairs = @truncate(max_header_list_pairs.to(u64));
-            }
-        }
-        if (options.get(globalObject, "maxSessionRejectedStreams")) |max_rejected_streams| {
-            if (max_rejected_streams.isNumber()) {
-                this.maxRejectedStreams = @truncate(max_rejected_streams.to(u64));
-            }
         }
 
         this.isServer = is_server;

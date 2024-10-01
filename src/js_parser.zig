@@ -1320,6 +1320,7 @@ pub const ImportScanner = struct {
                         ) catch bun.outOfMemory();
 
                         if (st.star_name_loc) |loc| {
+                            record.contains_import_star = true;
                             p.named_imports.putAssumeCapacity(
                                 namespace_ref,
                                 js_ast.NamedImport{
@@ -1333,6 +1334,7 @@ pub const ImportScanner = struct {
                         }
 
                         if (st.default_name) |default| {
+                            record.contains_default_alias = true;
                             p.named_imports.putAssumeCapacity(
                                 default.ref.?,
                                 .{
@@ -1366,8 +1368,7 @@ pub const ImportScanner = struct {
                         // We do not know at this stage whether or not the import statement is bundled
                         // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
                         for (st.items) |item| {
-                            const is_default = strings.eqlComptime(item.alias, "default");
-                            record.contains_default_alias = record.contains_default_alias or is_default;
+                            record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(item.alias, "default");
 
                             const name: LocRef = item.name;
                             const name_ref = name.ref.?;
@@ -2895,6 +2896,7 @@ pub const Parser = struct {
         warn_about_unbundled_modules: bool = true,
 
         module_type: options.ModuleType = .unknown,
+        output_format: options.Format = .esm,
 
         transform_only: bool = false,
 
@@ -3226,9 +3228,15 @@ pub const Parser = struct {
         }
 
         // Detect a leading "// @bun" pragma
-        if (p.lexer.bun_pragma and p.options.features.dont_bundle_twice) {
+        if (p.lexer.bun_pragma != .none and p.options.features.dont_bundle_twice) {
             return js_ast.Result{
-                .already_bundled = {},
+                .already_bundled = switch (p.lexer.bun_pragma) {
+                    .bun => .bun,
+                    .bytecode => .bytecode,
+                    .bytecode_cjs => .bytecode_cjs,
+                    .bun_cjs => .bun_cjs,
+                    else => unreachable,
+                },
             };
         }
 
@@ -3655,7 +3663,7 @@ pub const Parser = struct {
             }
         }
 
-        if (p.options.bundle and parts.items.len < 4 and parts.items.len > 0) {
+        if (parts.items.len < 4 and parts.items.len > 0 and p.options.features.unwrap_commonjs_to_esm) {
 
             // Specially handle modules shaped like this:
             //
@@ -3731,6 +3739,7 @@ pub const Parser = struct {
             }
 
             if (p.commonjs_named_exports_deoptimized and
+                p.options.features.unwrap_commonjs_to_esm and
                 p.unwrap_all_requires and
                 p.imports_to_convert_from_require.items.len == 1 and
                 p.import_records.items.len == 1 and
@@ -5273,7 +5282,7 @@ fn NewParser_(
 
                     // For unwrapping CommonJS into ESM to fully work
                     // we must also unwrap requires into imports.
-                    const should_unwrap_require = !p.options.features.hot_module_reloading and
+                    const should_unwrap_require = p.options.features.unwrap_commonjs_to_esm and
                         (p.unwrap_all_requires or
                         if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
                         // We cannot unwrap a require wrapped in a try/catch because
@@ -5336,9 +5345,8 @@ fn NewParser_(
             }
         }
 
-        pub fn shouldUnwrapCommonJSToESM(p: *P) bool {
-            // hot module loading opts out of this because we want to produce a cjs bundle at the end
-            return FeatureFlags.unwrap_commonjs_to_esm and !p.options.features.hot_module_reloading;
+        pub inline fn shouldUnwrapCommonJSToESM(p: *const P) bool {
+            return p.options.features.unwrap_commonjs_to_esm;
         }
 
         fn isBindingUsed(p: *P, binding: Binding, default_export_ref: Ref) bool {
@@ -12457,8 +12465,7 @@ fn NewParser_(
         }
 
         pub inline fn isStrictModeOutputFormat(p: *P) bool {
-            // TODO: once CJS or IIFE is supported, this will need to be updated
-            return p.options.bundle;
+            return p.options.bundle and p.options.output_format.isESM();
         }
 
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
@@ -17637,7 +17644,7 @@ fn NewParser_(
         /// If --target=bun, this does nothing.
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
-            if (!p.options.features.use_import_meta_require) {
+            if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
@@ -17646,9 +17653,7 @@ fn NewParser_(
         }
 
         fn ignoreUsageOfRuntimeRequire(p: *P) void {
-            if (!p.options.features.use_import_meta_require and
-                p.options.features.allow_runtime)
-            {
+            if (p.options.features.auto_polyfill_require) {
                 bun.assert(p.runtime_imports.__require != null);
                 p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
                 p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
@@ -23511,6 +23516,7 @@ fn NewParser_(
                 .export_keyword = p.esm_export_keyword,
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
                 .char_freq = p.computeCharacterFrequency(),
+                .directive = if (p.module_scope.strict_mode == .explicit_strict_mode) "use strict" else null,
 
                 // Assign slots to symbols in nested scopes. This is some precomputation for
                 // the symbol renaming pass that will happen later in the linker. It's done
@@ -23532,7 +23538,7 @@ fn NewParser_(
                 .uses_require_ref = p.runtime_imports.__require != null and
                     p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
                 .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
-                // .top_Level_await_keyword = p.top_level_await_keyword,
+                .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
 
@@ -23645,13 +23651,13 @@ fn NewParser_(
                 .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,
 
-                // Only enable during bundling
-                .commonjs_named_exports_deoptimized = !opts.bundle,
+                // Only enable during bundling, when not bundling CJS
+                .commonjs_named_exports_deoptimized = if (opts.bundle) opts.output_format == .cjs else true,
             };
             this.lexer.track_comments = opts.features.minify_identifiers;
 
             this.unwrap_all_requires = brk: {
-                if (opts.bundle) {
+                if (opts.bundle and opts.output_format != .cjs) {
                     if (source.path.packageName()) |pkg| {
                         if (opts.features.shouldUnwrapRequire(pkg)) {
                             if (strings.eqlComptime(pkg, "react") or strings.eqlComptime(pkg, "react-dom")) {

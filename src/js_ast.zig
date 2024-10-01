@@ -6956,6 +6956,12 @@ pub const Ast = struct {
     }
 };
 
+pub const TlaCheck = struct {
+    depth: u32 = 0,
+    parent: Index.Int = Index.invalid.get(),
+    import_record_index: Index.Int = Index.invalid.get(),
+};
+
 /// Like Ast but slimmer and for bundling only.
 ///
 /// On Linux, the hottest function in the bundler is:
@@ -6982,6 +6988,8 @@ pub const BundledAst = struct {
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
+    top_level_await_keyword: logger.Range,
+    tla_check: TlaCheck = .{},
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
@@ -7024,8 +7032,7 @@ pub const BundledAst = struct {
         force_cjs_to_esm: bool = false,
         has_lazy_export: bool = false,
         commonjs_module_exports_assigned_deoptimized: bool = false,
-
-        _: u1 = 0,
+        has_explicit_use_strict_directive: bool = false,
     };
 
     pub const empty = BundledAst.init(Ast.empty);
@@ -7049,6 +7056,7 @@ pub const BundledAst = struct {
             .module_ref = this.module_ref,
             .wrapper_ref = this.wrapper_ref,
             .require_ref = this.require_ref,
+            .top_level_await_keyword = this.top_level_await_keyword,
 
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
@@ -7075,6 +7083,7 @@ pub const BundledAst = struct {
             .force_cjs_to_esm = this.flags.force_cjs_to_esm,
             .has_lazy_export = this.flags.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
+            .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
         };
     }
 
@@ -7098,7 +7107,7 @@ pub const BundledAst = struct {
             .module_ref = ast.module_ref,
             .wrapper_ref = ast.wrapper_ref,
             .require_ref = ast.require_ref,
-
+            .top_level_await_keyword = ast.top_level_await_keyword,
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.
@@ -7127,6 +7136,7 @@ pub const BundledAst = struct {
                 .force_cjs_to_esm = ast.force_cjs_to_esm,
                 .has_lazy_export = ast.has_lazy_export,
                 .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
+                .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
             },
         };
     }
@@ -7543,9 +7553,16 @@ pub const Part = struct {
 };
 
 pub const Result = union(enum) {
-    already_bundled: void,
+    already_bundled: AlreadyBundled,
     cached: void,
     ast: Ast,
+
+    pub const AlreadyBundled = enum {
+        bun,
+        bun_cjs,
+        bytecode,
+        bytecode_cjs,
+    };
 };
 
 pub const StmtOrExpr = union(enum) {

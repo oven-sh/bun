@@ -1131,7 +1131,7 @@ Each artifact also contains the following properties:
 ---
 
 - `kind`
-- What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, and copied assets (like images).
+- What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, and copied assets (like images).
 
 ---
 
@@ -1147,11 +1147,6 @@ Each artifact also contains the following properties:
 
 - `hash`
 - The hash of the file contents. Always defined for assets.
-
----
-
-- `bytecode`
-- Generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint
 
 ---
 
@@ -1197,6 +1192,26 @@ BuildArtifact (entry-point) {
   },
   sourcemap: null
 }
+```
+
+{% /codetabs %}
+
+### Bytecode
+
+The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  bytecode: true,
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --bytecode
 ```
 
 {% /codetabs %}

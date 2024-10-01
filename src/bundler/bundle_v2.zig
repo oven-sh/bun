@@ -3760,6 +3760,8 @@ pub const JSMeta = struct {
 
 pub const Graph = struct {
     generate_bytecode_cache: bool = false,
+
+    // TODO: consider removing references to this in favor of bundler.options.code_splitting
     code_splitting: bool = false,
 
     pool: *ThreadPool,

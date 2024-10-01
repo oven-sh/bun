@@ -361,21 +361,17 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
-            Output.print("\n", .{});
+            publish(false, &context) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                        Global.crash();
+                    },
+                }
+            };
 
-            if (!manager.options.dry_run) {
-                publish(false, &context) catch |err| {
-                    switch (err) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                        error.NeedAuth => {
-                            Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
-                            Global.crash();
-                        },
-                    }
-                };
-            }
-
-            Output.prettyln("<green>{s}@{s}<r>", .{
+            Output.prettyln("\n<green> +<r> {s}@{s}", .{
                 context.package_name,
                 context.package_version,
             });
@@ -408,24 +404,20 @@ pub const PublishCommand = struct {
             Global.crash();
         };
 
-        Output.print("\n", .{});
-
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
-        if (!manager.options.dry_run) {
-            publish(true, &context) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
-                    error.NeedAuth => {
-                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
-                        Global.crash();
-                    },
-                }
-            };
-        }
+        publish(true, &context) catch |err| {
+            switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                error.NeedAuth => {
+                    Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                    Global.crash();
+                },
+            }
+        };
 
-        Output.prettyln("<green>{s}@{s}<r>", .{
+        Output.prettyln("\n<green> +<r> {s}@{s}", .{
             context.package_name,
             context.package_version,
         });
@@ -491,6 +483,21 @@ pub const PublishCommand = struct {
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
         }
+
+        // continues from `printSummary`
+        Output.pretty(
+            \\<b><blue>Tag<r>: {s}
+            \\<b><blue>Access<r>: {s}
+            \\<b><blue>Registry<r>: {s}
+            \\
+        , .{
+            if (ctx.manager.options.publish_config.tag.len > 0) ctx.manager.options.publish_config.tag else "latest",
+            if (ctx.manager.options.publish_config.access) |access| @tagName(access) else "default",
+            registry.url.href,
+        });
+
+        // dry-run stops here
+        if (ctx.manager.options.dry_run) return;
 
         const publish_req_body = try constructPublishRequestBody(directory_publish, ctx, registry);
 
@@ -716,7 +723,7 @@ pub const PublishCommand = struct {
             const done_url_str = try json.getStringCloned(ctx.allocator, "doneUrl") orelse break :try_web;
             const done_url = URL.parse(done_url_str);
 
-            Output.prettyln("Authenticate your account at (press <b>ENTER<r> to open in browser):\n\n", .{});
+            Output.prettyln("\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n", .{});
 
             const offset = 0;
             const padding = 1;
@@ -834,7 +841,7 @@ pub const PublishCommand = struct {
         }
 
         // classic
-        return prompt(ctx.allocator, "This operation requires a one-time password.\nEnter OTP: ", "") catch |err| {
+        return prompt(ctx.allocator, "\nThis operation requires a one-time password.\nEnter OTP: ", "") catch |err| {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
                 else => {

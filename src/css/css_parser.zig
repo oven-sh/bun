@@ -100,6 +100,8 @@ pub const SelectorError = errors_.SelectorError;
 pub const MinifyErrorKind = errors_.MinifyErrorKind;
 pub const MinifyError = errors_.MinifyError;
 
+pub const ImportConditions = css_rules.import.ImportConditions;
+
 pub const compat = @import("./compat.zig");
 
 pub const fmtPrinterError = errors_.fmtPrinterError;
@@ -2487,6 +2489,9 @@ pub const MinifyOptions = struct {
 };
 
 pub const BundlerStyleSheet = StyleSheet(DefaultAtRule);
+pub const BundlerCssRuleList = CssRuleList(DefaultAtRule);
+pub const BundlerCssRule = CssRule(DefaultAtRule);
+pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(DefaultAtRule);
 
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {

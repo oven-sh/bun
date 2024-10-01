@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 pub const css = @import("../css_parser.zig");
 const Error = css.Error;
 const ArrayList = std.ArrayListUnmanaged;
@@ -16,6 +17,44 @@ const fontprops = css.css_properties.font;
 const LayerName = css.css_rules.layer.LayerName;
 const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
+
+pub const ImportConditions = struct {
+    /// An optional cascade layer name, or `None` for an anonymous layer.
+    layer: ?struct {
+        /// PERF: null pointer optimizaiton, nullable
+        v: ?LayerName,
+    },
+
+    /// An optional `supports()` condition.
+    supports: ?SupportsCondition,
+
+    /// A media query.
+    media: css.MediaList,
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) ImportConditions {
+        return ImportConditions{
+            .layer = if (this.layer) |*l| if (l.v) |layer| .{ .v = layer.deepClone(allocator) } else .{ .v = null } else null,
+            .supports = if (this.supports) |*s| s.deepClone(allocator) else null,
+            .media = this.media.deepClone(allocator),
+        };
+    }
+
+    pub fn layersEql(lhs: *const @This(), rhs: *const @This()) bool {
+        if (lhs.layer) |ll| {
+            if (rhs.layer) |rl| {
+                if (ll.v) |lv| {
+                    if (rl.v) |rv| {
+                        return lv.eql(&rv);
+                    }
+                    return false;
+                }
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+};
 
 /// A [@import](https://drafts.csswg.org/css-cascade/#at-import) rule.
 pub const ImportRule = struct {
@@ -38,6 +77,14 @@ pub const ImportRule = struct {
     loc: Location,
 
     const This = @This();
+
+    pub fn conditionsOwned(this: *const This, allocator: std.mem.Allocator) ImportConditions {
+        return ImportConditions{
+            .layer = if (this.layer) |*l| if (l.v) |layer| .{ .v = layer.deepClone(allocator) } else .{ .v = null } else null,
+            .supports = if (this.supports) |*s| s.deepClone(allocator) else null,
+            .media = this.media.deepClone(allocator),
+        };
+    }
 
     pub fn hasConditions(this: *const This) bool {
         return this.layer != null or this.supports != null or this.media.media_queries.items.len > 0;

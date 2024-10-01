@@ -4357,6 +4357,7 @@ pub const LinkerContext = struct {
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
+                            .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
                         },
                     },
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
@@ -4839,12 +4840,10 @@ pub const LinkerContext = struct {
 
             pub fn visit(
                 visitor: *@This(),
-                len_: usize,
                 source_index: Index,
-                wrapping_conditions: *BabyList(*const bun.css.ImportRule),
+                wrapping_conditions: *BabyList(bun.css.ImportConditions),
                 wrapping_import_records: *BabyList(*const ImportRecord),
             ) void {
-                var len = len_;
 
                 // The CSS specification strangely does not describe what to do when there
                 // is a cycle. So we are left with reverse-engineering the behavior from a
@@ -4865,12 +4864,11 @@ pub const LinkerContext = struct {
                     visitor.temp_allocator,
                     source_index,
                 ) catch bun.outOfMemory();
-                len += 1;
 
                 const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()].?;
                 const top_level_rules = &repr.rules;
 
-                // TODO:
+                // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
                 // Any pre-import layers come first
                 // if len(repr.AST.LayersPreImport) > 0 {
                 // 	order = append(order, cssImportOrder{
@@ -4899,15 +4897,16 @@ pub const LinkerContext = struct {
                             // imported stylesheet subtree is wrapped in all of the conditions
                             if (rule.import.hasConditions()) {
                                 // Fork our state
-                                // var nested_conditions = wrapping_conditions.deepClone(temp_allocator) catch bun.outOfMemory();
-                                // _ = nested_conditions; // autofix
-                                // var nested_import_records = wrapping_import_records.deepClone(temp_allocator) catch bun.outOfMemory();
+                                var nested_conditions = wrapping_conditions.deepClone2(visitor.allocator);
+                                // var nested_import_records = wrapping_import_records.deepClone(visitor.allocator) catch bun.outOfMemory();
                                 // _ = nested_import_records; // autofix
 
                                 // Clone these import conditions and append them to the state
-                                // nested_conditoins.append
+                                nested_conditions.push(visitor.allocator, rule.import.conditionsOwned(visitor.allocator)) catch bun.outOfMemory();
+                                visitor.visit(record.source_index, &nested_conditions, wrapping_import_records);
+                                continue;
                             }
-                            visitor.visit(len, record.source_index, wrapping_conditions, wrapping_import_records);
+                            visitor.visit(record.source_index, wrapping_conditions, wrapping_import_records);
                             continue;
                         }
 
@@ -4933,6 +4932,7 @@ pub const LinkerContext = struct {
                 // Accumulate imports in depth-first postorder
                 visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
                     .kind = .{ .source_index = source_index },
+                    .conditions = wrapping_conditions.*,
                 }) catch bun.outOfMemory();
             }
         };
@@ -4945,11 +4945,11 @@ pub const LinkerContext = struct {
             .css_asts = this.graph.ast.items(.css),
             .all_import_records = this.graph.ast.items(.import_records),
         };
-        var wrapping_conditions: BabyList(*const bun.css.ImportRule) = .{};
+        var wrapping_conditions: BabyList(bun.css.ImportConditions) = .{};
         var wrapping_import_records: BabyList(*const ImportRecord) = .{};
         // Include all files reachable from any entry point
         for (entry_points) |entry_point| {
-            visitor.visit(0, entry_point, &wrapping_conditions, &wrapping_import_records);
+            visitor.visit(entry_point, &wrapping_conditions, &wrapping_import_records);
         }
 
         const order = visitor.order;
@@ -4976,15 +4976,15 @@ pub const LinkerContext = struct {
                             gop.value_ptr.* = BabyList(u32){};
                         }
                         for (gop.value_ptr.slice()) |j| {
-                            _ = j; // autofix
                             // TODO: check conditions are redundant
-                            // if (isConditionalImportRedundant()) {}
-                            order.mut(i).kind = .{
-                                .layers = &.{},
-                            };
-                            continue :next_backward;
+                            if (isConditionalImportRedundant(&entry.conditions, &order.at(j).conditions)) {
+                                order.mut(i).kind = .{
+                                    .layers = &.{},
+                                };
+                                continue :next_backward;
+                            }
                         }
-                        gop.value_ptr.push(temp_allocator, idx.get()) catch bun.outOfMemory();
+                        gop.value_ptr.push(temp_allocator, i) catch bun.outOfMemory();
                     },
                     .external_path => @panic("TODO: this"),
                     .layers => {},
@@ -5001,11 +5001,98 @@ pub const LinkerContext = struct {
         // Finally, merge adjacent "@layer" rules with identical conditions together.
 
         if (bun.Environment.isDebug) {
-            debug("CSS order:\n", .{});
-            // for (
+            std.debug.print("CSS order:\n", .{});
+            // for (order.slice()) |entry| {
+            //     std.debug.print("  {s}\n", .{entry.toString(temp_allocator)});
+            // }
         }
 
         return order;
+    }
+
+    // Given two "@import" rules for the same source index (an earlier one and a
+    // later one), the earlier one is masked by the later one if the later one's
+    // condition list is a prefix of the earlier one's condition list.
+    //
+    // For example:
+    //
+    //	// entry.css
+    //	@import "foo.css" supports(display: flex);
+    //	@import "bar.css" supports(display: flex);
+    //
+    //	// foo.css
+    //	@import "lib.css" screen;
+    //
+    //	// bar.css
+    //	@import "lib.css";
+    //
+    // When we bundle this code we'll get an import order as follows:
+    //
+    //  1. lib.css [supports(display: flex), screen]
+    //  2. foo.css [supports(display: flex)]
+    //  3. lib.css [supports(display: flex)]
+    //  4. bar.css [supports(display: flex)]
+    //  5. entry.css []
+    //
+    // For "lib.css", the entry with the conditions [supports(display: flex)] should
+    // make the entry with the conditions [supports(display: flex), screen] redundant.
+    //
+    // Note that all of this deliberately ignores the existence of "@layer" because
+    // that is handled separately. All of this is only for handling unlayered styles.
+    pub fn isConditionalImportRedundant(earlier: *const BabyList(bun.css.ImportConditions), later: *const BabyList(bun.css.ImportConditions)) bool {
+        if (later.len > earlier.len) return false;
+
+        for (0..later.len) |i| {
+            const a = earlier.at(i);
+            const b = later.at(i);
+
+            // Only compare "@supports" and "@media" if "@layers" is equal
+            if (a.layersEql(b)) {
+                // TODO: supports
+                // TODO: media
+                const same_supports = true;
+                const same_media = true;
+
+                // If the import conditions are exactly equal, then only keep
+                // the later one. The earlier one is redundant. Example:
+                //
+                //   @import "foo.css" layer(abc) supports(display: flex) screen;
+                //   @import "foo.css" layer(abc) supports(display: flex) screen;
+                //
+                // The later one makes the earlier one redundant.
+                if (same_supports and same_media) {
+                    continue;
+                }
+
+                // If the media conditions are exactly equal and the later one
+                // doesn't have any supports conditions, then the later one will
+                // apply in all cases where the earlier one applies. Example:
+                //
+                //   @import "foo.css" layer(abc) supports(display: flex) screen;
+                //   @import "foo.css" layer(abc) screen;
+                //
+                // The later one makes the earlier one redundant.
+                if (same_media and b.supports == null) {
+                    continue;
+                }
+
+                // If the supports conditions are exactly equal and the later one
+                // doesn't have any media conditions, then the later one will
+                // apply in all cases where the earlier one applies. Example:
+                //
+                //   @import "foo.css" layer(abc) supports(display: flex) screen;
+                //   @import "foo.css" layer(abc) supports(display: flex);
+                //
+                // The later one makes the earlier one redundant.
+                if (same_supports and b.media.media_queries.items.len == 0) {
+                    continue;
+                }
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     // JavaScript modules are traversed in depth-first postorder. This is the
@@ -7354,7 +7441,7 @@ pub const LinkerContext = struct {
                 @panic("TODO: ");
             },
             .source_index => |idx| {
-                const css: *const bun.css.BundlerStyleSheet = c.graph.ast.items(.css)[idx.get()].?;
+                const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
                 _ = css.toCssWithWriter(worker.allocator, &buffer_writer, bun.css.PrinterOptions{
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
@@ -7450,13 +7537,12 @@ pub const LinkerContext = struct {
         //     .part_range = &prepare_css_asts.part_range,
         // } };
 
-        prepareCssAstsForChunkImpl(prepare_css_asts.linker, prepare_css_asts.chunk);
+        prepareCssAstsForChunkImpl(prepare_css_asts.linker, prepare_css_asts.chunk, worker.allocator);
     }
 
-    fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk) void {
+    fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.mem.Allocator) void {
         const asts: []?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
         // Prepare CSS asts
-        // TODO:
         // Remove duplicate rules across files. This must be done in serial, not
         // in parallel, and must be done from the last rule to the first rule.
         {
@@ -7473,7 +7559,14 @@ pub const LinkerContext = struct {
                     },
                     .external_path => @panic("TODO: external path"),
                     .source_index => |source_index| {
-                        const ast = asts[source_index.get()].?;
+                        // Multiple imports may refer to the same file/AST, but they
+                        // may wrap or modify the AST in differetn ways. So we need
+                        // to make a shallow copy and be careful not to modify shared
+                        // references.
+                        var ast = ast: {
+                            chunk.content.css.asts[i] = asts[source_index.get()].?.*;
+                            break :ast &chunk.content.css.asts[i];
+                        };
 
                         filter: {
                             // Filter out "@charset", "@import", and leading "@layer" rules
@@ -7493,10 +7586,59 @@ pub const LinkerContext = struct {
                         }
 
                         // TODO: wrapRulesWithConditions
+                        wrapRulesWithConditions(ast, allocator, &entry.conditions, &entry.condition_import_records);
                         // TODO: Remove top-level duplicate rules across files
                     },
                 }
             }
+        }
+    }
+
+    fn wrapRulesWithConditions(
+        ast: *bun.css.BundlerStyleSheet,
+        temp_allocator: std.mem.Allocator,
+        conditions: *const BabyList(bun.css.ImportConditions),
+        condition_import_records: *const BabyList(ImportRecord),
+    ) void {
+        _ = condition_import_records; // autofix
+        var i: usize = conditions.len;
+        while (i > 0) {
+            i -= 1;
+            const item = conditions.at(i);
+
+            // Generate "@layer" wrappers. Note that empty "@layer" rules still have
+            // a side effect (they set the layer order) so they cannot be removed.
+            if (item.layer) |l| {
+                if (l.v) |layer| {
+                    if (ast.rules.v.items.len == 0) {
+                        if (layer.v.items.len == 0) {
+                            // Omit an empty "@layer {}" entirely
+                            continue;
+                        } else {
+                            // Generate "@layer foo;" instead of "@layer foo {}"
+                            ast.rules.v = .{};
+                        }
+                    }
+
+                    ast.rules = brk: {
+                        var new_rules = bun.css.BundlerCssRuleList{};
+                        new_rules.v.append(
+                            temp_allocator,
+                            .{ .layer_block = bun.css.BundlerLayerBlockRule{
+                                .name = layer,
+                                .rules = ast.rules,
+                                .loc = bun.css.Location.dummy(),
+                            } },
+                        ) catch bun.outOfMemory();
+
+                        break :brk new_rules;
+                    };
+                }
+            }
+
+            // TODO: @supports wrappers
+
+            // TODO: @media wrappers
         }
     }
 
@@ -10175,8 +10317,11 @@ pub const LinkerContext = struct {
             c.source_maps.line_offset_tasks.len = 0;
         }
 
+        // Per CSS chunk:
+        // Remove duplicate rules across files. This must be done in serial, not
+        // in parallel, and must be done from the last rule to the first rule.
         if (brk: {
-            // TODO: Have count of chunks with css
+            // TODO: Have count of chunks with css on linker context?
             for (chunks) |*chunk| {
                 if (chunk.content == .css) break :brk true;
             }
@@ -12846,6 +12991,12 @@ pub const Chunk = struct {
 
     pub const CssChunk = struct {
         imports_in_chunk_in_order: BabyList(CssImportOrder) = .{},
+        /// Multiple imports may refer to the same file/stylesheet, but may need to
+        /// wrap them in conditions (e.g. a layer).
+        ///
+        /// When we go through the `prepareCssAstsForChunk()` step, each import will
+        /// create a shallow copy of the file's AST (just dereferencing the pointer).
+        asts: []bun.css.BundlerStyleSheet = &.{},
     };
 
     const CssImportKind = enum {
@@ -12856,7 +13007,7 @@ pub const Chunk = struct {
 
     pub const CssImportOrder = struct {
         // TODO: all these boiz
-        conditions: BabyList(void) = .{},
+        conditions: BabyList(bun.css.ImportConditions) = .{},
         condition_import_records: BabyList(ImportRecord) = .{},
 
         kind: union(enum) {

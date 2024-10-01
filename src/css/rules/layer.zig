@@ -36,6 +36,20 @@ pub const LayerName = struct {
         }, false);
     }
 
+    pub fn deepClone(this: *const LayerName, allocator: std.mem.Allocator) LayerName {
+        return LayerName{
+            .v = this.v.clone(allocator) catch bun.outOfMemory(),
+        };
+    }
+
+    pub fn eql(lhs: *const LayerName, rhs: *const LayerName) bool {
+        if (lhs.v.items.len != rhs.v.items.len) return false;
+        for (lhs.v.items, 0..) |part, i| {
+            if (!bun.strings.eql(part, rhs.v.items[i])) return false;
+        }
+        return true;
+    }
+
     pub fn parse(input: *css.Parser) Result(LayerName) {
         var parts: css.SmallList([]const u8, 1) = .{};
         const ident = switch (input.expectIdent()) {

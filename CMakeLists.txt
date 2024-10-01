@@ -46,4 +46,7 @@ include(BuildBun)
 include(RunClangFormat)
 include(RunClangTidy)
 include(RunZigFormat)
-include(RunPrettier)
+
+if (ENABLE_PRETTIER)
+  include(RunPrettier)
+endif()

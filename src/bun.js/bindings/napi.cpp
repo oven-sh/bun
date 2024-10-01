@@ -2593,9 +2593,15 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
-    JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis());
+    NakedPtr<Exception> returnedException;
+    JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
-    if (throwScope.exception() || value.isEmpty()) {
+    if (returnedException) {
+        throwScope.throwException(globalObject, returnedException);
+        RELEASE_AND_RETURN(throwScope, napi_generic_failure);
+    }
+
+    if (value.isEmpty()) {
         return napi_generic_failure;
     }
 

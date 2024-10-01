@@ -1,9 +1,4 @@
-/*
- * A module id is an unsigned 52-bit numeric hash of the filepath.
- *
- * TODO: how resistant to hash collision is this? if it is not, an alternate approach must be taken.
- */
-type Id = number;
+type Id = string;
 
 interface Config {
   main: Id;
@@ -22,11 +17,19 @@ declare const config: Config;
  * The runtime is bundled for server and client, which influences
  * how hmr connection should be established, as well if there is
  * a window to visually display errors with.
+ * 
+ * TODO: rename this "side" to align with other code
  */
 declare const mode: "client" | "server";
 
-/* What should be `export default`'d */
-declare var server_fetch_function: any;
+/*
+ * This variable becomes the default export. Kit uses this
+ * interface as opposed to a WebSocket connection.
+ */
+declare var server_exports: {
+  handleRequest: (req: any, id: Id) => any,
+  registerUpdate: (modules: any) => void,
+};
 
 /*
  * If you are running a debug build of Bun. These debug builds should provide

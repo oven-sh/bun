@@ -736,7 +736,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto iter1 = JSSetIterator::create(globalObject, set1->structure(), set1, IterationKind::Keys);
+        auto iter1 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
             if (set2->has(globalObject, key1)) {
@@ -745,7 +745,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(globalObject, set2->structure(), set2, IterationKind::Keys);
+            auto iter2 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
@@ -775,7 +775,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto iter1 = JSMapIterator::create(globalObject, map1->structure(), map1, IterationKind::Entries);
+        auto iter1 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {
             JSValue value2 = map2->get(globalObject, key1);
@@ -783,7 +783,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // We couldn't find the key in the second map. This may be a false positive due to
                 // how JSValues are represented in JSC, so we need to fall back to a linear search
                 // to be sure.
-                auto iter2 = JSMapIterator::create(globalObject, map2->structure(), map2, IterationKind::Entries);
+                auto iter2 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
@@ -4212,7 +4212,7 @@ public:
             end = offset;
         }
 
-        if (end == start || start == WTF::notFound) {
+        if (start >= end || start == WTF::notFound) {
             return false;
         }
 
@@ -4394,9 +4394,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     if (except->code == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-
         except->message = Bun::toStringRef(global, message);
-
     } else {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
@@ -4465,42 +4463,44 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
+                if (!stack.isEmpty()) {
 
-                V8StackTraceIterator iterator(stack);
-                const uint8_t frame_count = except->stack.frames_len;
+                    V8StackTraceIterator iterator(stack);
+                    const uint8_t frame_count = except->stack.frames_len;
 
-                except->stack.frames_len = 0;
+                    except->stack.frames_len = 0;
 
-                iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
-                    ASSERT(except->stack.frames_len < frame_count);
-                    auto& current = except->stack.frames_ptr[except->stack.frames_len];
-                    current = {};
+                    iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                        ASSERT(except->stack.frames_len < frame_count);
+                        auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                        current = {};
 
-                    String functionName = frame.functionName.toString();
-                    String sourceURL = frame.sourceURL.toString();
-                    current.function_name = Bun::toStringRef(functionName);
-                    current.source_url = Bun::toStringRef(sourceURL);
-                    current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
-                    current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        String functionName = frame.functionName.toString();
+                        String sourceURL = frame.sourceURL.toString();
+                        current.function_name = Bun::toStringRef(functionName);
+                        current.source_url = Bun::toStringRef(sourceURL);
+                        current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                        current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
-                    current.remapped = true;
+                        current.remapped = true;
 
-                    if (frame.isConstructor) {
-                        current.code_type = ZigStackFrameCodeConstructor;
-                    } else if (frame.isGlobalCode) {
-                        current.code_type = ZigStackFrameCodeGlobal;
+                        if (frame.isConstructor) {
+                            current.code_type = ZigStackFrameCodeConstructor;
+                        } else if (frame.isGlobalCode) {
+                            current.code_type = ZigStackFrameCodeGlobal;
+                        }
+
+                        except->stack.frames_len += 1;
+
+                        stop = except->stack.frames_len >= frame_count;
+                    });
+
+                    if (except->stack.frames_len > 0) {
+                        getFromSourceURL = false;
+                        except->remapped = true;
+                    } else {
+                        except->stack.frames_len = frame_count;
                     }
-
-                    except->stack.frames_len += 1;
-
-                    stop = except->stack.frames_len >= frame_count;
-                });
-
-                if (except->stack.frames_len > 0) {
-                    getFromSourceURL = false;
-                    except->remapped = true;
-                } else {
-                    except->stack.frames_len = frame_count;
                 }
             }
         }
@@ -4787,7 +4787,7 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            fromErrorInstance(exception, global, error, &jscException->stack(), value);
+            fromErrorInstance(exception, global, error, &jscException->stack(), jscException->value());
             return;
         }
     }

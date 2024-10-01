@@ -150,6 +150,7 @@
 #include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
+#include <JavaScriptCore/JSCBytecodeCacheVersion.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -192,6 +193,27 @@ static bool has_loaded_jsc = false;
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
+
+#ifndef BUN_WEBKIT_VERSION
+#ifndef ASSERT_ENABLED
+#warning "BUN_WEBKIT_VERSION is not defined. WebKit's cmakeconfig.h is supposed to define that. If you're building a release build locally, ignore this warning. If you're seeing this warning in CI, please file an issue."
+#endif
+
+#define WEBKIT_BYTECODE_CACHE_HASH_KEY __TIMESTAMP__
+#else
+#define WEBKIT_BYTECODE_CACHE_HASH_KEY BUN_WEBKIT_VERSION
+#endif
+static consteval unsigned getWebKitBytecodeCacheVersion()
+{
+    return WTF::SuperFastHash::computeHash(WEBKIT_BYTECODE_CACHE_HASH_KEY);
+}
+#undef WEBKIT_BYTECODE_CACHE_HASH_KEY
+
+extern "C" unsigned getJSCBytecodeCacheVersion()
+{
+    return getWebKitBytecodeCacheVersion();
+}
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
     // NOLINTBEGIN
@@ -223,6 +245,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::evalMode() = evalMode;
         JSC::Options::usePromiseTryMethod() = true;
         JSC::Options::useRegExpEscape() = true;
+        JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;

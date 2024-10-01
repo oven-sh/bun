@@ -852,7 +852,6 @@ pub fn IncrementalGraph(side: kit.Side) type {
 
             switch (side) {
                 .client => {
-                    bun.assertIsDefaultAllocator(code);
                     if (gop.found_existing) {
                         bun.default_allocator.free(gop.value_ptr.code);
                     }

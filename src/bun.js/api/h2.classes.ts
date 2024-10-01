@@ -9,6 +9,10 @@ export default [
         fn: "request",
         length: 2,
       },
+      setNativeSocket: {
+        fn: "setNativeSocketFromJS",
+        length: 1,
+      },
       ping: {
         fn: "ping",
         length: 0,

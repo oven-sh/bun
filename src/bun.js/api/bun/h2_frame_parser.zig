@@ -760,8 +760,9 @@ pub const H2FrameParser = struct {
                         if (_frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value);
                         _frame.deinit(client.allocator);
                     }
-                    const has_backpressure = client.write(frame.buffer);
+                    const no_backpressure = client.write(frame.buffer);
                     written.* += frame.buffer.len;
+                    log("frame flushed {}", .{frame.buffer.len});
                     client.outboundQueueSize -= 1;
                     client.enqueedDataSize -= frame.buffer.len;
                     if (this.dataFrameQueue.count() == 0) {
@@ -773,11 +774,13 @@ pub const H2FrameParser = struct {
                             }
                             this.cleanQueue();
                             if (this.waitForTrailers) {
-                                this.client.dispatch(.onWantTrailers, this.getIdentifier());
+                                client.dispatch(.onWantTrailers, this.getIdentifier());
                             }
+
+                            client.dispatchWithExtra(.onStreamEnd, this.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(this.state)));
                         }
                     }
-                    return has_backpressure;
+                    return no_backpressure;
                 }
             }
             // empty or cannot send data
@@ -969,7 +972,7 @@ pub const H2FrameParser = struct {
         stream.state = .CLOSED;
         stream.cleanQueue();
         if (rstCode == .NO_ERROR) {
-            this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), .undefined);
+            this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         } else {
             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
@@ -1203,11 +1206,18 @@ pub const H2FrameParser = struct {
     }
 
     fn flushStreamQueue(this: *H2FrameParser) usize {
-        var it = this.streams.iterator();
+        log("flushStreamQueue {}", .{this.outboundQueueSize});
+        // we still need to wait the first ACK before sending the data frames.
+        if (this.pendingBuffer.len > 0) return 0;
         var written: usize = 0;
-        while (it.next()) |*entry| {
-            var stream = entry.value_ptr.*;
-            if (!stream.flushQueue(&written)) break;
+        // try to send as much as we can until we reach backpressure
+        while (this.outboundQueueSize > 0) {
+            var it = this.streams.iterator();
+            while (it.next()) |*entry| {
+                var stream = entry.value_ptr.*;
+                // reach backpressure
+                if (!stream.flushQueue(&written)) return written;
+            }
         }
         return written;
     }
@@ -1503,8 +1513,12 @@ pub const H2FrameParser = struct {
         if (this.remainingLength == 0) {
             this.currentFrame = null;
             if (frame.flags & @intFromEnum(DataFrameFlags.END_STREAM) != 0) {
-                stream.state = .HALF_CLOSED_REMOTE;
-                this.dispatch(.onStreamEnd, stream.getIdentifier());
+                if (stream.state == .HALF_CLOSED_LOCAL) {
+                    stream.state = .CLOSED;
+                } else {
+                    stream.state = .HALF_CLOSED_REMOTE;
+                }
+                this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
             }
         }
 
@@ -1643,8 +1657,8 @@ pub const H2FrameParser = struct {
                 if (stream.state == .HALF_CLOSED_REMOTE) {
                     // no more continuation headers we can call it closed
                     stream.state = .CLOSED;
-                    this.dispatch(.onStreamEnd, stream.getIdentifier());
                 }
+                this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                 stream.isWaitingMoreHeaders = false;
             }
 
@@ -1699,8 +1713,12 @@ pub const H2FrameParser = struct {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
                     // no more continuation headers we can call it closed
-                    stream.state = .CLOSED;
-                    this.dispatch(.onStreamEnd, stream.getIdentifier());
+                    if (stream.state == .HALF_CLOSED_LOCAL) {
+                        stream.state = .CLOSED;
+                    } else {
+                        stream.state = .HALF_CLOSED_REMOTE;
+                    }
+                    this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                     return content.end;
                 }
             }
@@ -1922,6 +1940,7 @@ pub const H2FrameParser = struct {
             _ = this.write(slice);
             // we will only flush one time
             this.pendingBuffer.deinitWithAllocator(this.allocator);
+            _ = this.flushStreamQueue();
         }
     }
 
@@ -2452,13 +2471,15 @@ pub const H2FrameParser = struct {
         var enqueued = false;
         defer if (!enqueued) {
             this.dispatchArbitrary(callback);
-            if (close and stream.waitForTrailers) {
+            if (close) {
                 if (stream.state == .HALF_CLOSED_REMOTE) {
                     stream.state = .CLOSED;
                 } else {
                     stream.state = .HALF_CLOSED_LOCAL;
                 }
-                this.dispatch(.onWantTrailers, stream.getIdentifier());
+                if (stream.waitForTrailers) {
+                    this.dispatch(.onWantTrailers, stream.getIdentifier());
+                }
             }
         };
 
@@ -3220,6 +3241,46 @@ pub const H2FrameParser = struct {
         const self = ctx orelse return;
         const this = bun.cast(*H2FrameParser, self);
         this.detachNativeSocket();
+    }
+
+    pub fn setNativeSocketFromJS(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(1);
+        if (args_list.len < 1) {
+            globalObject.throw("Expected socket argument", .{});
+            return .zero;
+        }
+
+        const socket_js = args_list.ptr[0];
+        if (JSTLSSocket.fromJS(socket_js)) |socket| {
+            log("TLSSocket attached", .{});
+
+            if (socket.native_callbacks.ctx == null) {
+                socket.native_callbacks.onData = H2FrameParser.onNativeRead;
+                socket.native_callbacks.onClose = H2FrameParser.onNativeClose;
+                socket.native_callbacks.onWritable = H2FrameParser.onNativeWritable;
+                socket.native_callbacks.ctx = bun.cast(*anyopaque, this);
+                this.native_socket = .{ .tls = socket };
+            } else {
+                this.native_socket = .{ .tls_writeonly = socket };
+            }
+            // if we started with non native and go to native we now control the backpressure internally
+            this.has_nonnative_backpressure = false;
+        } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
+            log("TCPSocket attached", .{});
+            if (socket.native_callbacks.ctx == null) {
+                socket.native_callbacks.onData = H2FrameParser.onNativeRead;
+                socket.native_callbacks.onClose = H2FrameParser.onNativeClose;
+                socket.native_callbacks.onWritable = H2FrameParser.onNativeWritable;
+                socket.native_callbacks.ctx = bun.cast(*anyopaque, this);
+                this.native_socket = .{ .tcp = socket };
+            } else {
+                this.native_socket = .{ .tcp_writeonly = socket };
+            }
+            // if we started with non native and go to native we now control the backpressure internally
+            this.has_nonnative_backpressure = false;
+        }
+        return .undefined;
     }
 
     pub fn detachNativeSocket(this: *H2FrameParser) void {

@@ -224,7 +224,7 @@ test("adding workspace in workspace edits package.json with correct version (wor
     cmd: [bunExe(), "add", "pkg2@workspace:*"],
     cwd: join(packageDir, "packages", "pkg1"),
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "inherit",
     env,
   });
   const out = await Bun.readableStreamToText(stdout);

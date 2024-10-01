@@ -3431,7 +3431,7 @@ pub const JSGlobalObject = opaque {
                 return 0;
             }
             if (int < min_t or int > max_t) {
-                this.throwRangeError(int, .{ .field_name = field_name, .min = min, .max = max });
+                this.throwRangeError(int, .{ .field_name = field_name, .min = @truncate(min), .max = @truncate(max) });
                 return null;
             }
             return @intCast(int);
@@ -3455,7 +3455,7 @@ pub const JSGlobalObject = opaque {
             return null;
         }
         if (f64_val < min_t or f64_val > max_t) {
-            this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = min, .max = max });
+            this.throwRangeError(f64_val, .{ .field_name = comptime field_name, .min = @truncate(min), .max = @truncate(max) });
             return null;
         }
 

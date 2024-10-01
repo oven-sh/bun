@@ -763,7 +763,7 @@ void populateESMExports(
     bool ignoreESModuleAnnotation)
 {
     auto& vm = globalObject->vm();
-    Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
+    const Identifier& esModuleMarker = builtinNames(vm).__esModulePublicName();
 
     // Bun's intepretation of the "__esModule" annotation:
     //

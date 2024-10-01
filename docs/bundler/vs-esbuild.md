@@ -59,7 +59,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--format`
 - `--format`
-- Bun only supports `"esm"` currently but other module formats are planned. esbuild defaults to `"iife"`.
+- Bun supports `"esm"` and `"cjs"` currently, but more module formats are planned. esbuild defaults to `"iife"`.
 
 ---
 

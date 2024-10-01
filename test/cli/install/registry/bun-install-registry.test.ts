@@ -109,7 +109,6 @@ function registryUrl() {
  * Returns auth token
  */
 async function generateRegistryUser(username: string, password: string): Promise<string> {
-  console.log("GENERATE REGISTRY USER");
   if (users[username]) {
     throw new Error("that user already exists");
   } else users[username] = password;
@@ -131,7 +130,6 @@ async function generateRegistryUser(username: string, password: string): Promise
 
   if (response.ok) {
     const data = await response.json();
-    console.log(`Token: ${data.token}`);
     return data.token;
   } else {
     throw new Error("Failed to create user:", response.statusText);
@@ -535,7 +533,6 @@ export async function publish(
 }
 
 async function authBunfig(user: string) {
-  console.log("AUTH BUNFIG:", user);
   const authToken = await generateRegistryUser(user, user);
   return `
         [install]
@@ -563,7 +560,6 @@ describe("publish", async () => {
     ]);
 
     const { out, err, exitCode } = await publish(env, packageDir);
-    console.log({ out, err });
     expect(err).not.toContain("error:");
     expect(err).not.toContain("warn:");
     expect(exitCode).toBe(0);
@@ -589,7 +585,6 @@ describe("publish", async () => {
     await pack(packageDir, env);
 
     let { out, err, exitCode } = await publish(env, packageDir, "./publish-pkg-2-2.2.2.tgz");
-    console.log({ out, err });
     expect(err).not.toContain("error:");
     expect(err).not.toContain("warn:");
     expect(exitCode).toBe(0);
@@ -605,7 +600,6 @@ describe("publish", async () => {
 
     // now with an absoute path
     ({ out, err, exitCode } = await publish(env, packageDir, join(packageDir, "publish-pkg-2-2.2.2.tgz")));
-    console.log({ out, err });
     expect(err).not.toContain("error:");
     expect(err).not.toContain("warn:");
     expect(exitCode).toBe(0);
@@ -648,6 +642,55 @@ describe("publish", async () => {
     expect(await file(join(packageDir, "node_modules", "publish-pkg-3", "package.json")).json()).toEqual(pkgJson);
   });
 
+  describe("--dry-run", async () => {
+    test("does not publish", async () => {
+      const bunfig = await authBunfig("dryrun");
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "dry-run-1"), { recursive: true, force: true }),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "dry-run-1",
+            version: "1.1.1",
+            dependencies: {
+              "dry-run-1": "1.1.1",
+            },
+          }),
+        ),
+      ]);
+
+      const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
+      expect(exitCode).toBe(0);
+
+      expect(await exists(join(import.meta.dir, "packages", "dry-run-1"))).toBeFalse();
+    });
+    test("does not publish from tarball path", async () => {
+      const bunfig = await authBunfig("dryruntarball");
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "dry-run-2"), { recursive: true, force: true }),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "dry-run-2",
+            version: "2.2.2",
+            dependencies: {
+              "dry-run-2": "2.2.2",
+            },
+          }),
+        ),
+      ]);
+
+      await pack(packageDir, env);
+
+      const { out, err, exitCode } = await publish(env, packageDir, "./dry-run-2-2.2.2.tgz", "--dry-run");
+      expect(exitCode).toBe(0);
+
+      expect(await exists(join(import.meta.dir, "packages", "dry-run-2"))).toBeFalse();
+    });
+  });
+
   describe("lifecycle scripts", async () => {
     const script = `const fs = require("fs");
     fs.writeFileSync(process.argv[2] + ".txt", \`
@@ -685,7 +728,6 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         ]);
 
         const { out, err, exitCode } = await publish(env, packageDir, arg);
-        console.log({ out, err, cwd: packageDir });
         expect(exitCode).toBe(0);
 
         const results = await Promise.all([
@@ -718,7 +760,6 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       ]);
 
       const { out, err, exitCode } = await publish(env, packageDir, "--ignore-scripts");
-      console.log({ out, err });
       expect(exitCode).toBe(0);
 
       const results = await Promise.all([
@@ -787,7 +828,6 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       expect(err).toContain("error: unable to restrict access to unscoped package");
 
       ({ out, err, exitCode } = await publish(env, packageDir, "--access", "public"));
-      console.log({ out, err });
       expect(exitCode).toBe(0);
 
       expect(await exists(join(import.meta.dir, "packages", "publish-pkg-7"))).toBeTrue();
@@ -815,8 +855,13 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         ]);
 
         let { out, err, exitCode } = await publish(env, packageDir);
-        console.log({ out, err });
         expect(exitCode).toBe(0);
+
+        await runBunInstall(env, packageDir);
+
+        expect(await file(join(packageDir, "node_modules", "@secret", "publish-pkg-8", "package.json")).json()).toEqual(
+          pkgJson,
+        );
       });
     }
   });
@@ -838,7 +883,6 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       ]);
 
       let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
-      console.log({ out, err });
       expect(exitCode).toBe(0);
 
       await runBunInstall(env, packageDir);

@@ -534,7 +534,7 @@ export async function runBunPublish(
   return { out, err, exitCode };
 }
 
-describe.only("publish", async () => {
+describe("publish", async () => {
   const authToken = await generateRegistryUser("yolo", "yolo");
   const bunfig = `
         [install]

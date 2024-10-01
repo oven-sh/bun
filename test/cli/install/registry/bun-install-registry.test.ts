@@ -10328,7 +10328,11 @@ describe("outdated", () => {
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
       const out = await Bun.readableStreamToText(stdout);
-      expect(out).toMatchSnapshot();
+      const first = out.slice(0, out.indexOf("\n"));
+      expect(first).toEqual(expect.stringContaining("bun outdated "));
+      expect(first).toEqual(expect.stringContaining("v1."));
+      const rest = out.slice(out.indexOf("\n") + 1);
+      expect(rest).toMatchSnapshot();
     });
   }
   test("in workspace", async () => {
@@ -10417,7 +10421,11 @@ describe("outdated", () => {
 
     const out = await Bun.readableStreamToText(stdout);
     expect(out).toContain("a-dep");
-    expect(out).toMatchSnapshot();
+    const first = out.slice(0, out.indexOf("\n"));
+    expect(first).toEqual(expect.stringContaining("bun outdated "));
+    expect(first).toEqual(expect.stringContaining("v1."));
+    const rest = out.slice(out.indexOf("\n") + 1);
+    expect(rest).toMatchSnapshot();
 
     expect(await exited).toBe(0);
   });

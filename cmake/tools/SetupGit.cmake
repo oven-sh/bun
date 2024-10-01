@@ -11,7 +11,7 @@ if(NOT GIT_PROGRAM)
   return()
 endif()
 
-set(GIT_DIFF_COMMAND ${GIT_PROGRAM} diff --no-color --name-only --diff-filter=AMCR main)
+set(GIT_DIFF_COMMAND ${GIT_PROGRAM} diff --no-color --name-only --diff-filter=AMCR origin/main)
 
 execute_process(
   COMMAND

@@ -343,7 +343,9 @@ Depending on the target, Bun will apply different module resolution rules and op
 
 Specifies the module format to be used in the generated bundles.
 
-Currently the bundler only supports one module format: `"esm"`. Support for `"cjs"` and `"iife"` are planned.
+#### `format: "esm"` - ES Module
+
+Bun defaults to `"esm"`, and provides experimental support for `"cjs"` and `"iife"`.
 
 {% codetabs %}
 
@@ -361,44 +363,31 @@ $ bun build ./index.tsx --outdir ./out --format esm
 
 {% /codetabs %}
 
-<!-- ### `bundling`
+To use ES Module syntax in browsers, set `format` to `"esm"` and make sure your `<script type="module">` tag has `type="module"` set.
 
-Whether to enable bundling.
+#### `format: "cjs"` - CommonJS
 
-{% codetabs group="a" %}
+To build a CommonJS module, set `format` to `"cjs"`. When choosing `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs", target: "node"` can be executed in both Bun and Node.js (assuming the APIs in use are supported by both).
+
+{% codetabs %}
 
 ```ts#JavaScript
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  bundling: true, // default
+  format: "cjs",
 })
 ```
 
 ```bash#CLI
-# bundling is enabled by default
-$ bun build ./index.tsx --outdir ./out
+$ bun build ./index.tsx --outdir ./out --format cjs
 ```
 
 {% /codetabs %}
 
-Set to `false` to disable bundling. Instead, files will be transpiled and individually written to `outdir`.
+#### `format: "iife"` - IIFE
 
-{% codetabs group="a" %}
-
-```ts#JavaScript
-await Bun.build({
-  entrypoints: ['./index.tsx'],
-  outdir: './out',
-  bundling: false,
-})
-```
-
-```bash#CLI
-$ bun build ./index.tsx --outdir ./out --no-bundling
-```
-
-{% /codetabs %} -->
+TODO: document IIFE once we support globalNames.
 
 ### `splitting`
 

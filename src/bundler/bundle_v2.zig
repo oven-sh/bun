@@ -7600,9 +7600,7 @@ pub const LinkerContext = struct {
 
                             if (parent_result_tla_keyword.len > 0) {
                                 tla_pretty_path = input_files[other_source_index].path.pretty;
-                                notes.append(Logger.Data{
-                                    .text = std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory(),
-                                }) catch bun.outOfMemory();
+                                notes.append(Logger.rangeData(&input_files[other_source_index], parent_result_tla_keyword, std.fmt.allocPrint(c.allocator, "The top-level await in {s} is here:", .{tla_pretty_path}) catch bun.outOfMemory())) catch bun.outOfMemory();
                                 break;
                             }
 

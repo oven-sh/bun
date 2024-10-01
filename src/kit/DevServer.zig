@@ -426,7 +426,7 @@ fn theRealBundlingFunction(
         bun.todoPanic(@src(), "support non-server components build", .{});
     }
 
-    var timer = if (debug.isVisible()) std.time.Timer.start() catch null else null;
+    var timer = if (Environment.enable_logs) std.time.Timer.start() catch unreachable;
 
     const bv2 = try BundleV2.init(
         &dev.server_bundler,
@@ -474,13 +474,12 @@ fn theRealBundlingFunction(
     bv2.client_bundler.log.printForLogLevel(Output.errorWriter()) catch {};
 
     dev.generation +%= 1;
-    if (timer) |*t| {
-        comptime assert(Environment.enable_logs);
+    if (Environment.enable_logs) {
         debug.log("Bundle Round {d}: {d} server, {d} client, {d} ms", .{
             dev.generation,
             dev.server_graph.current_incremental_chunk_parts.items.len,
             dev.client_graph.current_incremental_chunk_parts.items.len,
-            @divFloor(t.read(), std.time.ns_per_ms),
+            @divFloor(timer.read(), std.time.ns_per_ms),
         });
     }
 

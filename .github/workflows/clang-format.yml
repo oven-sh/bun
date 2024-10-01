@@ -10,8 +10,6 @@ on:
     paths:
       - ".github/workflows/clang-format.yml"
       - "**.clang-format"
-      - "src/bun.js/bindings/.clang-format"
-      - "packages/bun-uws/.clang-format"
       - "package.json"
       - "scripts/**"
       - "cmake/**"

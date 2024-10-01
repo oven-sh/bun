@@ -544,7 +544,7 @@ async function authBunfig(user: string) {
         `;
 }
 
-describe.only("publish", async () => {
+describe("publish", async () => {
   test("can publish a package then install it", async () => {
     const bunfig = await authBunfig("basic");
     await Promise.all([

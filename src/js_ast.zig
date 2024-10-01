@@ -6909,6 +6909,12 @@ pub const Ast = struct {
     }
 };
 
+pub const TlaCheck = struct {
+    depth: u32 = 0,
+    parent: Index.Int = Index.invalid.get(),
+    import_record_index: Index.Int = Index.invalid.get(),
+};
+
 /// Like Ast but slimmer and for bundling only.
 ///
 /// On Linux, the hottest function in the bundler is:
@@ -6935,6 +6941,8 @@ pub const BundledAst = struct {
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
+    top_level_await_keyword: logger.Range,
+    tla_check: TlaCheck = .{},
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
@@ -7002,6 +7010,7 @@ pub const BundledAst = struct {
             .module_ref = this.module_ref,
             .wrapper_ref = this.wrapper_ref,
             .require_ref = this.require_ref,
+            .top_level_await_keyword = this.top_level_await_keyword,
 
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
@@ -7051,7 +7060,7 @@ pub const BundledAst = struct {
             .module_ref = ast.module_ref,
             .wrapper_ref = ast.wrapper_ref,
             .require_ref = ast.require_ref,
-
+            .top_level_await_keyword = ast.top_level_await_keyword,
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.

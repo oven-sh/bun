@@ -32,6 +32,7 @@ jobs:
     name: clang-format
     runs-on: ubuntu-latest
     steps:
+      - run: apt-get purge clang-format
       - name: Checkout
         uses: actions/checkout@v4
         with:

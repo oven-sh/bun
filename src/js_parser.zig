@@ -18780,6 +18780,10 @@ fn NewParser_(
                     if (strings.eqlComptime(name, "main")) {
                         return p.valueForImportMetaMain(false, target.loc);
                     }
+
+                    if (strings.eqlComptime(name, "require")) {
+                        return p.valueForRequire(target.loc);
+                    }
                 },
                 .e_require_call_target => {
                     if (strings.eqlComptime(name, "main")) {

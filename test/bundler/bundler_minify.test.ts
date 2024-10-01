@@ -443,6 +443,9 @@ describe("bundler", () => {
         capture(!!(require.main !== module)); 
         capture(!!(require.main == module)); 
         capture(!!(require.main != module)); 
+
+        capture(import.meta.require.main === module); 
+        capture(import.meta.require.main !== module); 
       `,
     },
     outfile: "/out.js",
@@ -455,6 +458,8 @@ describe("bundler", () => {
       "import.meta.main",
       "!import.meta.main",
       "import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
       "import.meta.main",
       "!import.meta.main",
       "import.meta.main",

@@ -1870,6 +1870,22 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: `123` },
   });
+  itBundled('edgecase/RebundleImportMetaRequire', {
+    // We don't officially support people manually using import.meta.require,
+    // however it is very easy to handle, and has caused issues when bundles
+    // are fed back into `bun build`. See https://github.com/oven-sh/bun/issues/9416
+    files: {
+      '/entry.js': `
+        console.log(import.meta.require('node:fs'));
+      `,
+    },
+    outfile: 'out.mjs',
+    target: 'node',
+    run: { runtime: 'node' }, // will throw since they do not have import.meta.require
+    onAfterBundle(api) {
+      api.expectFile('/out.mjs').not.toInclude('import.meta.require');
+    },
+  });
   itBundled("edgecase/Latin1StringKeyBrowser", {
     files: {
       "/entry.ts": `

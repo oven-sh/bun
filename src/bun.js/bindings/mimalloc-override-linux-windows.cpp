@@ -11,43 +11,43 @@
 
 extern "C" {
 
-char* strdup(const char* s) { return mi_strdup(s); }
-char* strndup(const char* s, size_t n) { return mi_strndup(s, n); }
-char* realpath(const char* f, char* n) { return mi_realpath(f, n); }
+char* wrap_strdup(const char* s) { return mi_strdup(s); }
+char* wrap_strndup(const char* s, size_t n) { return mi_strndup(s, n); }
+char* wrap_realpath(const char* f, char* n) { return mi_realpath(f, n); }
 
-void* malloc(size_t n) { return mi_malloc(n); }
-void* calloc(size_t n, size_t c) { return mi_calloc(n, c); }
-void* realloc(void* p, size_t n) { return mi_realloc(p, n); }
-void free(void* p) { mi_free(p); }
+void* wrap_malloc(size_t n) { return mi_malloc(n); }
+void* wrap_calloc(size_t n, size_t c) { return mi_calloc(n, c); }
+void* wrap_realloc(void* p, size_t n) { return mi_realloc(p, n); }
+void wrap_free(void* p) { mi_free(p); }
 
-void cfree(void* p) { mi_cfree(p); }
-void* _expand(void* p, size_t newsize) { return mi__expand(p, newsize); }
-size_t _msize(const void* p) { return mi_malloc_size(p); }
-void* recalloc(void* p, size_t newcount, size_t size) { return mi_recalloc(p, newcount, size); }
+void wrap_cfree(void* p) { mi_cfree(p); }
+void* wrap__expand(void* p, size_t newsize) { return mi__expand(p, newsize); }
+size_t wrap__msize(const void* p) { return mi_malloc_size(p); }
+void* wrap_recalloc(void* p, size_t newcount, size_t size) { return mi_recalloc(p, newcount, size); }
 
-size_t malloc_size(const void* p) { return mi_malloc_size(p); }
-size_t malloc_good_size(size_t size) { return mi_malloc_good_size(size); }
-size_t malloc_usable_size(const void* p) { return mi_malloc_usable_size(p); }
+size_t wrap_malloc_size(const void* p) { return mi_malloc_size(p); }
+size_t wrap_malloc_good_size(size_t size) { return mi_malloc_good_size(size); }
+size_t wrap_malloc_usable_size(const void* p) { return mi_malloc_usable_size(p); }
 
-int posix_memalign(void** p, size_t alignment, size_t size) { return mi_posix_memalign(p, alignment, size); }
-void* memalign(size_t alignment, size_t size) { return mi_memalign(alignment, size); }
-void* valloc(size_t size) { return mi_valloc(size); }
-void* pvalloc(size_t size) { return mi_pvalloc(size); }
-void* aligned_alloc(size_t alignment, size_t size) { return mi_aligned_alloc(alignment, size); }
+int wrap_posix_memalign(void** p, size_t alignment, size_t size) { return mi_posix_memalign(p, alignment, size); }
+void* wrap_memalign(size_t alignment, size_t size) { return mi_memalign(alignment, size); }
+void* wrap_valloc(size_t size) { return mi_valloc(size); }
+void* wrap_pvalloc(size_t size) { return mi_pvalloc(size); }
+void* wrap_aligned_alloc(size_t alignment, size_t size) { return mi_aligned_alloc(alignment, size); }
 
-void* reallocarray(void* p, size_t count, size_t size) { return mi_reallocarray(p, count, size); }
-int reallocarr(void* p, size_t count, size_t size) { return mi_reallocarr(p, count, size); }
-void* aligned_recalloc(void* p, size_t newcount, size_t size, size_t alignment) { return mi_aligned_recalloc(p, newcount, size, alignment); }
-void* aligned_offset_recalloc(void* p, size_t newcount, size_t size, size_t alignment, size_t offset) { return mi_aligned_offset_recalloc(p, newcount, size, alignment, offset); }
+void* wrap_reallocarray(void* p, size_t count, size_t size) { return mi_reallocarray(p, count, size); }
+int wrap_reallocarr(void* p, size_t count, size_t size) { return mi_reallocarr(p, count, size); }
+void* wrap_aligned_recalloc(void* p, size_t newcount, size_t size, size_t alignment) { return mi_aligned_recalloc(p, newcount, size, alignment); }
+void* wrap_aligned_offset_recalloc(void* p, size_t newcount, size_t size, size_t alignment, size_t offset) { return mi_aligned_offset_recalloc(p, newcount, size, alignment, offset); }
 
-unsigned short* wcsdup(const unsigned short* s) { return mi_wcsdup(s); }
-unsigned char* mbsdup(const unsigned char* s) { return mi_mbsdup(s); }
-int dupenv_s(char** buf, size_t* size, const char* name) { return mi_dupenv_s(buf, size, name); }
-int wdupenv_s(unsigned short** buf, size_t* size, const unsigned short* name) { return mi_wdupenv_s(buf, size, name); }
+unsigned short* wrap_wcsdup(const unsigned short* s) { return mi_wcsdup(s); }
+unsigned char* wrap_mbsdup(const unsigned char* s) { return mi_mbsdup(s); }
+int wrap_dupenv_s(char** buf, size_t* size, const char* name) { return mi_dupenv_s(buf, size, name); }
+int wrap_wdupenv_s(unsigned short** buf, size_t* size, const unsigned short* name) { return mi_wdupenv_s(buf, size, name); }
 
-void free_size(void* p, size_t size) { mi_free_size(p, size); }
-void free_size_aligned(void* p, size_t size, size_t alignment) { mi_free_size_aligned(p, size, alignment); }
-void free_aligned(void* p, size_t alignment) { mi_free_aligned(p, alignment); }
+void wrap_free_size(void* p, size_t size) { mi_free_size(p, size); }
+void wrap_free_size_aligned(void* p, size_t size, size_t alignment) { mi_free_size_aligned(p, size, alignment); }
+void wrap_free_aligned(void* p, size_t alignment) { mi_free_aligned(p, alignment); }
 }
 
 void* operator new(size_t size) { return mi_new(size); }

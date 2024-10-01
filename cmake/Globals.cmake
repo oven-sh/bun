@@ -256,8 +256,7 @@ function(find_command)
   endif()
 
   list(GET FIND_COMMAND 0 FIND_NAME)
-
-  if(FIND_VERSION AND ${FIND_VERSION_VARIABLE})
+  if(FIND_VERSION)
     optionx(${FIND_VERSION_VARIABLE} STRING "The version of ${FIND_NAME} to find" DEFAULT "${FIND_VERSION}")
 
     function(find_command_version variable exe)

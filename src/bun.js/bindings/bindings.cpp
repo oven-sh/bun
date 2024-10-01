@@ -4643,7 +4643,6 @@ void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
     arg0->finalizeSynchronousJSExecution();
 }
 
-static auto function_string_view = MAKE_STATIC_STRING_IMPL("Function");
 void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
     JSValue value = JSValue::decode(JSValue0);
@@ -4657,7 +4656,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     auto view = WTF::StringView(std::span { ptr, strlen(ptr) });
 
     // Fallback to .name if className is empty
-    if (view.length() == 0 || StringView(String(function_string_view)) == view) {
+    if (view.length() == 0 || view == "Function"_s) {
         JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
         return;
     }
@@ -4665,7 +4664,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     JSObject* obj = value.toObject(arg1);
 
     auto calculated = JSObject::calculatedClassName(obj);
-    if (calculated.length() > 0) {
+    if (calculated.length() > 0 && calculated != "Function"_s) {
         *arg2 = Zig::toZigString(calculated);
         return;
     }

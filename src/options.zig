@@ -657,9 +657,21 @@ pub const Loader = enum(u8) {
     }
 
     pub fn shouldCopyForBundling(this: Loader) bool {
+        if (comptime bun.FeatureFlags.css) {
+            return switch (this) {
+                .file,
+                .css,
+                .napi,
+                .sqlite,
+                .sqlite_embedded,
+                // TODO: loader for reading bytes and creating module or instance
+                .wasm,
+                => true,
+                else => false,
+            };
+        }
         return switch (this) {
             .file,
-            // TODO: CSS
             // .css,
             .napi,
             .sqlite,

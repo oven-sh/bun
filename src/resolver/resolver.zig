@@ -155,7 +155,6 @@ pub const PathPair = struct {
     }
 };
 
-// this is ripped from esbuild, comments included
 pub const SideEffects = enum {
     /// The default value conservatively considers all files to have side effects.
     has_side_effects,
@@ -621,7 +620,7 @@ pub const Resolver = struct {
             .fs = _fs,
             .log = log,
             .extension_order = opts.extension_order.default.default,
-            .care_about_browser_field = opts.target.isWebLike(),
+            .care_about_browser_field = opts.target == .browser,
         };
     }
 
@@ -734,7 +733,7 @@ pub const Resolver = struct {
         // support passing a package.json or path to a package
         const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
-        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator, true)) orelse return error.JSONParseError;
 
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();

@@ -32,6 +32,7 @@
 #include "wtf/text/OrdinalNumber.h"
 
 #include "AsyncContextFrame.h"
+#include "ErrorCode.h"
 
 #include "napi_handle_scope.h"
 
@@ -382,7 +383,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
         JSC::EncodedJSValue exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
@@ -442,24 +443,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     JSValue numberValue = callFrame->argument(0);
 
     if (!numberValue.isNumber()) {
-        throwTypeError(globalObject, throwScope, "The \"mask\" argument must be a number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "mask"_s, "number"_s, numberValue);
     }
 
     if (!numberValue.isAnyInt()) {
-        throwNodeRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, "an integer"_s, numberValue);
     }
 
     double number = numberValue.toNumber(globalObject);
     int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
     if (newUmask < 0 || newUmask > 4294967295) {
-        StringBuilder messageBuilder;
-        messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
-        messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
-        throwNodeRangeError(globalObject, throwScope, messageBuilder.toString());
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, 0, 4294967295, numberValue);
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
@@ -702,82 +697,82 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
 #else
-            signalNameToNumberMap->add(signalNames[0], SIGHUP);
-            signalNameToNumberMap->add(signalNames[1], SIGINT);
-            signalNameToNumberMap->add(signalNames[2], SIGQUIT);
-            signalNameToNumberMap->add(signalNames[3], SIGILL);
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
+        signalNameToNumberMap->add(signalNames[1], SIGINT);
+        signalNameToNumberMap->add(signalNames[2], SIGQUIT);
+        signalNameToNumberMap->add(signalNames[3], SIGILL);
 #ifdef SIGTRAP
-            signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+        signalNameToNumberMap->add(signalNames[4], SIGTRAP);
 #endif
-            signalNameToNumberMap->add(signalNames[5], SIGABRT);
+        signalNameToNumberMap->add(signalNames[5], SIGABRT);
 #ifdef SIGIOT
-            signalNameToNumberMap->add(signalNames[6], SIGIOT);
+        signalNameToNumberMap->add(signalNames[6], SIGIOT);
 #endif
 #ifdef SIGBUS
-            signalNameToNumberMap->add(signalNames[7], SIGBUS);
+        signalNameToNumberMap->add(signalNames[7], SIGBUS);
 #endif
-            signalNameToNumberMap->add(signalNames[8], SIGFPE);
-            signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[8], SIGFPE);
+        signalNameToNumberMap->add(signalNames[9], SIGKILL);
 #ifdef SIGUSR1
-            signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
 #endif
-            signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+        signalNameToNumberMap->add(signalNames[11], SIGSEGV);
 #ifdef SIGUSR2
-            signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+        signalNameToNumberMap->add(signalNames[12], SIGUSR2);
 #endif
 #ifdef SIGPIPE
-            signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+        signalNameToNumberMap->add(signalNames[13], SIGPIPE);
 #endif
 #ifdef SIGALRM
-            signalNameToNumberMap->add(signalNames[14], SIGALRM);
+        signalNameToNumberMap->add(signalNames[14], SIGALRM);
 #endif
-            signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[15], SIGTERM);
 #ifdef SIGCHLD
-            signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+        signalNameToNumberMap->add(signalNames[16], SIGCHLD);
 #endif
 #ifdef SIGCONT
-            signalNameToNumberMap->add(signalNames[17], SIGCONT);
+        signalNameToNumberMap->add(signalNames[17], SIGCONT);
 #endif
 #ifdef SIGSTOP
-            signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+        signalNameToNumberMap->add(signalNames[18], SIGSTOP);
 #endif
 #ifdef SIGTSTP
-            signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+        signalNameToNumberMap->add(signalNames[19], SIGTSTP);
 #endif
 #ifdef SIGTTIN
-            signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+        signalNameToNumberMap->add(signalNames[20], SIGTTIN);
 #endif
 #ifdef SIGTTOU
-            signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+        signalNameToNumberMap->add(signalNames[21], SIGTTOU);
 #endif
 #ifdef SIGURG
-            signalNameToNumberMap->add(signalNames[22], SIGURG);
+        signalNameToNumberMap->add(signalNames[22], SIGURG);
 #endif
 #ifdef SIGXCPU
-            signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+        signalNameToNumberMap->add(signalNames[23], SIGXCPU);
 #endif
 #ifdef SIGXFSZ
-            signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+        signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
 #endif
 #ifdef SIGVTALRM
-            signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+        signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
 #endif
 #ifdef SIGPROF
-            signalNameToNumberMap->add(signalNames[26], SIGPROF);
+        signalNameToNumberMap->add(signalNames[26], SIGPROF);
 #endif
-            signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
 #ifdef SIGIO
-            signalNameToNumberMap->add(signalNames[28], SIGIO);
+        signalNameToNumberMap->add(signalNames[28], SIGIO);
 #endif
 #ifdef SIGINFO
-            signalNameToNumberMap->add(signalNames[29], SIGINFO);
+        signalNameToNumberMap->add(signalNames[29], SIGINFO);
 #endif
 
 #ifndef SIGINFO
-            signalNameToNumberMap->add(signalNames[29], 255);
+        signalNameToNumberMap->add(signalNames[29], 255);
 #endif
 #ifdef SIGSYS
-            signalNameToNumberMap->add(signalNames[30], SIGSYS);
+        signalNameToNumberMap->add(signalNames[30], SIGSYS);
 #endif
 #endif
     });
@@ -2895,11 +2890,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    int pid = callFrame->argument(0).toInt32(globalObject);
+    auto pid_value = callFrame->argument(0);
+    int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (pid < 0) {
-        throwNodeRangeError(globalObject, scope, "pid must be a positive integer"_s);
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "pid"_s, "a positive integer"_s, pid_value);
     }
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
@@ -2912,13 +2907,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
             signal = num;
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            throwNodeRangeError(globalObject, scope, "Unknown signal name"_s);
-            return {};
+            return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
         }
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!signalValue.isUndefinedOrNull()) {
-        throwTypeError(globalObject, scope, "signal must be a string or number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "signal"_s, "string or number"_s, signalValue);
     }
 
     auto global = jsCast<Zig::GlobalObject*>(globalObject);

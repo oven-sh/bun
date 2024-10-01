@@ -380,10 +380,8 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-const BrotliDecoder = JSC.API.BrotliDecoder;
-const BrotliEncoder = JSC.API.BrotliEncoder;
-const ZlibDecoder = JSC.API.ZlibDecoder;
-const ZlibEncoder = JSC.API.ZlibEncoder;
+const NativeZlib = JSC.API.NativeZlib;
+const NativeBrotli = JSC.API.NativeBrotli;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -466,10 +464,8 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    BrotliEncoder,
-    BrotliDecoder,
-    ZlibEncoder,
-    ZlibDecoder,
+    NativeZlib,
+    NativeBrotli,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -484,10 +480,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
-
-    bun.kit.DevServer.BundleTask,
-    bun.kit.DevServer.HotReloadTask,
-
+    // bun.kit.DevServer.HotReloadTask,
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
@@ -1024,19 +1017,19 @@ pub const EventLoop = struct {
                     transform_task.deinit();
                 },
                 @field(Task.Tag, @typeName(HotReloadTask)) => {
-                    var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
-                    transform_task.*.run();
+                    const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.run();
                     transform_task.deinit();
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                    transform_task.*.run();
-                    transform_task.deinit();
-                    // special case: we return
-                    return 0;
-                },
+                // @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
+                //     const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
+                //     transform_task.*.run();
+                //     transform_task.deinit();
+                //     // special case: we return
+                //     return 0;
+                // },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
@@ -1224,20 +1217,12 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
-                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeZlib))) => {
+                    var any: *NativeZlib = task.get(NativeZlib).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
-                    var any: *BrotliDecoder = task.get(BrotliDecoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
-                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
-                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeBrotli))) => {
+                    var any: *NativeBrotli = task.get(NativeBrotli).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
@@ -1257,15 +1242,9 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
-                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
-                },
 
-                else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else {
-                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                    unreachable;
+                else => {
+                    bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
                 },
             }
 
@@ -1714,8 +1693,7 @@ pub const MiniVM = struct {
     }
 
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {
-        _ = this; // autofix
-
+        _ = this;
         @panic("FIXME TODO");
     }
 

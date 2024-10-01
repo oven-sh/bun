@@ -25,9 +25,10 @@ const FSWatcher = bun.JSC.Node.FSWatcher;
 const Event = FSWatcher.Event;
 const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
+const Watcher = GenericWatcher.NewWatcher;
+
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
     main_watcher: *Watcher,
 
@@ -148,6 +149,7 @@ pub const PathWatcherManager = struct {
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
             .main_watcher = try Watcher.init(
+                PathWatcherManager,
                 this,
                 vm.bundler.fs,
                 bun.default_allocator,

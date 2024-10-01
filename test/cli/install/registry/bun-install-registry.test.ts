@@ -189,6 +189,97 @@ registry = http://localhost:${port}/
     await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
   });
 
+  it("works with home config", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+    console.log("home dir", homeDir);
+
+    const ini = /* ini */ `
+  registry=http://localhost:${port}/
+  `;
+
+    await Bun.$`echo ${ini} > ${homeDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`
+      .env({
+        ...process.env,
+        XDG_CONFIG_HOME: `${homeDir}`,
+      })
+      .cwd(packageDir)
+      .throws(true);
+  });
+
+  it("works with two configs", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    console.log("package dir", packageDir);
+    const packageIni = /* ini */ `
+  @types:registry=http://localhost:${port}/
+  `;
+    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
+
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+    console.log("home dir", homeDir);
+    const homeIni = /* ini */ `
+    registry = http://localhost:${port}/
+    `;
+    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
+
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`
+      .env({
+        ...process.env,
+        XDG_CONFIG_HOME: `${homeDir}`,
+      })
+      .cwd(packageDir)
+      .throws(true);
+  });
+
+  it("package config overrides home config", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    console.log("package dir", packageDir);
+    const packageIni = /* ini */ `
+  @types:registry=http://localhost:${port}/
+  `;
+    await Bun.$`echo ${packageIni} > ${packageDir}/.npmrc`;
+
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+    console.log("home dir", homeDir);
+    const homeIni = /* ini */ "@types:registry=https://registry.npmjs.org/";
+    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
+
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`
+      .env({
+        ...process.env,
+        XDG_CONFIG_HOME: `${homeDir}`,
+      })
+      .cwd(packageDir)
+      .throws(true);
+  });
+
   it("default registry from env variable", async () => {
     const ini = /* ini */ `
 registry=\${LOL}

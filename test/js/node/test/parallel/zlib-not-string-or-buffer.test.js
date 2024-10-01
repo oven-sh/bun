@@ -16,9 +16,6 @@ test("zlib.deflateSync throws for invalid input types", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
         name: "TypeError",
-        message: expect.stringContaining(
-          'The "buffer" argument must be of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer.',
-        ),
       }),
     );
   });

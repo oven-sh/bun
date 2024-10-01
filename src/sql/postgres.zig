@@ -3514,13 +3514,13 @@ pub const PostgresSQLConnection = struct {
             }
         }
 
-        // #define pg_hton16(x)		(x)
-        // #define pg_hton32(x)		(x)
-        // #define pg_hton64(x)		(x)
+        // #define pg_hton16(x)        (x)
+        // #define pg_hton32(x)        (x)
+        // #define pg_hton64(x)        (x)
 
-        // #define pg_ntoh16(x)		(x)
-        // #define pg_ntoh32(x)		(x)
-        // #define pg_ntoh64(x)		(x)
+        // #define pg_ntoh16(x)        (x)
+        // #define pg_ntoh32(x)        (x)
+        // #define pg_ntoh64(x)        (x)
 
         fn pg_ntoT(comptime IntSize: usize, i: anytype) std.meta.Int(.unsigned, IntSize) {
             @setRuntimeSafety(false);

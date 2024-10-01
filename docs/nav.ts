@@ -374,6 +374,10 @@ export default {
       description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
     }), // "`Semver`"),
 
+    page("api/color", "Color", {
+      description: `Bun's color function leverages Bun's CSS parser for parsing, normalizing, and converting colors from user input to a variety of output formats.`,
+    }), // "`Color`"),
+
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),
     // page("dev/css", "CSS"),

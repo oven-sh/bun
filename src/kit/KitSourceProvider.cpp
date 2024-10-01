@@ -15,7 +15,7 @@ namespace Kit {
 
 
 extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunString source) {
-  String string = "kit://server/0/index.js"_s;
+  String string = "kit://server"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(KitSourceProvider::create(
     source.toWTFString(),

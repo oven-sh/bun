@@ -27,7 +27,7 @@ extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunSt
 
   JSC::JSString* key = JSC::jsString(global->vm(), string);
   global->moduleLoader()->provideFetch(global, key, sourceCode);
-  
+
   return {
      global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined()),
      key

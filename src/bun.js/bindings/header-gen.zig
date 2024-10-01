@@ -619,9 +619,9 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\//-- GENERATED FILE. Do not edit --
                 \\//
                 \\//   To regenerate this file, run:
-                \\//   
+                \\//
                 \\//      make headers
-                \\// 
+                \\//
                 \\//-- GENERATED FILE. Do not edit --
                 \\
             ) catch unreachable;
@@ -663,9 +663,9 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\//-- GENERATED FILE. Do not edit --
                 \\//
                 \\//   To regenerate this file, run:
-                \\//   
+                \\//
                 \\//      make headers
-                \\// 
+                \\//
                 \\//-- GENERATED FILE. Do not edit --
                 \\
             ) catch unreachable;
@@ -962,16 +962,16 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             generated.writer().print(
                 \\ #include "root.h"
                 \\ #include "headers.h"
-                \\ 
+                \\
                 \\ #include <JavaScriptCore/DOMJITAbstractHeap.h>
                 \\ #include "DOMJITIDLConvert.h"
                 \\ #include "DOMJITIDLType.h"
                 \\ #include "DOMJITIDLTypeFilter.h"
                 \\ #include "DOMJITHelpers.h"
                 \\ #include <JavaScriptCore/DFGAbstractHeap.h>
-                \\ 
+                \\
                 \\ #include "JSDOMConvertBufferSource.h"
-                \\ 
+                \\
                 \\ using namespace JSC;
                 \\ using namespace WebCore;
                 \\

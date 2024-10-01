@@ -14,6 +14,7 @@ import {
   randomPort,
   runBunInstall,
   runBunUpdate,
+  pack,
   tempDirWithFiles,
   tmpdirSync,
   toBeValidBin,
@@ -512,6 +513,216 @@ ${Object.keys(opts)
       expect(stderr).toContain("got an empty string");
     },
   );
+});
+
+export async function runBunPublish(
+  env: any,
+  cwd: string,
+  ...args: string[]
+): Promise<{ out: string; err: string; exitCode: number }> {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "publish", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const out = await Bun.readableStreamToText(stdout);
+  const err = await Bun.readableStreamToText(stderr);
+  const exitCode = await exited;
+  return { out, err, exitCode };
+}
+
+describe.only("publish", async () => {
+  const authToken = await generateRegistryUser("yolo", "yolo");
+  const bunfig = `
+        [install]
+        registry = { url = "http://localhost:${port}/", token = "${authToken}" }
+        `;
+
+  test("can publish a package then install it", async () => {
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-1"), { recursive: true, force: true }),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "publish-pkg-1",
+          version: "1.1.1",
+          dependencies: {
+            "publish-pkg-1": "1.1.1",
+          },
+        }),
+      ),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+
+    const { out, err, exitCode } = await runBunPublish(env, packageDir);
+    console.log({ out, err });
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "node_modules", "publish-pkg-1", "package.json"))).toBeTrue();
+  });
+  test("can publish from a tarball", async () => {
+    const json = {
+      name: "publish-pkg-2",
+      version: "2.2.2",
+      dependencies: {
+        "publish-pkg-2": "2.2.2",
+      },
+    };
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
+      write(join(packageDir, "package.json"), JSON.stringify(json)),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+
+    await pack(packageDir, env);
+
+    let { out, err, exitCode } = await runBunPublish(env, packageDir, "./publish-pkg-2-2.2.2.tgz");
+    console.log({ out, err });
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "node_modules", "publish-pkg-2", "package.json"))).toBeTrue();
+
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
+      rm(join(packageDir, "bun.lockb"), { recursive: true, force: true }),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+
+    // now with an absoute path
+    ({ out, err, exitCode } = await runBunPublish(env, packageDir, join(packageDir, "publish-pkg-2-2.2.2.tgz")));
+    console.log({ out, err });
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
+  });
+
+  test("can publish workspace package", async () => {
+    const pkgJson = {
+      name: "publish-pkg-3",
+      version: "3.3.3",
+      dependencies: {
+        "publish-pkg-3": "3.3.3",
+      },
+    };
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+        }),
+      ),
+      write(join(packageDir, "packages", "publish-pkg-3", "package.json"), JSON.stringify(pkgJson)),
+    ]);
+
+    await runBunPublish(env, join(packageDir, "packages", "publish-pkg-3"));
+
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", "dependencies": { "publish-pkg-3": "3.3.3" } }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    expect(await file(join(packageDir, "node_modules", "publish-pkg-3", "package.json")).json()).toEqual(pkgJson);
+  });
+
+  describe("lifecycle scripts", async () => {
+    const script = `const fs = require("fs");
+    fs.writeFileSync(process.argv[2] + ".txt", \`
+prepublishOnly: \${fs.existsSync("prepublishOnly.txt")}
+publish: \${fs.existsSync("publish.txt")}
+postpublish: \${fs.existsSync("postpublish.txt")}
+prepack: \${fs.existsSync("prepack.txt")}
+prepare: \${fs.existsSync("prepare.txt")}
+postpack: \${fs.existsSync("postpack.txt")}\`)`;
+    const json = {
+      name: "publish-pkg-4",
+      version: "4.4.4",
+      scripts: {
+        // should happen in this order
+        "prepublishOnly": `${bunExe()} script.js prepublishOnly`,
+        "prepack": `${bunExe()} script.js prepack`,
+        "prepare": `${bunExe()} script.js prepare`,
+        "postpack": `${bunExe()} script.js postpack`,
+        "publish": `${bunExe()} script.js publish`,
+        "postpublish": `${bunExe()} script.js postpublish`,
+      },
+      dependencies: {
+        "publish-pkg-4": "4.4.4",
+      },
+    };
+
+    for (const arg of ["", "--dry-run"]) {
+      test(`should run in order${arg ? " (--dry-run)" : ""}`, async () => {
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "publish-pkg-4"), { recursive: true, force: true }),
+          write(join(packageDir, "package.json"), JSON.stringify(json)),
+          write(join(packageDir, "script.js"), script),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+        ]);
+
+        const { out, err, exitCode } = await runBunPublish(env, packageDir, arg);
+        console.log({ out, err, cwd: packageDir });
+
+        const results = await Promise.all([
+          file(join(packageDir, "prepublishOnly.txt")).text(),
+          file(join(packageDir, "prepack.txt")).text(),
+          file(join(packageDir, "prepare.txt")).text(),
+          file(join(packageDir, "postpack.txt")).text(),
+          file(join(packageDir, "publish.txt")).text(),
+          file(join(packageDir, "postpublish.txt")).text(),
+        ]);
+
+        expect(results).toEqual([
+          "\nprepublishOnly: false\npublish: false\npostpublish: false\nprepack: false\nprepare: false\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: false\nprepare: false\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: false\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: true\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: true\npostpack: true",
+          "\nprepublishOnly: true\npublish: true\npostpublish: false\nprepack: true\nprepare: true\npostpack: true",
+        ]);
+      });
+    }
+
+    test("--ignore-scripts", async () => {
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "publish-pkg-5"), { recursive: true, force: true }),
+        write(join(packageDir, "package.json"), JSON.stringify(json)),
+        write(join(packageDir, "script.js"), script),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+      ]);
+
+      const { out, err, exitCode } = await runBunPublish(env, packageDir, "--ignore-scripts");
+      console.log({ out, err });
+      expect(exitCode).toBe(0);
+
+      const results = await Promise.all([
+        exists(join(packageDir, "prepublishOnly.txt")),
+        exists(join(packageDir, "prepack.txt")),
+        exists(join(packageDir, "prepare.txt")),
+        exists(join(packageDir, "postpack.txt")),
+        exists(join(packageDir, "publish.txt")),
+        exists(join(packageDir, "postpublish.txt")),
+      ]);
+
+      expect(results).toEqual([false, false, false, false, false, false]);
+    });
+  });
 });
 
 describe("package.json indentation", async () => {

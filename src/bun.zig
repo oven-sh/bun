@@ -2235,9 +2235,29 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.pos
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    if (comptime !Environment.isWindows) {
-        argv = try std.process.argsAlloc(allocator);
-    } else {
+    if (comptime Environment.isPosix) {
+        // modified `std.process.argsAlloc`
+        // pro: only allocates once
+        // con: finds length of each arg twice
+        var total_bytes: usize = 0;
+        for (std.os.argv) |arg| {
+            total_bytes += @sizeOf([:0]const u8) + std.mem.len(arg) + 1;
+        }
+
+        const buf = try allocator.alignedAlloc(u8, @alignOf([:0]const u8), total_bytes);
+        const args_start = @sizeOf([:0]const u8) * std.os.argv.len;
+
+        argv = std.mem.bytesAsSlice([:0]const u8, buf[0..args_start]);
+
+        var arg_offset = args_start;
+        for (std.os.argv, 0..) |arg, i| {
+            const arg_len = std.mem.len(arg) + 1;
+            const arg_slice = buf[arg_offset..];
+            @memcpy(arg_slice[0..arg_len], arg);
+            argv[i] = arg_slice[0 .. arg_len - 1 :0];
+            arg_offset += arg_len;
+        }
+    } else if (comptime Environment.isWindows) {
         // Zig's implementation of `std.process.argsAlloc()`on Windows platforms
         // is not reliable, specifically the way it splits the command line string.
         //
@@ -2287,6 +2307,8 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         }
 
         argv = out_argv;
+    } else {
+        argv = try std.process.argsAlloc(allocator);
     }
 }
 

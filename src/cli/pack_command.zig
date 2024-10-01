@@ -1149,7 +1149,7 @@ pub const PackCommand = struct {
 
         const postpack_script, const publish_script: ?[]const u8, const postpublish_script: ?[]const u8 = post_scripts: {
             // --ignore-scripts
-            if (!manager.options.do.run_scripts or manager.options.dry_run) break :post_scripts .{ null, null, null };
+            if (!manager.options.do.run_scripts) break :post_scripts .{ null, null, null };
 
             const scripts = json.root.asProperty("scripts") orelse break :post_scripts .{ null, null, null };
             if (scripts.expr.data != .e_object) break :post_scripts .{ null, null, null };
@@ -1355,8 +1355,33 @@ pub const PackCommand = struct {
                 };
             }
 
-            // :(
-            return undefined;
+            if (comptime for_publish) {
+                var dest_buf: bun.PathBuffer = undefined;
+                const abs_tarball_dest, _ = absTarballDestination(
+                    ctx.manager.options.pack_destination,
+                    abs_workspace_path,
+                    package_name,
+                    package_version,
+                    &dest_buf,
+                );
+                return .{
+                    .allocator = ctx.allocator,
+                    .command_ctx = ctx.command_ctx,
+                    .manager = manager,
+                    .package_name = package_name,
+                    .package_version = package_version,
+                    .abs_tarball_path = try ctx.allocator.dupeZ(u8, abs_tarball_dest),
+                    .tarball_bytes = "",
+                    .shasum = undefined,
+                    .integrity = undefined,
+                    .uses_workspaces = false,
+                    .publish_script = publish_script,
+                    .postpublish_script = postpublish_script,
+                    .script_env = this_bundler.env,
+                };
+            }
+
+            return;
         }
 
         const bins = try getPackageBins(ctx.allocator, json.root);

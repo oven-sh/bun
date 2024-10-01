@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, runBunInstall, tmpdirSync } from "harness";
+import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
 import { join } from "path";
 
 var packageDir: string;
@@ -10,30 +10,6 @@ var packageDir: string;
 beforeEach(() => {
   packageDir = tmpdirSync();
 });
-
-async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "pm", "pack", ...args],
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    env,
-  });
-
-  const err = await Bun.readableStreamToText(stderr);
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("warning:");
-  expect(err).not.toContain("failed");
-  expect(err).not.toContain("panic:");
-
-  const out = await Bun.readableStreamToText(stdout);
-
-  const exitCode = await exited;
-  expect(exitCode).toBe(0);
-
-  return { out, err };
-}
 
 async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
   const { stdout, stderr, exited } = spawn({

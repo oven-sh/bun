@@ -63,7 +63,7 @@ pub const PublishCommand = struct {
                 RestrictedUnscopedPackage,
             };
 
-            // Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
+            /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
             pub fn fromTarballPath(
                 ctx: Command.Context,
                 manager: *PackageManager,
@@ -116,7 +116,10 @@ pub const PublishCommand = struct {
 
                     // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
                     if (strings.indexOfAnyT(bun.OSPathChar, pathname, "/\\")) |slash| {
-                        if (strings.indexOfAnyT(bun.OSPathChar, pathname[slash + 1 ..], "/\\") == null) {
+                        const stripped = pathname[slash + 1 ..];
+                        if (stripped.len == 0) continue;
+
+                        if (strings.indexOfAnyT(bun.OSPathChar, stripped, "/\\") == null) {
 
                             // check for package.json, readme.md, ...
                             const filename = pathname[slash + 1 ..];
@@ -209,8 +212,8 @@ pub const PublishCommand = struct {
 
             const FromWorkspaceError = Pack.PackError(true);
 
-            // `bun publish` without a tarball path. Automatically pack the current workspace and get
-            // information required for publishing
+            /// `bun publish` without a tarball path. Automatically pack the current workspace and get
+            /// information required for publishing
             pub fn fromWorkspace(
                 ctx: Command.Context,
                 manager: *PackageManager,
@@ -319,15 +322,22 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
-            publish(false, &context) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => bun.outOfMemory(),
-                    error.NeedAuth => {
-                        Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
-                        Global.crash();
-                    },
-                }
-            };
+            if (!manager.options.dry_run) {
+                publish(false, &context) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.NeedAuth => {
+                            Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
+                            Global.crash();
+                        },
+                    }
+                };
+            }
+
+            Output.prettyln("\n<green>{s}@{s}<r>", .{
+                context.package_name,
+                context.package_version,
+            });
 
             return;
         }
@@ -360,15 +370,69 @@ pub const PublishCommand = struct {
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
-        publish(true, &context) catch |err| {
-            switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
-                error.NeedAuth => {
-                    Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
-                    Global.crash();
-                },
+        if (!manager.options.dry_run) {
+            publish(true, &context) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
+                        Global.crash();
+                    },
+                }
+            };
+        }
+
+        Output.prettyln("\n<green>{s}@{s}<r>", .{
+            context.package_name,
+            context.package_version,
+        });
+
+        if (manager.options.do.run_scripts) {
+            const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"));
+            if (context.publish_script) |publish_script| {
+                _ = Run.runPackageScriptForeground(
+                    context.command_ctx,
+                    context.allocator,
+                    publish_script,
+                    "publish",
+                    abs_workspace_path,
+                    context.script_env,
+                    &.{},
+                    context.manager.options.log_level == .silent,
+                    context.command_ctx.debug.use_system_shell,
+                ) catch |err| {
+                    switch (err) {
+                        error.MissingShell => {
+                            Output.errGeneric("failed to find shell executable to run publish script", .{});
+                            Global.crash();
+                        },
+                        error.OutOfMemory => |oom| return oom,
+                    }
+                };
             }
-        };
+
+            if (context.postpublish_script) |postpublish_script| {
+                _ = Run.runPackageScriptForeground(
+                    context.command_ctx,
+                    context.allocator,
+                    postpublish_script,
+                    "postpublish",
+                    abs_workspace_path,
+                    context.script_env,
+                    &.{},
+                    context.manager.options.log_level == .silent,
+                    context.command_ctx.debug.use_system_shell,
+                ) catch |err| {
+                    switch (err) {
+                        error.MissingShell => {
+                            Output.errGeneric("failed to find shell executable to run postpublish script", .{});
+                            Global.crash();
+                        },
+                        error.OutOfMemory => |oom| return oom,
+                    }
+                };
+            }
+        }
     }
 
     const PublishError = OOM || error{
@@ -511,70 +575,11 @@ pub const PublishCommand = struct {
                     400...std.math.maxInt(@TypeOf(otp_res.status_code)) => {
                         return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, true);
                     },
-                    else => try success(directory_publish, ctx),
+                    else => {},
                 }
             },
-            else => try success(directory_publish, ctx),
+            else => {},
         }
-    }
-
-    fn success(
-        comptime directory_publish: bool,
-        ctx: *const Context(directory_publish),
-    ) OOM!void {
-        if (comptime directory_publish) {
-            if (ctx.manager.options.do.run_scripts) {
-                const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(ctx.manager.original_package_json_path, "package.json"));
-                if (ctx.publish_script) |publish_script| {
-                    _ = Run.runPackageScriptForeground(
-                        ctx.command_ctx,
-                        ctx.allocator,
-                        publish_script,
-                        "publish",
-                        abs_workspace_path,
-                        ctx.script_env,
-                        &.{},
-                        ctx.manager.options.log_level == .silent,
-                        ctx.command_ctx.debug.use_system_shell,
-                    ) catch |err| {
-                        switch (err) {
-                            error.MissingShell => {
-                                Output.errGeneric("failed to find shell executable to run publish script", .{});
-                                Global.crash();
-                            },
-                            error.OutOfMemory => |oom| return oom,
-                        }
-                    };
-                }
-
-                if (ctx.postpublish_script) |postpublish_script| {
-                    _ = Run.runPackageScriptForeground(
-                        ctx.command_ctx,
-                        ctx.allocator,
-                        postpublish_script,
-                        "postpublish",
-                        abs_workspace_path,
-                        ctx.script_env,
-                        &.{},
-                        ctx.manager.options.log_level == .silent,
-                        ctx.command_ctx.debug.use_system_shell,
-                    ) catch |err| {
-                        switch (err) {
-                            error.MissingShell => {
-                                Output.errGeneric("failed to find shell executable to run postpublish script", .{});
-                                Global.crash();
-                            },
-                            error.OutOfMemory => |oom| return oom,
-                        }
-                    };
-                }
-            }
-        }
-
-        Output.prettyln("\n<green>{s}@{s}<r>", .{
-            ctx.package_name,
-            ctx.package_version,
-        });
     }
 
     fn handleResponseErrors(
@@ -599,7 +604,7 @@ pub const PublishCommand = struct {
                     if (success_expr.asBool()) |successful| {
                         if (successful) {
                             // possible to hit this with otp responses
-                            return success(directory_publish, ctx);
+                            return;
                         }
                     }
                 }
@@ -822,7 +827,8 @@ pub const PublishCommand = struct {
             }
 
             if (maybe_json_len != null) {
-                headers.count("content-type", MimeType.json.value);
+                // not using `MimeType.json.value`, verdaccio will fail if it's anything other than `application/json`
+                headers.count("content-type", "application/json");
             }
 
             headers.count("npm-auth-type", npm_auth_type);
@@ -870,7 +876,8 @@ pub const PublishCommand = struct {
             }
 
             if (maybe_json_len != null) {
-                headers.append("content-type", MimeType.json.value);
+                // not using `MimeType.json.value`, verdaccio will fail if it's anything other than `application/json`
+                headers.append("content-type", "application/json");
             }
 
             headers.append("npm-auth-type", npm_auth_type);

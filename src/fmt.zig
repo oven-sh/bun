@@ -126,6 +126,8 @@ pub const RedactedNpmUrlFormatter = struct {
                 continue;
             }
 
+            // TODO: redact password from `https://username:password@registry.com/`
+
             try writer.writeByte(this.url[i]);
             i += 1;
         }

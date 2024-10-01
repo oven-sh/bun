@@ -24,3 +24,9 @@ V1.1.30-canary.37+117e1b388
 ### `(`
 
 Hot-module-reloading patch. The entire payload is UTF-8 Encoded JavaScript Payload.
+
+### `R`
+
+Server-side code has reloaded. Client should either refetch the route or perform a hard reload.
+
+TODO: pass route(s) changed so the client can only update when it matches the route.

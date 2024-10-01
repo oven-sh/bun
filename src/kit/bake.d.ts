@@ -1,4 +1,4 @@
-declare module 'bun' {
+declare module "bun" {
   declare function wipDevServerExpectHugeBreakingChanges(options: Bake.Options): never;
 
   declare namespace Bake {
@@ -6,13 +6,13 @@ declare module 'bun' {
       /**
        * Bun provides built-in support for using React as a framework by
        * passing 'react-server-components' as the framework name.
-       * 
+       *
        * Has external dependencies:
        * ```
        * bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
        * ```
        */
-      framework: Framework | 'react-server-components';
+      framework: Framework | "react-server-components";
 
       /**
        * Route patterns must be statically known.
@@ -22,7 +22,7 @@ declare module 'bun' {
 
       // TODO: many other options
     }
-  
+
     /**
      * A "Framework" in our eyes is simply a set of bundler options that a
      * framework author would set in order to integrate framework code with the
@@ -35,19 +35,19 @@ declare module 'bun' {
        * This file is the true entrypoint of the server application. This module
        * must `export default` a fetch function, which takes a request and the
        * bundled route module, and returns a response. See `ServerEntryPoint`
-       * 
+       *
        * When `serverComponents` is configured, this can access the component
        * manifest using the special 'bun:bake/server' import:
-       * 
+       *
        *     import { serverManifest } from 'bun:bake/server'
        */
       serverEntryPoint: ImportSource;
       /**
        * This file is the true entrypoint of the client application.
-       * 
+       *
        * When `serverComponents` is configured, this can access the component
        * manifest using the special 'bun:bake/client' import:
-       * 
+       *
        *     import { clientManifest } from 'bun:bake/client'
        */
       clientEntryPoint: ImportSource;
@@ -68,7 +68,7 @@ declare module 'bun' {
     }
 
     type BuiltInModule = { code: string } | { path: string };
-  
+
     /**
      * A high-level overview of what server components means exists
      * in the React Docs: https://react.dev/reference/rsc/server-components
@@ -92,10 +92,10 @@ declare module 'bun' {
        * despite running in the same process. This facilitates different aspects
        * of the server and client react runtimes, such as `async` components only
        * being available on the server.
-       * 
+       *
        * To cross from the server graph to the SSR graph, use the bun_bake_graph
        * import attribute:
-       * 
+       *
        *     import * as ReactDOM from 'react-dom/server' with { bun_bake_graph: 'ssr' };
        *
        * Since these models are so subtley different, there is no default value
@@ -123,27 +123,39 @@ declare module 'bun' {
        *         // name the user has given.
        *         "ClientComp",
        *     );
-       * 
+       *
        * Additionally, the bundler will assemble a component manifest to be used
        * during rendering.
        */
       serverRegisterClientReferenceExport: string | undefined;
     }
-  
+
     /** Customize the React Fast Refresh transform. */
     interface ReactFastRefreshOptions {
       /** @default "react-refresh/runtime" */
       importSource: ImportSource | undefined;
     }
-  
+
     /// Will be resolved from the point of view of the framework user's project root
     /// Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
     type ImportSource = string;
-  
+
     interface ServerEntryPoint {
-      /// The framework implementation decides and enforces the shape
-      /// of the route module. Bun passes it as an opaque value.
+      /**
+       * The framework implementation decides and enforces the shape
+       * of the route module. Bun passes it as an opaque value.
+       */
       default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Response;
+    }
+
+    interface ClientEntryPoint {
+      /**
+       * Called when server-side code is changed. This can be used to fetch a
+       * non-html version of the updated page to perform a faster reload.
+       *
+       * Tree-shaken away in production builds.
+       */
+      onServerSideReload?: () => void;
     }
 
     interface RouteMetadata {
@@ -153,13 +165,13 @@ declare module 'bun' {
       scripts: string[];
     }
   }
-  
+
   // declare class Bake {
   //   constructor(options: Bake.Options);
   // }
 }
 
-declare module 'bun:bake/server' {
+declare module "bun:bake/server" {
   // NOTE: The format of these manifests will likely be customizable in the future.
 
   /**
@@ -179,7 +191,7 @@ declare module 'bun:bake/server' {
   declare const actionManifest: never;
 }
 
-declare module 'bun:bake/client' {
+declare module "bun:bake/client" {
   /**
    * Entries in this manifest can be loaded by using dynamic `await import()` or
    * `require`. The bundler currently ensures that all modules are ready.
@@ -189,11 +201,11 @@ declare module 'bun:bake/client' {
 
 declare interface ReactClientManifest {
   [id: string]: {
-    [name: string]: { 
+    [name: string]: {
       /** Valid specifier to import */
-      specifier: string,
+      specifier: string;
       /** Export name */
-      name: string,
+      name: string;
     };
   };
 }
@@ -202,21 +214,21 @@ declare interface ReactServerManifest {
   /**
    * Concatenation of the component file ID and the instance id with '#'
    * Example: 'components/Navbar.tsx#default' (dev) or 'l2#a' (prod/minified)
-   * 
+   *
    * The component file ID and the instance id are both passed to `registerClientReference`
    */
   [combinedComponentId: string]: {
-      /**
-       * The `id` in ReactClientManifest. 
-       * Correlates but is not required to be the filename
-       */
-      id: string;
-      /**
-       * The `name` in ReactServerManifest
-       * Correlates but is not required to be the export name
-       */
-      name: string;
-      /** Currently not implemented; always an empty array */
-      chunks: [];
+    /**
+     * The `id` in ReactClientManifest.
+     * Correlates but is not required to be the filename
+     */
+    id: string;
+    /**
+     * The `name` in ReactServerManifest
+     * Correlates but is not required to be the export name
+     */
+    name: string;
+    /** Currently not implemented; always an empty array */
+    chunks: [];
   };
 }

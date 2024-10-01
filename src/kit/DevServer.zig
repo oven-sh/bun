@@ -167,13 +167,14 @@ pub fn init(options: Options) !*DevServer {
         .bun_watcher = undefined,
     });
 
-    dev.server_graph = .{ .owner = dev };
-    dev.client_graph = .{ .owner = dev };
+    dev.server_graph = IncrementalGraph(.server).initEmpty(dev);
+    dev.client_graph = IncrementalGraph(.client).initEmpty(dev);
 
     const fs = try bun.fs.FileSystem.init(options.cwd);
     dev.bun_watcher = HotReloader.init(dev, fs, options.verbose_watcher, false);
     dev.server_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.client_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.ssr_bundler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
     try dev.initBundler(&dev.server_bundler, .server);
     try dev.initBundler(&dev.client_bundler, .client);
@@ -477,8 +478,8 @@ fn theRealBundlingFunction(
     if (Environment.enable_logs) {
         debug.log("Bundle Round {d}: {d} server, {d} client, {d} ms", .{
             dev.generation,
-            dev.server_graph.current_incremental_chunk_parts.items.len,
-            dev.client_graph.current_incremental_chunk_parts.items.len,
+            dev.server_graph.current_chunk_parts.items.len,
+            dev.client_graph.current_chunk_parts.items.len,
             @divFloor(timer.read(), std.time.ns_per_ms),
         });
     }
@@ -595,16 +596,32 @@ pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Renderer) bool {
 // uws with bundle handlers
 
 fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp: *Response) void {
-    _ = bundle;
-    _ = req;
     const dev = route.dev;
+    _ = bundle;
+
+    // TODO: this does not move the body, reuse memory, and many other things
+    // that server.zig does.
+    const url_bun_string = bun.String.init(req.url());
+    defer url_bun_string.deref();
+
+    const headers = JSC.FetchHeaders.createFromUWS(req);
+    const request_object = JSC.WebCore.Request.init(
+        url_bun_string,
+        headers,
+        dev.vm.initRequestBodyValue(.Null) catch bun.outOfMemory(),
+        bun.http.Method.which(req.method()) orelse .GET,
+    ).new();
+
+    const js_request = request_object.toJS(dev.server_global.js());
+
     const global = dev.server_global.js();
 
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not bundle
 
-    const context = JSValue.createEmptyObject(global, 1);
-    context.put(
+    // TODO: use a custom class for this metadata type + revise the object structure too
+    const meta = JSValue.createEmptyObject(global, 1);
+    meta.put(
         dev.server_global.js(),
         bun.String.static("clientEntryPoint"),
         bun.String.init(route.client_bundled_url).toJS(global),
@@ -614,7 +631,8 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
         global,
         .undefined,
         &.{
-            context,
+            js_request,
+            meta,
             route.module_name_string.?.toJS(dev.server_global.js()),
         },
     ) catch |err| {
@@ -728,24 +746,36 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// be re-materialized (required when pressing Cmd+R after any client update)
 pub fn IncrementalGraph(side: kit.Side) type {
     return struct {
+        // TODO: this can be retrieved via @fieldParentPtr
         owner: *DevServer,
 
-        bundled_files: bun.StringArrayHashMapUnmanaged(File) = .{},
-        stale_files: bun.bit_set.DynamicBitSetUnmanaged = .{},
-
-        server_is_rsc: if (side == .server) bun.bit_set.DynamicBitSetUnmanaged else void =
-            if (side == .server) .{},
-        server_is_ssr: if (side == .server) bun.bit_set.DynamicBitSetUnmanaged else void =
-            if (side == .server) .{},
+        /// Key contents are owned by `default_allocator`
+        bundled_files: bun.StringArrayHashMapUnmanaged(File),
+        /// Track bools for files which are *stale*, meaning
+        /// they should be re-bundled before being used.
+        stale_files: bun.bit_set.DynamicBitSetUnmanaged,
 
         /// Byte length of every file queued for concatenation
-        current_incremental_chunk_len: usize = 0,
-        current_incremental_chunk_parts: std.ArrayListUnmanaged(switch (side) {
+        current_chunk_len: usize = 0,
+        current_chunk_parts: std.ArrayListUnmanaged(switch (side) {
             .client => Index,
-            // these slices do not outlive the bundler, and must be joined
-            // before its arena is deinitialized.
+            // These slices do not outlive the bundler, and must
+            // be joined before its arena is deinitialized.
             .server => []const u8,
-        }) = .{},
+        }),
+
+        pub fn initEmpty(owner: *DevServer) @This() {
+            return .{
+                .owner = owner,
+
+                .bundled_files = .{},
+                .stale_files = .{},
+                // .dependencies = .{},
+
+                .current_chunk_len = 0,
+                .current_chunk_parts = .{},
+            };
+        }
 
         /// An index into `bundled_files` or `stale_files`
         pub const Index = enum(u32) { _ };
@@ -753,15 +783,18 @@ pub fn IncrementalGraph(side: kit.Side) type {
         pub const File = switch (side) {
             // The server's incremental graph does not store previously bundled
             // code because there is only one instance of the server. Instead,
-            // it stores which
-            .server => struct {},
+            // it stores which module graphs it is a part of. This makes sure
+            // that recompilation knows what bundler options to use.
+            .server => packed struct(u8) {
+                is_rsc: bool,
+                is_ssr: bool,
+                is_route: bool,
+
+                unused: enum(u5) { unused = 0 } = .unused,
+            },
             .client => struct {
                 /// allocated by default_allocator
                 code: []const u8,
-                // /// To re-assemble a stale bundle (browser hard-reload), follow this recursively
-                // imports: []Index,
-
-                // routes: u32,
             },
         };
 
@@ -770,7 +803,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
         /// For client, takes ownership of the code slice (must be default allocated)
         ///
         /// For server, the code is temporarily kept in the
-        /// `current_incremental_chunk_parts` array, where it must live until
+        /// `current_chunk_parts` array, where it must live until
         /// takeChunk is called. Then it can be freed.
         pub fn addChunk(
             g: *@This(),
@@ -792,7 +825,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
                 }
             }
 
-            g.current_incremental_chunk_len += code.len;
+            g.current_chunk_len += code.len;
 
             if (g.owner.dump_dir) |dump_dir| {
                 const cwd = g.owner.cwd;
@@ -825,26 +858,22 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     }
                     gop.value_ptr.* = .{
                         .code = code,
-                        // .imports = &.{},
                     };
-                    try g.current_incremental_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
+                    try g.current_chunk_parts.append(default_allocator, @enumFromInt(gop.index));
                 },
                 .server => {
-                    // TODO: Heavily revise this allocation strategy. Right now
-                    // this calls so many re-allocations for no reason. Two
-                    // separate bitsets isnt even good for memory locality.
                     if (!gop.found_existing) {
-                        try g.server_is_ssr.resize(default_allocator, gop.index + 1, false);
-                        try g.server_is_rsc.resize(default_allocator, gop.index + 1, false);
+                        gop.value_ptr.* = .{
+                            .is_rsc = !is_ssr_graph,
+                            .is_ssr = is_ssr_graph,
+                            .is_route = false, // TODO
+                        };
+                    } else if (is_ssr_graph) {
+                        gop.value_ptr.is_ssr = true;
+                    } else {
+                        gop.value_ptr.is_rsc = true;
                     }
-
-                    try g.current_incremental_chunk_parts.append(default_allocator, chunk.code());
-
-                    const bitset = switch (is_ssr_graph) {
-                        true => &g.server_is_ssr,
-                        false => &g.server_is_rsc,
-                    };
-                    bitset.set(gop.index);
+                    try g.current_chunk_parts.append(default_allocator, chunk.code());
                 },
             }
         }
@@ -854,6 +883,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
 
         pub fn invalidate(g: *@This(), paths: []const []const u8, hashes: []const u32, out_paths: *FileLists, file_list_alloc: Allocator) !void {
+            const values = g.bundled_files.values();
             for (paths, hashes) |path, hash| {
                 const ctx: bun.StringArrayHashMapContext.Prehashed = .{
                     .value = hash,
@@ -865,9 +895,10 @@ pub fn IncrementalGraph(side: kit.Side) type {
                 switch (side) {
                     .client => try out_paths.client.append(file_list_alloc, path),
                     .server => {
-                        if (g.server_is_rsc.isSet(index))
+                        const data = &values[index];
+                        if (data.is_rsc)
                             try out_paths.server.append(file_list_alloc, path);
-                        if (g.server_is_ssr.isSet(index))
+                        if (data.is_ssr)
                             try out_paths.ssr.append(file_list_alloc, path);
                     },
                 }
@@ -875,12 +906,12 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
 
         fn reset(g: *@This()) void {
-            g.current_incremental_chunk_len = 0;
-            g.current_incremental_chunk_parts.clearRetainingCapacity();
+            g.current_chunk_len = 0;
+            g.current_chunk_parts.clearRetainingCapacity();
         }
 
         pub fn takeBundle(g: *@This(), kind: ChunkKind) ![]const u8 {
-            if (g.current_incremental_chunk_len == 0) return "";
+            if (g.current_chunk_len == 0) return "";
 
             const runtime = switch (kind) {
                 .initial_response => bun.kit.getHmrRuntime(side),
@@ -944,11 +975,11 @@ pub fn IncrementalGraph(side: kit.Side) type {
             // This function performs one allocation, right here
             var chunk = try std.ArrayListUnmanaged(u8).initCapacity(
                 default_allocator,
-                g.current_incremental_chunk_len + runtime.len + end.len,
+                g.current_chunk_len + runtime.len + end.len,
             );
 
             chunk.appendSliceAssumeCapacity(runtime);
-            for (g.current_incremental_chunk_parts.items) |entry| {
+            for (g.current_chunk_parts.items) |entry| {
                 chunk.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
                     .client => files[@intFromEnum(entry)].code,
@@ -1262,6 +1293,8 @@ pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
 
     defer for (changed_file_paths) |path| default_allocator.free(path);
 
+    debug.log("changed_file_paths: {s}", .{bun.fmt.fmtSlice(changed_file_paths, ", ")});
+
     var files: FileLists = .{
         .client = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
         .server = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
@@ -1293,6 +1326,11 @@ pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
         fail.printToConsole(&dev.routes[0]);
         return;
     };
+
+    // TODO: be more specific with the kinds of files we send events for. this is a hack
+    if (files.server.items.len > 0) {
+        _ = dev.app.publish("*", "R", .binary, true);
+    }
     _ = bundle; // already sent to client
 }
 
@@ -1307,56 +1345,6 @@ pub fn getLoaders(dev: *DevServer) *bun.options.Loader.HashTable {
     // therefore, we must ensure that server and client options
     // use the same loader set.
     return &dev.server_bundler.options.loaders;
-}
-
-/// A data structure to represent two arrays that share a known upper bound.
-/// The "left" array starts at the allocation start, and the "right" array
-/// starts at the allocation end.
-///
-/// An example use-case is having a list of files, but categorizing them
-/// into server/client. The total number of files is known.
-pub fn DualArray(T: type) type {
-    return struct {
-        items: []T,
-        left_end: u32,
-        right_start: u32,
-
-        pub fn initCapacity(allocator: Allocator, cap: usize) !@This() {
-            return .{
-                .items = try allocator.alloc(T, cap),
-                .left_end = 0,
-                .right_start = @intCast(cap),
-            };
-        }
-
-        pub fn deinit(a: @This(), allocator: Allocator) void {
-            allocator.free(a.items);
-        }
-
-        fn hasAny(a: @This()) bool {
-            return a.left_end != 0 or a.right_start != a.items.len;
-        }
-
-        pub fn left(a: @This()) []T {
-            return a.items[0..a.left_end];
-        }
-
-        pub fn right(a: @This()) []T {
-            return a.items[a.right_start..];
-        }
-
-        pub fn appendLeft(a: *@This(), item: T) void {
-            assert(a.left_end < a.right_start);
-            a.items[a.left_end] = item;
-            a.left_end += 1;
-        }
-
-        pub fn appendRight(a: *@This(), item: T) void {
-            assert(a.right_start > a.left_end);
-            a.right_start -= 1;
-            a.items[a.right_start] = item;
-        }
-    };
 }
 
 const std = @import("std");

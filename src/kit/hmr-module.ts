@@ -21,12 +21,9 @@ export const enum LoadModuleType {
  * non-standard properties that are used for implementing hot-module
  * reloading. It is unacceptable to depend on these properties, and
  * it will not be considered a breaking change.
- * 
- * TODO: consider property mangling on this to prevent people
- * depending on the HMR internals
  */
-export class HotModule {
-  exports: any = {};
+export class HotModule<E = any> {
+  exports: E = {} as E;
 
   _state = State.Loading;
   _ext_exports = undefined;
@@ -49,9 +46,7 @@ export class HotModule {
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
     const module = loadModule(specifier, LoadModuleType.UserDynamic);
     const { exports, __esModule } = module;
-    return __esModule
-      ? exports
-      : module._ext_exports ??= { ...exports, default: exports }; 
+    return __esModule ? exports : (module._ext_exports ??= { ...exports, default: exports });
   }
 
   importMeta() {
@@ -62,35 +57,39 @@ export class HotModule {
   declare importBuiltin: (id: string) => any;
 }
 
-if(mode === 'server') {
+if (side === "server") {
   HotModule.prototype.importBuiltin = function (id: string) {
     return import.meta.require(id);
-  }
+  };
 }
-
-
 
 function initImportMeta(m: HotModule): ImportMeta {
   throw new Error("TODO: import meta object");
 }
 
-
-export function loadModule(key: Id, type: LoadModuleType): HotModule {
+/** 
+ * Load a module by ID. Use `type` to specify if the module is supposed to be
+ * present, or is something a user is able to dynamically specify.
+ */
+export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
   let module = registry.get(key);
   if (module) {
     // Preserve failures until they are re-saved.
-    if (module._state == State.Error)
-      throw module._cached_failure;
+    if (module._state == State.Error) throw module._cached_failure;
 
     return module;
   }
   module = new HotModule(key);
   const load = input_graph[key];
   if (!load) {
-    if(type == LoadModuleType.AssertPresent) {
-      throw new Error(`Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`);
+    if (type == LoadModuleType.AssertPresent) {
+      throw new Error(
+        `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun Kit's bundler.`,
+      );
     } else {
-      throw new Error(`Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`);
+      throw new Error(
+        `Failed to resolve dynamic import '${key}'. In Bun Kit, all imports must be statically known at compile time so that the bundler can trace everything.`,
+      );
     }
   }
   try {
@@ -125,19 +124,19 @@ export function replaceModules(modules: any) {
       console.error(err);
     }
   }
-  if (mode === 'client' && refreshRuntime) {
+  if (side === "client" && refreshRuntime) {
     refreshRuntime.performReactRefresh(window);
   }
 }
 
-// {
-//   const runtime = new HotModule(0);
-//   runtime.exports = runtimeHelpers;
-//   runtime.__esModule = true;
-//   registry.set(0, runtime);
-// }
+{
+  const runtime = new HotModule("bun:wrap");
+  runtime.exports = runtimeHelpers;
+  runtime.__esModule = true;
+  registry.set("bun:wrap", runtime);
+}
 
-if(mode === 'client') {
+if (side === "client") {
   const { refresh } = config;
   if (refresh) {
     refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
@@ -147,13 +146,13 @@ if(mode === 'client') {
 
 // TODO: Remove this after `react-server-dom-bun` is uploaded
 globalThis.__webpack_require__ = (id: string) => {
-  if(mode == 'server' && config.separateSSRGraph && !id.startsWith('ssr:')) {
+  if (side == "server" && config.separateSSRGraph && !id.startsWith("ssr:")) {
     return loadModule("ssr:" + id, LoadModuleType.UserDynamic).exports;
   } else {
     return loadModule(id, LoadModuleType.UserDynamic).exports;
   }
-}
+};
 
-runtimeHelpers.__name(HotModule.prototype.importSync, '<HMR runtime> importSync')
-runtimeHelpers.__name(HotModule.prototype.require, '<HMR runtime> require')
-runtimeHelpers.__name(loadModule, '<HMR runtime> loadModule')
+runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
+runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");
+runtimeHelpers.__name(loadModule, "<HMR runtime> loadModule");

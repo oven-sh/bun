@@ -13,9 +13,9 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     KitInitProcessIdentifier();
 
     bun.Output.warn(
-        \\Be advised that Bun Kit is highly experimental, and its API will have
-        \\breaking changes. Join the <magenta>#kit<r> Discord channel to help us find bugs
-        \\and suggest use-cases/features: <blue>https://bun.sh/discord<r>
+        \\Be advised that Bun Bake is highly experimental, and its API
+        \\will have breaking changes. Join the <magenta>#bake<r> Discord
+        \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
         \\
         \\
     , .{});
@@ -364,15 +364,15 @@ pub fn addImportMetaDefines(
 }
 
 pub const server_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initForKitBuiltIn("bun", "kit/server"),
-    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "kit/server"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
+    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.kit_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
-    .path = bun.fs.Path.initForKitBuiltIn("bun", "kit/client"),
-    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "kit/client"),
+    .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
+    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.kit_client_data,
 };

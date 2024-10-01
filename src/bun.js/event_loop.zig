@@ -1023,13 +1023,13 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                // @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                //     const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                //     transform_task.*.run();
-                //     transform_task.deinit();
-                //     // special case: we return
-                //     return 0;
-                // },
+                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
+                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
+                    transform_task.*.run();
+                    transform_task.deinit();
+                    // special case: we return
+                    return 0;
+                },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();

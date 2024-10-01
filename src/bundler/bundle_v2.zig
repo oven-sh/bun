@@ -942,14 +942,14 @@ pub const BundleV2 = struct {
         }
     }
 
-    /// This generates the two asts for 'bun:kit/client' and 'bun:kit/server'. Both are generated
+    /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
     /// at the same time in one pass over the SBC list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If Kit is not being used, do nothing
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:kit/client'", .{});
+        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:bake/client'", .{});
         if (!this.graph.kit_referenced_server_data) return;
 
         const alloc = this.graph.allocator;

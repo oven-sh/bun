@@ -3116,40 +3116,43 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .css => {
-                var import_records = BabyList(ImportRecord){};
-                const source_code = source.contents;
-                const css_ast =
-                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
-                    allocator,
-                    source_code,
-                    bun.css.ParserOptions.default(allocator, bundler.log),
-                    &import_records,
-                )) {
-                    .result => |v| v,
-                    .err => |e| {
-                        bundler.log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{} parsing", .{e}) catch unreachable;
-                        @panic("handle this");
-                    },
-                };
-                const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                return js_ast.BundledAst{
-                    .approximate_newline_count = 0, // TODO: this
-                    .import_records = import_records,
-                    .css = css_ast_heap,
-                    .allocator = bundler.allocator,
-                    .parts = js_ast.Part.List.fromSlice(bundler.allocator, &.{ .{}, .{} }) catch bun.outOfMemory(),
-                };
+                if (comptime bun.FeatureFlags.css) {
+                    var import_records = BabyList(ImportRecord){};
+                    const source_code = source.contents;
+                    const css_ast =
+                        switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
+                        allocator,
+                        source_code,
+                        bun.css.ParserOptions.default(allocator, bundler.log),
+                        &import_records,
+                    )) {
+                        .result => |v| v,
+                        .err => |e| {
+                            bundler.log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{} parsing", .{e}) catch unreachable;
+                            @panic("handle this");
+                        },
+                    };
+                    const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
+                    return js_ast.BundledAst{
+                        .top_level_await_keyword = Logger.Range.None,
+                        .approximate_newline_count = 0, // TODO: this
+                        .import_records = import_records,
+                        .css = css_ast_heap,
+                        // .allocator = bundler.allocator,
+                        .parts = js_ast.Part.List.fromSlice(bundler.allocator, &.{ .{}, .{} }) catch bun.outOfMemory(),
+                    };
+                }
             },
             // TODO: css
-            else => {
-                const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-                const root = Expr.init(E.String, E.String{
-                    .data = unique_key,
-                }, Logger.Loc{ .start = 0 });
-                unique_key_for_additional_file.* = unique_key;
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-            },
+            else => {},
         }
+
+        const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+        const root = Expr.init(E.String, E.String{
+            .data = unique_key,
+        }, Logger.Loc{ .start = 0 });
+        unique_key_for_additional_file.* = unique_key;
+        return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
     }
 
     fn run_(
@@ -4817,13 +4820,65 @@ pub const LinkerContext = struct {
             const key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
             _ = key; // autofix
 
-            if (this.graph.ast.items(.css)[source_index]) |*css| {
-                _ = css; // autofix
-                // Create a chunk for the entry point here to ensure that the chunk is
-                // always generated even if the resulting file is empty
+            if (comptime bun.FeatureFlags.css) {
+                if (this.graph.ast.items(.css)[source_index]) |*css| {
+                    _ = css; // autofix
+                    // Create a chunk for the entry point here to ensure that the chunk is
+                    // always generated even if the resulting file is empty
+                    const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                    // const css_chunk_entry = try js_chunks.getOrPut();
+                    const order = this.findImportedFilesInCSSOrder(temp_allocator, &[_]Index{Index.init(source_index)});
+                    css_chunk_entry.value_ptr.* = .{
+                        .entry_point = .{
+                            .entry_point_id = entry_bit,
+                            .source_index = source_index,
+                            .is_entry_point = true,
+                        },
+                        .entry_bits = entry_bits.*,
+                        .content = .{
+                            .css = .{
+                                .imports_in_chunk_in_order = order,
+                                .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            },
+                        },
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    };
+                    continue;
+                }
+            }
+            // Create a chunk for the entry point here to ensure that the chunk is
+            // always generated even if the resulting file is empty
+            const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+            js_chunk_entry.value_ptr.* = .{
+                .entry_point = .{
+                    .entry_point_id = entry_bit,
+                    .source_index = source_index,
+                    .is_entry_point = true,
+                },
+                .entry_bits = entry_bits.*,
+                .content = .{
+                    .javascript = .{},
+                },
+                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+            };
+
+            // If this JS entry point has an associated CSS entry point, generate it
+            // now. This is essentially done by generating a virtual CSS file that
+            // only contains "@import" statements in the order that the files were
+            // discovered in JS source order, where JS source order is arbitrary but
+            // consistent for dynamic imports. Then we run the CSS import order
+            // algorithm to determine the final CSS file order for the chunk.
+            const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
+            if (css_source_indices.len > 0) {
+                const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
+                var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                for (order.slice()) |entry| {
+                    if (entry.kind == .source_index) {
+                        css_files_wth_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                    }
+                }
                 const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                // const css_chunk_entry = try js_chunks.getOrPut();
-                const order = this.findImportedFilesInCSSOrder(temp_allocator, &[_]Index{Index.init(source_index)});
+                // const css_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
                 css_chunk_entry.value_ptr.* = .{
                     .entry_point = .{
                         .entry_point_id = entry_bit,
@@ -4837,61 +4892,12 @@ pub const LinkerContext = struct {
                             .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
                         },
                     },
+                    .files_with_parts_in_chunk = css_files_wth_parts_in_chunk,
                     .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                 };
-            } else {
-                // Create a chunk for the entry point here to ensure that the chunk is
-                // always generated even if the resulting file is empty
-                const js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                js_chunk_entry.value_ptr.* = .{
-                    .entry_point = .{
-                        .entry_point_id = entry_bit,
-                        .source_index = source_index,
-                        .is_entry_point = true,
-                    },
-                    .entry_bits = entry_bits.*,
-                    .content = .{
-                        .javascript = .{},
-                    },
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                };
-
-                // If this JS entry point has an associated CSS entry point, generate it
-                // now. This is essentially done by generating a virtual CSS file that
-                // only contains "@import" statements in the order that the files were
-                // discovered in JS source order, where JS source order is arbitrary but
-                // consistent for dynamic imports. Then we run the CSS import order
-                // algorithm to determine the final CSS file order for the chunk.
-                const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
-                if (css_source_indices.len > 0) {
-                    const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
-                    var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
-                    for (order.slice()) |entry| {
-                        if (entry.kind == .source_index) {
-                            css_files_wth_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
-                        }
-                    }
-                    const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                    // const css_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                    css_chunk_entry.value_ptr.* = .{
-                        .entry_point = .{
-                            .entry_point_id = entry_bit,
-                            .source_index = source_index,
-                            .is_entry_point = true,
-                        },
-                        .entry_bits = entry_bits.*,
-                        .content = .{
-                            .css = .{
-                                .imports_in_chunk_in_order = order,
-                            },
-                        },
-                        .files_with_parts_in_chunk = css_files_wth_parts_in_chunk,
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                    };
-                }
-
-                js_chunk_entry.value_ptr.content.javascript.has_css_chunk = true;
             }
+
+            js_chunk_entry.value_ptr.content.javascript.has_css_chunk = true;
         }
         var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
 
@@ -5310,6 +5316,7 @@ pub const LinkerContext = struct {
             all_import_records: []const BabyList(ImportRecord),
 
             graph: *LinkerGraph,
+            parse_graph: *Graph,
 
             has_external_import: bool = false,
             visited: BabyList(Index),
@@ -5394,17 +5401,17 @@ pub const LinkerContext = struct {
 
                 // TODO: composes?
 
-                // fmt.Printf("Lookin' at file: %d=%s\n", sourceIndex, c.graph.Files[sourceIndex].InputFile.Source.PrettyPath)
-                // fmt.Printf("  Visit: %v\n", visited)
-                std.debug.print(
-                    "Lookin' at file: {d}={s}\n",
-                    .{ source_index.get(), visitor.graph.bundler_graph.input_files.items(.source)[source_index.get()].path.pretty },
-                );
-                for (visitor.visited.slice()) |idx| {
+                if (comptime bun.Environment.isDebug) {
                     std.debug.print(
-                        "  Visit: {d}\n",
-                        .{idx.get()},
+                        "Lookin' at file: {d}={s}\n",
+                        .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
                     );
+                    for (visitor.visited.slice()) |idx| {
+                        std.debug.print(
+                            "  Visit: {d}\n",
+                            .{idx.get()},
+                        );
+                    }
                 }
                 // Accumulate imports in depth-first postorder
                 visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
@@ -5418,6 +5425,7 @@ pub const LinkerContext = struct {
             .allocator = this.allocator,
             .temp_allocator = temp_allocator,
             .graph = &this.graph,
+            .parse_graph = this.parse_graph,
             .visited = BabyList(Index).initCapacity(temp_allocator, 16) catch bun.outOfMemory(),
             .css_asts = this.graph.ast.items(.css),
             .all_import_records = this.graph.ast.items(.import_records),
@@ -7172,6 +7180,7 @@ pub const LinkerContext = struct {
                                     parts,
                                     import_records,
                                     entry_point_kinds,
+                                    css_reprs,
                                 );
                             },
                             .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
@@ -7189,6 +7198,7 @@ pub const LinkerContext = struct {
                         parts,
                         import_records,
                         entry_point_kinds,
+                        css_reprs,
                     );
                 }
                 if (c.parse_graph.kit_referenced_client_data) {
@@ -7198,6 +7208,7 @@ pub const LinkerContext = struct {
                         parts,
                         import_records,
                         entry_point_kinds,
+                        css_reprs,
                     );
                 }
             };
@@ -7247,6 +7258,7 @@ pub const LinkerContext = struct {
                                     parts,
                                     import_records,
                                     file_entry_bits,
+                                    css_reprs,
                                 );
                             },
                             .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
@@ -8148,7 +8160,8 @@ pub const LinkerContext = struct {
                         // to make a shallow copy and be careful not to modify shared
                         // references.
                         var ast = ast: {
-                            chunk.content.css.asts[i] = asts[source_index.get()].?.*;
+                            const original_stylesheet = asts[source_index.get()].?;
+                            chunk.content.css.asts[i] = original_stylesheet.*;
                             break :ast &chunk.content.css.asts[i];
                         };
 
@@ -11052,53 +11065,55 @@ pub const LinkerContext = struct {
             c.source_maps.line_offset_tasks.len = 0;
         }
 
-        // Per CSS chunk:
-        // Remove duplicate rules across files. This must be done in serial, not
-        // in parallel, and must be done from the last rule to the first rule.
-        if (brk: {
-            // TODO: Have count of chunks with css on linker context?
-            for (chunks) |*chunk| {
-                if (chunk.content == .css) break :brk true;
-            }
-            break :brk false;
-        }) {
-            var wait_group = try c.allocator.create(sync.WaitGroup);
-            wait_group.init();
-            defer {
-                wait_group.deinit();
-                c.allocator.destroy(wait_group);
-            }
-            const total_count = total_count: {
-                var total_count: usize = 0;
+        if (comptime bun.FeatureFlags.css) {
+            // Per CSS chunk:
+            // Remove duplicate rules across files. This must be done in serial, not
+            // in parallel, and must be done from the last rule to the first rule.
+            if (brk: {
+                // TODO: Have count of chunks with css on linker context?
                 for (chunks) |*chunk| {
-                    if (chunk.content == .css) total_count += 1;
+                    if (chunk.content == .css) break :brk true;
                 }
-                break :total_count total_count;
-            };
-
-            debug(" START {d} prepare CSS ast (total count)", .{total_count});
-            defer debug("  DONE {d} prepare CSS ast (total count)", .{total_count});
-
-            var batch = ThreadPoolLib.Batch{};
-            const tasks = c.allocator.alloc(PrepareCssAstTask, total_count) catch bun.outOfMemory();
-            var i: usize = 0;
-            for (chunks) |*chunk| {
-                if (chunk.content == .css) {
-                    tasks[i] = PrepareCssAstTask{
-                        .task = ThreadPoolLib.Task{
-                            .callback = &prepareCssAstsForChunk,
-                        },
-                        .chunk = chunk,
-                        .linker = c,
-                        .wg = wait_group,
-                    };
-                    batch.push(ThreadPoolLib.Batch.from(&tasks[i].task));
-                    i += 1;
+                break :brk false;
+            }) {
+                var wait_group = try c.allocator.create(sync.WaitGroup);
+                wait_group.init();
+                defer {
+                    wait_group.deinit();
+                    c.allocator.destroy(wait_group);
                 }
+                const total_count = total_count: {
+                    var total_count: usize = 0;
+                    for (chunks) |*chunk| {
+                        if (chunk.content == .css) total_count += 1;
+                    }
+                    break :total_count total_count;
+                };
+
+                debug(" START {d} prepare CSS ast (total count)", .{total_count});
+                defer debug("  DONE {d} prepare CSS ast (total count)", .{total_count});
+
+                var batch = ThreadPoolLib.Batch{};
+                const tasks = c.allocator.alloc(PrepareCssAstTask, total_count) catch bun.outOfMemory();
+                var i: usize = 0;
+                for (chunks) |*chunk| {
+                    if (chunk.content == .css) {
+                        tasks[i] = PrepareCssAstTask{
+                            .task = ThreadPoolLib.Task{
+                                .callback = &prepareCssAstsForChunk,
+                            },
+                            .chunk = chunk,
+                            .linker = c,
+                            .wg = wait_group,
+                        };
+                        batch.push(ThreadPoolLib.Batch.from(&tasks[i].task));
+                        i += 1;
+                    }
+                }
+                wait_group.counter = @as(u32, @truncate(total_count));
+                c.parse_graph.pool.pool.schedule(batch);
+                wait_group.wait();
             }
-            wait_group.counter = @as(u32, @truncate(total_count));
-            c.parse_graph.pool.pool.schedule(batch);
-            wait_group.wait();
         }
 
         {
@@ -13743,7 +13758,7 @@ pub const Chunk = struct {
         ///
         /// When we go through the `prepareCssAstsForChunk()` step, each import will
         /// create a shallow copy of the file's AST (just dereferencing the pointer).
-        asts: []bun.css.BundlerStyleSheet = &.{},
+        asts: []bun.css.BundlerStyleSheet,
     };
 
     const CssImportKind = enum {

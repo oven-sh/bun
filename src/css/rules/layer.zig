@@ -73,7 +73,7 @@ pub const LayerName = struct {
                                 .err => |e| return .{ .err = e },
                                 .result => |vvv| vvv,
                             };
-                            if (tok.* == .delim or tok.delim == '.') {
+                            if (tok.* == .delim and tok.delim == '.') {
                                 break :out;
                             }
                             return .{ .err = start_location.newBasicUnexpectedTokenError(tok.*) };

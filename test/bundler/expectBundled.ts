@@ -1579,7 +1579,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
+      opts.snapshotSourceMap ? isDebug ? Infinity : 30_000 : isDebug ? 15_000 : undefined,
     );
   }
   return ref;

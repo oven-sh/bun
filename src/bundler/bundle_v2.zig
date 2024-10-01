@@ -6646,32 +6646,6 @@ pub const LinkerContext = struct {
                     entry_point_kinds,
                 );
             }
-
-            // // When using server components with a separated SSR graph, these
-            // // components are not required to be referenced; The framework may
-            // // use a dynamic import to get a handle to it.
-            // if (c.framework) |fw| if (fw.server_components) |sc| {
-            //     if (sc.separate_ssr_graph) {
-            //         const slice = c.parse_graph.server_component_boundaries.list.slice();
-            //         for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
-            //             switch (use) {
-            //                 .client => {
-            //                     inline for (.{ source_index, ssr_source_index }) |idx| {
-            //                         c.markFileLiveForTreeShaking(
-            //                             idx,
-            //                             side_effects,
-            //                             parts,
-            //                             import_records,
-            //                             entry_point_kinds,
-            //                         );
-            //                     }
-            //                 },
-            //                 .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
-            //                 else => unreachable,
-            //             }
-            //         }
-            //     }
-            // };
         }
 
         {
@@ -6703,29 +6677,6 @@ pub const LinkerContext = struct {
                     import_records,
                     file_entry_bits,
                 );
-
-                // if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
-                //     const slice = c.parse_graph.server_component_boundaries.list.slice();
-                //     for (slice.items(.use_directive), slice.items(.source_index), slice.items(.ssr_source_index)) |use, source_index, ssr_source_index| {
-                //         switch (use) {
-                //             .client => {
-                //                 inline for (.{ source_index, ssr_source_index }) |idx| {
-                //                     c.markFileReachableForCodeSplitting(
-                //                         idx,
-                //                         i,
-                //                         distances,
-                //                         0,
-                //                         parts,
-                //                         import_records,
-                //                         file_entry_bits,
-                //                     );
-                //                 }
-                //             },
-                //             .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
-                //             else => unreachable,
-                //         }
-                //     }
-                // };
             }
         }
     }
@@ -10281,18 +10232,6 @@ pub const LinkerContext = struct {
                         chunk.content.javascript.parts_in_chunk_in_order,
                         chunk.compile_results_for_chunk,
                     ) |part_range, compile_result| {
-                        if (Environment.enable_logs) {
-                            debugPartRanges(
-                                "Part Range for Kit: {s} {s} ({d}..{d})",
-                                .{
-                                    c.parse_graph.input_files.items(.source)[part_range.source_index.get()].path.pretty,
-                                    @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer()),
-                                    part_range.part_index_begin,
-                                    part_range.part_index_end,
-                                },
-                            );
-                        }
-
                         try dev_server.receiveChunk(
                             input_file_sources[part_range.source_index.get()].path.text,
                             targets[part_range.source_index.get()].kitRenderer(),
@@ -13051,6 +12990,7 @@ pub const AstBuilder = struct {
             .char_freq = .{},
             .flags = .{},
             .target = target,
+            .top_level_await_keyword = Logger.Range.None,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else

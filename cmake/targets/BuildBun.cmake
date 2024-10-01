@@ -899,6 +899,36 @@ else()
     -Wl,--wrap=mknodat
     -Wl,--wrap=statx
     -Wl,--wrap=fmod
+    -Wl,--wrap=_expand
+    -Wl,--wrap=_msize
+    -Wl,--wrap=aligned_alloc
+    -Wl,--wrap=aligned_offset_recalloc
+    -Wl,--wrap=aligned_recalloc
+    -Wl,--wrap=calloc
+    -Wl,--wrap=cfree
+    -Wl,--wrap=dupenv_s
+    -Wl,--wrap=free
+    -Wl,--wrap=free_aligned
+    -Wl,--wrap=free_size
+    -Wl,--wrap=free_size_aligned
+    -Wl,--wrap=malloc
+    -Wl,--wrap=malloc_good_size
+    -Wl,--wrap=malloc_size
+    -Wl,--wrap=malloc_usable_size
+    -Wl,--wrap=mbsdup
+    -Wl,--wrap=memalign
+    -Wl,--wrap=posix_memalign
+    -Wl,--wrap=pvalloc
+    -Wl,--wrap=realloc
+    -Wl,--wrap=reallocarr
+    -Wl,--wrap=reallocarray
+    -Wl,--wrap=realpath
+    -Wl,--wrap=recalloc
+    -Wl,--wrap=strdup
+    -Wl,--wrap=strndup
+    -Wl,--wrap=valloc
+    -Wl,--wrap=wcsdup
+    -Wl,--wrap=wdupenv_s
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro

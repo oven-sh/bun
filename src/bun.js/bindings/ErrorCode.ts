@@ -16,7 +16,7 @@ export default [
   ["ERR_HTTP2_INVALID_HEADER_VALUE", TypeError, "TypeError"],
   ["ERR_HTTP2_INVALID_PSEUDOHEADER", TypeError, "TypeError"],
   ["ERR_HTTP2_PING_CANCEL", Error, "Error"],
-
+  ["ERR_HTTP2_STREAM_ERROR", Error, "Error"],
   ["ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", TypeError, "TypeError"],
   ["ERR_INVALID_ARG_TYPE", TypeError, "TypeError"],
   ["ERR_INVALID_ARG_VALUE", TypeError, "TypeError"],

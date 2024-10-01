@@ -519,7 +519,7 @@ pub const PublishCommand = struct {
 
         try print_writer.print("{s}/{s}", .{
             strings.withoutTrailingSlash(registry.url.href),
-            ctx.package_name,
+            bun.fmt.dependencyUrl(ctx.package_name),
         });
         const publish_url = URL.parse(try ctx.allocator.dupe(u8, print_buf.items));
         print_buf.clearRetainingCapacity();

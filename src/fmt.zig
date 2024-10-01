@@ -140,6 +140,27 @@ pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
     };
 }
 
+// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-package-arg/lib/npa.js#L163
+pub const DependencyUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = this.url;
+        while (strings.indexOfChar(remain, '/')) |slash| {
+            try writer.writeAll(remain[0..slash]);
+            try writer.writeAll("%2f");
+            remain = remain[slash + 1 ..];
+        }
+        try writer.writeAll(remain);
+    }
+};
+
+pub fn dependencyUrl(url: string) DependencyUrlFormatter {
+    return .{
+        .url = url,
+    };
+}
+
 const IntegrityFormatStyle = enum {
     short,
     full,

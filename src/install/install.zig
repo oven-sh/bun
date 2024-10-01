@@ -6947,6 +6947,7 @@ pub const PackageManager = struct {
             access: ?Access = null,
             tag: string = "",
             otp: string = "",
+            auth_type: ?AuthType = null,
         };
 
         pub const Access = enum {
@@ -6956,6 +6957,17 @@ pub const PackageManager = struct {
             const map = bun.ComptimeEnumMap(Access);
 
             pub fn fromStr(str: string) ?Access {
+                return map.get(str);
+            }
+        };
+
+        pub const AuthType = enum {
+            legacy,
+            web,
+
+            const map = bun.ComptimeEnumMap(AuthType);
+
+            pub fn fromStr(str: string) ?AuthType {
                 return map.get(str);
             }
         };
@@ -7376,6 +7388,9 @@ pub const PackageManager = struct {
                 }
                 if (cli.publish_config.otp.len > 0) {
                     this.publish_config.otp = cli.publish_config.otp;
+                }
+                if (cli.publish_config.auth_type) |auth_type| {
+                    this.publish_config.auth_type = auth_type;
                 }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
@@ -9282,6 +9297,7 @@ pub const PackageManager = struct {
         clap.parseParam("--access <STR>                         Set access level for scoped packages") catch unreachable,
         clap.parseParam("--tag <STR>                            Tag the release. Default is \"latest\"") catch unreachable,
         clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
+        clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
     });
 
     pub const CommandLineArguments = struct {
@@ -9700,6 +9716,13 @@ pub const PackageManager = struct {
 
                 if (args.option("--otp")) |otp| {
                     cli.publish_config.otp = otp;
+                }
+
+                if (args.option("--auth-type")) |auth_type| {
+                    cli.publish_config.auth_type = Options.AuthType.fromStr(auth_type) orelse {
+                        Output.errGeneric("invalid `auth-type` value: '{s}'", .{auth_type});
+                        Global.crash();
+                    };
                 }
             }
 

@@ -96,9 +96,10 @@ pub const PublishCommand = struct {
                     .result => |res| res,
                 };
 
-                // filter everything but regular files
-                iter.filter.toggleAll();
-                iter.filter.toggle(.file);
+                var unpacked_size: usize = 0;
+                var total_files: usize = 0;
+
+                Output.print("\n", .{});
 
                 while (switch (iter.next()) {
                     .err => |err| {
@@ -107,12 +108,20 @@ pub const PublishCommand = struct {
                     },
                     .result => |res| res,
                 }) |next| {
-                    if (maybe_package_json_contents != null) break;
-
                     const pathname = if (comptime Environment.isWindows)
                         next.entry.pathnameW()
                     else
                         next.entry.pathname();
+
+                    const size = next.entry.size();
+
+                    unpacked_size += @intCast(@max(0, size));
+                    total_files += @intFromBool(next.kind == .file);
+
+                    Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
+                        bun.fmt.fmtOSPath(pathname, .{}),
+                    });
 
                     // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
                     if (strings.indexOfAnyT(bun.OSPathChar, pathname, "/\\")) |slash| {
@@ -166,6 +175,25 @@ pub const PublishCommand = struct {
                         }
                     }
 
+                    if (json.get("publishConfig")) |config| {
+                        if (manager.options.publish_config.tag.len == 0) {
+                            if (try config.getStringCloned(ctx.allocator, "tag")) |tag| {
+                                manager.options.publish_config.tag = tag;
+                            }
+                        }
+
+                        if (manager.options.publish_config.access == null) {
+                            if (try config.getString(ctx.allocator, "access")) |access| {
+                                manager.options.publish_config.access = PackageManager.Options.Access.fromStr(access[0]) orelse {
+                                    Output.errGeneric("invalid `access` value: '{s}'", .{access[0]});
+                                    Global.crash();
+                                };
+                            }
+                        }
+
+                        // maybe otp
+                    }
+
                     const name = try json.getStringCloned(ctx.allocator, "name") orelse return error.MissingPackageName;
                     const is_scoped = try Dependency.isScopedPackageName(name);
 
@@ -181,19 +209,30 @@ pub const PublishCommand = struct {
                     break :package_info .{ name, version };
                 };
 
-                var sha1_digest: sha.SHA1.Digest = undefined;
+                var shasum: sha.SHA1.Digest = undefined;
                 var sha1 = sha.SHA1.init();
                 defer sha1.deinit();
 
                 sha1.update(tarball_bytes);
-                sha1.final(&sha1_digest);
+                sha1.final(&shasum);
 
-                var sha512_digest: sha.SHA512.Digest = undefined;
+                var integrity: sha.SHA512.Digest = undefined;
                 var sha512 = sha.SHA512.init();
                 defer sha512.deinit();
 
                 sha512.update(tarball_bytes);
-                sha512.final(&sha512_digest);
+                sha512.final(&integrity);
+
+                Pack.Context.printSummary(
+                    .{
+                        .total_files = total_files,
+                        .unpacked_size = unpacked_size,
+                        .packed_size = tarball_bytes.len,
+                    },
+                    shasum,
+                    integrity,
+                    manager.options.log_level,
+                );
 
                 return .{
                     .manager = manager,
@@ -202,8 +241,8 @@ pub const PublishCommand = struct {
                     .package_version = package_version,
                     .abs_tarball_path = try ctx.allocator.dupeZ(u8, abs_tarball_path),
                     .tarball_bytes = tarball_bytes,
-                    .shasum = sha1_digest,
-                    .integrity = sha512_digest,
+                    .shasum = shasum,
+                    .integrity = integrity,
                     .uses_workspaces = false,
                     .command_ctx = ctx,
                     .script_env = {},
@@ -322,19 +361,21 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
+            Output.print("\n", .{});
+
             if (!manager.options.dry_run) {
                 publish(false, &context) catch |err| {
                     switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
                         error.NeedAuth => {
-                            Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
+                            Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                             Global.crash();
                         },
                     }
                 };
             }
 
-            Output.prettyln("\n<green>{s}@{s}<r>", .{
+            Output.prettyln("<green>{s}@{s}<r>", .{
                 context.package_name,
                 context.package_version,
             });
@@ -367,6 +408,8 @@ pub const PublishCommand = struct {
             Global.crash();
         };
 
+        Output.print("\n", .{});
+
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
@@ -375,14 +418,14 @@ pub const PublishCommand = struct {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.NeedAuth => {
-                        Output.errGeneric("missing authentication (run <cyan>`npm login`<r>)", .{});
+                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                         Global.crash();
                     },
                 }
             };
         }
 
-        Output.prettyln("\n<green>{s}@{s}<r>", .{
+        Output.prettyln("<green>{s}@{s}<r>", .{
             context.package_name,
             context.package_version,
         });
@@ -462,6 +505,7 @@ pub const PublishCommand = struct {
             publish_req_body.len,
             if (ctx.manager.options.publish_config.otp.len > 0) ctx.manager.options.publish_config.otp else null,
             ctx.uses_workspaces,
+            ctx.manager.options.publish_config.auth_type,
         );
 
         var response_buf = try MutableString.init(ctx.allocator, 1024);
@@ -544,6 +588,7 @@ pub const PublishCommand = struct {
                     publish_req_body.len,
                     otp,
                     ctx.uses_workspaces,
+                    ctx.manager.options.publish_config.auth_type,
                 );
 
                 response_buf.reset();
@@ -614,12 +659,12 @@ pub const PublishCommand = struct {
             break :message @"error";
         };
 
-        Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n{s}{s}", .{
+        Output.prettyErrorln("<red>{d}<r>{s}{s}: {s}\n{s}{s}", .{
             res.status_code,
             if (res.status.len > 0) " " else "",
             res.status,
             bun.fmt.redactedNpmUrl(req.url.href),
-            if (message != null) " - " else "",
+            if (message != null) "\n - " else "",
             message orelse "",
         });
         Global.crash();
@@ -671,7 +716,7 @@ pub const PublishCommand = struct {
             const done_url_str = try json.getStringCloned(ctx.allocator, "doneUrl") orelse break :try_web;
             const done_url = URL.parse(done_url_str);
 
-            Output.prettyln("\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n\n", .{});
+            Output.prettyln("Authenticate your account at (press <b>ENTER<r> to open in browser):\n\n", .{});
 
             const offset = 0;
             const padding = 1;
@@ -716,6 +761,7 @@ pub const PublishCommand = struct {
                 null,
                 null,
                 ctx.uses_workspaces,
+                ctx.manager.options.publish_config.auth_type,
             );
 
             while (true) {
@@ -806,10 +852,14 @@ pub const PublishCommand = struct {
         maybe_json_len: ?usize,
         maybe_otp: ?[]const u8,
         uses_workspaces: bool,
+        auth_type: ?PackageManager.Options.AuthType,
     ) OOM!http.HeaderBuilder {
         var print_writer = print_buf.writer(allocator);
         var headers: http.HeaderBuilder = .{};
-        const npm_auth_type = if (maybe_otp == null) "web" else "legacy";
+        const npm_auth_type = if (maybe_otp == null)
+            if (auth_type) |auth| @tagName(auth) else "web"
+        else
+            "legacy";
         const ci_name = bun.detectCI();
 
         {

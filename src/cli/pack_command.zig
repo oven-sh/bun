@@ -51,23 +51,24 @@ pub const PackCommand = struct {
 
         bundled_deps: std.ArrayListUnmanaged(BundledDep) = .{},
 
-        stats: struct {
+        stats: Stats = .{},
+
+        const Stats = struct {
             unpacked_size: usize = 0,
             total_files: usize = 0,
             ignored_files: usize = 0,
             ignored_directories: usize = 0,
             packed_size: usize = 0,
             bundled_deps: usize = 0,
-        } = .{},
+        };
 
         pub fn printSummary(
-            this: *const Context,
+            stats: Stats,
             maybe_shasum: ?[sha.SHA1.digest]u8,
             maybe_integrity: ?[sha.SHA512.digest]u8,
-            comptime log_level: LogLevel,
+            log_level: LogLevel,
         ) void {
-            if (comptime log_level != .silent) {
-                const stats = this.stats;
+            if (log_level != .silent) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{bun.fmt.bytesToHex(shasum, .lower)});
@@ -1099,6 +1100,26 @@ pub const PackCommand = struct {
             .entry => |entry| entry,
         };
 
+        if (comptime for_publish) {
+            if (json.root.get("publishConfig")) |config| {
+                if (manager.options.publish_config.tag.len == 0) {
+                    if (try config.getStringCloned(ctx.allocator, "tag")) |tag| {
+                        manager.options.publish_config.tag = tag;
+                    }
+                }
+                if (manager.options.publish_config.access == null) {
+                    if (try config.getString(ctx.allocator, "access")) |access| {
+                        manager.options.publish_config.access = PackageManager.Options.Access.fromStr(access[0]) orelse {
+                            Output.errGeneric("invalid `access` value: '{s}'", .{access[0]});
+                            Global.crash();
+                        };
+                    }
+                }
+            }
+
+            // maybe otp
+        }
+
         const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
         const package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
         if (comptime for_publish) {
@@ -1331,7 +1352,7 @@ pub const PackCommand = struct {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
 
-            ctx.printSummary(null, null, log_level);
+            Context.printSummary(ctx.stats, null, null, log_level);
 
             if (postpack_script) |postpack_script_str| {
                 _ = RunCommand.runPackageScriptForeground(
@@ -1648,7 +1669,7 @@ pub const PackCommand = struct {
             }
         }
 
-        ctx.printSummary(shasum, integrity, log_level);
+        Context.printSummary(ctx.stats, shasum, integrity, log_level);
 
         if (comptime for_publish) {
             Output.flush();

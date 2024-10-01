@@ -75,6 +75,11 @@ packages:
     publish: $authenticated
     unpublish: $authenticated
 
+  "@secret/*":
+    access: $authenticated
+    publish: $authenticated
+    unpublish: $authenticated
+
   "@*/*":
     # scoped packages
     access: $all

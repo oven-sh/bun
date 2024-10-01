@@ -7,6 +7,8 @@ find_command(
     LLVM_VERSION
   COMMAND
     clang-format
+  VERSION
+    ${LLVM_VERSION}
   REQUIRED
     OFF
 )

@@ -269,9 +269,10 @@ function(find_command)
   endif()
 
   list(GET FIND_COMMAND 0 FIND_NAME)
-  optionx(${FIND_VERSION_VARIABLE} STRING "The version of ${FIND_NAME} to find" DEFAULT "${FIND_VERSION}")
 
-  if(${FIND_VERSION_VARIABLE})
+  if(FIND_VERSION AND ${FIND_VERSION_VARIABLE})
+    optionx(${FIND_VERSION_VARIABLE} STRING "The version of ${FIND_NAME} to find" DEFAULT "${FIND_VERSION}")
+
     function(find_command_version variable exe)
       set(${variable} OFF PARENT_SCOPE)
 
@@ -286,6 +287,7 @@ function(find_command)
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
       )
 
       if(NOT result EQUAL 0)

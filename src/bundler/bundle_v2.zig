@@ -7428,7 +7428,7 @@ pub const LinkerContext = struct {
         switch (css_import.kind) {
             .layers => |layers| {
                 if (layers.len > 0) {
-                    @panic("TODO: layers");
+                    @panic("TODO: layer only import");
                 }
                 return CompileResult{
                     .css = .{
@@ -13006,8 +13006,8 @@ pub const Chunk = struct {
     };
 
     pub const CssImportOrder = struct {
-        // TODO: all these boiz
         conditions: BabyList(bun.css.ImportConditions) = .{},
+        // TODO: import records
         condition_import_records: BabyList(ImportRecord) = .{},
 
         kind: union(enum) {

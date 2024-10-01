@@ -75,6 +75,8 @@ extern "C" int kill(int pid, int sig)
 __asm__(".symver cosf,cosf@GLIBC_2.2.5");
 __asm__(".symver exp,exp@GLIBC_2.2.5");
 __asm__(".symver expf,expf@GLIBC_2.2.5");
+__asm__(".symver fcntl,fcntl@GLIBC_2.2.5");
+__asm__(".symver fcntl64,fcntl64@GLIBC_2.2.5");
 __asm__(".symver fmod,fmod@GLIBC_2.2.5");
 __asm__(".symver fmodf,fmodf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
@@ -86,12 +88,12 @@ __asm__(".symver pow,pow@GLIBC_2.2.5");
 __asm__(".symver sincosf,sincosf@GLIBC_2.2.5");
 __asm__(".symver sinf,sinf@GLIBC_2.2.5");
 __asm__(".symver tanf,tanf@GLIBC_2.2.5");
-__asm__(".symver fcntl,fcntl@GLIBC_2.2.5");
-__asm__(".symver fcntl64,fcntl64@GLIBC_2.2.5");
 #elif defined(__aarch64__)
 __asm__(".symver cosf,cosf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
 __asm__(".symver expf,expf@GLIBC_2.17");
+__asm__(".symver fcntl,fcntl@GLIBC_2.17");
+__asm__(".symver fcntl64,fcntl64@GLIBC_2.17");
 __asm__(".symver fmod,fmod@GLIBC_2.17");
 __asm__(".symver fmodf,fmodf@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
@@ -103,8 +105,6 @@ __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver sincosf,sincosf@GLIBC_2.17");
 __asm__(".symver sinf,sinf@GLIBC_2.17");
 __asm__(".symver tanf,tanf@GLIBC_2.17");
-__asm__(".symver fcntl,fcntl@GLIBC_2.17");
-__asm__(".symver fcntl64,fcntl64@GLIBC_2.17");
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__)
@@ -114,22 +114,22 @@ __asm__(".symver fcntl64,fcntl64@GLIBC_2.17");
 #endif
 
 extern "C" {
-float BUN_WRAP_GLIBC_SYMBOL(cosf)(float);
 double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
-float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
 double BUN_WRAP_GLIBC_SYMBOL(fmod)(double, double);
-float BUN_WRAP_GLIBC_SYMBOL(fmodf)(float, float);
 double BUN_WRAP_GLIBC_SYMBOL(log)(double);
-float BUN_WRAP_GLIBC_SYMBOL(log10f)(float);
 double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
+double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
+float BUN_WRAP_GLIBC_SYMBOL(cosf)(float);
+float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
+float BUN_WRAP_GLIBC_SYMBOL(fmodf)(float, float);
+float BUN_WRAP_GLIBC_SYMBOL(log10f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
-double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
-void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
 float BUN_WRAP_GLIBC_SYMBOL(sinf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(tanf)(float);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl)(int, int, ...);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
+void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
 }
 
 // ban statx, for now

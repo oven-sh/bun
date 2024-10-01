@@ -1490,8 +1490,7 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        console.error("chunk", chunk?.toString());
-        native?.writeStream(this.#id, chunk, this.#endStream, undefined);
+        native.writeStream(this.#id, chunk, this.#endStream, callback);
         return;
       }
       if (typeof callback == "function") {
@@ -1775,7 +1774,7 @@ class ServerHttp2Session extends Http2Session {
       }
       //queue
       self.#queue.push(buffer);
-      return false;
+      return true;
     },
   };
 

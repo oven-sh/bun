@@ -819,8 +819,8 @@ pub const H2FrameParser = struct {
 
         pub fn canSendData(this: *Stream) bool {
             return switch (this.state) {
-                .IDLE, .RESERVED_LOCAL, .RESERVED_REMOTE, .OPEN, .HALF_CLOSED_REMOTE => false,
-                .HALF_CLOSED_LOCAL, .CLOSED => true,
+                .IDLE, .RESERVED_LOCAL, .RESERVED_REMOTE, .OPEN, .HALF_CLOSED_REMOTE => true,
+                .HALF_CLOSED_LOCAL, .CLOSED => false,
             };
         }
 
@@ -1158,6 +1158,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
+        log("_genericWrite {}", .{bytes.len});
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
             {
@@ -1168,6 +1169,7 @@ pub const H2FrameParser = struct {
 
                     // we still have more to buffer and even more now
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
+                    log("_genericWrite flushed {} and buffered more {}", .{ written, bytes.len });
                     return false;
                 }
             }
@@ -1180,6 +1182,7 @@ pub const H2FrameParser = struct {
                 if (written < bytes.len) {
                     // ops not all data was sent, lets buffer again
                     _ = this.writeBuffer.write(this.allocator, bytes[written..]) catch bun.outOfMemory();
+                    log("_genericWrite buffered more {}", .{bytes[written..].len});
                     return false;
                 }
             }
@@ -1271,7 +1274,7 @@ pub const H2FrameParser = struct {
 
     pub fn write(this: *H2FrameParser, bytes: []const u8) bool {
         JSC.markBinding(@src());
-        log("write", .{});
+        log("write {}", .{bytes.len});
         if (comptime ENABLE_AUTO_CORK) {
             this.cork();
             const available = CORK_BUFFER[CORK_OFFSET..];
@@ -2711,7 +2714,7 @@ pub const H2FrameParser = struct {
             return .zero;
         }
 
-        return JSC.JSValue.jsBoolean(this.hasBackpressure());
+        return JSC.JSValue.jsBoolean(true);
     }
 
     fn getNextStreamID(this: *H2FrameParser) u32 {

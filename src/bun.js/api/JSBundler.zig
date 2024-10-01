@@ -166,7 +166,7 @@ pub const JSBundler = struct {
             if (try config.getOwnOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
 
-                if (this.target != .bun and this.bytecode) {
+                if (target != .bun and this.bytecode) {
                     globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                     return error.JSError;
                 }
@@ -203,8 +203,8 @@ pub const JSBundler = struct {
             if (try config.getOwnOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and !(this.format == .esm or this.format == .cjs)) {
-                    globalThis.throwInvalidArguments("format must be 'esm' or 'cjs' when bytecode is true", .{});
+                if (this.bytecode and format != .cjs) {
+                    globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                     return error.JSError;
                 }
             }

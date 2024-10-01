@@ -791,6 +791,11 @@ pub const Arguments = struct {
 
                 if (opts.target.? == .bun)
                     ctx.debug.run_in_bun = opts.target.? == .bun;
+
+                if (opts.target.? != .bun and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--watch")) {
@@ -843,6 +848,10 @@ pub const Arguments = struct {
                 }
 
                 ctx.bundler_options.output_format = format;
+                if (format != .cjs and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--splitting")) {

@@ -343,9 +343,11 @@ Depending on the target, Bun will apply different module resolution rules and op
 
 Specifies the module format to be used in the generated bundles.
 
+Bun defaults to `"esm"`, and provides experimental support for `"cjs"` and `"iife"`.
+
 #### `format: "esm"` - ES Module
 
-Bun defaults to `"esm"`, and provides experimental support for `"cjs"` and `"iife"`.
+This is the default format, which supports ES Module syntax including top-level `await`, import.meta, and more.
 
 {% codetabs %}
 

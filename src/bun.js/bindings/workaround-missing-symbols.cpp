@@ -72,10 +72,65 @@ extern "C" int kill(int pid, int sig)
 #endif
 
 #if defined(__x86_64__)
-// Force older versions of symbols
-__asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver cosf,cosf@GLIBC_2.2.5");
+__asm__(".symver exp,exp@GLIBC_2.2.5");
+__asm__(".symver expf,expf@GLIBC_2.2.5");
+__asm__(".symver fmod,fmod@GLIBC_2.2.5");
+__asm__(".symver fmodf,fmodf@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
+__asm__(".symver log10f,log10f@GLIBC_2.2.5");
+__asm__(".symver log2,log2@GLIBC_2.2.5");
+__asm__(".symver log2f,log2f@GLIBC_2.2.5");
+__asm__(".symver logf,logf@GLIBC_2.2.5");
+__asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver sincosf,sincosf@GLIBC_2.2.5");
+__asm__(".symver sinf,sinf@GLIBC_2.2.5");
+__asm__(".symver tanf,tanf@GLIBC_2.2.5");
+__asm__(".symver fcntl,fcntl@GLIBC_2.2.5");
+__asm__(".symver fcntl64,fcntl64@GLIBC_2.2.5");
+#elif defined(__aarch64__)
+__asm__(".symver cosf,cosf@GLIBC_2.17");
+__asm__(".symver exp,exp@GLIBC_2.17");
+__asm__(".symver expf,expf@GLIBC_2.17");
+__asm__(".symver fmod,fmod@GLIBC_2.17");
+__asm__(".symver fmodf,fmodf@GLIBC_2.17");
+__asm__(".symver log,log@GLIBC_2.17");
+__asm__(".symver log10f,log10f@GLIBC_2.17");
+__asm__(".symver log2,log2@GLIBC_2.17");
+__asm__(".symver log2f,log2f@GLIBC_2.17");
+__asm__(".symver logf,logf@GLIBC_2.17");
+__asm__(".symver pow,pow@GLIBC_2.17");
+__asm__(".symver sincosf,sincosf@GLIBC_2.17");
+__asm__(".symver sinf,sinf@GLIBC_2.17");
+__asm__(".symver tanf,tanf@GLIBC_2.17");
+__asm__(".symver fcntl,fcntl@GLIBC_2.17");
+__asm__(".symver fcntl64,fcntl64@GLIBC_2.17");
 #endif
+
+#if defined(__x86_64__) || defined(__aarch64__)
+#define BUN_WRAP_GLIBC_SYMBOL(symbol) __wrap_##symbol
+#else
+#define BUN_WRAP_GLIBC_SYMBOL(symbol) symbol
+#endif
+
+extern "C" {
+float BUN_WRAP_GLIBC_SYMBOL(cosf)(float);
+double BUN_WRAP_GLIBC_SYMBOL(exp)(double);
+float BUN_WRAP_GLIBC_SYMBOL(expf)(float);
+double BUN_WRAP_GLIBC_SYMBOL(fmod)(double, double);
+float BUN_WRAP_GLIBC_SYMBOL(fmodf)(float, float);
+double BUN_WRAP_GLIBC_SYMBOL(log)(double);
+float BUN_WRAP_GLIBC_SYMBOL(log10f)(float);
+double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
+float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
+float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
+double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
+void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
+float BUN_WRAP_GLIBC_SYMBOL(sinf)(float);
+float BUN_WRAP_GLIBC_SYMBOL(tanf)(float);
+int BUN_WRAP_GLIBC_SYMBOL(fcntl)(int, int, ...);
+int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
+}
 
 // ban statx, for now
 extern "C" int __wrap_statx(int fd, const char* path, int flags,
@@ -86,118 +141,6 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
     abort();
 #endif
     return -1;
-}
-
-extern "C" int __real_fcntl(int fd, int cmd, ...);
-typedef double (*MathFunction)(double);
-typedef double (*MathFunction2)(double, double);
-
-static inline double __real_exp(double x)
-{
-    static MathFunction function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "exp"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x);
-}
-static inline double __real_log(double x)
-{
-    static MathFunction function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x);
-}
-static inline double __real_log2(double x)
-{
-    static MathFunction function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log2"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x);
-}
-static inline double __real_fmod(double x, double y)
-{
-    static MathFunction2 function = nullptr;
-    if (UNLIKELY(function == nullptr)) {
-        function = reinterpret_cast<MathFunction2>(dlsym(nullptr, "fmod"));
-        if (UNLIKELY(function == nullptr))
-            abort();
-    }
-
-    return function(x, y);
-}
-
-extern "C" int __wrap_fcntl(int fd, int cmd, ...)
-{
-    va_list va;
-    va_start(va, cmd);
-    int ret = __real_fcntl(fd, cmd, va_arg(va, void*));
-    va_end(va);
-    return ret;
-}
-
-extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
-{
-    va_list va;
-    va_start(va, cmd);
-    int ret = __real_fcntl(fd, cmd, va_arg(va, void*));
-    va_end(va);
-    return ret;
-}
-
-extern "C" double __wrap_pow(double x, double y)
-{
-    static void* pow_ptr = nullptr;
-    if (UNLIKELY(pow_ptr == nullptr)) {
-        pow_ptr = dlsym(RTLD_DEFAULT, "pow");
-    }
-
-    return ((double (*)(double, double))pow_ptr)(x, y);
-}
-
-extern "C" double __wrap_exp(double x)
-{
-    return __real_exp(x);
-}
-
-extern "C" double __wrap_log(double x)
-{
-    return __real_log(x);
-}
-
-extern "C" double __wrap_log2(double x)
-{
-    return __real_log2(x);
-}
-
-extern "C" double __wrap_fmod(double x, double y)
-{
-    return __real_fmod(x, y);
-}
-
-static inline float __real_expf(float arg)
-{
-    static void* ptr = nullptr;
-    if (UNLIKELY(ptr == nullptr)) {
-        ptr = dlsym(RTLD_DEFAULT, "expf");
-    }
-
-    return ((float (*)(float))ptr)(arg);
-}
-
-extern "C" float __wrap_expf(float arg)
-{
-    return __real_expf(arg);
 }
 
 #ifndef _MKNOD_VER

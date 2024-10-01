@@ -12991,6 +12991,7 @@ pub const AstBuilder = struct {
             .top_level_symbols_to_parts = top_level_symbols_to_parts,
             .char_freq = .{},
             .flags = .{},
+            .top_level_await_keyword = bun.logger.Range.None,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else

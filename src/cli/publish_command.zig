@@ -311,7 +311,7 @@ pub const PublishCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        Output.prettyErrorln("<r><b>bun publish <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun publish <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .publish);
@@ -644,7 +644,7 @@ pub const PublishCommand = struct {
     ) OOM!void {
         const message = message: {
             const source = logger.Source.initPathString("???", response_body.list.items);
-            const json = JSON.parseJSONUTF8(&source, ctx.manager.log, ctx.allocator) catch |err| {
+            const json = JSON.parseUTF8(&source, ctx.manager.log, ctx.allocator) catch |err| {
                 switch (err) {
                     error.OutOfMemory => |oom| return oom,
                     else => break :message null,
@@ -666,7 +666,7 @@ pub const PublishCommand = struct {
             break :message @"error";
         };
 
-        Output.prettyErrorln("<red>{d}<r>{s}{s}: {s}\n{s}{s}", .{
+        Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n{s}{s}", .{
             res.status_code,
             if (res.status.len > 0) " " else "",
             res.status,
@@ -707,7 +707,7 @@ pub const PublishCommand = struct {
     ) GetOTPError![]const u8 {
         const res_source = logger.Source.initPathString("???", response_buf.list.items);
 
-        if (JSON.parseJSONUTF8(&res_source, ctx.manager.log, ctx.allocator) catch |err| res_json: {
+        if (JSON.parseUTF8(&res_source, ctx.manager.log, ctx.allocator) catch |err| res_json: {
             switch (err) {
                 error.OutOfMemory => |oom| return oom,
 
@@ -818,7 +818,7 @@ pub const PublishCommand = struct {
                     200 => {
                         // login successful
                         const otp_done_source = logger.Source.initPathString("???", response_buf.list.items);
-                        const otp_done_json = JSON.parseJSONUTF8(&otp_done_source, ctx.manager.log, ctx.allocator) catch |err| {
+                        const otp_done_json = JSON.parseUTF8(&otp_done_source, ctx.manager.log, ctx.allocator) catch |err| {
                             switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 else => {

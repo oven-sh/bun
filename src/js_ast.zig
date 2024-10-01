@@ -3343,7 +3343,7 @@ pub const Expr = struct {
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
-            var out_expr = JSONParser.parseJSONForMacro(&source, log, allocator) catch {
+            var out_expr = JSONParser.parseForMacro(&source, log, allocator) catch {
                 return error.MacroFailed;
             };
             out_expr.loc = loc;

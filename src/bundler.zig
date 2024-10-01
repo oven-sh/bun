@@ -1457,7 +1457,7 @@ pub const Bundler = struct {
                     if (source.path.isJSONCFile())
                         json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.parseJSON(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

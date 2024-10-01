@@ -30,7 +30,7 @@ const bundler = bun.bundler;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
-const ParseJSON = @import("../json_parser.zig").parseJSONUTF8;
+const JSON = bun.JSON;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
@@ -266,7 +266,7 @@ pub const UpgradeCommand = struct {
         defer if (comptime silent) log.deinit();
         var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
         initializeStore();
-        var expr = ParseJSON(&source, &log, allocator) catch |err| {
+        var expr = JSON.parseUTF8(&source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
                 refresher.?.refresh();

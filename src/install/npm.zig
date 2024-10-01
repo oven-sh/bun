@@ -1280,7 +1280,7 @@ pub const PackageManifest = struct {
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        const json = json_parser.parseJSONUTF8(
+        const json = json_parser.parseUTF8(
             &source,
             log,
             arena.allocator(),

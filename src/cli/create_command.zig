@@ -31,7 +31,7 @@ const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 
-const ParseJSON = @import("../json_parser.zig").parseJSONUTF8;
+const JSON = bun.JSON;
 const Archiver = bun.libarchive.Archiver;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
@@ -701,7 +701,7 @@ pub const CreateCommand = struct {
 
                 var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch {
+                var package_json_expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -2075,7 +2075,7 @@ pub const Example = struct {
         refresher.refresh();
         initializeStore();
         var source = logger.Source.initPathString("package.json", mutable.list.items);
-        var expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
+        var expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
             refresher.refresh();
 
@@ -2214,7 +2214,7 @@ pub const Example = struct {
 
         initializeStore();
         var source = logger.Source.initPathString("examples.json", mutable.list.items);
-        const examples_object = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
+        const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
                 if (Output.enable_ansi_colors) {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);

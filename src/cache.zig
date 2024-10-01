@@ -311,7 +311,7 @@ pub const Json = struct {
             return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
         }
 
-        return try parse(cache, log, source, allocator, json_parser.parseJSON, false);
+        return try parse(cache, log, source, allocator, json_parser.parse, false);
     }
 
     pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime force_utf8: bool) anyerror!?js_ast.Expr {

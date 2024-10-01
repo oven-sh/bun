@@ -51,8 +51,8 @@ jobs:
       - name: Install LLVM
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
-      - run: ls -l /usr/lib/llvm-18/bin/
-      - run: echo "/usr/lib/llvm-18/bin/" >> $GITHUB_PATH
+      - run: ls -l /usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin/
+      - run: echo "/usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin/" >> $GITHUB_PATH
       - name: Clang Format Version
         env:
           ENABLE_CCACHE: OFF

@@ -607,7 +607,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * globalObject,
 static JSValue getModulePrototypeObject(VM &vm, JSObject *moduleObject) {
   auto *globalObject = defaultGlobalObject(moduleObject->globalObject());
   auto prototype =
-      constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+      constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
   prototype->putDirectCustomAccessor(
       vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
       JSC::CustomGetterSetter::create(vm, getterRequireFunction,
@@ -710,6 +710,12 @@ public:
         JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
   }
 
+  template <typename CellType, JSC::SubspaceAccess>
+  static JSC::GCClient::IsoSubspace *subspaceFor(JSC::VM &vm) {
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSModuleConstructor, Base);
+    return &vm.internalFunctionSpace();
+  }
+
   static JSModuleConstructor *create(JSC::VM &vm,
                                      Zig::GlobalObject *globalObject) {
     auto *structure =
@@ -729,7 +735,7 @@ private:
 
   void finishCreation(JSC::VM &vm) {
     Base::finishCreation(vm, 1, "Module"_s,
-                         PropertyAdditionMode::WithStructureTransition);
+                         PropertyAdditionMode::WithoutStructureTransition);
   }
 };
 

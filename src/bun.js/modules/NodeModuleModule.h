@@ -35,7 +35,13 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_CATCH_SCOPE(vm);
   auto *object = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-  
+
+if (object->hasNonReifiedStaticProperties()) {
+  object->reifyAllStaticProperties(globalObject);
+  if (scope.exception()) {
+    scope.clearException();
+  }
+}
 
 const auto _cacheIdentifier = Identifier::fromString(vm, "_cache"_s);
   auto _cacheValue =

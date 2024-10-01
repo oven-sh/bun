@@ -1465,7 +1465,11 @@ class Http2Stream extends Duplex {
     if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
     const session = this[bunHTTP2Session];
     if (session) {
-      session[bunHTTP2Native]?.writeStream(this.#id, chunk, this.#endStream);
+      const native = session[bunHTTP2Native];
+      if (native) {
+        native?.writeStream(this.#id, chunk, this.#endStream, callback);
+        return;
+      }
       if (typeof callback == "function") {
         callback();
       }
@@ -1743,16 +1747,16 @@ class ServerHttp2Session extends Http2Session {
       self.#parser = null;
     },
     write(self: ServerHttp2Session, buffer: Buffer) {
-      if (!self) return;
+      if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (!socket) return;
+      if (!socket) return false;
       if (self.#connected) {
         // redirect writes to socket
-        socket.write(buffer);
-      } else {
-        //queue
-        self.#queue.push(buffer);
+        return socket.write(buffer);
       }
+      //queue
+      self.#queue.push(buffer);
+      return false;
     },
   };
 
@@ -1765,11 +1769,13 @@ class ServerHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
     this.emit("close");
   }
+
   #onError(error: Error) {
     this.#parser = null;
     this[bunHTTP2Socket] = null;
     this.emit("error", error);
   }
+
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
@@ -1781,6 +1787,13 @@ class ServerHttp2Session extends Http2Session {
     }
     this.emit("timeout");
     this.destroy();
+  }
+
+  #onDrain() {
+    const parser = this.#parser;
+    if (parser) {
+      parser.flush();
+    }
   }
 
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server) {
@@ -1804,11 +1817,11 @@ class ServerHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     this[bunHTTP2Socket] = socket;
-
+    const nativeSocket = socket[bunSocketInternal];
     this.#encrypted = socket instanceof TLSSocket;
 
     this.#parser = new H2FrameParser({
-      native: socket[bunSocketInternal],
+      native: nativeSocket,
       context: this,
       settings: options || {},
       type: 0, // server type
@@ -1820,6 +1833,7 @@ class ServerHttp2Session extends Http2Session {
     // we can just use native to read data when possible
     if (!this.#parser.hasNativeRead()) {
       socket.on("data", this.#onRead.bind(this));
+      socket.on("drain", this.#onDrain.bind(this));
     }
     process.nextTick(emitConnectNT, this, socket);
   }
@@ -2165,16 +2179,16 @@ class ClientHttp2Session extends Http2Session {
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
-      if (!self) return;
+      if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (!socket) return;
+      if (!socket) return false;
       if (self.#connected) {
         // redirect writes to socket
-        socket.write(buffer);
-      } else {
-        //queue
-        self.#queue.push(buffer);
+        return socket.write(buffer);
       }
+      //queue
+      self.#queue.push(buffer);
+      return false;
     },
   };
 
@@ -2214,6 +2228,7 @@ class ClientHttp2Session extends Http2Session {
     // we can just use native to read data when possible
     if (!this.#parser.hasNativeRead()) {
       socket.on("data", this.#onRead.bind(this));
+      socket.on("drain", this.#onDrain.bind(this));
     }
     // redirect the queued buffers
     const queue = this.#queue;
@@ -2244,6 +2259,12 @@ class ClientHttp2Session extends Http2Session {
     }
     this.emit("timeout");
     this.destroy();
+  }
+  #onDrain() {
+    const parser = this.#parser;
+    if (parser) {
+      parser.flush();
+    }
   }
   get connecting() {
     const socket = this[bunHTTP2Socket];
@@ -2411,9 +2432,9 @@ class ClientHttp2Session extends Http2Session {
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;
-
+    const nativeSocket = socket[bunSocketInternal];
     this.#parser = new H2FrameParser({
-      native: socket[bunSocketInternal],
+      native: nativeSocket,
       context: this,
       settings: options,
       handlers: ClientHttp2Session.#Handlers,

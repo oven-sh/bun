@@ -10,8 +10,21 @@
 #include <mimalloc.h>
 
 extern "C" {
+
+char* strdup(const char* s) { return mi_strdup(s); }
+char* strndup(const char* s, size_t n) { return mi_strndup(s, n); }
+char* realpath(const char* f, char* n) { return mi_realpath(f, n); }
+
+void* malloc(size_t n) { return mi_malloc(n); }
+void* calloc(size_t n, size_t c) { return mi_calloc(n, c); }
+void* realloc(void* p, size_t n) { return mi_realloc(p, n); }
+void free(void* p) { mi_free(p); }
+
 void cfree(void* p) { mi_cfree(p); }
 void* _expand(void* p, size_t newsize) { return mi__expand(p, newsize); }
+size_t _msize(const void* p) { return mi_malloc_size(p); }
+void* recalloc(void* p, size_t newcount, size_t size) { return mi_recalloc(p, newcount, size); }
+
 size_t malloc_size(const void* p) { return mi_malloc_size(p); }
 size_t malloc_good_size(size_t size) { return mi_malloc_good_size(size); }
 size_t malloc_usable_size(const void* p) { return mi_malloc_usable_size(p); }

@@ -12,19 +12,21 @@ extern "C" void KitInitProcessIdentifier() {
   WebCore::Process::identifier();
 }
 
-JSC::JSInternalPromise* moduleLoaderImportModule(
-    JSC::JSGlobalObject* jsGlobalObject,
-    JSC::JSModuleLoader*,
-    JSC::JSString* moduleNameValue,
-    JSC::JSValue parameters,
-    const JSC::SourceOrigin& sourceOrigin)
-{
-    // TODO: forward this to the runtime?
-    JSC::VM&vm=jsGlobalObject->vm();
-    auto err = JSC::createTypeError(jsGlobalObject, WTF::makeString("Dynamic import should have been replaced with a hook into the module runtime"_s));
-    auto* promise = JSC::JSInternalPromise::create(vm, jsGlobalObject->internalPromiseStructure());
-    promise->reject(jsGlobalObject, err);
-    return promise;
+JSC::JSInternalPromise *
+moduleLoaderImportModule(JSC::JSGlobalObject *jsGlobalObject,
+                         JSC::JSModuleLoader *, JSC::JSString *moduleNameValue,
+                         JSC::JSValue parameters,
+                         const JSC::SourceOrigin &sourceOrigin) {
+  // TODO: forward this to the runtime?
+  JSC::VM &vm = jsGlobalObject->vm();
+  auto err = JSC::createTypeError(
+      jsGlobalObject,
+      WTF::makeString(
+          "Dynamic import should have been replaced with a hook into the module runtime"_s));
+  auto *promise = JSC::JSInternalPromise::create(
+      vm, jsGlobalObject->internalPromiseStructure());
+  promise->reject(jsGlobalObject, err);
+  return promise;
 }
 
 #define INHERIT_HOOK_METHOD(name)                                              \

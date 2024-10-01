@@ -42,7 +42,7 @@ pub const BuildCommand = struct {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
-        if (ctx.bundler_options.compile) {
+        if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
         }

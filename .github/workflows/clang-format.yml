@@ -56,7 +56,7 @@ jobs:
           ENABLE_CCACHE: OFF
           LLVM_VERSION: ${{ env.LLVM_VERSION }}
         run: |
-          bun run clang-format-version
+          bun run clang-format:version
       - name: Clang Format
         env:
           ENABLE_CCACHE: OFF

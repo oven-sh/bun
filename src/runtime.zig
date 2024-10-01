@@ -240,6 +240,8 @@ pub const Runtime = struct {
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported with --target=bun
         use_import_meta_require: bool = false,
+
+        /// Allow runtime usage of require(), converting `require` into `__require`
         auto_polyfill_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},

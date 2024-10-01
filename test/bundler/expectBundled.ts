@@ -469,13 +469,14 @@ function expectBundled(
 
   // Resolve defaults for options and some related things
   bundling ??= true;
-  target ??= "browser";
 
   if (bytecode) {
     format ??= "cjs";
+    target ??= "bun";
   }
 
   format ??= "esm";
+  target ??= "browser";
 
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};

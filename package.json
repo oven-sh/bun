@@ -58,9 +58,8 @@
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
     "zig:check-windows": "bun run zig build check-windows --summary new",
-    "cmake": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -B build/debug",
+    "cmake": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -B build/debug",
     "clang-format": "bun run cmake --target clang-format",
-    "clang-format:version": "bun run cmake --target clang-format-version",
     "clang-format:check": "bun run cmake --target clang-format-check",
     "clang-format:diff": "bun run cmake --target clang-format-diff",
     "clang-tidy": "bun run cmake --target clang-tidy",
@@ -69,9 +68,9 @@
     "zig-format": "bun run cmake --target zig-format",
     "zig-format:check": "bun run cmake --target zig-format-check",
     "zig-format:diff": "bun run cmake --target zig-format-diff",
-    "prettier": "bun run cmake -DENABLE_PRETTIER=ON --target prettier",
-    "prettier:check": "bun run cmake -DENABLE_PRETTIER=ON --target prettier-check",
-    "prettier:extra": "bun run cmake -DENABLE_PRETTIER=ON --target prettier-extra",
-    "prettier:diff": "bun run cmake -DENABLE_PRETTIER=ON --target prettier-diff"
+    "prettier": "bun run cmake --target prettier",
+    "prettier:check": "bun run cmake --target prettier-check",
+    "prettier:extra": "bun run cmake --target prettier-extra",
+    "prettier:diff": "bun run cmake --target prettier-diff"
   }
 }

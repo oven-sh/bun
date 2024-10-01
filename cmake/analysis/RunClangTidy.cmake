@@ -3,10 +3,10 @@
 find_command(
   VARIABLE
     CLANG_TIDY_PROGRAM
+  VERSION_VARIABLE
+    LLVM_VERSION
   COMMAND
     clang-tidy
-  VERSION
-    ${LLVM_VERSION}
   REQUIRED
     OFF
 )

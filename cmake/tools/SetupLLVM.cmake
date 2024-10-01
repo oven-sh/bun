@@ -11,7 +11,6 @@ else()
 endif()
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
-parse_semver(${LLVM_VERSION} LLVM)
 
 if(APPLE)
   execute_process(

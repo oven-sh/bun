@@ -150,19 +150,6 @@ optionx(CLEAN BOOL "Set when --clean is used" DEFAULT OFF)
 
 # --- Helper functions ---
 
-function(parse_semver value variable)
-  string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${value}")
-  
-  if(NOT match)
-    message(FATAL_ERROR "Invalid semver: \"${value}\"")
-  endif()
-  
-  set(${variable}_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}" PARENT_SCOPE)
-  set(${variable}_VERSION_MAJOR "${CMAKE_MATCH_1}" PARENT_SCOPE)
-  set(${variable}_VERSION_MINOR "${CMAKE_MATCH_2}" PARENT_SCOPE)
-  set(${variable}_VERSION_PATCH "${CMAKE_MATCH_3}" PARENT_SCOPE)
-endfunction()
-
 # setenv()
 # Description:
 #   Sets an environment variable during the build step, and writes it to a .env file.

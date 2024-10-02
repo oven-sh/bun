@@ -4645,7 +4645,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), ZigString.init("InvalidMatcherError").toJS(globalThis));
+        err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
         globalThis.throwValue(err);
     }
 

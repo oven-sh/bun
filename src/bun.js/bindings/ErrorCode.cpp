@@ -415,7 +415,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, ASCIILiteral reason)
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSC::JSValue value, WTF::String reason)
 {
     ASCIILiteral type;
     {
@@ -429,6 +429,18 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto message = makeString("The "_s, type, " '"_s, name, "' "_s, reason, ". Received "_s, value_string);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    return {};
+}
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::String reason)
+{
+    auto name_string = JSValueToStringSafe(globalObject, name);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto value_string = JSValueToStringSafe(globalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto message = makeString("The argument '"_s, name_string, "' "_s, reason, ". Received "_s, value_string);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
     return {};
 }
@@ -463,13 +475,28 @@ JSC::EncodedJSValue BUFFER_OUT_OF_BOUNDS(JSC::ThrowScope& throwScope, JSC::JSGlo
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal)
+JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue signal, bool triedUppercase)
 {
     auto signal_string = JSValueToStringSafe(globalObject, signal);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("Unknown signal: "_s, signal_string);
+    auto message_extra = triedUppercase ? " (signals must use all capital letters)"_s : ""_s;
+    auto message = makeString("Unknown signal: "_s, signal_string, message_extra);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_SIGNAL, message));
+    return {};
+}
+
+JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue port, bool allowZero)
+{
+    ASCIILiteral op = allowZero ? ">="_s : ">"_s;
+
+    auto name_string = JSValueToStringSafe(globalObject, name);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto port_string = JSValueToStringSafe(globalObject, port);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto message = makeString(name_string, " should be "_s, op, " 0 and < 65536. Received "_s, port_string);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_SOCKET_BAD_PORT, message));
     return {};
 }
 

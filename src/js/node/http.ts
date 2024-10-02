@@ -6,6 +6,7 @@ const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors"
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
+const { validateFunction } = require("internal/validators");
 
 const {
   getHeader,
@@ -130,13 +131,6 @@ function validateMsecs(numberlike: any, field: string) {
   }
 
   return numberlike;
-}
-function validateFunction(callable: any, field: string) {
-  if (typeof callable !== "function") {
-    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
 }
 
 type FakeSocket = InstanceType<typeof FakeSocket>;

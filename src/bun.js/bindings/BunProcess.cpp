@@ -683,6 +683,16 @@ static const NeverDestroyed<String> signalNames[] = {
     MAKE_STATIC_STRING_IMPL("SIGSYS"),
 };
 
+bool isSignalName(WTF::String input)
+{
+    for (auto i = 0; i < std::size(signalNames); i++) {
+        if (input == signalNames[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void loadSignalNumberMap()
 {
 

@@ -9,7 +9,7 @@ pub const debug = bun.Output.Scoped(.Kit, false);
 pub const Options = struct {
     cwd: []u8,
     routes: []Route,
-    framework: kit.Framework,
+    framework: bake.Framework,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".kit-debug" else null,
     verbose_watcher: bool = false,
@@ -18,6 +18,7 @@ pub const Options = struct {
 
 /// Accepting a custom allocator for all of DevServer would be misleading
 /// as there are many functions which will use default_allocator.
+/// TODO: use a named heap in debug
 const default_allocator = bun.default_allocator;
 
 cwd: []const u8,
@@ -43,7 +44,8 @@ server_register_update_callback: JSC.Strong,
 generation: usize = 0,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
-framework: kit.Framework,
+directory_watchers: DirectoryWatchStore,
+framework: bake.Framework,
 bun_watcher: *JSC.Watcher,
 server_bundler: Bundler,
 client_bundler: Bundler,
@@ -146,6 +148,7 @@ pub fn init(options: Options) !*DevServer {
             .port = @intCast(options.listen_config.port),
             .hostname = options.listen_config.host orelse "localhost",
         },
+        .directory_watchers = DirectoryWatchStore.empty,
         .server_fetch_function_callback = .{},
         .server_register_update_callback = .{},
         .listener = null,
@@ -233,7 +236,7 @@ pub fn init(options: Options) !*DevServer {
     return dev;
 }
 
-fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Renderer) !void {
+fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: bake.Renderer) !void {
     const framework = dev.framework;
 
     bundler.* = try bun.Bundler.init(
@@ -281,7 +284,7 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: kit.Render
     bundler.configureLinker();
     try bundler.configureDefines();
 
-    try kit.addImportMetaDefines(default_allocator, bundler.options.define, .development, switch (renderer) {
+    try bake.addImportMetaDefines(default_allocator, bundler.options.define, .development, switch (renderer) {
         .client => .client,
         .server, .ssr => .server,
     });
@@ -401,6 +404,7 @@ fn theRealBundlingFunction(
     fail.* = .{ .zig_error = error.FileNotFound };
     errdefer |err| if (fail.* == .zig_error) {
         if (dev.log.hasAny()) {
+            // todo: clone to recycled
             fail.* = Failure.fromLog(&dev.log);
         } else {
             fail.* = .{ .zig_error = err };
@@ -453,21 +457,39 @@ fn theRealBundlingFunction(
         bv2.deinit();
     }
 
-    errdefer {
-        // Wait for wait groups to finish. There still may be ongoing work.
-        bv2.linker.source_maps.line_offset_wait_group.wait();
-        bv2.linker.source_maps.quoted_contents_wait_group.wait();
-    }
-
     defer {
         dev.server_graph.reset();
         dev.client_graph.reset();
     }
 
+    errdefer |e| brk: {
+        // Wait for wait groups to finish. There still may be ongoing work.
+        bv2.linker.source_maps.line_offset_wait_group.wait();
+        bv2.linker.source_maps.quoted_contents_wait_group.wait();
+
+        if (e == error.OutOfMemory) break :brk;
+
+        // Since a bundle failed, track all files as stale. This allows
+        // hot-reloading to remember the targets to rebuild for.
+        for (bv2.graph.input_files.items(.source), bv2.graph.ast.items(.target)) |file, target| {
+            const abs_path = file.path.text;
+            if (!std.fs.path.isAbsolute(abs_path)) continue;
+
+            _ = (switch (target.kitRenderer()) {
+                .server => dev.server_graph.insertStale(abs_path, false),
+                .ssr => dev.server_graph.insertStale(abs_path, true),
+                .client => dev.client_graph.insertStale(abs_path, false),
+            }) catch bun.outOfMemory();
+        }
+
+        dev.client_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
+        dev.server_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
+    }
+
     const output_files = try bv2.runFromJSInNewThread(server_requirements, client_requirements, ssr_requirements);
 
-    try dev.client_graph.ensureStaleBitCapacity();
-    try dev.server_graph.ensureStaleBitCapacity();
+    try dev.client_graph.ensureStaleBitCapacity(false);
+    try dev.server_graph.ensureStaleBitCapacity(false);
 
     assert(output_files.items.len == 0);
 
@@ -568,7 +590,7 @@ fn theRealBundlingFunction(
 pub fn receiveChunk(
     dev: *DevServer,
     abs_path: []const u8,
-    side: kit.Renderer,
+    side: bake.Renderer,
     chunk: bun.bundle_v2.CompileResult,
 ) !void {
     return switch (side) {
@@ -578,7 +600,7 @@ pub fn receiveChunk(
     };
 }
 
-pub fn isFileStale(dev: *DevServer, path: []const u8, side: kit.Renderer) bool {
+pub fn isFileStale(dev: *DevServer, path: []const u8, side: bake.Renderer) bool {
     switch (side) {
         inline else => |side_comptime| {
             const g = switch (side_comptime) {
@@ -744,7 +766,7 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// do not emit duplicate dependencies. By tracing `imports` on each file in
 /// the module graph recursively, the full bundle for any given route can
 /// be re-materialized (required when pressing Cmd+R after any client update)
-pub fn IncrementalGraph(side: kit.Side) type {
+pub fn IncrementalGraph(side: bake.Side) type {
     return struct {
         // TODO: this can be retrieved via @fieldParentPtr
         owner: *DevServer,
@@ -778,7 +800,7 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
 
         /// An index into `bundled_files` or `stale_files`
-        pub const Index = enum(u32) { _ };
+        pub const Index = enum(u30) { _ };
 
         pub const File = switch (side) {
             // The server's incremental graph does not store previously bundled
@@ -788,9 +810,9 @@ pub fn IncrementalGraph(side: kit.Side) type {
             .server => packed struct(u8) {
                 is_rsc: bool,
                 is_ssr: bool,
-                is_route: bool,
+                // is_route: bool,
 
-                unused: enum(u5) { unused = 0 } = .unused,
+                unused: enum(u6) { unused = 0 } = .unused,
             },
             .client => struct {
                 /// allocated by default_allocator
@@ -865,7 +887,6 @@ pub fn IncrementalGraph(side: kit.Side) type {
                         gop.value_ptr.* = .{
                             .is_rsc = !is_ssr_graph,
                             .is_ssr = is_ssr_graph,
-                            .is_route = false, // TODO
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -877,8 +898,41 @@ pub fn IncrementalGraph(side: kit.Side) type {
             }
         }
 
-        pub fn ensureStaleBitCapacity(g: *@This()) !void {
-            try g.stale_files.resize(default_allocator, g.bundled_files.count(), false);
+        /// Never takes ownership of `abs_path`
+        /// Marks a chunk but without any content. Used to track dependencies to files that don't exist.
+        pub fn insertStale(g: *@This(), abs_path: []const u8, is_ssr_graph: bool) bun.OOM!Index {
+            debug.log("Insert stale: {s}", .{abs_path});
+            const gop = try g.bundled_files.getOrPut(default_allocator, abs_path);
+
+            if (!gop.found_existing) {
+                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+            } else {
+                g.stale_files.set(gop.index);
+            }
+
+            switch (side) {
+                .client => {
+                    gop.value_ptr.* = .{ .code = "" };
+                },
+                .server => {
+                    if (!gop.found_existing) {
+                        gop.value_ptr.* = .{
+                            .is_rsc = !is_ssr_graph,
+                            .is_ssr = is_ssr_graph,
+                        };
+                    } else if (is_ssr_graph) {
+                        gop.value_ptr.is_ssr = true;
+                    } else {
+                        gop.value_ptr.is_rsc = true;
+                    }
+                },
+            }
+
+            return @enumFromInt(gop.index);
+        }
+
+        pub fn ensureStaleBitCapacity(g: *@This(), val: bool) !void {
+            try g.stale_files.resize(default_allocator, @max(g.bundled_files.count(), g.stale_files.bit_length), val);
         }
 
         pub fn invalidate(g: *@This(), paths: []const []const u8, hashes: []const u32, out_paths: *FileLists, file_list_alloc: Allocator) !void {
@@ -888,8 +942,12 @@ pub fn IncrementalGraph(side: kit.Side) type {
                     .value = hash,
                     .input = path,
                 };
-                const index = g.bundled_files.getIndexAdapted(path, ctx) orelse
+                const index = g.bundled_files.getIndexAdapted(path, ctx) orelse {
+                    // cannot enqueue because we don't know what targets to
+                    // bundle for. instead, a failing bundle must retrieve the
+                    // list of files and add them as stale.
                     continue;
+                };
                 g.stale_files.set(index);
                 switch (side) {
                     .client => try out_paths.client.append(file_list_alloc, path),
@@ -1004,6 +1062,218 @@ pub fn IncrementalGraph(side: kit.Side) type {
         }
     };
 }
+
+/// When a file fails to import a relative path, directory watchers are added so
+/// that when a matching file is created, the dependencies can be rebuilt. This
+/// handles HMR cases where a user writes an import before creating the file,
+/// or moves files around.
+///
+/// This structure manages those watchers, including releasing them once
+/// import resolution failures are solved.
+const DirectoryWatchStore = struct {
+    /// List of active watchers. Can be re-ordered on removal
+    watches: bun.StringArrayHashMapUnmanaged(Entry),
+    dependencies: std.ArrayListUnmanaged(Dep),
+    /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
+    dependencies_free_list: std.ArrayListUnmanaged(Dep.Index),
+
+    const empty: DirectoryWatchStore = .{
+        .watches = .{},
+        .dependencies = .{},
+        .dependencies_free_list = .{},
+    };
+
+    pub fn owner(store: *DirectoryWatchStore) *DevServer {
+        return @alignCast(@fieldParentPtr("directory_watchers", store));
+    }
+
+    pub fn trackResolutionFailure(
+        store: *DirectoryWatchStore,
+        import_source: []const u8,
+        specifier: []const u8,
+        renderer: bake.Renderer,
+    ) bun.OOM!void {
+        // When it does not resolve to a file path, there is
+        // nothing to track. Bake does not watch node_modules.
+        if (!(bun.strings.startsWith(specifier, "./") or
+            bun.strings.startsWith(specifier, "../"))) return;
+        if (!std.fs.path.isAbsolute(import_source)) return;
+
+        const joined = bun.path.joinAbs(import_source, .auto, specifier);
+        const dir = bun.path.dirname(joined, .auto);
+
+        const dev = store.owner();
+        const file: GraphFileIndex = .{
+            .graph = renderer,
+            .index = @intFromEnum(try switch (renderer) {
+                .client => dev.client_graph.insertStale(import_source, false),
+                .server, .ssr => dev.server_graph.insertStale(import_source, renderer == .ssr),
+            }),
+        };
+
+        store.insert(dir, file, specifier) catch |err| switch (err) {
+            error.WatchError => {}, // ignoring watch errors.
+            error.OutOfMemory => |e| return e,
+        };
+    }
+
+    /// `dir_name_to_watch` and `specifier` are not owned.
+    fn insert(
+        store: *DirectoryWatchStore,
+        dir_name_to_watch: []const u8,
+        file: GraphFileIndex,
+        specifier: []const u8,
+    ) !void {
+        // TODO: watch the parent dir too.
+        const dev = store.owner();
+
+        debug.log("DirectoryWatchStore.insert({}, .{s}: {d}, {})", .{
+            bun.fmt.quote(dir_name_to_watch),
+            @tagName(file.graph),
+            file.index,
+            bun.fmt.quote(specifier),
+        });
+
+        if (store.dependencies_free_list.items.len == 0)
+            try store.dependencies.ensureUnusedCapacity(default_allocator, 1);
+
+        const gop = try store.watches.getOrPut(default_allocator, dir_name_to_watch);
+        if (gop.found_existing) {
+            const specifier_cloned = try default_allocator.dupe(u8, specifier);
+            errdefer default_allocator.free(specifier_cloned);
+
+            // TODO: check for dependency
+
+            const dep = store.appendDepAssumeCapacity(.{
+                .next = gop.value_ptr.first_dep.toOptional(),
+                .file = file,
+                .specifier = specifier_cloned,
+            });
+            gop.value_ptr.first_dep = dep;
+
+            return;
+        }
+        errdefer store.watches.swapRemoveAt(gop.index);
+
+        // Try to use an existing open directory handle
+        const cache_fd = if (dev.server_bundler.resolver.readDirInfo(dir_name_to_watch) catch null) |cache| fd: {
+            const fd = cache.getFileDescriptor();
+            break :fd if (fd == .zero) null else fd;
+        } else null;
+
+        const fd, const owned_fd = if (cache_fd) |fd|
+            .{ fd, false }
+        else
+            .{
+                switch (bun.sys.open(
+                    &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
+                        error.NameTooLong => return, // wouldn't be able to open, ignore
+                    }),
+                    bun.O.DIRECTORY,
+                    0,
+                )) {
+                    .result => |fd| fd,
+                    .err => |err| switch (err.getErrno()) {
+                        // If this directory doesn't exist, a watcher should be
+                        // placed on the parent directory. Then, if this
+                        // directory is later created, the watcher can be
+                        // properly initialized. This would happen if you write
+                        // an import path like `./dir/whatever/hello.tsx` and
+                        // `dir` does not exist, Bun must place a watcher on
+                        // `.`, see the creation of `dir`, and repeat until it
+                        // can open a watcher on `whatever` to see the creation
+                        // of `hello.tsx`
+                        .NOENT => {
+                            // TODO: implement that. for now it ignores
+                            return;
+                        },
+                        .NOTDIR => return, // ignore
+                        else => {
+                            bun.todoPanic(@src(), "log watcher error", .{});
+                        },
+                    },
+                },
+                true,
+            };
+        errdefer _ = if (owned_fd) bun.sys.close(fd);
+
+        debug.log("-> fd: {} ({s})", .{
+            fd,
+            if (owned_fd) "from dir cache" else "owned fd",
+        });
+
+        const dir_name = try default_allocator.dupe(u8, dir_name_to_watch);
+        errdefer default_allocator.free(dir_name);
+
+        const specifier_cloned = try default_allocator.dupe(u8, specifier);
+        errdefer default_allocator.free(specifier_cloned);
+
+        switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.JSC.GenericWatcher.getHash(dir_name), false)) {
+            .err => return error.WatchError,
+            .result => {},
+        }
+        const dep = store.appendDepAssumeCapacity(.{
+            .next = .none,
+            .file = file,
+            .specifier = specifier_cloned,
+        });
+        store.watches.putAssumeCapacity(dir_name, .{
+            .dir = fd,
+            .dir_fd_owned = owned_fd,
+            .first_dep = dep,
+        });
+    }
+
+    fn appendDepAssumeCapacity(store: *DirectoryWatchStore, dep: Dep) Dep.Index {
+        if (store.dependencies_free_list.popOrNull()) |index| {
+            store.dependencies.items[@intFromEnum(index)] = dep;
+            return index;
+        }
+
+        const index: Dep.Index = @enumFromInt(store.dependencies.items.len);
+        store.dependencies.appendAssumeCapacity(dep);
+        return index;
+    }
+
+    const Entry = struct {
+        /// The directory handle the watch is placed on
+        dir: bun.FileDescriptor,
+        dir_fd_owned: bool,
+        /// Files which request this import index
+        first_dep: Dep.Index,
+    };
+
+    const Dep = struct {
+        next: Index.Optional,
+        /// The graph and file used
+        file: GraphFileIndex,
+        /// The specifier that failed. Before running re-build, it is resolved for, as
+        /// creating an unrelated file should not re-emit another error. Default-allocator
+        specifier: []const u8,
+
+        const Index = enum(u32) {
+            _,
+
+            pub fn toOptional(oi: Index) Optional {
+                return @enumFromInt(@intFromEnum(oi));
+            }
+
+            pub const Optional = enum(u32) {
+                none = std.math.maxInt(u32),
+                _,
+
+                pub fn unwrap(oi: Optional) ?Index {
+                    return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+                }
+            };
+        };
+    };
+
+    const GraphFileIndex = packed struct(u32) {
+        graph: bake.Renderer,
+        index: u30,
+    };
+};
 
 const ChunkKind = enum {
     initial_response,
@@ -1135,7 +1405,7 @@ const Failure = union(enum) {
 };
 
 // For debugging, it is helpful to be able to see bundles.
-fn dumpBundle(dump_dir: std.fs.Dir, side: kit.Renderer, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
+fn dumpBundle(dump_dir: std.fs.Dir, side: bake.Renderer, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {
     const name = bun.path.joinAbsString("/", &.{
         @tagName(side),
         rel_path,
@@ -1334,9 +1604,11 @@ pub fn reload(dev: *DevServer, reload_task: *const HotReloadTask) void {
 }
 
 pub fn bustDirCache(dev: *DevServer, path: []const u8) bool {
-    const a = dev.server_bundler.resolver.bustDirCache(path);
-    const b = dev.client_bundler.resolver.bustDirCache(path);
-    return a or b;
+    debug.log("bustDirCache {s}\n", .{path});
+    const server = dev.server_bundler.resolver.bustDirCache(path);
+    const client = dev.client_bundler.resolver.bustDirCache(path);
+    const ssr = dev.ssr_bundler.resolver.bustDirCache(path);
+    return server or client or ssr;
 }
 
 pub fn getLoaders(dev: *DevServer) *bun.options.Loader.HashTable {
@@ -1353,7 +1625,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const assert = bun.assert;
 
-const kit = bun.kit;
+const bake = bun.kit;
 
 const Log = bun.logger.Log;
 

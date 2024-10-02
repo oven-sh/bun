@@ -1573,6 +1573,21 @@ pub const Resolver = struct {
         return first_bust or second_bust;
     }
 
+    /// bust both the named file and a parent directory, because `./hello` can resolve
+    /// to `./hello.js` or `./hello/index.js`
+    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source: []const u8, specifier: []const u8) bool {
+        if (!(bun.strings.startsWith(specifier, "./") or
+            bun.strings.startsWith(specifier, "../"))) return false;
+        if (!std.fs.path.isAbsolute(import_source)) return false;
+
+        const joined = bun.path.joinAbs(import_source, .auto, specifier);
+        const dir = bun.path.dirname(joined, .auto);
+
+        const a = r.bustDirCache(dir);
+        const b = r.bustDirCache(joined);
+        return a or b;
+    }
+
     pub fn loadNodeModules(
         r: *ThisResolver,
         import_path: string,
@@ -2635,7 +2650,7 @@ pub const Resolver = struct {
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories
-        // (unless those child directores are in the queue)
+        // (unless those child directories are in the queue)
         // We go top-down instead of bottom-up to increase odds of reusing previously open file handles
         // "/home/jarred/Code/node_modules/react/cjs/react.development.js"
         //       ^

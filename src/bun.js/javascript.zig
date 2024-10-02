@@ -4288,8 +4288,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const current_hash = hashes[event.index];
 
-                if (this.verbose)
-                    debug("onFileUpdate {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+                // if (this.verbose)
+                std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {
@@ -4308,6 +4308,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         if (event.op.write or event.op.delete or event.op.rename) {
                             current_task.append(file_path, current_hash);
                         }
+
+                        // TODO: delete events?
                     },
                     .directory => {
                         if (comptime Environment.isWindows) {

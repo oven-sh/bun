@@ -1232,9 +1232,7 @@ pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, p
 }
 
 pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
-    const parts = [_][]const u8{
-        part,
-    };
+    const parts = [_][]const u8{part};
     const slice = joinAbsString(_cwd, &parts, _platform);
     return slice;
 }

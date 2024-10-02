@@ -491,7 +491,6 @@ pub const BundleV2 = struct {
             const scbs = this.graph.server_component_boundaries.list.slice();
             for (scbs.items(.source_index)) |source_index| {
                 scb_bitset.set(source_index);
-                // insert the other one?
             }
             break :brk scb_bitset;
         } else null;
@@ -562,11 +561,32 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) void {
         const bundler = this.bundlerForTarget(target);
-        var resolve_result = bundler.resolver.resolve(
+        var had_busted_dir_cache: bool = false;
+        var resolve_result = while (true) break bundler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
             import_record.specifier,
             import_record.kind,
         ) catch |err| {
+            // Only perform directory busting when hot-reloading is enabled
+            if (err == error.ModuleNotFound) {
+                if (this.bundler.options.kit) |dev| {
+                    if (!had_busted_dir_cache) {
+                        // Only re-query if we previously had something cached.
+                        if (bundler.resolver.bustDirCacheFromSpecifier(import_record.source_file, import_record.specifier)) {
+                            had_busted_dir_cache = true;
+                            continue;
+                        }
+                    }
+
+                    // Tell Bake's Dev Server to wait for the file to be imported.
+                    dev.directory_watchers.trackResolutionFailure(
+                        import_record.source_file,
+                        import_record.specifier,
+                        target.kitRenderer(),
+                    ) catch bun.outOfMemory();
+                }
+            }
+
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
             const log = &this.completion.?.log;
@@ -2007,7 +2027,7 @@ pub const BundleV2 = struct {
 
         var last_error: ?anyerror = null;
 
-        for (ast.import_records.slice(), 0..) |*import_record, i| {
+        outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
             if (
             // Don't resolve TypeScript types
             import_record.is_unused or
@@ -2133,7 +2153,35 @@ pub const BundleV2 = struct {
                 ast.target,
             };
 
-            var resolve_result = bundler.resolver.resolveWithFramework(source_dir, import_record.path.text, import_record.kind) catch |err| {
+            var had_busted_dir_cache = false;
+            var resolve_result = inner: while (true) break bundler.resolver.resolveWithFramework(
+                source_dir,
+                import_record.path.text,
+                import_record.kind,
+            ) catch |err| {
+                // Only perform directory busting when hot-reloading is enabled
+                if (err == error.ModuleNotFound) {
+                    if (this.bundler.options.kit) |dev| {
+                        if (!had_busted_dir_cache) {
+                            // Only re-query if we previously had something cached.
+                            if (bundler.resolver.bustDirCacheFromSpecifier(
+                                source.path.text,
+                                import_record.path.text,
+                            )) {
+                                had_busted_dir_cache = true;
+                                continue :inner;
+                            }
+                        }
+
+                        // Tell Bake's Dev Server to wait for the file to be imported.
+                        dev.directory_watchers.trackResolutionFailure(
+                        source.path.text,
+                            import_record.path.text,
+                            ast.target.kitRenderer(), // use the source file target not the altered one
+                        ) catch bun.outOfMemory();
+                    }
+                }
+
                 // Disable failing packages from being printed.
                 // This may cause broken code to write.
                 // However, doing this means we tell them all the resolve errors
@@ -2188,7 +2236,7 @@ pub const BundleV2 = struct {
                         last_error = err;
                     },
                 }
-                continue;
+                continue :outer;
             };
             // if there were errors, lets go ahead and collect them all
             if (last_error != null) continue;
@@ -3801,6 +3849,7 @@ pub const Graph = struct {
     pool: *ThreadPool,
     heap: ThreadlocalArena = .{},
     /// This allocator is thread-local to the Bundler thread
+    /// .allocator == .heap.allocator()
     allocator: std.mem.Allocator = undefined,
 
     /// Mapping user-specified entry points to their Source Index
@@ -3847,10 +3896,6 @@ pub const Graph = struct {
     /// files. This happens for all files with a "use <side>" directive.
     server_component_boundaries: ServerComponentBoundary.List = .{},
 
-    // TODO: this has no reason to be using logger.Range
-    shadow_entry_point_range: Logger.Range = Logger.Range.None,
-
-    // TODO: document what makes this estimate not perfect
     estimated_file_loader_count: usize = 0,
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
@@ -4195,7 +4240,6 @@ const LinkerGraph = struct {
         sources: []const Logger.Source,
         server_component_boundaries: ServerComponentBoundary.List,
         dynamic_import_entry_points: []const Index.Int,
-        shadow_entry_point_range: Logger.Range,
     ) !void {
         const scb = server_component_boundaries.slice();
         try this.files.setCapacity(this.allocator, sources.len);
@@ -4283,10 +4327,7 @@ const LinkerGraph = struct {
                     // Loop #2: For each import in the entire module graph
                     for (this.reachable_files) |source_id| {
                         const use_directive = this.useDirectiveBoundary(source_id.get());
-                        const source_i32 = @as(i32, @intCast(source_id.get()));
-
-                        // TODO(paperdave/kit): i am not sure if this logic is correct
-                        const is_shadow_entrypoint = shadow_entry_point_range.contains(source_i32);
+                        const is_shadow_entrypoint = false;
 
                         // If the reachable file has a "use client"; at the top
                         for (import_records_list[source_id.get()].slice()) |*import_record| {
@@ -4646,7 +4687,7 @@ pub const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys(), bundle.graph.shadow_entry_point_range);
+        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
         this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
@@ -4663,7 +4704,7 @@ pub const LinkerContext = struct {
         if (this.options.output_format == .cjs or this.options.output_format == .iife) {
             const exports_kind = this.graph.ast.items(.exports_kind);
             const ast_flags_list = this.graph.ast.items(.flags);
-            const meta_flags_ist = this.graph.meta.items(.flags);
+            const meta_flags_list = this.graph.meta.items(.flags);
 
             for (entry_points) |entry_point| {
                 var ast_flags: js_ast.BundledAst.Flags = ast_flags_list[entry_point.get()];
@@ -4682,7 +4723,7 @@ pub const LinkerContext = struct {
                 if (ast_flags.uses_export_keyword) {
                     ast_flags.uses_exports_ref = true;
                     ast_flags_list[entry_point.get()] = ast_flags;
-                    meta_flags_ist[entry_point.get()].force_include_exports_for_entry_point = true;
+                    meta_flags_list[entry_point.get()].force_include_exports_for_entry_point = true;
                 }
             }
         }
@@ -11267,6 +11308,7 @@ pub const LinkerContext = struct {
             debugTreeShake("end()", .{});
         };
 
+        if (c.graph.files_live.isSet(source_index)) return;
         c.graph.files_live.set(source_index);
 
         if (source_index >= c.graph.ast.len) {

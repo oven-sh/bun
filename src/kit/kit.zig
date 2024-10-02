@@ -329,7 +329,7 @@ pub fn getHmrRuntime(mode: Side) []const u8 {
 
 pub const Mode = enum { production, development };
 pub const Side = enum { client, server };
-pub const Renderer = enum {
+pub const Renderer = enum(u2) {
     client,
     server,
     /// Only used when Framework has .server_components.separate_ssr_graph set

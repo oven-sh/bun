@@ -3143,7 +3143,6 @@ pub const ParseTask = struct {
                     };
                 }
             },
-            // TODO: css
             else => {},
         }
 
@@ -4817,9 +4816,6 @@ pub const LinkerContext = struct {
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
-            const key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
-            _ = key; // autofix
-
             if (comptime bun.FeatureFlags.css) {
                 if (this.graph.ast.items(.css)[source_index]) |*css| {
                     _ = css; // autofix
@@ -4862,42 +4858,44 @@ pub const LinkerContext = struct {
                 .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
             };
 
-            // If this JS entry point has an associated CSS entry point, generate it
-            // now. This is essentially done by generating a virtual CSS file that
-            // only contains "@import" statements in the order that the files were
-            // discovered in JS source order, where JS source order is arbitrary but
-            // consistent for dynamic imports. Then we run the CSS import order
-            // algorithm to determine the final CSS file order for the chunk.
-            const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
-            if (css_source_indices.len > 0) {
-                const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
-                var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
-                for (order.slice()) |entry| {
-                    if (entry.kind == .source_index) {
-                        css_files_wth_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+            if (comptime bun.FeatureFlags.css) {
+                // If this JS entry point has an associated CSS entry point, generate it
+                // now. This is essentially done by generating a virtual CSS file that
+                // only contains "@import" statements in the order that the files were
+                // discovered in JS source order, where JS source order is arbitrary but
+                // consistent for dynamic imports. Then we run the CSS import order
+                // algorithm to determine the final CSS file order for the chunk.
+                const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
+                if (css_source_indices.len > 0) {
+                    const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
+                    var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                    for (order.slice()) |entry| {
+                        if (entry.kind == .source_index) {
+                            css_files_wth_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                        }
                     }
-                }
-                const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                // const css_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                css_chunk_entry.value_ptr.* = .{
-                    .entry_point = .{
-                        .entry_point_id = entry_bit,
-                        .source_index = source_index,
-                        .is_entry_point = true,
-                    },
-                    .entry_bits = entry_bits.*,
-                    .content = .{
-                        .css = .{
-                            .imports_in_chunk_in_order = order,
-                            .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                    const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                    // const css_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+                    css_chunk_entry.value_ptr.* = .{
+                        .entry_point = .{
+                            .entry_point_id = entry_bit,
+                            .source_index = source_index,
+                            .is_entry_point = true,
                         },
-                    },
-                    .files_with_parts_in_chunk = css_files_wth_parts_in_chunk,
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                };
-            }
+                        .entry_bits = entry_bits.*,
+                        .content = .{
+                            .css = .{
+                                .imports_in_chunk_in_order = order,
+                                .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            },
+                        },
+                        .files_with_parts_in_chunk = css_files_wth_parts_in_chunk,
+                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                    };
+                }
 
-            js_chunk_entry.value_ptr.content.javascript.has_css_chunk = true;
+                js_chunk_entry.value_ptr.content.javascript.has_css_chunk = true;
+            }
         }
         var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
 
@@ -5699,24 +5697,26 @@ pub const LinkerContext = struct {
                 const records: []ImportRecord = import_records[source_index.get()].slice();
 
                 for (records) |record| {
-                    // Traverse any files imported by this part. Note that CommonJS calls
-                    // to "require()" count as imports too, sort of as if the part has an
-                    // ESM "import" statement in it. This may seem weird because ESM imports
-                    // are a compile-time concept while CommonJS imports are a run-time
-                    // concept. But we don't want to manipulate <style> tags at run-time so
-                    // this is the only way to do it.
-                    visit(
-                        c,
-                        import_records,
-                        temp,
-                        visits,
-                        o,
-                        record.source_index,
-                        record.tag == .css or strings.hasSuffixComptime(record.path.text, ".css"),
-                    );
+                    if (record.source_index.isValid()) {
+                        // Traverse any files imported by this part. Note that CommonJS calls
+                        // to "require()" count as imports too, sort of as if the part has an
+                        // ESM "import" statement in it. This may seem weird because ESM imports
+                        // are a compile-time concept while CommonJS imports are a run-time
+                        // concept. But we don't want to manipulate <style> tags at run-time so
+                        // this is the only way to do it.
+                        visit(
+                            c,
+                            import_records,
+                            temp,
+                            visits,
+                            o,
+                            record.source_index,
+                            record.tag == .css or strings.hasSuffixComptime(record.path.text, ".css"),
+                        );
+                    }
                 }
 
-                if (is_css) {
+                if (is_css and source_index.isValid()) {
                     o.push(temp, source_index) catch bun.outOfMemory();
                 }
             }
@@ -8214,16 +8214,6 @@ pub const LinkerContext = struct {
         defer prepare_css_asts.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", prepare_css_asts.linker));
         defer worker.unget();
-
-        // const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
-        // defer if (Environment.isDebug) {
-        //     bun.crash_handler.current_action = prev_action;
-        // };
-        // if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
-        //     .chunk = chunk,
-        //     .context = ctx.c,
-        //     .part_range = &prepare_css_asts.part_range,
-        // } };
 
         prepareCssAstsForChunkImpl(prepare_css_asts.linker, prepare_css_asts.chunk, worker.allocator);
     }

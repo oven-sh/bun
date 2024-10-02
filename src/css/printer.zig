@@ -72,15 +72,6 @@ const Browsers = css.targets.Browsers;
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
 pub fn Printer(comptime Writer: type) type {
-    const getWrittenAmt = struct {
-        pub inline fn func(writer: Writer) usize {
-            return switch (Writer) {
-                ArrayList(u8).Writer => writer.context.self.items.len,
-                *bun.js_printer.BufferWriter => writer.written.len,
-                else => @compileError("Dunno what to do with this type yo: " ++ @typeName(Writer)),
-            };
-        }
-    }.func;
     return struct {
         // #[cfg(feature = "sourcemap")]
         sources: ?*const ArrayList([]const u8),
@@ -110,6 +101,14 @@ pub fn Printer(comptime Writer: type) type {
         // TODO: finish the fields
 
         const This = @This();
+
+        inline fn getWrittenAmt(writer: Writer) usize {
+            return switch (Writer) {
+                ArrayList(u8).Writer => writer.context.self.items.len,
+                *bun.js_printer.BufferWriter => writer.written.len,
+                else => @compileError("Dunno what to do with this type yo: " ++ @typeName(Writer)),
+            };
+        }
 
         /// Returns the current source filename that is being printed.
         pub fn filename(this: *const This) []const u8 {

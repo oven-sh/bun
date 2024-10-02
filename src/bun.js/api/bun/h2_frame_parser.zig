@@ -3722,7 +3722,7 @@ pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         H2FrameParser.getConstructor(global),
         JSC.JSFunction.create(global, "assertSettings", jsAssertSettings, 1, .{}),
-        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
-        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),
+        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 1, .{}),
+        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 1, .{}),
     });
 }

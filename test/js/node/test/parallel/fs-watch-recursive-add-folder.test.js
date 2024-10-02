@@ -3,6 +3,8 @@
 //-----------------
 "use strict";
 
+import { patchEmitter } from "harness";
+
 const { setTimeout } = require("timers/promises");
 const assert = require("assert");
 const path = require("path");
@@ -17,7 +19,8 @@ if (isIBMi) {
 } else if (isAIX) {
   it.skip("folder watch capability is limited in AIX.", () => {});
 } else {
-  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "test-"));
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "test-test-fs-watch-recursive-add-folder"));
+  console.log("cwd", process.cwd());
 
   afterAll(() => {
     fs.rmSync(testDir, { recursive: true, force: true });
@@ -29,14 +32,17 @@ if (isIBMi) {
     const rootDirectory = fs.mkdtempSync(path.join(testDir, "root-"));
     const testDirectory = path.join(rootDirectory, "test-2");
     fs.mkdirSync(testDirectory);
+    console.log("testDirectory", testDirectory);
 
     const testFile = path.join(testDirectory, "folder-2");
 
     const watcher = fs.watch(testDirectory, { recursive: true });
+    patchEmitter(watcher, "watcher");
     let watcherClosed = false;
 
-    const watchPromise = new Promise(resolve => {
+    const watchPromise = new Promise((resolve, reject) => {
       watcher.on("change", function (event, filename) {
+        console.log(["change", event, filename]);
         expect(event).toBe("rename");
 
         if (filename === path.basename(testFile)) {
@@ -44,10 +50,11 @@ if (isIBMi) {
           watcherClosed = true;
           resolve();
         }
+        reject();
       });
     });
 
-    await setTimeout(100);
+    await setTimeout(1000);
     fs.mkdirSync(testFile);
 
     await watchPromise;

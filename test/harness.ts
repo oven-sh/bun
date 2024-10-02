@@ -1328,3 +1328,12 @@ export function waitForFileToExist(path: string, interval: number) {
     sleepSync(interval);
   }
 }
+
+export function patchEmitter(emitter: any, prefix: string) {
+  var oldEmit = emitter.emit;
+
+  emitter.emit = function () {
+    console.log([prefix, arguments[0]]);
+    oldEmit.apply(emitter, arguments);
+  };
+}

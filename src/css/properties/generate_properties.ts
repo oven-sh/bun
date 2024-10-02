@@ -540,22 +540,22 @@ generateCode({
   //   ty: "border.LineStyle",
   //   logical_group: { ty: "border_style", category: "logical" },
   // },
-  // "border-top-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
-  // "border-bottom-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
-  // "border-left-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
-  // "border-right-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
+  "border-top-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
+  "border-bottom-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
+  "border-left-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
+  "border-right-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
   // "border-block-start-width": {
   //   ty: "BorderSideWidth",
   //   logical_group: { ty: "border_width", category: "logical" },

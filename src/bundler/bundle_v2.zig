@@ -11041,6 +11041,9 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "generateChunksInParallel");
         defer trace.end();
 
+        var has_js_chunk = false;
+        var has_css_chunk = false;
+
         bun.assert(chunks.len > 0);
 
         {
@@ -11134,8 +11137,10 @@ pub const LinkerContext = struct {
                             chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
                             total_count += chunk.content.javascript.parts_in_chunk_in_order.len;
                             chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.javascript.parts_in_chunk_in_order.len) catch bun.outOfMemory();
+                            has_js_chunk = true;
                         },
                         .css => {
+                            has_css_chunk = true;
                             chunk_ctx.* = .{ .wg = wait_group, .c = c, .chunks = chunks, .chunk = chunk };
                             total_count += chunk.content.css.imports_in_chunk_in_order.len;
                             chunk.compile_results_for_chunk = c.allocator.alloc(CompileResult, chunk.content.css.imports_in_chunk_in_order.len) catch bun.outOfMemory();
@@ -11344,7 +11349,7 @@ pub const LinkerContext = struct {
 
         const root_path = c.resolver.opts.output_dir;
 
-        if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache) and !c.resolver.opts.compile) {
+        if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache or (has_css_chunk and has_js_chunk)) and !c.resolver.opts.compile) {
             try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
             return error.MultipleOutputFilesWithoutOutputDir;
         }

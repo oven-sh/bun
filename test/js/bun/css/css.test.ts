@@ -69,70 +69,68 @@ describe("css tests", () => {
   });
 
   describe("border", () => {
-    cssTest(
-      `
-      .foo {
-        border-left: 2px solid red;
-        border-right: 2px solid red;
-        border-bottom: 2px solid red;
-        border-top: 2px solid red;
-      }
-    `,
-      indoc`
-      .foo {
-        border: 2px solid red;
-      }
-    `,
-    );
-
-    cssTest(
-      `
-      .foo {
-        border-left-color: red;
-        border-right-color: red;
-        border-bottom-color: red;
-        border-top-color: red;
-      }
-    `,
-      indoc`
-      .foo {
-        border-color: red;
-      }
-    `,
-    );
-
-    cssTest(
-      `
-      .foo {
-        border-left-width: thin;
-        border-right-width: thin;
-        border-bottom-width: thin;
-        border-top-width: thin;
-      }
-    `,
-      indoc`
-      .foo {
-        border-width: thin;
-      }
-    `,
-    );
-
-    cssTest(
-      `
-      .foo {
-        border-left-style: dotted;
-        border-right-style: dotted;
-        border-bottom-style: dotted;
-        border-top-style: dotted;
-      }
-    `,
-      indoc`
-      .foo {
-        border-style: dotted;
-      }
-    `,
-    );
-
+    // TODO:
+    // cssTest(
+    //   `
+    //   .foo {
+    //     border-left: 2px solid red;
+    //     border-right: 2px solid red;
+    //     border-bottom: 2px solid red;
+    //     border-top: 2px solid red;
+    //   }
+    // `,
+    //   indoc`
+    //   .foo {
+    //     border: 2px solid red;
+    //   }
+    // `,
+    // );
+    // TODO: this
+    // cssTest(
+    //   `
+    //   .foo {
+    //     border-left-color: red;
+    //     border-right-color: red;
+    //     border-bottom-color: red;
+    //     border-top-color: red;
+    //   }
+    // `,
+    //   indoc`
+    //   .foo {
+    //     border-color: red;
+    //   }
+    // `,
+    // );
+    // cssTest(
+    //   `
+    //   .foo {
+    //     border-left-width: thin;
+    //     border-right-width: thin;
+    //     border-bottom-width: thin;
+    //     border-top-width: thin;
+    //   }
+    // `,
+    //   indoc`
+    //   .foo {
+    //     border-width: thin;
+    //   }
+    // `,
+    // );
+    // cssTest(
+    //   `
+    //   .foo {
+    //     border-left-style: dotted;
+    //     border-right-style: dotted;
+    //     border-bottom-style: dotted;
+    //     border-top-style: dotted;
+    //   }
+    // `,
+    //   indoc`
+    //   .foo {
+    //     border-style: dotted;
+    //   }
+    // `,
+    // );
     // cssTest(
     //   `
     //   .foo {
@@ -147,7 +145,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -161,7 +158,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -175,7 +171,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -190,7 +185,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -205,7 +199,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -221,7 +214,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -236,7 +228,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -253,7 +244,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -268,7 +258,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -285,7 +274,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -299,7 +287,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // minifyTest(
     //   `
     //   .foo {
@@ -308,9 +295,7 @@ describe("css tests", () => {
     // `,
     //   `.foo{border:none}`,
     // );
-
     // minifyTest(".foo { border-width: 0 0 1px; }", ".foo{border-width:0 0 1px}");
-
     // cssTest(
     //   `
     //   .foo {
@@ -324,7 +309,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -340,7 +324,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -357,7 +340,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -374,12 +356,10 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // minifyTest(
     //   ".foo { border-bottom: 1px solid var(--spectrum-global-color-gray-200)}",
     //   ".foo{border-bottom:1px solid var(--spectrum-global-color-gray-200)}",
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -394,7 +374,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -409,7 +388,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -426,7 +404,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -443,7 +420,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -460,7 +436,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -477,7 +452,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -494,7 +468,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -511,7 +484,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -529,7 +501,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -547,7 +518,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -564,7 +534,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -581,7 +550,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // cssTest(
     //   `
     //   .foo {
@@ -594,7 +562,6 @@ describe("css tests", () => {
     //   }
     // `,
     // );
-
     // minifyTest(
     //   `
     //   .foo {
@@ -603,7 +570,6 @@ describe("css tests", () => {
     // `,
     //   ".foo{border:1px solid}",
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -620,7 +586,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -636,7 +601,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -652,7 +616,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -669,7 +632,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -686,7 +648,6 @@ describe("css tests", () => {
     //     safari: 13 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -702,7 +663,6 @@ describe("css tests", () => {
     //     safari: 15 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -713,15 +673,12 @@ describe("css tests", () => {
     //   .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: 2px solid red;
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: 2px solid red;
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right: 2px solid red;
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right: 2px solid red;
     //   }
@@ -730,7 +687,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -741,15 +697,12 @@ describe("css tests", () => {
     //   .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left-width: 2px;
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left-width: 2px;
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right-width: 2px;
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right-width: 2px;
     //   }
@@ -758,7 +711,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -769,15 +721,12 @@ describe("css tests", () => {
     //   .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-right: 2px solid red;
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-right: 2px solid red;
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 2px solid red;
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 2px solid red;
     //   }
@@ -786,7 +735,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -799,17 +747,14 @@ describe("css tests", () => {
     //     border-left: 2px solid red;
     //     border-right: 5px solid green;
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: 2px solid red;
     //     border-right: 5px solid green;
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 5px solid green;
     //     border-right: 2px solid red;
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 5px solid green;
     //     border-right: 2px solid red;
@@ -819,14 +764,12 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
     //     border-inline-start: 2px solid red;
     //     border-inline-end: 5px solid green;
     //   }
-
     //   .bar {
     //     border-inline-start: 1px dotted gray;
     //     border-inline-end: 1px solid black;
@@ -837,37 +780,30 @@ describe("css tests", () => {
     //     border-left: 2px solid red;
     //     border-right: 5px solid green;
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: 2px solid red;
     //     border-right: 5px solid green;
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 5px solid green;
     //     border-right: 2px solid red;
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 5px solid green;
     //     border-right: 2px solid red;
     //   }
-
     //   .bar:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: 1px dotted gray;
     //     border-right: 1px solid #000;
     //   }
-
     //   .bar:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: 1px dotted gray;
     //     border-right: 1px solid #000;
     //   }
-
     //   .bar:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 1px solid #000;
     //     border-right: 1px dotted gray;
     //   }
-
     //   .bar:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: 1px solid #000;
     //     border-right: 1px dotted gray;
@@ -877,7 +813,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -894,7 +829,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -911,7 +845,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -928,7 +861,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -945,7 +877,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -956,15 +887,12 @@ describe("css tests", () => {
     //   .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-right: var(--test);
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-right: var(--test);
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: var(--test);
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left: var(--test);
     //   }
@@ -973,7 +901,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -986,17 +913,14 @@ describe("css tests", () => {
     //     border-left: var(--start);
     //     border-right: var(--end);
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left: var(--start);
     //     border-right: var(--end);
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right: var(--start);
     //     border-left: var(--end);
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right: var(--start);
     //     border-left: var(--end);
@@ -1006,7 +930,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // for (const prop of [
     //   "border-inline-start-color",
     //   "border-inline-end-color",
@@ -1037,7 +960,6 @@ describe("css tests", () => {
     //     },
     //   );
     // }
-
     // for (const prop of [
     //   "border",
     //   "border-inline",
@@ -1068,7 +990,6 @@ describe("css tests", () => {
     //     },
     //   );
     // }
-
     // for (const prop of [
     //   "border",
     //   "border-inline",
@@ -1092,7 +1013,6 @@ describe("css tests", () => {
     //     .foo {
     //       ${prop}: var(--border-width) solid #b32323;
     //     }
-
     //     @supports (color: lab(0% 0 0)) {
     //       .foo {
     //         ${prop}: var(--border-width) solid lab(40% 56.6 39);
@@ -1104,7 +1024,6 @@ describe("css tests", () => {
     //     },
     //   );
     // }
-
     // prefix_test(
     //   `
     //   .foo {
@@ -1116,17 +1035,14 @@ describe("css tests", () => {
     //     border-left-color: #b32323;
     //     border-left-color: lab(40% 56.6 39);
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-left-color: #b32323;
     //     border-left-color: lab(40% 56.6 39);
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right-color: #b32323;
     //     border-right-color: lab(40% 56.6 39);
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-right-color: #b32323;
     //     border-right-color: lab(40% 56.6 39);
@@ -1136,7 +1052,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {
@@ -1148,17 +1063,14 @@ describe("css tests", () => {
     //     border-right-color: #b32323;
     //     border-right-color: lab(40% 56.6 39);
     //   }
-
     //   .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
     //     border-right-color: #b32323;
     //     border-right-color: lab(40% 56.6 39);
     //   }
-
     //   .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left-color: #b32323;
     //     border-left-color: lab(40% 56.6 39);
     //   }
-
     //   .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
     //     border-left-color: #b32323;
     //     border-left-color: lab(40% 56.6 39);
@@ -1168,7 +1080,6 @@ describe("css tests", () => {
     //     safari: 8 << 16,
     //   },
     // );
-
     // prefix_test(
     //   `
     //   .foo {

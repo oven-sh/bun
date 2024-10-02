@@ -259,6 +259,10 @@ pub const Property = union(PropertyIdTag) {
     @"border-right-style": border.LineStyle,
     @"border-block-start-style": border.LineStyle,
     @"border-block-end-style": border.LineStyle,
+    @"border-top-width": BorderSideWidth,
+    @"border-bottom-width": BorderSideWidth,
+    @"border-left-width": BorderSideWidth,
+    @"border-right-width": BorderSideWidth,
     composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
@@ -389,6 +393,34 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"border-top-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-width" = c } };
+                    }
+                }
+            },
+            .@"border-bottom-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-width" = c } };
+                    }
+                }
+            },
+            .@"border-left-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-width" = c } };
+                    }
+                }
+            },
+            .@"border-right-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-width" = c } };
+                    }
+                }
+            },
             .composes => {
                 if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -437,6 +469,10 @@ pub const Property = union(PropertyIdTag) {
             .@"border-right-style" => .{ "border-right-style", VendorPrefix{ .none = true } },
             .@"border-block-start-style" => .{ "border-block-start-style", VendorPrefix{ .none = true } },
             .@"border-block-end-style" => .{ "border-block-end-style", VendorPrefix{ .none = true } },
+            .@"border-top-width" => .{ "border-top-width", VendorPrefix{ .none = true } },
+            .@"border-bottom-width" => .{ "border-bottom-width", VendorPrefix{ .none = true } },
+            .@"border-left-width" => .{ "border-left-width", VendorPrefix{ .none = true } },
+            .@"border-right-width" => .{ "border-right-width", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
@@ -470,6 +506,10 @@ pub const Property = union(PropertyIdTag) {
             .@"border-right-style" => |*value| value.toCss(W, dest),
             .@"border-block-start-style" => |*value| value.toCss(W, dest),
             .@"border-block-end-style" => |*value| value.toCss(W, dest),
+            .@"border-top-width" => |*value| value.toCss(W, dest),
+            .@"border-bottom-width" => |*value| value.toCss(W, dest),
+            .@"border-left-width" => |*value| value.toCss(W, dest),
+            .@"border-right-width" => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
@@ -504,6 +544,10 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-right-style",
     @"border-block-start-style",
     @"border-block-end-style",
+    @"border-top-width",
+    @"border-bottom-width",
+    @"border-left-width",
+    @"border-right-width",
     composes,
     all,
     unparsed,
@@ -536,6 +580,10 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => VendorPrefix.empty(),
             .@"border-block-start-style" => VendorPrefix.empty(),
             .@"border-block-end-style" => VendorPrefix.empty(),
+            .@"border-top-width" => VendorPrefix.empty(),
+            .@"border-bottom-width" => VendorPrefix.empty(),
+            .@"border-left-width" => VendorPrefix.empty(),
+            .@"border-right-width" => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
@@ -594,6 +642,18 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-style")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-top-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-bottom-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-left-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-right-width";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
@@ -624,6 +684,10 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => .@"border-right-style",
             .@"border-block-start-style" => .@"border-block-start-style",
             .@"border-block-end-style" => .@"border-block-end-style",
+            .@"border-top-width" => .@"border-top-width",
+            .@"border-bottom-width" => .@"border-bottom-width",
+            .@"border-left-width" => .@"border-left-width",
+            .@"border-right-width" => .@"border-right-width",
             .composes => .composes,
             else => this.*,
         };
@@ -649,6 +713,10 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => {},
             .@"border-block-start-style" => {},
             .@"border-block-end-style" => {},
+            .@"border-top-width" => {},
+            .@"border-bottom-width" => {},
+            .@"border-left-width" => {},
+            .@"border-right-width" => {},
             .composes => {},
             else => {},
         };
@@ -672,6 +740,10 @@ pub const PropertyIdTag = enum(u16) {
     @"border-right-style",
     @"border-block-start-style",
     @"border-block-end-style",
+    @"border-top-width",
+    @"border-bottom-width",
+    @"border-left-width",
+    @"border-right-width",
     composes,
     all,
     unparsed,

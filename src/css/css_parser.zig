@@ -794,10 +794,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
         }
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            // return dest.writeStr(asStr(this));
-            @panic(todo_stuff.depth);
+            return dest.writeStr(asStr(this));
         }
     };
 }

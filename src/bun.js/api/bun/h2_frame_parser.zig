@@ -2637,7 +2637,7 @@ pub const H2FrameParser = struct {
                 .streamIdentifier = @intCast(stream_id),
                 .length = 0,
             };
-            if (this.hasBackpressure() or this.outboundQueueSize > 0) {
+            if (this.firstSettingsACK and (this.hasBackpressure() or this.outboundQueueSize > 0)) {
                 enqueued = true;
                 stream.queueFrame("", callback, close);
             } else {
@@ -2655,7 +2655,7 @@ pub const H2FrameParser = struct {
                 offset += size;
                 const end_stream = offset >= payload.len and close;
 
-                if (this.hasBackpressure() or this.outboundQueueSize > 0) {
+                if (this.firstSettingsACK and (this.hasBackpressure() or this.outboundQueueSize > 0)) {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     stream.queueFrame(slice, callback, end_stream);

@@ -34,8 +34,6 @@ pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").auto_allocator;
 
-pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
-
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
@@ -1000,13 +998,14 @@ pub const StringArrayHashMapContext = struct {
     pub const Prehashed = struct {
         value: u32,
         input: []const u8,
+
         pub fn hash(this: @This(), s: []const u8) u32 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
             return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
         }
 
-        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
             return strings.eqlLong(a, b, true);
         }
     };
@@ -2991,6 +2990,12 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
+    @setCold(true);
+    bun.Analytics.Features.todo_panic = 1;
+    Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
+}
+
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
@@ -3815,3 +3820,5 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
         }
     };
 }
+
+pub const bytecode_extension = ".jsc";

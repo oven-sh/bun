@@ -44,6 +44,7 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
+const OOM = bun.OOM;
 
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
@@ -330,14 +331,25 @@ pub const Arguments = struct {
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
         var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
 
                 if (getHomeConfigPath(&config_buf)) |path| {
-                    try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+                    loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                        if (ctx.log.hasAny()) {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                                },
+                            }
+                        }
+                        if (ctx.log.hasAny()) Output.printError("\n", .{});
+                        Output.err(err, "failed to load config", .{});
+                        Global.crash();
+                    };
                 }
             }
         }
@@ -385,7 +397,18 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         }
 
-        try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
+        loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
+            if (ctx.log.hasAny()) {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+            }
+            if (ctx.log.hasAny()) Output.printError("\n", .{});
+            Output.err(err, "failed to load config", .{});
+            Global.crash();
+        };
     }
 
     pub fn loadConfigWithCmdArgs(
@@ -393,7 +416,7 @@ pub const Arguments = struct {
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
         ctx: Command.Context,
-    ) !void {
+    ) OOM!void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 

@@ -371,9 +371,10 @@ pub const PublishCommand = struct {
                 }
             };
 
-            Output.prettyln("\n<green> +<r> {s}@{s}", .{
+            Output.prettyln("\n<green> +<r> {s}@{s}{s}", .{
                 context.package_name,
                 context.package_version,
+                if (manager.options.dry_run) " (dry-run)" else "",
             });
 
             return;
@@ -417,9 +418,10 @@ pub const PublishCommand = struct {
             }
         };
 
-        Output.prettyln("\n<green> +<r> {s}@{s}", .{
+        Output.prettyln("\n<green> +<r> {s}@{s}{s}", .{
             context.package_name,
             context.package_version,
+            if (manager.options.dry_run) " (dry-run)" else "",
         });
 
         if (manager.options.do.run_scripts) {

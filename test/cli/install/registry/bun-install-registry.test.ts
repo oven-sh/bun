@@ -542,6 +542,68 @@ async function authBunfig(user: string) {
 }
 
 describe("publish", async () => {
+  describe("otp", async () => {
+    for (const setAuthHeader of [true, false]) {
+      test("mock web login" + (setAuthHeader ? "" : " (without auth header)"), async () => {
+        using mockRegistry = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            if (req.url.endsWith("otp-pkg-1")) {
+              if (req.headers.get("npm-otp") === authToken) {
+                return new Response("OK", { status: 200 });
+              } else {
+                const headers = new Headers();
+                if (setAuthHeader) headers.set("www-authenticate", "OTP");
+                return new Response(
+                  JSON.stringify({
+                    // this isn't accurate, but we just want to check that finding this string works
+                    mock: setAuthHeader ? "" : "one-time password",
+
+                    authUrl: `http://localhost:${this.port}/auth`,
+                    doneUrl: `http://localhost:${this.port}/done`,
+                  }),
+                  {
+                    status: 401,
+                    headers,
+                  },
+                );
+              }
+            } else if (req.url.endsWith("auth")) {
+              expect.unreachable("url given to user, bun publish should not request");
+            } else if (req.url.endsWith("done")) {
+              // send a fake response saying the user has authenticated successfully with the auth url
+              return new Response(JSON.stringify({ token: authToken }), { status: 200 });
+            }
+
+            expect.unreachable("unexpected url");
+          },
+        });
+
+        const authToken = await generateRegistryUser("otp" + (setAuthHeader ? "" : "noheader"), "otp");
+        const bunfig = `
+      [install]
+      cache = false
+      registry = { url = "http://localhost:${mockRegistry.port}", token = "${authToken}" }`;
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "otp-pkg-1"), { recursive: true, force: true }),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "otp-pkg-1",
+              version: "2.2.2",
+              dependencies: {
+                "otp-pkg-1": "2.2.2",
+              },
+            }),
+          ),
+        ]);
+
+        const { out, err, exitCode } = await publish(env, packageDir);
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
   test("can publish a package then install it", async () => {
     const bunfig = await authBunfig("basic");
     await Promise.all([

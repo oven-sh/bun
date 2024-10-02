@@ -2482,13 +2482,13 @@ class ClientHttp2Session extends Http2Session {
           ? {
               host: url.hostname,
               port,
-              ALPNProtocols: ["h2", "http/1.1"],
+              ALPNProtocols: ["h2"],
               ...options,
             }
           : {
               host: url.hostname,
               port,
-              ALPNProtocols: ["h2", "http/1.1"],
+              ALPNProtocols: ["h2"],
             },
         onConnect.bind(this),
       );
@@ -2679,15 +2679,15 @@ class Http2SecureServer extends tls.Server {
   constructor(options, onRequestHandler) {
     if (typeof options === "function") {
       onRequestHandler = options;
-      options = {};
+      options = { ALPNProtocols: ["h2"] };
     } else if (options == null || typeof options == "object") {
-      options = { ...options };
+      options = { ...options, ALPNProtocols: ["h2"] };
     } else {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }
     super(options);
     this.on("newListener", setupCompat);
-    this.on("connection", Http2SecureServer.#connectionListener);
+    this.on("secureConnection", Http2SecureServer.#connectionListener);
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);
     }

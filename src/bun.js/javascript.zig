@@ -4289,7 +4289,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 const current_hash = hashes[event.index];
 
                 // if (this.verbose)
-                std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
+                //     std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {

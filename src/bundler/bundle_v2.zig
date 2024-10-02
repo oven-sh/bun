@@ -960,6 +960,11 @@ pub const BundleV2 = struct {
                 child.parent = module_scope;
             }
 
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.graph.heap.gc(true);
+                bun.Mimalloc.mi_collect(true);
+            }
+
             module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
         }
     }
@@ -1857,6 +1862,11 @@ pub const BundleV2 = struct {
 
         try this.processServerComponentManifestFiles();
 
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.graph.heap.gc(true);
+            bun.Mimalloc.mi_collect(true);
+        }
+
         try this.cloneAST();
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -2175,7 +2185,7 @@ pub const BundleV2 = struct {
 
                         // Tell Bake's Dev Server to wait for the file to be imported.
                         dev.directory_watchers.trackResolutionFailure(
-                        source.path.text,
+                            source.path.text,
                             import_record.path.text,
                             ast.target.kitRenderer(), // use the source file target not the altered one
                         ) catch bun.outOfMemory();

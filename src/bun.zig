@@ -3828,25 +3828,27 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
-        owning_thread: std.Thread.Id,
+        owning_thread: ?std.Thread.Id = null,
 
-        pub fn initFromCurrentThread() @This() {
-            return .{ .owning_thread = std.Thread.getCurrentId() };
+        pub fn lock(impl: *@This()) void {
+            bun.assert(impl.owning_thread == null);
+            impl.owning_thread = std.Thread.getCurrentId();
         }
 
-        pub fn assertOwningThread(lock: DebugThreadLock) void {
-            assert(std.Thread.getCurrentId() == lock.owning_thread);
+        pub fn unlock(impl: *@This()) void {
+            impl.assertLocked();
+            impl.owning_thread = null;
+        }
+
+        pub fn assertLocked(impl: *const @This()) void {
+            assert(std.Thread.getCurrentId() == impl.owning_thread);
         }
     }
 else
     struct {
-        pub inline fn initFromCurrentThread() @This() {
-            return .{};
-        }
-
-        pub inline fn assertOwningThread(lock: DebugThreadLock) void {
-            _ = lock;
-        }
+        pub fn lock(_: *@This()) void {}
+        pub fn unlock(_: *@This()) void {}
+        pub fn assertLocked(_: *const @This()) void {}
     };
 
 pub const bytecode_extension = ".jsc";

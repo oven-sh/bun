@@ -483,7 +483,7 @@ pub const Task = TaggedPointerUnion(.{
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
-    bun.kit.DevServer.HotReloadTask,
+    bun.bake.DevServer.HotReloadTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1023,12 +1023,9 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                    transform_task.*.run();
-                    transform_task.deinit();
-                    // special case: we return
-                    return 0;
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+                    hmr_task.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;

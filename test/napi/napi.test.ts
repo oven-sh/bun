@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("napi", () => {
@@ -18,6 +18,124 @@ describe("napi", () => {
       throw new Error("build failed");
     }
   });
+
+  describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
+    describe.each(["node", "bun"])("target %s", target => {
+      it("Bun.build", async () => {
+        const dir = tempDirWithFiles("node-file-cli", {
+          "package.json": JSON.stringify({
+            name: "napi-app",
+            version: "1.0.0",
+            type: format === "esm" ? "module" : "commonjs",
+          }),
+        });
+        const build = spawnSync({
+          cmd: [
+            bunExe(),
+            "build",
+            "--target",
+            target,
+            "--outdir",
+            dir,
+            "--format=" + format,
+            join(__dirname, "napi-app/main.js"),
+          ],
+          cwd: join(__dirname, "napi-app"),
+          env: bunEnv,
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        expect(build.success).toBeTrue();
+
+        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), "node"]) {
+          const result = spawnSync({
+            cmd: [exec, join(dir, "main.js"), "self"],
+            env: bunEnv,
+            stdin: "inherit",
+            stderr: "inherit",
+            stdout: "pipe",
+          });
+          const stdout = result.stdout.toString().trim();
+          expect(stdout).toBe("hello world!");
+          expect(result.success).toBeTrue();
+        }
+      });
+
+      if (target === "bun") {
+        it("should work with --compile", async () => {
+          const dir = tempDirWithFiles("napi-app-compile-" + format, {
+            "package.json": JSON.stringify({
+              name: "napi-app",
+              version: "1.0.0",
+              type: format === "esm" ? "module" : "commonjs",
+            }),
+          });
+
+          const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+          const build = spawnSync({
+            cmd: [
+              bunExe(),
+              "build",
+              "--target=" + target,
+              "--format=" + format,
+              "--compile",
+              join(__dirname, "napi-app", "main.js"),
+            ],
+            cwd: dir,
+            env: bunEnv,
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+          expect(build.success).toBeTrue();
+
+          const result = spawnSync({
+            cmd: [exe, "self"],
+            env: bunEnv,
+            stdin: "inherit",
+            stderr: "inherit",
+            stdout: "pipe",
+          });
+          const stdout = result.stdout.toString().trim();
+
+          expect(stdout).toBe("hello world!");
+          expect(result.success).toBeTrue();
+        });
+      }
+
+      it("`bun build`", async () => {
+        const dir = tempDirWithFiles("node-file-build", {
+          "package.json": JSON.stringify({
+            name: "napi-app",
+            version: "1.0.0",
+            type: format === "esm" ? "module" : "commonjs",
+          }),
+        });
+        const build = await Bun.build({
+          entrypoints: [join(__dirname, "napi-app/main.js")],
+          outdir: dir,
+          target,
+          format,
+        });
+
+        expect(build.logs).toBeEmpty();
+
+        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), "node"]) {
+          const result = spawnSync({
+            cmd: [exec, join(dir, "main.js"), "self"],
+            env: bunEnv,
+            stdin: "inherit",
+            stderr: "inherit",
+            stdout: "pipe",
+          });
+          const stdout = result.stdout.toString().trim();
+
+          expect(stdout).toBe("hello world!");
+          expect(result.success).toBeTrue();
+        }
+      });
+    });
+  });
+
   describe("issue_7685", () => {
     it("works", () => {
       const args = [...Array(20).keys()];

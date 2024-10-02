@@ -3070,20 +3070,11 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .napi => {
-                if (bundler.options.target == .node) {
+                if (bundler.options.target == .browser) {
                     log.addError(
                         null,
                         Logger.Loc.Empty,
-                        "TODO: implement .node loader for Node.js target",
-                    ) catch bun.outOfMemory();
-                    return error.ParserError;
-                }
-
-                if (bundler.options.target != .bun) {
-                    log.addError(
-                        null,
-                        Logger.Loc.Empty,
-                        "To load .node files, set target to \"bun\"",
+                        "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                     ) catch bun.outOfMemory();
                     return error.ParserError;
                 }
@@ -3091,27 +3082,20 @@ pub const ParseTask = struct {
                 const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                 // This injects the following code:
                 //
-                // import.meta.require(unique_key)
+                // require(unique_key)
                 //
                 const import_path = Expr.init(E.String, E.String{
                     .data = unique_key,
                 }, Logger.Loc{ .start = 0 });
 
-                // TODO: e_require_string
-                const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, Logger.Loc{ .start = 0 });
-                const require_property = Expr.init(E.Dot, E.Dot{
-                    .target = import_meta,
-                    .name_loc = Logger.Loc.Empty,
-                    .name = "require",
-                }, Logger.Loc{ .start = 0 });
                 const require_args = allocator.alloc(Expr, 1) catch unreachable;
                 require_args[0] = import_path;
-                const require_call = Expr.init(E.Call, E.Call{
-                    .target = require_property,
+
+                const root = Expr.init(E.Call, E.Call{
+                    .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
                     .args = BabyList(Expr).init(require_args),
                 }, Logger.Loc{ .start = 0 });
 
-                const root = require_call;
                 unique_key_for_additional_file.* = unique_key;
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
@@ -5221,6 +5205,21 @@ pub const LinkerContext = struct {
                     expr,
                 );
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
+
+                // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
+                if (expr.data == .e_call and expr.data.e_call.target.data == .e_require_call_target and
+                    // if it's commonjs, use require()
+                    this.options.output_format != .cjs and
+                    // if it's esm and bun, use import.meta.require(). the code for __require is not injected into the bundle.
+                    !this.options.target.isBun())
+                {
+                    this.graph.generateRuntimeSymbolImportAndUse(
+                        source_index,
+                        Index.part(1),
+                        "__require",
+                        1,
+                    ) catch unreachable;
+                }
             },
             else => {
                 // Otherwise, generate ES6 export statements. These are added as additional
@@ -5941,7 +5940,6 @@ pub const LinkerContext = struct {
                                     // generating a CommonJS output file, since it won't exist otherwise.
                                     // Disabled for target bun because `import.meta.require` will be inlined.
                                     if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
-                                        record.calls_runtime_require = true;
                                         runtime_require_uses += 1;
                                     }
 
@@ -7555,7 +7553,7 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.resolver.opts.target.isBun() or c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const print_options = js_printer.Options{

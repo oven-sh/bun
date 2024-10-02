@@ -1183,7 +1183,7 @@ pub const DefaultAtRuleParser = struct {
             return .{ .err = {} };
         }
 
-        pub fn onImportRule(_: *This, _: *const ImportRule, _: u32, _: u32) void {}
+        pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
     };
 };
 
@@ -1208,7 +1208,9 @@ pub const BundlerAtRuleParser = struct {
             return .{ .err = {} };
         }
 
-        pub fn onImportRule(this: *This, import_rule: *const ImportRule, start_position: u32, end_position: u32) void {
+        pub fn onImportRule(this: *This, import_rule: *ImportRule, start_position: u32, end_position: u32) void {
+            const import_record_index = this.import_records.len;
+            import_rule.import_record_idx = import_record_index;
             this.import_records.push(this.allocator, ImportRecord{
                 .path = bun.fs.Path.init(import_rule.url),
                 .kind = if (import_rule.supports != null) .at_conditional else .at,
@@ -1530,7 +1532,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 switch (prelude) {
                     .import => {
                         this.state = State.imports;
-                        const import_rule = ImportRule{
+                        var import_rule = ImportRule{
                             .url = prelude.import[0],
                             .media = prelude.import[1],
                             .supports = prelude.import[2],

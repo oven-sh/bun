@@ -893,7 +893,7 @@ pub const Resolver = struct {
                         .primary = Path.init(import_path),
                     },
                     .is_external = true,
-                    .module_type = .esm,
+                    .module_type = if (!kind.isFromCSS()) .esm else .unknown,
                 },
             };
         }

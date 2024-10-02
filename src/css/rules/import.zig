@@ -73,10 +73,37 @@ pub const ImportRule = struct {
     /// A media query.
     media: css.MediaList,
 
+    /// This is default initialized to 2^32 - 1 when parsing.
+    /// If we are bundling, this will be set to the index of the corresponding ImportRecord
+    /// created for this import rule.
+    import_record_idx: u32 = std.math.maxInt(u32),
+
     /// The location of the rule in the source file.
     loc: Location,
 
     const This = @This();
+
+    pub fn fromUrl(url: []const u8) This {
+        return .{
+            .url = url,
+            .layer = null,
+            .supports = null,
+            .media = MediaList{ .media_queries = .{} },
+            .import_record_idx = std.math.maxInt(u32),
+            .loc = Location.dummy(),
+        };
+    }
+
+    pub fn fromConditionsAndUrl(url: []const u8, conditions: ImportConditions) This {
+        return ImportRule{
+            .url = url,
+            .layer = if (conditions.layer) |layer| if (layer.v) |ly| .{ .v = ly } else .{ .v = null } else null,
+            .supports = conditions.supports,
+            .media = conditions.media,
+            .import_record_idx = std.math.maxInt(u32),
+            .loc = Location.dummy(),
+        };
+    }
 
     pub fn conditionsOwned(this: *const This, allocator: std.mem.Allocator) ImportConditions {
         return ImportConditions{

@@ -73,6 +73,10 @@ export default [
         fn: "getStreamState",
         length: 1,
       },
+      bufferSize: {
+        fn: "getBufferSize",
+        length: 0,
+      },
       hasNativeRead: {
         fn: "hasNativeRead",
         length: 1,

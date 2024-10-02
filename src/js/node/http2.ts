@@ -79,7 +79,10 @@ const {
 } = require("internal/primordials");
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
-const [H2FrameParser, getPackedSettings, getUnpackedSettings] = $zig("h2_frame_parser.zig", "createNodeHttp2Binding");
+const [H2FrameParser, getPackedSettings, getUnpackedSettings, assertSettings] = $zig(
+  "h2_frame_parser.zig",
+  "createNodeHttp2Binding",
+);
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -1308,7 +1311,8 @@ class Http2Stream extends Duplex {
   get bufferSize() {
     const session = this[bunHTTP2Session];
     if (!session) return 0;
-    return session[bunHTTP2Socket]?.bufferSize || 0;
+    // native queued + socket queued
+    return session.bufferSize() + (session[bunHTTP2Socket]?.bufferSize || 0);
   }
 
   get sentHeaders() {
@@ -2691,7 +2695,13 @@ class Http2Server extends net.Server {
       }
     }
   }
-  updateSettings(settings) {}
+  updateSettings(settings) {
+    assertSettings(settings);
+    const options = this[bunSocketServerOptions];
+    if (options) {
+      options.settings = { ...options.settings, ...settings };
+    }
+  }
 }
 class Http2SecureServer extends tls.Server {
   #timeout = 0;
@@ -2735,7 +2745,13 @@ class Http2SecureServer extends tls.Server {
       }
     }
   }
-  updateSettings(settings) {}
+  updateSettings(settings) {
+    assertSettings(settings);
+    const options = this[bunSocketServerOptions];
+    if (options) {
+      options.settings = { ...options.settings, ...settings };
+    }
+  }
 }
 function createServer(options, onRequestHandler) {
   return new Http2Server(options, onRequestHandler);

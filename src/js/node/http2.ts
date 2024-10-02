@@ -2650,6 +2650,8 @@ function setupCompat(ev) {
   }
 }
 class Http2Server extends net.Server {
+  #timeout = 0;
+  #hasTimeoutEvent = false,
   static #connectionListener(socket: Socket) {
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
@@ -2670,8 +2672,24 @@ class Http2Server extends net.Server {
       this.on("request", onRequestHandler);
     }
   }
+  #onTimeout() {
+    this.emit('timeout');
+  }
+
+  get timeout() {
+    return this.#timeout;
+  }
+
   setTimeout(ms, callback) {
-    this[bunSocketInternal]?.setTimeout(ms, callback);
+    this.#timeout = ms;
+    const socket = this[bunSocketInternal];
+    if (socket) {
+      socket.setTimeout(ms, callback);
+      if (!this.#hasTimeoutEvent) {
+        this.#hasTimeoutEvent = true;
+        socket.on("timeout", this.#onTimeout.bind(this));
+      }
+    }
   }
   updateSettings(settings) {}
 }

@@ -54,12 +54,15 @@ extern "C" int kill(int pid, int sig)
 // if linux
 #if defined(__linux__)
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <fcntl.h>
 #include <dlfcn.h>
-#include <errno.h>
-#include <linux/fcntl.h>
-#include <math.h>
 #include <stdarg.h>
+#include <errno.h>
+#include <math.h>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)

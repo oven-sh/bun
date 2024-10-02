@@ -4,12 +4,14 @@
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "PathInlines.h"
+#include "headers.h"
 
 using namespace Zig;
 using namespace JSC;
@@ -531,6 +533,17 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   put(Identifier::fromString(vm, "_cache"_s), jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
   put(Identifier::fromString(vm, "globalPaths"_s), constructEmptyArray(globalObject, nullptr, 0));
+
+  auto constants_compileCacheStatus = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+  constants_compileCacheStatus->putDirect(vm, Identifier::fromString(vm, "FAILED"_s), jsNumber(0));
+  constants_compileCacheStatus->putDirect(vm, Identifier::fromString(vm, "ENABLED"_s), jsNumber(1));
+  constants_compileCacheStatus->putDirect(vm, Identifier::fromString(vm, "ALREADY_ENABLED"_s), jsNumber(2));
+  constants_compileCacheStatus->putDirect(vm, Identifier::fromString(vm, "DISABLED"_s), jsNumber(3));
+
+  auto constants = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+  constants->putDirect(vm, Identifier::fromString(vm, "compileCacheStatus"_s), constants_compileCacheStatus);
+
+  put(Identifier::fromString(vm,"constants"_s), constants);
 
   auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
   prototype->putDirectCustomAccessor(

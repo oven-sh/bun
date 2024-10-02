@@ -995,9 +995,7 @@ pub const H2FrameParser = struct {
             log("abortListener", .{});
             reason.ensureStillAlive();
             if (this.state != .CLOSED) {
-                this.state = .CLOSED;
-                this.client.endStream(this, .CANCEL);
-                this.client.dispatchWithExtra(.onAborted, this.getIdentifier(), reason);
+                this.client.abortStream(this, reason);
             }
         }
 
@@ -1091,6 +1089,31 @@ pub const H2FrameParser = struct {
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
         this.ajustWindowSize(null, @intCast(buffer.len));
+    }
+
+    pub fn abortStream(this: *H2FrameParser, stream: *Stream, abortReason: JSC.JSValue) void {
+        abortReason.ensureStillAlive();
+        var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
+        @memset(&buffer, 0);
+        var writerStream = std.io.fixedBufferStream(&buffer);
+        const writer = writerStream.writer();
+
+        var frame: FrameHeader = .{
+            .type = @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM),
+            .flags = 0,
+            .streamIdentifier = stream.id,
+            .length = 4,
+        };
+        _ = frame.write(@TypeOf(writer), writer);
+        var value: u32 = @intFromEnum(ErrorCode.CANCEL);
+        stream.rstCode = value;
+        value = @byteSwap(value);
+        _ = writer.write(std.mem.asBytes(&value)) catch 0;
+        const old_state = stream.state;
+        stream.state = .CLOSED;
+        stream.cleanQueue();
+        this.dispatchWith2Extra(.onAborted, stream.getIdentifier(), abortReason, JSC.JSValue.jsNumber(@intFromEnum(old_state)));
+        _ = this.write(&buffer);
     }
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
@@ -1296,7 +1319,9 @@ pub const H2FrameParser = struct {
             this.writeBuffer.len = 0;
             // lets keep size under control
             if (this.writeBuffer.cap > MAX_BUFFER_SIZE) {
+                this.writeBuffer.len = MAX_BUFFER_SIZE;
                 this.writeBuffer.shrinkAndFree(this.allocator, MAX_BUFFER_SIZE);
+                this.writeBuffer.clearRetainingCapacity();
             }
         }
         return buffer.len;
@@ -1304,6 +1329,15 @@ pub const H2FrameParser = struct {
 
     pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
         log("_genericWrite {}", .{bytes.len});
+        defer {
+            // lets keep size under control
+            if (this.writeBuffer.cap > MAX_BUFFER_SIZE and this.writeBuffer.len <= MAX_BUFFER_SIZE) {
+                const old_len = this.writeBuffer.len;
+                this.writeBuffer.len = MAX_BUFFER_SIZE;
+                this.writeBuffer.shrinkAndFree(this.allocator, MAX_BUFFER_SIZE);
+                this.writeBuffer.len = old_len;
+            }
+        }
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
             {
@@ -1330,10 +1364,6 @@ pub const H2FrameParser = struct {
                     log("_genericWrite buffered more {}", .{bytes[written..].len});
                     return false;
                 }
-            }
-            // lets keep size under control
-            if (this.writeBuffer.cap > MAX_BUFFER_SIZE and this.writeBuffer.len <= MAX_BUFFER_SIZE) {
-                this.writeBuffer.shrinkAndFree(this.allocator, MAX_BUFFER_SIZE);
             }
             return true;
         }
@@ -1862,7 +1892,12 @@ pub const H2FrameParser = struct {
                     } else {
                         stream.state = .HALF_CLOSED_REMOTE;
                     }
-                    this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+
+                    if (stream.endAfterHeaders) {
+                        this.endStream(stream, ErrorCode.NO_ERROR);
+                    } else {
+                        this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+                    }
                     return content.end;
                 }
             }
@@ -2375,37 +2410,6 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsBoolean(true);
     }
 
-    pub fn getStreamAbortReason(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-        JSC.markBinding(@src());
-        const args_list = callframe.arguments(1);
-        if (args_list.len < 1) {
-            globalObject.throw("Expected stream argument", .{});
-            return .zero;
-        }
-        const stream_arg = args_list.ptr[0];
-
-        if (!stream_arg.isNumber()) {
-            globalObject.throw("Invalid stream id", .{});
-            return .zero;
-        }
-
-        const stream_id = stream_arg.toU32();
-        if (stream_id == 0) {
-            globalObject.throw("Invalid stream id", .{});
-            return .zero;
-        }
-
-        const stream = this.streams.getPtr(stream_id) orelse {
-            globalObject.throw("Invalid stream id", .{});
-            return .zero;
-        };
-
-        if (stream.signal) |_signal| {
-            return _signal.abortReason();
-        }
-        return JSC.JSValue.jsBoolean(false);
-    }
-
     pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
@@ -2434,7 +2438,8 @@ pub const H2FrameParser = struct {
         if (stream.signal) |_signal| {
             return JSC.JSValue.jsBoolean(_signal.aborted());
         }
-        return JSC.JSValue.jsBoolean(false);
+        // closed with cancel = aborted
+        return JSC.JSValue.jsBoolean(stream.state == .CLOSED and stream.rstCode == @intFromEnum(ErrorCode.CANCEL));
     }
     pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
@@ -3297,9 +3302,8 @@ pub const H2FrameParser = struct {
             if (options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                     if (signal_.aborted()) {
-                        stream.state = .CLOSED;
-                        stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
-                        this.dispatchWithExtra(.onAborted, stream.getIdentifier(), signal_.abortReason());
+                        stream.state = .IDLE;
+                        this.abortStream(stream, signal_.abortReason());
                         return JSC.JSValue.jsNumber(stream.id);
                     }
                     stream.attachSignal(signal_);
@@ -3460,17 +3464,12 @@ pub const H2FrameParser = struct {
         switch (this.native_socket) {
             .tls => |socket| {
                 if (socket.native_callbacks.ctx != null) {
-                    socket.native_callbacks.ctx = null;
-                    socket.native_callbacks.onData = null;
-                    socket.native_callbacks.onClose = null;
-                    socket.native_callbacks.onWritable = null;
+                    socket.native_callbacks = .{};
                 }
             },
             .tcp => |socket| {
                 if (socket.native_callbacks.ctx != null) {
-                    socket.native_callbacks.ctx = null;
-                    socket.native_callbacks.onData = null;
-                    socket.native_callbacks.onWritable = null;
+                    socket.native_callbacks = .{};
                 }
             },
             else => {},
@@ -3607,10 +3606,17 @@ pub const H2FrameParser = struct {
         this.strong_ctx.deinit();
         this.handlers.deinit();
         this.readBuffer.deinit();
-        this.writeBuffer.deinitWithAllocator(this.allocator);
+        {
+            var writeBuffer = this.writeBuffer;
+            this.writeBuffer = .{};
+            writeBuffer.deinitWithAllocator(this.allocator);
+        }
         this.writeBufferOffset = 0;
-        this.pendingBuffer.deinitWithAllocator(this.allocator);
-
+        {
+            var pendingBuffer = this.pendingBuffer;
+            this.pendingBuffer = .{};
+            pendingBuffer.deinitWithAllocator(this.allocator);
+        }
         if (this.hpack) |hpack| {
             hpack.deinit();
             this.hpack = null;

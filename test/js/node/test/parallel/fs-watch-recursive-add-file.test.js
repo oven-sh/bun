@@ -3,6 +3,8 @@
 //-----------------
 "use strict";
 
+import { patchEmitter, tmpdirSync } from "harness";
+
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -15,28 +17,16 @@ if (isIBMi) {
 } else if (isAIX) {
   it.skip("folder watch capability is limited in AIX.", () => {});
 } else {
-  const tmpdir = {
-    path: path.join(os.tmpdir(), "jest-test-fs-watch-recursive-add-file"),
-    refresh: () => {
-      if (fs.existsSync(tmpdir.path)) {
-        fs.rmSync(tmpdir.path, { recursive: true, force: true });
-      }
-      fs.mkdirSync(tmpdir.path, { recursive: true });
-    },
-  };
-
-  beforeEach(() => {
-    tmpdir.refresh();
-  });
-
   it("should detect file added to already watching folder", done => {
-    const rootDirectory = fs.mkdtempSync(tmpdir.path + path.sep);
+    const rootDirectory = tmpdirSync();
     const testDirectory = path.join(rootDirectory, "test-1");
     fs.mkdirSync(testDirectory);
+    console.log("testDirectory", testDirectory);
 
     const testFile = path.join(testDirectory, "file-1.txt");
 
     const watcher = fs.watch(testDirectory, { recursive: true });
+    patchEmitter(watcher, "watcher");
     let watcherClosed = false;
 
     watcher.on("change", function (event, filename) {
@@ -51,12 +41,9 @@ if (isIBMi) {
     });
 
     // Do the write with a delay to ensure that the OS is ready to notify us.
-    setTimeout(
-      () => {
-        fs.writeFileSync(testFile, "world");
-      },
-      process.platform === "win32" ? 200 : 100,
-    );
+    setTimeout(() => {
+      fs.writeFileSync(testFile, "world");
+    }, 1000);
   });
 }
 

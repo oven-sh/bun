@@ -3,6 +3,8 @@
 //-----------------
 "use strict";
 
+import { patchEmitter } from "harness";
+
 const { setTimeout } = require("timers/promises");
 const path = require("path");
 const fs = require("fs");
@@ -19,16 +21,19 @@ if (isIBMi) {
 } else {
   it("should watch for file changes using URL as path", async () => {
     const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "test-"));
+    console.log("cwd", process.cwd());
 
     // Add a file to already watching folder, and use URL as the path
     const rootDirectory = fs.mkdtempSync(path.join(testDir, path.sep));
     const testDirectory = path.join(rootDirectory, "test-5");
     fs.mkdirSync(testDirectory);
+    console.log("testDirectory", testDirectory);
 
     const filePath = path.join(testDirectory, "file-8.txt");
     const url = pathToFileURL(testDirectory);
 
     const watcher = fs.watch(url, { recursive: true });
+    patchEmitter(watcher, "watcher");
     let watcherClosed = false;
 
     const watchPromise = new Promise(resolve => {
@@ -43,7 +48,7 @@ if (isIBMi) {
       });
     });
 
-    await setTimeout(100);
+    await setTimeout(1000);
     fs.writeFileSync(filePath, "world");
 
     await watchPromise;

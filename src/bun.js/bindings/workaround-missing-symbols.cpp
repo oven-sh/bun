@@ -197,13 +197,13 @@ int __wrap_fcntl64(int fd, int cmd, ...)
         return fcntl(fd, cmd, *(struct f_owner_ex**)arg);
 
 #ifdef F_OFD_GETLK
-    // Commands that take a struct f_owner_exlock *
+    // Commands that take a struct flock *
     case F_OFD_GETLK:
     case F_OFD_SETLK:
     case F_OFD_SETLKW:
-        arg = va_arg(ap, struct f_owner_exlock**);
+        arg = va_arg(ap, struct flock**);
         va_end(ap);
-        return fcntl(fd, cmd, *(struct f_owner_exlock**)arg);
+        return fcntl(fd, cmd, *(struct flock**)arg);
 #endif
 
     default:

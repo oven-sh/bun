@@ -325,18 +325,18 @@ fn refreshWithHeldLock(self: *Progress) void {
             const completed_items = @atomicLoad(usize, &node.unprotected_completed_items, .monotonic);
             const current_item = completed_items + 1;
             if (node.name.len != 0 or eti > 0) {
-                if (node.name.len != 0) {
-                    self.bufWrite(&end, "{s}", .{node.name});
-                    need_ellipse = true;
-                }
                 if (eti > 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit });
+                    self.bufWrite(&end, "[{d}/{d}{s}]", .{ current_item, eti, node.unit });
                     need_ellipse = false;
                 } else if (completed_items != 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit });
+                    self.bufWrite(&end, "[{d}{s}]", .{ current_item, node.unit });
                     need_ellipse = false;
+                }
+                if (node.name.len != 0) {
+                    self.bufWrite(&end, "{s}", .{node.name});
+                    need_ellipse = true;
                 }
             }
             maybe_node = @atomicLoad(?*Node, &node.recently_updated_child, .acquire);

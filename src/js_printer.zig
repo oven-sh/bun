@@ -2578,7 +2578,7 @@ fn NewPrinter(
 
                     if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.require");
-                    } else if  (p.options.require_ref) |require_ref| {
+                    } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                     } else {
                         p.print("require");

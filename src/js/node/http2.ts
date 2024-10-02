@@ -2251,10 +2251,8 @@ class ClientHttp2Session extends Http2Session {
     // redirect the queued buffers
     const queue = this.#queue;
     while (queue.length) {
-      console.error("queue", queue);
       socket.write(queue.shift());
     }
-    this.#parser.flush();
     process.nextTick(emitConnectNT, this, socket);
   }
 

@@ -21,7 +21,7 @@ try {
 
   const interval = setInterval(() => {
     fs.writeFileSync("relative.txt", "world");
-  }, 10);
+  }, 1000);
 } catch (err) {
   console.error(err.message);
   process.exit(1);

@@ -21925,16 +21925,6 @@ fn NewParser_(
             );
         }
 
-        fn anyDeclInConstValues(p: *P, decls: G.Decl.List) bool {
-            for (decls.slice()) |decl| {
-                if (decl.binding.data != .b_identifier) continue;
-                if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         // Try separating the list for appending, so that it's not a pointer.
         fn visitStmts(p: *P, stmts: *ListManaged(Stmt), kind: StmtsKind) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {

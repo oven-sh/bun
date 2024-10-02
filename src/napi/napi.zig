@@ -1202,7 +1202,7 @@ pub const napi_async_work = struct {
         this.wait_for_deinit = true;
     }
 
-    pub fn runFromJS(this: *napi_async_work) void {
+    fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
         const handle_scope = NapiHandleScope.push(this.global, false);
         defer if (handle_scope) |scope| scope.pop(this.global);
         this.complete.?(
@@ -1213,6 +1213,15 @@ pub const napi_async_work = struct {
                 napi_status.ok,
             this.ctx.?,
         );
+        if (this.global.hasException()) {
+            return error.JSError;
+        }
+    }
+
+    pub fn runFromJS(this: *napi_async_work) void {
+        this.runFromJSWithError() catch |e| {
+            this.global.reportActiveExceptionAsUnhandled(e);
+        };
     }
 };
 pub const napi_threadsafe_function = *ThreadSafeFunction;

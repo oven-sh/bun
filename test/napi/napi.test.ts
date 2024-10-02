@@ -79,7 +79,7 @@ describe("napi", () => {
       checkSameOutput("test_napi_class_constructor_handle_scope", []);
     });
     it("exists while calling a napi_async_complete_callback", () => {
-      checkSameOutput("create_promise", []);
+      checkSameOutput("create_promise", [false]);
     });
   });
 
@@ -136,6 +136,9 @@ describe("napi", () => {
     it("can check for a pending error and catch the right value", () => {
       checkSameOutput("test_get_exception", [5]);
       checkSameOutput("test_get_exception", [{ foo: "bar" }]);
+    });
+    it("can throw an exception from an async_complete_callback", () => {
+      checkSameOutput("create_promise", [true]);
     });
   });
 });

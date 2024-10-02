@@ -374,12 +374,12 @@ struct AsyncWorkData {
   int result;
   napi_deferred deferred;
   napi_async_work work;
+  bool do_throw;
 
-  AsyncWorkData() : result(0), deferred(nullptr), work(nullptr) {}
+  AsyncWorkData()
+      : result(0), deferred(nullptr), work(nullptr), do_throw(false) {}
 
   static void execute(napi_env env, void *data) {
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(10ms);
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
     async_work_data->result = 42;
   }
@@ -388,22 +388,43 @@ struct AsyncWorkData {
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
     assert(status == napi_ok);
 
-    napi_value result;
-    char buf[64] = {0};
-    snprintf(buf, sizeof(buf), "the number is %d", async_work_data->result);
-    assert(napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result) ==
-           napi_ok);
-    assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
-           napi_ok);
-    assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
+    if (async_work_data->do_throw) {
+      // still have to resolve/reject otherwise the process times out
+      // we should not see the resolution as our unhandled exception handler
+      // exits the process before that can happen
+      napi_value result;
+      assert(napi_get_undefined(env, &result) == napi_ok);
+      assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
+             napi_ok);
 
+      napi_value err;
+      napi_value msg;
+      assert(napi_create_string_utf8(env, "error from napi", NAPI_AUTO_LENGTH,
+                                     &msg) == napi_ok);
+      assert(napi_create_error(env, nullptr, msg, &err) == napi_ok);
+      assert(napi_throw(env, err) == napi_ok);
+    } else {
+      napi_value result;
+      char buf[64] = {0};
+      snprintf(buf, sizeof(buf), "the number is %d", async_work_data->result);
+      assert(napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result) ==
+             napi_ok);
+      assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
+             napi_ok);
+    }
+
+    assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
     delete async_work_data;
   }
 };
 
+// create_promise(void *unused_run_gc_callback, bool do_throw): makes a promise
+// using napi_Async_work that either resolves or throws in the complete callback
 napi_value create_promise(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   auto *data = new AsyncWorkData();
+  // info[0] is a callback to run the GC
+  assert(napi_get_value_bool(env, info[1], &data->do_throw) == napi_ok);
 
   napi_value promise;
 

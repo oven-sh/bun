@@ -1,5 +1,4 @@
 const nativeTests = require("./build/Release/napitests.node");
-const { EventEmitter } = require("node:events");
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
@@ -30,21 +29,6 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   // create_promise_with_threadsafe_function returns a promise that calls our function from another
   // thread (via napi_threadsafe_function) and resolves with its return value
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
-};
-
-const emitter = new EventEmitter();
-
-nativeTests.test_throw_in_completion = async () => {
-  nativeTests.create_promise_with_threadsafe_function(() => {
-    emitter.emit("error", new Error("foo"));
-  });
-  nativeTests.create_promise_with_threadsafe_function(() => {
-    console.log("hello from js");
-  });
-};
-
-nativeTests.test_throw_in_two_completions = () => {
-  return Promise.all([nativeTests.create_promise(), nativeTests.create_promise()]);
 };
 
 nativeTests.test_get_exception = (_, value) => {

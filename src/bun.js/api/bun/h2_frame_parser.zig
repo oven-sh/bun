@@ -1883,6 +1883,7 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
+                stream.endAfterHeaders = true;
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
@@ -1893,17 +1894,10 @@ pub const H2FrameParser = struct {
                         stream.state = .HALF_CLOSED_REMOTE;
                     }
 
-                    if (stream.endAfterHeaders) {
-                        this.endStream(stream, ErrorCode.NO_ERROR);
-                    } else {
-                        this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-                    }
+                    this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+
                     return content.end;
                 }
-            }
-
-            if (stream.endAfterHeaders) {
-                this.endStream(stream, ErrorCode.NO_ERROR);
             }
             return content.end;
         }
@@ -2374,40 +2368,6 @@ pub const H2FrameParser = struct {
         };
 
         return JSC.JSValue.jsBoolean(stream.endAfterHeaders);
-    }
-
-    pub fn setEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-        JSC.markBinding(@src());
-        const args_list = callframe.arguments(2);
-        if (args_list.len < 2) {
-            globalObject.throw("Expected stream and endAfterHeaders arguments", .{});
-            return .zero;
-        }
-        const stream_arg = args_list.ptr[0];
-        const end_arg = args_list.ptr[1];
-
-        if (!stream_arg.isNumber()) {
-            globalObject.throw("Invalid stream id", .{});
-            return .zero;
-        }
-
-        const stream_id = stream_arg.toU32();
-        if (stream_id == 0 or stream_id > MAX_STREAM_ID) {
-            globalObject.throw("Invalid stream id", .{});
-            return .zero;
-        }
-
-        var stream = this.streams.getPtr(stream_id) orelse {
-            globalObject.throw("Invalid stream id", .{});
-            return .zero;
-        };
-
-        if (!stream.canSendData() and !stream.canReceiveData()) {
-            return JSC.JSValue.jsBoolean(false);
-        }
-
-        stream.endAfterHeaders = end_arg.toBoolean();
-        return JSC.JSValue.jsBoolean(true);
     }
 
     pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {

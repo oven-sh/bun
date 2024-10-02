@@ -1403,12 +1403,6 @@ class Http2Stream extends Duplex {
     session[bunHTTP2Native]?.setStreamPriority(this.#id, options);
   }
 
-  set endAfterHeaders(value: boolean) {
-    const session = this[bunHTTP2Session];
-    assertSession(session);
-    session[bunHTTP2Native]?.setEndAfterHeaders(this.#id, value);
-  }
-
   get endAfterHeaders() {
     const session = this[bunHTTP2Session];
     if (session) {

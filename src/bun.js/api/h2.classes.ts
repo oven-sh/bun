@@ -61,10 +61,6 @@ export default [
         fn: "setStreamContext",
         length: 2,
       },
-      setEndAfterHeaders: {
-        fn: "setEndAfterHeaders",
-        length: 2,
-      },
       getEndAfterHeaders: {
         fn: "getEndAfterHeaders",
         length: 1,

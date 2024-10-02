@@ -21,7 +21,7 @@ const Table = bun.fmt.Table;
 
 pub const OutdatedCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        Output.prettyErrorln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);

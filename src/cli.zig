@@ -237,6 +237,7 @@ pub const Arguments = struct {
 
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
@@ -253,7 +254,8 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
-        clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
+        clap.parseParam("--server-components              Enable Server Components (experimental)") catch unreachable,
+        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
@@ -724,6 +726,13 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
+            ctx.bundler_options.bytecode = args.flag("--bytecode");
+
+            // TODO: support --format=esm
+            if (ctx.bundler_options.bytecode) {
+                ctx.bundler_options.output_format = .cjs;
+                ctx.args.target = .bun;
+            }
 
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
@@ -782,6 +791,11 @@ pub const Arguments = struct {
 
                 if (opts.target.? == .bun)
                     ctx.debug.run_in_bun = opts.target.? == .bun;
+
+                if (opts.target.? != .bun and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--watch")) {
@@ -826,17 +840,18 @@ pub const Arguments = struct {
                         bun.Output.flush();
                     },
                     .cjs => {
-                        // Make this a soft error in debug to allow experimenting with these flags.
-                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
-                        function("Format '{s}' are not implemented", .{@tagName(format)});
-                        if (!Environment.isDebug) {
-                            Global.crash();
+                        if (ctx.args.target == null) {
+                            ctx.args.target = .node;
                         }
                     },
                     else => {},
                 }
 
                 ctx.bundler_options.output_format = format;
+                if (format != .cjs and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--splitting")) {
@@ -856,7 +871,19 @@ pub const Arguments = struct {
             }
 
             if (args.flag("--server-components")) {
-                ctx.bundler_options.react_server_components = true;
+                if (!bun.FeatureFlags.cli_server_components) {
+                    // TODO: i want to disable this in non-canary
+                    // but i also want to have tests that can run for PRs
+                }
+                ctx.bundler_options.server_components = true;
+                if (opts.target) |target| {
+                    if (!bun.options.Target.from(target).isServerSide()) {
+                        bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                        Global.crash();
+                    }
+                } else {
+                    opts.target = .bun;
+                }
             }
 
             if (args.flag("--react-fast-refresh")) {
@@ -986,9 +1013,9 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0 and opts.framework == null) {
-                Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
+            if (opts.entry_points.len == 0) {
+                Output.prettyln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                Output.pretty("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
                 Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
@@ -1320,7 +1347,7 @@ pub const Command = struct {
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
-            react_server_components: bool = false,
+            server_components: bool = false,
             react_fast_refresh: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
@@ -1331,6 +1358,7 @@ pub const Command = struct {
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
+            bytecode: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1712,7 +1740,7 @@ pub const Command = struct {
                     const index = AddCompletions.index;
 
                     outer: {
-                        if (filter.len > 1) {
+                        if (filter.len > 1 and filter[1].len > 0) {
                             const first_letter: FirstLetter = switch (filter[1][0]) {
                                 'a' => FirstLetter.a,
                                 'b' => FirstLetter.b,

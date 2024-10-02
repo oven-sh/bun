@@ -109,7 +109,7 @@ pub const PackCommand = struct {
     };
 
     pub fn execWithManager(ctx: Command.Context, manager: *PackageManager) !void {
-        Output.prettyErrorln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         var lockfile: Lockfile = undefined;

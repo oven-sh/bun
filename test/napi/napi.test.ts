@@ -141,6 +141,22 @@ describe("napi", () => {
       checkSameOutput("create_promise", [true]);
     });
   });
+
+  describe("napi_run_script", () => {
+    it("evaluates a basic expression", () => {
+      checkSameOutput("eval_wrapper", ["5 * (1 + 2)"]);
+    });
+    it("provides the right this value", () => {
+      checkSameOutput("eval_wrapper", ["this === global"]);
+    });
+    it("propagates exceptions", () => {
+      checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
+    });
+    it("cannot see locals from around its invocation", () => {
+      // variable is declared on main.js:18, but it should not be in scope for the eval'd code
+      checkSameOutput("eval_wrapper", ["shouldNotExist"]);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

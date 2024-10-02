@@ -70,12 +70,35 @@ pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
-    already_bundled: bool = false,
+    already_bundled: AlreadyBundled = .none,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+    pub const AlreadyBundled = union(enum) {
+        none: void,
+        source_code: void,
+        source_code_cjs: void,
+        bytecode: []u8,
+        bytecode_cjs: []u8,
+
+        pub fn bytecodeSlice(this: AlreadyBundled) []u8 {
+            return switch (this) {
+                inline .bytecode, .bytecode_cjs => |slice| slice,
+                else => &.{},
+            };
+        }
+
+        pub fn isBytecode(this: AlreadyBundled) bool {
+            return this == .bytecode or this == .bytecode_cjs;
+        }
+
+        pub fn isCommonJS(this: AlreadyBundled) bool {
+            return this == .source_code_cjs or this == .bytecode_cjs;
+        }
+    };
 
     pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
         const import_record_ids = this.pending_imports.items(.import_record_id);
@@ -322,6 +345,12 @@ pub const PluginRunner = struct {
     }
 };
 
+/// This structure was the JavaScript bundler before bundle_v2 was written. It now
+/// acts mostly as a configuration object, but it also contains stateful logic around
+/// logging errors (.log) and module resolution (.resolve_queue)
+///
+/// This object is not exclusive to bundle_v2/Bun.build, one of these is stored
+/// on every VM so that the options can be used for transpilation.
 pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
@@ -581,111 +610,12 @@ pub const Bundler = struct {
         defer js_ast.Expr.Data.Store.reset();
         defer js_ast.Stmt.Data.Store.reset();
 
-        if (this.options.framework) |framework| {
-            if (this.options.target.isClient()) {
-                try this.options.loadDefines(this.allocator, this.env, &framework.client.env);
-            } else {
-                try this.options.loadDefines(this.allocator, this.env, &framework.server.env);
-            }
-        } else {
-            try this.options.loadDefines(this.allocator, this.env, &this.options.env);
-        }
+        try this.options.loadDefines(this.allocator, this.env, &this.options.env);
 
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
             if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
             }
-        }
-    }
-
-    pub fn configureFramework(
-        this: *Bundler,
-        comptime load_defines: bool,
-    ) !void {
-        if (this.options.framework) |*framework| {
-            if (framework.needsResolveFromPackage()) {
-                var route_config = this.options.routes;
-                var pair = PackageJSON.FrameworkRouterPair{ .framework = framework, .router = &route_config };
-
-                if (framework.development) {
-                    try this.resolver.resolveFramework(framework.package, &pair, .development, load_defines);
-                } else {
-                    try this.resolver.resolveFramework(framework.package, &pair, .production, load_defines);
-                }
-
-                if (this.options.areDefinesUnset()) {
-                    if (this.options.target.isClient()) {
-                        this.options.env = framework.client.env;
-                    } else {
-                        this.options.env = framework.server.env;
-                    }
-                }
-
-                if (pair.loaded_routes) {
-                    this.options.routes = route_config;
-                }
-                framework.resolved = true;
-                this.options.framework = framework.*;
-            } else if (!framework.resolved) {
-                Output.panic("directly passing framework path is not implemented yet!", .{});
-            }
-        }
-    }
-
-    pub fn configureFrameworkWithResolveResult(this: *Bundler, comptime client: bool) !?_resolver.Result {
-        if (this.options.framework != null) {
-            try this.configureFramework(true);
-            if (comptime client) {
-                if (this.options.framework.?.client.isEnabled()) {
-                    return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.client.path, .stmt);
-                }
-
-                if (this.options.framework.?.fallback.isEnabled()) {
-                    return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.fallback.path, .stmt);
-                }
-            } else {
-                if (this.options.framework.?.server.isEnabled()) {
-                    return try this.resolver.resolve(this.fs.top_level_dir, this.options.framework.?.server, .stmt);
-                }
-            }
-        }
-
-        return null;
-    }
-
-    pub fn configureRouter(this: *Bundler, comptime load_defines: bool) !void {
-        try this.configureFramework(load_defines);
-        defer {
-            if (load_defines) {
-                this.configureDefines() catch {};
-            }
-        }
-
-        if (this.options.routes.routes_enabled) {
-            const dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
-            const dir_info = dir_info_ orelse return error.MissingRoutesDir;
-
-            this.options.routes.dir = dir_info.abs_path;
-
-            this.router = try Router.init(this.fs, this.allocator, this.options.routes);
-            try this.router.?.loadRoutes(
-                this.log,
-                dir_info,
-                Resolver,
-                &this.resolver,
-                this.fs.top_level_dir,
-            );
-            this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
-            return;
-        }
-
-        // If we get this far, it means they're trying to run the bundler without a preconfigured router
-        if (this.options.entry_points.len > 0) {
-            this.options.routes.routes_enabled = false;
-        }
-
-        if (this.router) |*router| {
-            router.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
         }
     }
 
@@ -709,6 +639,7 @@ pub const Bundler = struct {
         input_fd: ?StoredFileDescriptorType,
         empty: bool = false,
     };
+
     pub fn buildWithResolveResult(
         bundler: *Bundler,
         resolve_result: _resolver.Result,
@@ -985,7 +916,7 @@ pub const Bundler = struct {
                         &writer,
                         .esm,
                     ),
-                    .bun, .bun_macro => try bundler.print(
+                    .bun, .bun_macro, .kit_server_components_ssr => try bundler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
@@ -1157,8 +1088,7 @@ pub const Bundler = struct {
                 js_ast.Symbol.Map.initList(symbols),
                 source,
                 false,
-                js_printer.Options{
-                    .externals = ast.externals,
+                .{
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
@@ -1180,8 +1110,7 @@ pub const Bundler = struct {
                 js_ast.Symbol.Map.initList(symbols),
                 source,
                 false,
-                js_printer.Options{
-                    .externals = ast.externals,
+                .{
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
@@ -1204,8 +1133,7 @@ pub const Bundler = struct {
                     js_ast.Symbol.Map.initList(symbols),
                     source,
                     is_bun,
-                    js_printer.Options{
-                        .externals = ast.externals,
+                    .{
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,
                         .css_import_behavior = bundler.options.cssImportBehavior(),
@@ -1313,6 +1241,7 @@ pub const Bundler = struct {
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
         keep_json_and_toml_as_one_statement: bool = false,
+        allow_bytecode_cache: bool = false,
     };
 
     pub fn parse(
@@ -1444,10 +1373,10 @@ pub const Bundler = struct {
 
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
                     jsx.parse and
-                    bundler.options.jsx.supports_fast_refresh;
+                    bundler.options.react_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
-                opts.warn_about_unbundled_modules = target.isNotBun();
+                opts.warn_about_unbundled_modules = !target.isBun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
@@ -1494,9 +1423,26 @@ pub const Bundler = struct {
                         .loader = loader,
                         .input_fd = input_fd,
                     },
-                    .already_bundled => ParseResult{
+                    .already_bundled => |already_bundled| ParseResult{
                         .ast = undefined,
-                        .already_bundled = true,
+                        .already_bundled = switch (already_bundled) {
+                            .bun => .source_code,
+                            .bun_cjs => .source_code_cjs,
+                            .bytecode_cjs, .bytecode => brk: {
+                                const default_value: ParseResult.AlreadyBundled = if (already_bundled == .bytecode_cjs) .source_code_cjs else .source_code;
+                                if (this_parse.virtual_source == null and this_parse.allow_bytecode_cache) {
+                                    var path_buf2: bun.PathBuffer = undefined;
+                                    @memcpy(path_buf2[0..path.text.len], path.text);
+                                    path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    if (bytecode.contents.len == 0) {
+                                        break :brk default_value;
+                                    }
+                                    break :brk if (already_bundled == .bytecode_cjs) .{ .bytecode_cjs = @constCast(bytecode.contents) } else .{ .bytecode = @constCast(bytecode.contents) };
+                                }
+                                break :brk default_value;
+                            },
+                        },
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,

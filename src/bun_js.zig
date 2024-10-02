@@ -107,9 +107,6 @@ pub const Run = struct {
 
         b.options.env.behavior = .load_all_without_inlining;
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
@@ -252,9 +249,6 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };

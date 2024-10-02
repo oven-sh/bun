@@ -259,6 +259,11 @@ static JSValue constructBunRevision(VM& vm, JSObject*)
     return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
+static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
+{
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_with_sha)));
+}
+
 static JSValue constructIsMainThread(VM&, JSObject* object)
 {
     return jsBoolean(jsCast<Zig::GlobalObject*>(object->globalObject())->scriptExecutionContext()->isMainThread());
@@ -608,6 +613,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
+    version_with_sha                               constructBunVersionWithSha                                          ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback

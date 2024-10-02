@@ -20,6 +20,8 @@ process.on("uncaughtException", (error, _origin) => {
 
 // pass GC runner as first argument
 try {
+  // napi.test.ts:147 tries to read this variable and shouldn't be able to
+  let shouldNotExist = 5;
   const result = fn.apply(null, [
     () => {
       if (process.isBun) {
@@ -37,6 +39,10 @@ try {
       .catch(e => {
         console.error("rejected:", e);
       });
+    result.then(x => console.log("resolved to", x));
+  } else if (process.argv[2] == "eval_wrapper") {
+    // eval_wrapper just returns the result of the expression so it shouldn't be an error
+    console.log(result);
   } else if (result) {
     throw new Error(result);
   }

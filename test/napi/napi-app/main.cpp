@@ -639,6 +639,13 @@ napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
   return exception;
 }
 
+napi_value eval_wrapper(const Napi::CallbackInfo &info) {
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(info.Env(), info[1], &ret);
+  return ret;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -691,6 +698,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, was_finalize_called));
   exports.Set("call_and_get_exception",
               Napi::Function::New(env, call_and_get_exception));
+  exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
 
   return exports;
 }

@@ -1633,6 +1633,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     stream.rstCode = error;
     stream[bunHTTP2Closed] = true;
     stream[bunHTTP2Session] = null;
+
     const error_instance = streamErrorFromCode(error);
     stream.emit("error", error_instance);
     stream.emit("end");
@@ -2212,8 +2213,6 @@ class ClientHttp2Session extends Http2Session {
       if (!stream[bunHTTP2Closed]) {
         stream[bunHTTP2Closed] = true;
       }
-
-      stream.rstCode = constants.NGHTTP2_CANCEL;
       stream.emit("aborted", error);
     },
     wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {

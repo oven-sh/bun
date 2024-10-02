@@ -69,6 +69,10 @@ export default [
         fn: "getEndAfterHeaders",
         length: 1,
       },
+      getStreamAbortReason: {
+        fn: "getStreamAbortReason",
+        length: 1,
+      },
       isStreamAborted: {
         fn: "isStreamAborted",
         length: 1,

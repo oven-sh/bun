@@ -994,7 +994,7 @@ pub const H2FrameParser = struct {
         pub fn abortListener(this: *Stream, reason: JSValue) void {
             log("abortListener", .{});
             reason.ensureStillAlive();
-            if (this.canReceiveData() or this.canSendData()) {
+            if (this.state != .CLOSED) {
                 this.state = .CLOSED;
                 this.client.endStream(this, .CANCEL);
                 this.client.dispatchWithExtra(.onAborted, this.getIdentifier(), reason);
@@ -2375,6 +2375,37 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsBoolean(true);
     }
 
+    pub fn getStreamAbortReason(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(1);
+        if (args_list.len < 1) {
+            globalObject.throw("Expected stream argument", .{});
+            return .zero;
+        }
+        const stream_arg = args_list.ptr[0];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        const stream = this.streams.getPtr(stream_id) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+
+        if (stream.signal) |_signal| {
+            return _signal.abortReason();
+        }
+        return JSC.JSValue.jsBoolean(false);
+    }
+
     pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
@@ -2403,7 +2434,7 @@ pub const H2FrameParser = struct {
         if (stream.signal) |_signal| {
             return JSC.JSValue.jsBoolean(_signal.aborted());
         }
-        return JSC.JSValue.jsBoolean(true);
+        return JSC.JSValue.jsBoolean(false);
     }
     pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
@@ -3179,8 +3210,8 @@ pub const H2FrameParser = struct {
         var parent: i32 = 0;
         var waitForTrailers: bool = false;
         var end_stream: bool = false;
-        if (args_list.len > 3 and !args_list.ptr[3].isEmptyOrUndefinedOrNull()) {
-            const options = args_list.ptr[3];
+        if (args_list.len > 4 and !args_list.ptr[4].isEmptyOrUndefinedOrNull()) {
+            const options = args_list.ptr[4];
             if (!options.isObject()) {
                 stream.state = .CLOSED;
                 stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);

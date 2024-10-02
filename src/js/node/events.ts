@@ -482,7 +482,7 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
 class AbortError extends Error {
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+      throw ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(message, options);
     this.code = "ABORT_ERR";

@@ -357,15 +357,18 @@ pub const Process = extern struct {
     pub const shim = Shimmer("Bun", "Process", @This());
     pub const name = "Process";
     pub const namespace = shim.namespace;
-    const _bun: string = "bun";
+    var current_title: []const u8 = "bun";
 
     pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
-        title.* = ZigString.init(_bun);
+        title.* = ZigString.init(current_title);
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-    pub fn setTitle(globalObject: *JSGlobalObject, _: *ZigString) callconv(.C) JSValue {
-        return ZigString.init(_bun).toJS(globalObject);
+    pub fn setTitle(globalObject: *JSGlobalObject, title: *ZigString) callconv(.C) JSValue {
+        if (title.len > 0) {
+            current_title = title.slice();
+        }
+        return ZigString.init(current_title).toJS(globalObject);
     }
 
     pub const getArgv = JSC.Node.Process.getArgv;

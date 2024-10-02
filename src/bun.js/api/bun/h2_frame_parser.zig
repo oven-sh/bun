@@ -373,6 +373,108 @@ fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
     }
 }
 
+fn jsAssertSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    const args_list = callframe.arguments(1);
+    if (args_list.len < 1) {
+        globalObject.throw("Expected settings to be a object", .{});
+        return .zero;
+    }
+
+    if (args_list.len > 0 and !args_list.ptr[0].isEmptyOrUndefinedOrNull()) {
+        const options = args_list.ptr[0];
+        if (!options.isObject()) {
+            globalObject.throw("Expected settings to be a object", .{});
+            return .zero;
+        }
+
+        if (options.get(globalObject, "headerTableSize")) |headerTableSize| {
+            if (headerTableSize.isNumber()) {
+                const headerTableSizeValue = headerTableSize.toInt32();
+                if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
+                    globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
+                    return .zero;
+                }
+            } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected headerTableSize to be a number", .{});
+                return .zero;
+            }
+        }
+
+        if (options.get(globalObject, "enablePush")) |enablePush| {
+            if (!enablePush.isBoolean() and !enablePush.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected enablePush to be a boolean", .{});
+                return .zero;
+            }
+        }
+
+        if (options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
+            if (initialWindowSize.isNumber()) {
+                const initialWindowSizeValue = initialWindowSize.toInt32();
+                if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
+                    globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
+                    return .zero;
+                }
+            } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected initialWindowSize to be a number", .{});
+                return .zero;
+            }
+        }
+
+        if (options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
+            if (maxFrameSize.isNumber()) {
+                const maxFrameSizeValue = maxFrameSize.toInt32();
+                if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
+                    globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
+                    return .zero;
+                }
+            } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxFrameSize to be a number", .{});
+                return .zero;
+            }
+        }
+
+        if (options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
+            if (maxConcurrentStreams.isNumber()) {
+                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
+                if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
+                    globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
+                    return .zero;
+                }
+            } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
+                return .zero;
+            }
+        }
+
+        if (options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
+            if (maxHeaderListSize.isNumber()) {
+                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
+                if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
+                    globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
+                    return .zero;
+                }
+            } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxHeaderListSize to be a number", .{});
+                return .zero;
+            }
+        }
+
+        if (options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
+            if (maxHeaderSize.isNumber()) {
+                const maxHeaderSizeValue = maxHeaderSize.toInt32();
+                if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
+                    globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
+                    return .zero;
+                }
+            } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
+                globalObject.throw("Expected maxHeaderSize to be a number", .{});
+                return .zero;
+            }
+        }
+    }
+    return .undefined;
+}
+
 fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
@@ -2599,6 +2701,11 @@ pub const H2FrameParser = struct {
     fn getSessionMemoryUsage(this: *H2FrameParser) usize {
         return (this.pendingBuffer.len + this.writeBuffer.len + this.queuedDataSize) / 1024 / 1024;
     }
+    // get memory in bytes
+    pub fn getBufferSize(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        JSC.markBinding(@src());
+        return JSC.JSValue.jsNumber(this.pendingBuffer.len + this.writeBuffer.len + this.queuedDataSize);
+    }
 
     fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
         log("{s} sendData({}, {}, {})", .{ if (stream.client.isServer) "server" else "client", stream.id, payload.len, close });
@@ -3614,6 +3721,7 @@ pub const H2FrameParser = struct {
 pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         H2FrameParser.getConstructor(global),
+        JSC.JSFunction.create(global, "assertSettings", jsAssertSettings, 1, .{}),
         JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
         JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),
     });

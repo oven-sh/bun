@@ -10,6 +10,7 @@ import { Duplex } from "stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+import { constants } from "node:buffer";
 
 const nodeExecutable = which("node");
 let nodeEchoServer_;
@@ -468,10 +469,10 @@ describe("Client Basics", () => {
     expect(settings).toEqual({
       enableConnectProtocol: false,
       headerTableSize: 4096,
-      enablePush: true,
+      enablePush: false,
       initialWindowSize: 65535,
       maxFrameSize: 16384,
-      maxConcurrentStreams: 2147483647,
+      maxConcurrentStreams: 4294967295,
       maxHeaderListSize: 65535,
       maxHeaderSize: 65535,
     });
@@ -513,7 +514,7 @@ describe("Client Basics", () => {
       expect("unreachable").toBe(true);
     } catch (err) {
       expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-      expect(err.message).toBe("Stream closed with error code 9");
+      expect(err.message).toBe("Stream closed with error code NGHTTP2_COMPRESSION_ERROR");
     }
   });
   it("should be destroyed after close", async () => {
@@ -636,7 +637,7 @@ describe("Client Basics", () => {
       await promise;
       expect("unreachable").toBe(true);
     } catch (err) {
-      expect(err.errno).toBe(http2.constants.NGHTTP2_CANCEL);
+      expect(err.code).toBe("ABORT_ERR");
     }
   });
   it("aborted event should work with abortController", async () => {
@@ -644,10 +645,10 @@ describe("Client Basics", () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
-    const req = client.request({ ":path": "/" }, { signal: abortController.signal });
+    const req = client.request({ ":path": "/post", ":method": "POST" }, { signal: abortController.signal });
     req.on("aborted", resolve);
     req.on("error", err => {
-      if (err.errno !== http2.constants.NGHTTP2_CANCEL) {
+      if (err.code !== "ABORT_ERR") {
         reject(err);
       }
     });
@@ -659,27 +660,52 @@ describe("Client Basics", () => {
     const result = await promise;
     expect(result).toBeUndefined();
     expect(req.aborted).toBeTrue();
-    expect(req.rstCode).toBe(8);
+    expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
   });
-  it("aborted event should work with aborted signal", async () => {
+  it("aborted event should not work when not writable but should emit error", async () => {
+    const abortController = new AbortController();
     const { promise, resolve, reject } = Promise.withResolvers();
     const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
-    const req = client.request({ ":path": "/" }, { signal: AbortSignal.abort() });
-    req.on("aborted", resolve);
+    const req = client.request({ ":path": "/" }, { signal: abortController.signal });
+    req.on("aborted", reject);
     req.on("error", err => {
-      if (err.errno !== http2.constants.NGHTTP2_CANCEL) {
+      if (err.code !== "ABORT_ERR") {
         reject(err);
+      } else {
+        resolve();
       }
     });
     req.on("end", () => {
       reject();
       client.close();
     });
+    abortController.abort();
     const result = await promise;
     expect(result).toBeUndefined();
-    expect(req.rstCode).toBe(8);
-    expect(req.aborted).toBeTrue();
+    expect(req.aborted).toBeFalse(); // will only be true when the request is in a writable state
+    expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
+  });
+  it("aborted event should work with aborted signal", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+    client.on("error", reject);
+    const req = client.request({ ":path": "/post", ":method": "POST" }, { signal: AbortSignal.abort() });
+    req.on("aborted", reject); // will not be emited because we could not start the request at all
+    req.on("error", err => {
+      if (err.name !== "AbortError") {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+    req.on("end", () => {
+      client.close();
+    });
+    const result = await promise;
+    expect(result).toBeUndefined();
+    expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
+    expect(req.aborted).toBeTrue(); // will be true in this case
   });
   it("endAfterHeaders should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -1091,7 +1117,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 6");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
         done();
       } catch (err) {
         done(err);
@@ -1123,7 +1149,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 6");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
         done();
       } catch (err) {
         done(err);
@@ -1155,7 +1181,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 1");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
         done();
       } catch (err) {
         done(err);
@@ -1187,7 +1213,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 6");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
         done();
       } catch (err) {
         done(err);
@@ -1220,7 +1246,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 6");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
         done();
       } catch (err) {
         done(err);
@@ -1256,7 +1282,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 1");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
         done();
       } catch (err) {
         done(err);
@@ -1290,7 +1316,7 @@ describe("Client Basics", () => {
         const result = await promise;
         expect(result).toBeDefined();
         expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-        expect(result.message).toBe("Session closed with error code 6");
+        expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
         done();
       } catch (err) {
         done(err);

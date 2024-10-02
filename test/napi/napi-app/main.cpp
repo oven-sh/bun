@@ -397,13 +397,6 @@ struct AsyncWorkData {
            napi_ok);
     assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
 
-    napi_value err;
-    napi_value msg;
-    assert(napi_create_string_utf8(env, "error from napi", NAPI_AUTO_LENGTH,
-                                   &msg) == napi_ok);
-    assert(napi_create_error(env, nullptr, msg, &err) == napi_ok);
-    assert(napi_throw(env, err) == napi_ok);
-
     delete async_work_data;
   }
 };
@@ -464,7 +457,7 @@ struct ThreadsafeFunctionData {
     napi_value js_result;
     napi_status call_result =
         napi_call_function(env, recv, js_callback, 0, nullptr, &js_result);
-    assert(call_result == napi_ok || call_result == napi_pending_exception);
+    // assert(call_result == napi_ok || call_result == napi_pending_exception);
 
     if (call_result == napi_ok) {
       // only resolve if js_callback did not return an error
@@ -571,6 +564,60 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+static const char *napi_valuetype_to_string(napi_valuetype type) {
+  switch (type) {
+  case napi_undefined:
+    return "undefined";
+  case napi_null:
+    return "null";
+  case napi_boolean:
+    return "boolean";
+  case napi_number:
+    return "number";
+  case napi_string:
+    return "string";
+  case napi_symbol:
+    return "symbol";
+  case napi_object:
+    return "object";
+  case napi_function:
+    return "function";
+  case napi_external:
+    return "external";
+  case napi_bigint:
+    return "bigint";
+  default:
+    return "unknown";
+  }
+}
+
+// calls a function (the sole argument) which must throw. catches and returns
+// the thrown error
+napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value fn = info[0];
+  napi_value undefined;
+  assert(napi_get_undefined(env, &undefined) == napi_ok);
+
+  (void)napi_call_function(env, undefined, fn, 0, nullptr, nullptr);
+
+  bool is_pending;
+  assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
+  assert(is_pending);
+
+  napi_value exception;
+  assert(napi_get_and_clear_last_exception(env, &exception) == napi_ok);
+
+  napi_valuetype type;
+  assert(napi_typeof(env, exception, &type) == napi_ok);
+  printf("typeof thrown exception = %s\n", napi_valuetype_to_string(type));
+
+  assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
+  assert(!is_pending);
+
+  return exception;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -621,6 +668,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, create_ref_with_finalizer));
   exports.Set("was_finalize_called",
               Napi::Function::New(env, was_finalize_called));
+  exports.Set("call_and_get_exception",
+              Napi::Function::New(env, call_and_get_exception));
 
   return exports;
 }

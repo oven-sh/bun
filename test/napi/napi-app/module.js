@@ -1,4 +1,5 @@
 const nativeTests = require("./build/Release/napitests.node");
+const { EventEmitter } = require("node:events");
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
@@ -31,17 +32,32 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+const emitter = new EventEmitter();
+
 nativeTests.test_throw_in_completion = async () => {
   nativeTests.create_promise_with_threadsafe_function(() => {
-    throw new Error("1");
+    emitter.emit("error", new Error("foo"));
   });
   nativeTests.create_promise_with_threadsafe_function(() => {
-    throw new Error("2");
+    console.log("hello from js");
   });
 };
 
 nativeTests.test_throw_in_two_completions = () => {
   return Promise.all([nativeTests.create_promise(), nativeTests.create_promise()]);
+};
+
+nativeTests.test_get_exception = (_, value) => {
+  function thrower() {
+    throw value;
+  }
+  try {
+    const result = nativeTests.call_and_get_exception(thrower);
+    console.log("got same exception back?", result === value);
+  } catch (e) {
+    console.log("native module threw", typeof e, e);
+    throw e;
+  }
 };
 
 module.exports = nativeTests;

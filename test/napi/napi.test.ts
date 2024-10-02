@@ -131,6 +131,13 @@ describe("napi", () => {
       expect(result).toBe("success!");
     });
   });
+
+  describe("exception handling", () => {
+    it("can check for a pending error and catch the right value", () => {
+      checkSameOutput("test_get_exception", [5]);
+      checkSameOutput("test_get_exception", [{ foo: "bar" }]);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

@@ -1584,8 +1584,13 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     }
 
     auto globalObject = toJS(env);
-    *result = toNapi(JSC::JSValue(globalObject->vm().lastException()), globalObject);
-    globalObject->vm().clearLastException();
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    if (scope.exception()) {
+        *result = toNapi(JSC::JSValue(scope.exception()->value()), globalObject);
+    } else {
+        *result = toNapi(JSC::jsUndefined(), globalObject);
+    }
+    scope.clearException();
     return napi_ok;
 }
 

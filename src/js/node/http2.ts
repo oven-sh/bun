@@ -2666,6 +2666,10 @@ class Http2Server extends net.Server {
       this.on("request", onRequestHandler);
     }
   }
+  setTimeout(ms, callback) {
+    this[bunSocketInternal]?.setTimeout(ms, callback);
+  }
+  updateSettings(settings) {}
 }
 class Http2SecureServer extends tls.Server {
   static #connectionListener(socket: TLSSocket | Socket) {
@@ -2688,6 +2692,10 @@ class Http2SecureServer extends tls.Server {
       this.on("request", onRequestHandler);
     }
   }
+  setTimeout(ms, callback) {
+    this[bunSocketInternal]?.setTimeout(ms, callback);
+  }
+  updateSettings(settings) {}
 }
 function createServer(options, onRequestHandler) {
   return new Http2Server(options, onRequestHandler);

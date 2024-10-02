@@ -14,6 +14,7 @@ if (typeof fn !== "function") {
 
 process.on("uncaughtException", (error, _origin) => {
   console.log("uncaught exception:", error.toString());
+  // 0 because one of the tests intentionally does this, and we don't want it to fail due to crashing
   process.exit(0);
 });
 

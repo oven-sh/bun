@@ -1740,7 +1740,7 @@ pub const Command = struct {
                     const index = AddCompletions.index;
 
                     outer: {
-                        if (filter.len > 1) {
+                        if (filter.len > 1 and filter[1].len > 0) {
                             const first_letter: FirstLetter = switch (filter[1][0]) {
                                 'a' => FirstLetter.a,
                                 'b' => FirstLetter.b,

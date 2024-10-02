@@ -492,7 +492,7 @@ pub export fn Bun__Process__send(
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        ex.put(globalObject, ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(zigGlobal, callback, ex);
         } else {

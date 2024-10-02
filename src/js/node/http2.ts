@@ -7,6 +7,7 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 const tls = require("node:tls");
 const net = require("node:net");
+const fs = require("node:fs");
 
 const { ERR_INVALID_ARG_TYPE, ERR_INVALID_HTTP_TOKEN, ERR_INVALID_ARG_VALUE } = require("internal/errors");
 class ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED extends TypeError {
@@ -1507,16 +1508,60 @@ class ClientHttp2Stream extends Http2Stream {
 class ServerHttp2Stream extends Http2Stream {
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
-    // this[bunHTTP2Session] = session;
   }
   pushStream() {
-    // not implemented yet aka server side
+    throwNotImplemented("ServerHttp2Stream.prototype.pushStream()");
   }
-  respondWithFile() {
-    // not implemented yet aka server side
+  respondWithFile(path, headers, options) {
+    // TODO: optimize this
+    let { statCheck, offset, length, onError } = options || {};
+    if (headers == undefined) {
+      headers = {};
+    }
+
+    if (!$isObject(headers)) {
+      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    }
+
+    offset = offset || 0;
+    const end = length || 0 + offset;
+    try {
+      const fd = fs.openSync(path, "r");
+      if (typeof statCheck === "function") {
+        const stat = fs.fstatSync(fd);
+        statCheck(stat, headers);
+      }
+
+      this.respond(headers, options);
+      fs.createReadStream(null, { fd: fd, autoClose: true, start: offset, end, emitClose: true }).pipe(this);
+    } catch (err) {
+      if (typeof onError === "function") {
+        onError(err);
+      } else {
+        this.close(constants.NGHTTP2_INTERNAL_ERROR, undefined);
+      }
+    }
   }
-  respondWithFd() {
-    // not implemented yet aka server side
+  respondWithFD(fd, headers, options) {
+    // TODO: optimize this
+    let { statCheck, offset, length } = options || {};
+    if (headers == undefined) {
+      headers = {};
+    }
+
+    if (!$isObject(headers)) {
+      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    }
+
+    offset = offset || 0;
+    const end = length || 0 + offset;
+    if (typeof statCheck === "function") {
+      const stat = fs.fstatSync(fd);
+      statCheck(stat, headers);
+    }
+
+    this.respond(headers, options);
+    fs.createReadStream(null, { fd: fd, autoClose: false, start: offset, end, emitClose: false }).pipe(this);
   }
 
   respond(headers: any, options?: any) {

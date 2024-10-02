@@ -116,34 +116,18 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 ## Building Bun
 
-After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
-
-```bash
-$ bun setup
-```
-
-The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
-
-```bash
-$ build/bun-debug --version
-x.y.z_debug
-```
-
-To rebuild, you can invoke `bun run build`
+After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
 $ bun run build
 ```
 
-These two scripts, `setup` and `build`, are aliases to do roughly the following:
+The binary will be located at `./build/debug/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
-$ ./scripts/setup.sh
-$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-$ ninja -C build # 'bun run build' runs just this
+$ build/debug/bun-debug --version
+x.y.z_debug
 ```
-
-Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 

@@ -217,9 +217,7 @@ export function createTestBuilder(path: string) {
       const tempdir = this.tempdir || "NO_TEMP_DIR";
       if (this.expected_stdout !== undefined) {
         if (typeof this.expected_stdout === "string") {
-          expect(stdout.toString()).toEqual(
-            `bun test ${Bun.version_with_sha}\n` + this.expected_stdout.replaceAll("$TEMP_DIR", tempdir),
-          );
+          expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
         } else {
           this.expected_stdout(stdout.toString(), tempdir);
         }

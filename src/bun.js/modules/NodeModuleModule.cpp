@@ -16,7 +16,7 @@
 #include "NodeModuleModule.h"
 
 #include <JavaScriptCore/LazyPropertyInlines.h>
-
+#include <JavaScriptCore/VMTrapsInlines.h>
 namespace Bun {
 
 using namespace JSC;

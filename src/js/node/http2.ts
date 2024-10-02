@@ -79,7 +79,7 @@ const {
 } = require("internal/primordials");
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
-const [H2FrameParser, getPackedSettings, getUnpackedSettings, assertSettings] = $zig(
+const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = $zig(
   "h2_frame_parser.zig",
   "createNodeHttp2Binding",
 );
@@ -1742,7 +1742,6 @@ class ServerHttp2Session extends Http2Session {
         headers["cookie"] = (headers["cookie"] as string[]).join(";");
       }
       self.#server.emit("stream", stream, headers, flags);
-
       if (stream[bunHTTP2StreamResponded]) {
         try {
           stream.emit("trailers", headers, flags);
@@ -1752,6 +1751,7 @@ class ServerHttp2Session extends Http2Session {
       } else {
         stream[bunHTTP2StreamResponded] = true;
         stream.emit("response", headers, flags);
+        self.emit("stream", stream, headers, flags);
       }
     },
     localSettings(self: ServerHttp2Session, settings: Settings) {
@@ -2187,6 +2187,7 @@ class ClientHttp2Session extends Http2Session {
       } else {
         stream[bunHTTP2StreamResponded] = true;
         stream.emit("response", headers, flags);
+        self.emit("stream", stream, headers, flags);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {

@@ -1,5 +1,8 @@
 // Hardcoded module "node:timers/promises"
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
+
+const { validateBoolean, validateAbortSignal } = require("internal/validators");
+
 const symbolAsyncIterator = Symbol.asyncIterator;
 
 class ERR_INVALID_ARG_TYPE extends Error {
@@ -19,18 +22,6 @@ class AbortError extends Error {
 function validateObject(object, name) {
   if (object === null || typeof object !== "object") {
     throw new ERR_INVALID_ARG_TYPE(name, "Object", object);
-  }
-}
-
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") {
-    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-  }
-}
-
-function validateAbortSignal(signal, name) {
-  if (typeof signal !== "undefined" && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
 

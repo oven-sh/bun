@@ -1027,8 +1027,8 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0) {
-                Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
+                Output.prettyln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                Output.pretty("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
                 Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
@@ -1754,7 +1754,7 @@ pub const Command = struct {
                     const index = AddCompletions.index;
 
                     outer: {
-                        if (filter.len > 1) {
+                        if (filter.len > 1 and filter[1].len > 0) {
                             const first_letter: FirstLetter = switch (filter[1][0]) {
                                 'a' => FirstLetter.a,
                                 'b' => FirstLetter.b,

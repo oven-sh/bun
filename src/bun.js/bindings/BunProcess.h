@@ -104,4 +104,6 @@ public:
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
 
+bool isSignalName(WTF::String input);
+
 } // namespace Bun

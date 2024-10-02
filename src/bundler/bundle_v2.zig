@@ -10027,6 +10027,7 @@ pub const LinkerContext = struct {
                                                 );
                                             }
                                         } else {
+                                            hoist.next_value = null;
                                             _ = decl.binding.toExpr(&hoist);
                                         }
                                     }

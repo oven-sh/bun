@@ -1883,6 +1883,23 @@ describe("bundler", () => {
     target: "browser",
     run: { stdout: `123` },
   });
+  itBundled('edgecase/UninitializedVariablesMoved', {
+    files: {
+      '/entry.ts': `
+        await import('./b.js');
+      `,
+      '/b.js': `
+        export var a = 32;
+        export var b;
+        (function (c) {
+            c.d = 1;
+        })(b ?? {});
+        +a;
+      `
+    },
+    minifySyntax:true,
+    run: true, // pass if no thrown error
+  })
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

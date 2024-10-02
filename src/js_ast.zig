@@ -12,8 +12,8 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const Ref = @import("ast/base.zig").Ref;
-const Index = @import("ast/base.zig").Index;
+pub const Ref = @import("ast/base.zig").Ref;
+pub const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
@@ -552,7 +552,7 @@ pub const B = union(Binding.Tag) {
 };
 
 pub const ClauseItem = struct {
-    alias: string = "",
+    alias: string,
     alias_loc: logger.Loc = logger.Loc.Empty,
     name: LocRef,
 
@@ -838,16 +838,15 @@ pub const G = struct {
     };
 
     pub const Property = struct {
-
-        // This is used when parsing a pattern that uses default values:
-        //
-        //   [a = 1] = [];
-        //   ({a = 1} = {});
-        //
-        // It's also used for class fields:
-        //
-        //   class Foo { a = 1 }
-        //
+        /// This is used when parsing a pattern that uses default values:
+        ///
+        ///   [a = 1] = [];
+        ///   ({a = 1} = {});
+        ///
+        /// It's also used for class fields:
+        ///
+        ///   class Foo { a = 1 }
+        ///
         initializer: ?ExprNodeIndex = null,
         kind: Kind = .normal,
         flags: Flags.Property.Set = Flags.Property.None,
@@ -1153,55 +1152,53 @@ pub const Symbol = struct {
     }
 
     pub const Kind = enum {
-
-        // An unbound symbol is one that isn't declared in the file it's referenced
-        // in. For example, using "window" without declaring it will be unbound.
+        /// An unbound symbol is one that isn't declared in the file it's referenced
+        /// in. For example, using "window" without declaring it will be unbound.
         unbound,
 
-        // This has special merging behavior. You're allowed to re-declare these
-        // symbols more than once in the same scope. These symbols are also hoisted
-        // out of the scope they are declared in to the closest containing function
-        // or module scope. These are the symbols with this kind:
-        //
-        // - Function arguments
-        // - Function statements
-        // - Variables declared using "var"
-        //
+        /// This has special merging behavior. You're allowed to re-declare these
+        /// symbols more than once in the same scope. These symbols are also hoisted
+        /// out of the scope they are declared in to the closest containing function
+        /// or module scope. These are the symbols with this kind:
+        ///
+        /// - Function arguments
+        /// - Function statements
+        /// - Variables declared using "var"
         hoisted,
         hoisted_function,
 
-        // There's a weird special case where catch variables declared using a simple
-        // identifier (i.e. not a binding pattern) block hoisted variables instead of
-        // becoming an error:
-        //
-        //   var e = 0;
-        //   try { throw 1 } catch (e) {
-        //     print(e) // 1
-        //     var e = 2
-        //     print(e) // 2
-        //   }
-        //   print(e) // 0 (since the hoisting stops at the catch block boundary)
-        //
-        // However, other forms are still a syntax error:
-        //
-        //   try {} catch (e) { let e }
-        //   try {} catch ({e}) { var e }
-        //
-        // This symbol is for handling this weird special case.
+        /// There's a weird special case where catch variables declared using a simple
+        /// identifier (i.e. not a binding pattern) block hoisted variables instead of
+        /// becoming an error:
+        ///
+        ///   var e = 0;
+        ///   try { throw 1 } catch (e) {
+        ///     print(e) // 1
+        ///     var e = 2
+        ///     print(e) // 2
+        ///   }
+        ///   print(e) // 0 (since the hoisting stops at the catch block boundary)
+        ///
+        /// However, other forms are still a syntax error:
+        ///
+        ///   try {} catch (e) { let e }
+        ///   try {} catch ({e}) { var e }
+        ///
+        /// This symbol is for handling this weird special case.
         catch_identifier,
 
-        // Generator and async functions are not hoisted, but still have special
-        // properties such as being able to overwrite previous functions with the
-        // same name
+        /// Generator and async functions are not hoisted, but still have special
+        /// properties such as being able to overwrite previous functions with the
+        /// same name
         generator_or_async_function,
 
-        // This is the special "arguments" variable inside functions
+        /// This is the special "arguments" variable inside functions
         arguments,
 
-        // Classes can merge with TypeScript namespaces.
+        /// Classes can merge with TypeScript namespaces.
         class,
 
-        // A class-private identifier (i.e. "#foo").
+        /// A class-private identifier (i.e. "#foo").
         private_field,
         private_method,
         private_get,
@@ -1213,25 +1210,26 @@ pub const Symbol = struct {
         private_static_set,
         private_static_get_set_pair,
 
-        // Labels are in their own namespace
+        /// Labels are in their own namespace
         label,
 
-        // TypeScript enums can merge with TypeScript namespaces and other TypeScript
-        // enums.
+        /// TypeScript enums can merge with TypeScript namespaces and other TypeScript
+        /// enums.
         ts_enum,
 
-        // TypeScript namespaces can merge with classes, functions, TypeScript enums,
-        // and other TypeScript namespaces.
+        /// TypeScript namespaces can merge with classes, functions, TypeScript enums,
+        /// and other TypeScript namespaces.
         ts_namespace,
 
-        // In TypeScript, imports are allowed to silently collide with symbols within
-        // the module. Presumably this is because the imports may be type-only.
+        /// In TypeScript, imports are allowed to silently collide with symbols within
+        /// the module. Presumably this is because the imports may be type-only.
+        /// Import statement namespace references should NOT have this set.
         import,
 
-        // Assigning to a "const" symbol will throw a TypeError at runtime
+        /// Assigning to a "const" symbol will throw a TypeError at runtime
         constant,
 
-        // This annotates all other symbols that don't have special behavior.
+        /// This annotates all other symbols that don't have special behavior.
         other,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1294,7 +1292,7 @@ pub const Symbol = struct {
         // single inner array, so you can join the maps together by just make a
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
-        symbols_for_source: NestedList = NestedList{},
+        symbols_for_source: NestedList = .{},
 
         pub fn dump(this: Map) void {
             defer Output.flush();
@@ -1427,21 +1425,6 @@ pub const Symbol = struct {
 
     pub inline fn isHoisted(self: *const Symbol) bool {
         return Symbol.isKindHoisted(self.kind);
-    }
-
-    pub fn isReactComponentishName(symbol: *const Symbol) bool {
-        switch (symbol.kind) {
-            .hoisted, .hoisted_function, .constant, .class, .other => {
-                return switch (symbol.original_name[0]) {
-                    'A'...'Z' => true,
-                    else => false,
-                };
-            },
-
-            else => {
-                return false;
-            },
-        }
     }
 };
 
@@ -2268,6 +2251,7 @@ pub const E = struct {
     pub const String = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
+        // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
         data: []const u8 = "",
         prefer_template: bool = false,
 
@@ -2361,6 +2345,11 @@ pub const E = struct {
                 init(utf8)
             else
                 init(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false) catch bun.outOfMemory());
+        }
+
+        pub fn slice8(this: *const String) []const u8 {
+            bun.assert(!this.is_utf16);
+            return this.data;
         }
 
         pub fn slice16(this: *const String) []const u16 {
@@ -3256,6 +3245,14 @@ pub const Stmt = struct {
             }
         };
     };
+
+    pub fn StoredData(tag: Tag) type {
+        const T = std.meta.FieldType(Data, tag);
+        return switch (@typeInfo(T)) {
+            .Pointer => |ptr| ptr.child,
+            else => T,
+        };
+    }
 
     pub fn caresAboutScope(self: *Stmt) bool {
         return switch (self.data) {
@@ -5904,9 +5901,10 @@ pub const Expr = struct {
                 .e_undefined => std.math.nan(f64),
                 .e_string => |str| {
                     if (str.next != null) return null;
+                    if (!str.isUTF8()) return null;
 
                     // +'1' => 1
-                    return stringToEquivalentNumberValue(str.data);
+                    return stringToEquivalentNumberValue(str.slice8());
                 },
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
@@ -5914,9 +5912,10 @@ pub const Expr = struct {
                     .e_number => |num| num.value,
                     .e_string => |str| {
                         if (str.next != null) return null;
+                        if (!str.isUTF8()) return null;
 
                         // +'1' => 1
-                        return stringToEquivalentNumberValue(str.data);
+                        return stringToEquivalentNumberValue(str.slice8());
                     },
                     else => null,
                 },
@@ -6265,6 +6264,14 @@ pub const Expr = struct {
             return @as(Expr.Tag, self) == .e_string;
         }
     };
+
+    pub fn StoredData(tag: Tag) type {
+        const T = std.meta.FieldType(Data, tag);
+        return switch (@typeInfo(T)) {
+            .Pointer => |ptr| ptr.child,
+            else => T,
+        };
+    }
 };
 
 pub const EnumValue = struct {
@@ -6437,7 +6444,7 @@ pub const S = struct {
         // when converting this module to a CommonJS module.
         namespace_ref: Ref,
         default_name: ?LocRef = null,
-        items: []ClauseItem = &([_]ClauseItem{}),
+        items: []ClauseItem = &.{},
         star_name_loc: ?logger.Loc = null,
         import_record_index: u32,
         is_single_line: bool = false,
@@ -6806,7 +6813,6 @@ pub const Ast = struct {
 
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
-    externals: []u32 = &[_]u32{},
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
     // closure.
@@ -6831,7 +6837,6 @@ pub const Ast = struct {
 
     hashbang: string = "",
     directive: ?string = null,
-    url_for_css: ?string = null,
     parts: Part.List = Part.List{},
     // This list may be mutated later, so we should store the capacity
     symbols: Symbol.List = Symbol.List{},
@@ -6847,11 +6852,11 @@ pub const Ast = struct {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
-    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
+    named_imports: NamedImports = .{},
+    named_exports: NamedExports = .{},
     export_star_import_records: []u32 = &([_]u32{}),
 
-    allocator: std.mem.Allocator,
+    // allocator: std.mem.Allocator,
     top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
 
     commonjs_named_exports: CommonJSNamedExports = .{},
@@ -6875,15 +6880,14 @@ pub const Ast = struct {
     };
     pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
 
-    pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
-    pub const NamedExports = bun.StringArrayHashMap(NamedExport);
+    pub const NamedImports = std.ArrayHashMapUnmanaged(Ref, NamedImport, RefHashCtx, true);
+    pub const NamedExports = bun.StringArrayHashMapUnmanaged(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
     pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
 
     pub fn fromParts(parts: []Part) Ast {
         return Ast{
             .parts = Part.List.init(parts),
-            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
@@ -6891,12 +6895,11 @@ pub const Ast = struct {
     pub fn initTest(parts: []Part) Ast {
         return Ast{
             .parts = Part.List.init(parts),
-            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
 
-    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{}, .allocator = bun.default_allocator };
+    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
@@ -6909,10 +6912,15 @@ pub const Ast = struct {
     pub fn deinit(this: *Ast) void {
         // TODO: assert mimalloc-owned memory
         if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
-        if (this.externals.len > 0) bun.default_allocator.free(this.externals);
         if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
         if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
     }
+};
+
+pub const TlaCheck = struct {
+    depth: u32 = 0,
+    parent: Index.Int = Index.invalid.get(),
+    import_record_index: Index.Int = Index.invalid.get(),
 };
 
 /// Like Ast but slimmer and for bundling only.
@@ -6924,43 +6932,42 @@ pub const Ast = struct {
 /// So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 pub const BundledAst = struct {
     approximate_newline_count: u32 = 0,
-    nested_scope_slot_counts: SlotCounts = SlotCounts{},
-    externals: []u32 = &[_]u32{},
+    nested_scope_slot_counts: SlotCounts = .{},
 
-    exports_kind: ExportsKind = ExportsKind.none,
+    exports_kind: ExportsKind = .none,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
     import_records: ImportRecord.List = .{},
 
     hashbang: string = "",
-    directive: string = "",
-    url_for_css: string = "",
-    parts: Part.List = Part.List{},
-    // This list may be mutated later, so we should store the capacity
-    symbols: Symbol.List = Symbol.List{},
-    module_scope: Scope = Scope{},
+    parts: Part.List = .{},
+    symbols: Symbol.List = .{},
+    module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
     exports_ref: Ref = Ref.None,
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
+    top_level_await_keyword: logger.Range,
+    tla_check: TlaCheck = .{},
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    named_imports: NamedImports = NamedImports.init(bun.failing_allocator),
-    named_exports: NamedExports = NamedExports.init(bun.failing_allocator),
-    export_star_import_records: []u32 = &([_]u32{}),
+    named_imports: NamedImports = .{},
+    named_exports: NamedExports = .{},
+    export_star_import_records: []u32 = &.{},
 
-    allocator: std.mem.Allocator,
     top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
 
     commonjs_named_exports: CommonJSNamedExports = .{},
 
     redirect_import_record_index: u32 = std.math.maxInt(u32),
 
-    /// Only populated when bundling
+    /// Only populated when bundling. When --server-components is passed, this
+    /// will be .browser when it is a client component, and the server's target
+    /// on the server.
     target: bun.options.Target = .browser,
 
     // const_values: ConstValuesMap = .{},
@@ -6986,8 +6993,7 @@ pub const BundledAst = struct {
         force_cjs_to_esm: bool = false,
         has_lazy_export: bool = false,
         commonjs_module_exports_assigned_deoptimized: bool = false,
-
-        _: u1 = 0,
+        has_explicit_use_strict_directive: bool = false,
     };
 
     pub const empty = BundledAst.init(Ast.empty);
@@ -6996,15 +7002,12 @@ pub const BundledAst = struct {
         return .{
             .approximate_newline_count = this.approximate_newline_count,
             .nested_scope_slot_counts = this.nested_scope_slot_counts,
-            .externals = this.externals,
 
             .exports_kind = this.exports_kind,
 
             .import_records = this.import_records,
 
             .hashbang = this.hashbang,
-            .directive = this.directive,
-            // .url_for_css = this.url_for_css,
             .parts = this.parts,
             // This list may be mutated later, so we should store the capacity
             .symbols = this.symbols,
@@ -7014,6 +7017,7 @@ pub const BundledAst = struct {
             .module_ref = this.module_ref,
             .wrapper_ref = this.wrapper_ref,
             .require_ref = this.require_ref,
+            .top_level_await_keyword = this.top_level_await_keyword,
 
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
@@ -7022,7 +7026,6 @@ pub const BundledAst = struct {
             .named_exports = this.named_exports,
             .export_star_import_records = this.export_star_import_records,
 
-            .allocator = this.allocator,
             .top_level_symbols_to_parts = this.top_level_symbols_to_parts,
 
             .commonjs_named_exports = this.commonjs_named_exports,
@@ -7041,6 +7044,7 @@ pub const BundledAst = struct {
             .force_cjs_to_esm = this.flags.force_cjs_to_esm,
             .has_lazy_export = this.flags.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
+            .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
         };
     }
 
@@ -7048,14 +7052,12 @@ pub const BundledAst = struct {
         return .{
             .approximate_newline_count = @as(u32, @truncate(ast.approximate_newline_count)),
             .nested_scope_slot_counts = ast.nested_scope_slot_counts,
-            .externals = ast.externals,
 
             .exports_kind = ast.exports_kind,
 
             .import_records = ast.import_records,
 
             .hashbang = ast.hashbang,
-            .directive = ast.directive orelse "",
             // .url_for_css = ast.url_for_css orelse "",
             .parts = ast.parts,
             // This list may be mutated later, so we should store the capacity
@@ -7066,7 +7068,7 @@ pub const BundledAst = struct {
             .module_ref = ast.module_ref,
             .wrapper_ref = ast.wrapper_ref,
             .require_ref = ast.require_ref,
-
+            .top_level_await_keyword = ast.top_level_await_keyword,
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.
@@ -7074,7 +7076,7 @@ pub const BundledAst = struct {
             .named_exports = ast.named_exports,
             .export_star_import_records = ast.export_star_import_records,
 
-            .allocator = ast.allocator,
+            // .allocator = ast.allocator,
             .top_level_symbols_to_parts = ast.top_level_symbols_to_parts,
 
             .commonjs_named_exports = ast.commonjs_named_exports,
@@ -7095,6 +7097,7 @@ pub const BundledAst = struct {
                 .force_cjs_to_esm = ast.force_cjs_to_esm,
                 .has_lazy_export = ast.has_lazy_export,
                 .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
+                .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
             },
         };
     }
@@ -7110,27 +7113,27 @@ pub const Span = struct {
 /// block are merged into a single namespace while the non-exported code is
 /// still scoped to just within that block:
 ///
-///	let x = 1;
-///	namespace Foo {
-///	  let x = 2;
-///	  export let y = 3;
-///	}
-///	namespace Foo {
-///	  console.log(x); // 1
-///	  console.log(y); // 3
-///	}
+///    let x = 1;
+///    namespace Foo {
+///      let x = 2;
+///      export let y = 3;
+///    }
+///    namespace Foo {
+///      console.log(x); // 1
+///      console.log(y); // 3
+///    }
 ///
 /// Doing this also works inside an enum:
 ///
-///	enum Foo {
-///	  A = 3,
-///	  B = A + 1,
-///	}
-///	enum Foo {
-///	  C = A + 2,
-///	}
-///	console.log(Foo.B) // 4
-///	console.log(Foo.C) // 5
+///    enum Foo {
+///      A = 3,
+///      B = A + 1,
+///    }
+///    enum Foo {
+///      C = A + 2,
+///    }
+///    console.log(Foo.B) // 4
+///    console.log(Foo.C) // 5
 ///
 /// This is a form of identifier lookup that works differently than the
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
@@ -7511,9 +7514,16 @@ pub const Part = struct {
 };
 
 pub const Result = union(enum) {
-    already_bundled: void,
+    already_bundled: AlreadyBundled,
     cached: void,
     ast: Ast,
+
+    pub const AlreadyBundled = enum {
+        bun,
+        bun_cjs,
+        bytecode,
+        bytecode_cjs,
+    };
 };
 
 pub const StmtOrExpr = union(enum) {
@@ -8468,14 +8478,22 @@ pub const ASTMemoryAllocator = struct {
     }
 };
 
-pub const UseDirective = enum {
+pub const UseDirective = enum(u2) {
+    // TODO: Remove this, and provide `UseDirective.Optional` instead
     none,
-    @"use client",
-    @"use server",
+    /// "use client"
+    client,
+    /// "use server"
+    server,
+
+    pub const Boundering = enum(u2) {
+        client = @intFromEnum(UseDirective.client),
+        server = @intFromEnum(UseDirective.server),
+    };
 
     pub const Flags = struct {
-        is_client: bool = false,
-        is_server: bool = false,
+        has_any_client: bool = false,
+        has_any_server: bool = false,
     };
 
     pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
@@ -8485,22 +8503,13 @@ pub const UseDirective = enum {
         return true;
     }
 
-    pub fn boundering(this: UseDirective, other: UseDirective) ?UseDirective {
+    pub fn boundering(this: UseDirective, other: UseDirective) ?Boundering {
         if (this == other or other == .none)
             return null;
-
-        return other;
+        return @enumFromInt(@intFromEnum(other));
     }
 
-    pub const EntryPoint = struct {
-        source_index: Index.Int,
-        use_directive: UseDirective,
-    };
-
-    pub const List = std.MultiArrayList(UseDirective.EntryPoint);
-
-    // TODO: remove this, add an onModuleDirective() callback to the parser
-    pub fn parse(contents: []const u8) UseDirective {
+    pub fn parse(contents: []const u8) ?UseDirective {
         const truncated = std.mem.trimLeft(u8, contents, " \t\n\r;");
 
         if (truncated.len < "'use client';".len)
@@ -8515,30 +8524,124 @@ pub const UseDirective = enum {
 
         const unquoted = directive_string[1 .. directive_string.len - 2];
 
-        if (strings.eqlComptime(
-            unquoted,
-            "use client",
-        )) {
-            return .@"use client";
+        if (strings.eqlComptime(unquoted, "use client")) {
+            return .client;
         }
 
-        if (strings.eqlComptime(
-            unquoted,
-            "use server",
-        )) {
-            return .@"use server";
+        if (strings.eqlComptime(unquoted, "use server")) {
+            return .server;
         }
 
-        return .none;
+        return null;
     }
+};
 
-    pub fn target(this: UseDirective, default: bun.options.Target) bun.options.Target {
-        return switch (this) {
-            .none => default,
-            .@"use client" => .browser,
-            .@"use server" => .bun,
+/// Represents a boundary between client and server code. Every boundary
+/// gets bundled twice, once for the desired target, and once to generate
+/// a module of "references". Specifically, the generated file takes the
+/// canonical Ast as input to derive a wrapper. See `Framework.ServerComponents`
+/// for more details about this generated file.
+///
+/// This is sometimes abbreviated as SCB
+pub const ServerComponentBoundary = struct {
+    use_directive: UseDirective,
+
+    /// The index of the original file.
+    source_index: Index.Int,
+
+    /// Index to the file imported on the opposite platform, which is
+    /// generated by the bundler. For client components, this is the
+    /// server's code. For server actions, this is the client's code.
+    reference_source_index: Index.Int,
+
+    /// When `kit.Framework.ServerComponents.separate_ssr_graph` is enabled this
+    /// points to the separated module. When the SSR graph is not separate, this is
+    /// equal to `reference_source_index`
+    //
+    // TODO: Is this used for server actions.
+    ssr_source_index: Index.Int,
+
+    /// The requirements for this data structure is to have reasonable lookup
+    /// speed, but also being able to pull a `[]const Index.Int` of all
+    /// boundaries for iteration.
+    pub const List = struct {
+        list: std.MultiArrayList(ServerComponentBoundary) = .{},
+        /// Used to facilitate fast lookups into `items` by `.source_index`
+        map: Map = .{},
+
+        const Map = std.ArrayHashMapUnmanaged(void, void, struct {}, true);
+
+        /// Can only be called on the bundler thread.
+        pub fn put(
+            m: *List,
+            allocator: std.mem.Allocator,
+            source_index: Index.Int,
+            use_directive: UseDirective,
+            reference_source_index: Index.Int,
+            ssr_source_index: Index.Int,
+        ) !void {
+            try m.list.append(allocator, .{
+                .source_index = source_index,
+                .use_directive = use_directive,
+                .reference_source_index = reference_source_index,
+                .ssr_source_index = ssr_source_index,
+            });
+            const gop = try m.map.getOrPutAdapted(
+                allocator,
+                source_index,
+                Adapter{ .list = m.list.slice() },
+            );
+            bun.assert(!gop.found_existing);
+        }
+
+        /// Can only be called on the bundler thread.
+        pub fn getIndex(l: *const List, real_source_index: Index.Int) ?usize {
+            return l.map.getIndexAdapted(
+                real_source_index,
+                Adapter{ .list = l.list.slice() },
+            );
+        }
+
+        /// Use this to improve speed of accessing fields at the cost of
+        /// storing more pointers. Invalidated when input is mutated.
+        pub fn slice(l: List) Slice {
+            return .{ .list = l.list.slice(), .map = l.map };
+        }
+
+        pub const Slice = struct {
+            list: std.MultiArrayList(ServerComponentBoundary).Slice,
+            map: Map,
+
+            pub fn getIndex(l: *const Slice, real_source_index: Index.Int) ?usize {
+                return l.map.getIndexAdapted(
+                    real_source_index,
+                    Adapter{ .list = l.list },
+                ) orelse return null;
+            }
+
+            pub fn getReferenceSourceIndex(l: *const Slice, real_source_index: Index.Int) ?u32 {
+                const i = l.map.getIndexAdapted(
+                    real_source_index,
+                    Adapter{ .list = l.list },
+                ) orelse return null;
+                bun.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
+                return l.list.items(.reference_source_index)[i];
+            }
         };
-    }
+
+        pub const Adapter = struct {
+            list: std.MultiArrayList(ServerComponentBoundary).Slice,
+
+            pub fn hash(_: Adapter, key: Index.Int) u32 {
+                return std.hash.uint32(key);
+            }
+
+            pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {
+                bun.unsafeAssert(adapt.list.capacity > 0); // optimize MultiArrayList.Slice.items
+                return a == adapt.list.items(.source_index)[b_index];
+            }
+        };
+    };
 };
 
 pub const GlobalStoreHandle = struct {

@@ -155,7 +155,6 @@ pub const PathPair = struct {
     }
 };
 
-// this is ripped from esbuild, comments included
 pub const SideEffects = enum {
     /// The default value conservatively considers all files to have side effects.
     has_side_effects,
@@ -621,7 +620,7 @@ pub const Resolver = struct {
             .fs = _fs,
             .log = log,
             .extension_order = opts.extension_order.default.default,
-            .care_about_browser_field = opts.target.isWebLike(),
+            .care_about_browser_field = opts.target == .browser,
         };
     }
 

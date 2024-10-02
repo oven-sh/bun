@@ -1671,12 +1671,6 @@ pub const Api = struct {
         /// extension_order
         extension_order: []const []const u8,
 
-        /// framework
-        framework: ?FrameworkConfig = null,
-
-        /// router
-        router: ?RouteConfig = null,
-
         /// no_summary
         no_summary: ?bool = null,
 

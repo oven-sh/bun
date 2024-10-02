@@ -19,7 +19,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     if (!bun.FeatureFlags.kit) return .undefined;
 
     bun.Output.warn(
-        \\Be advised that Kit is highly experimental, and its API is subject to change
+        \\Be advised that Bun Kit is experimental, and its API is likely to change.
     , .{});
     bun.Output.flush();
 
@@ -37,6 +37,86 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
         while (true) std.Thread.Futex.wait(&futex, 0);
     }
 }
+
+/// A "Framework" in our eyes is simply set of bundler options that a framework
+/// author would set in order to integrate the framework with the application.
+///
+/// Full documentation on these fields is located in the TypeScript definitions.
+pub const Framework = struct {
+    entry_client: ?[]const u8 = null,
+    entry_server: ?[]const u8 = null,
+
+    server_components: ?ServerComponents = null,
+    react_fast_refresh: ?ReactFastRefresh = null,
+
+    /// Bun provides built-in support for using React as a framework
+    pub fn react() Framework {
+        return .{
+            .server_components = .{
+                .separate_ssr_graph = true,
+                .server_runtime_import = "react-server-dom-webpack/server",
+                .client_runtime_import = "react-server-dom-webpack/client",
+            },
+            .react_fast_refresh = .{
+                .import_source = "react-refresh/runtime",
+            },
+            // TODO: embed these in bun
+            .entry_client = "./entry_client.tsx",
+            .entry_server = "./entry_server.tsx",
+        };
+    }
+
+    const ServerComponents = struct {
+        separate_ssr_graph: bool = false,
+        server_runtime_import: []const u8,
+        client_runtime_import: []const u8,
+        server_register_client_reference: []const u8 = "registerClientReference",
+        server_register_server_reference: []const u8 = "registerServerReference",
+        client_register_server_reference: []const u8 = "registerServerReference",
+    };
+
+    const ReactFastRefresh = struct {
+        import_source: []const u8,
+        register_export: []const u8 = "register",
+        create_signature_export: []const u8 = "createSignatureFunctionForTransform",
+        inject_export: []const u8 = "injectIntoGlobalHook",
+    };
+
+    /// Given a Framework configuration, this returns another one with all modules resolved.
+    ///
+    /// All resolution errors will happen before returning error.ModuleNotFound
+    /// Details written into `r.log`
+    pub fn resolve(f: Framework, server: *bun.resolver.Resolver, client: *bun.resolver.Resolver) !Framework {
+        var clone = f;
+        var had_errors: bool = false;
+
+        if (clone.entry_client) |*path| resolveHelper(client, path, &had_errors);
+        if (clone.entry_server) |*path| resolveHelper(server, path, &had_errors);
+
+        if (clone.react_fast_refresh) |*react_fast_refresh| {
+            resolveHelper(client, &react_fast_refresh.import_source, &had_errors);
+        }
+
+        if (clone.server_components) |*sc| {
+            resolveHelper(server, &sc.server_runtime_import, &had_errors);
+            resolveHelper(client, &sc.client_runtime_import, &had_errors);
+        }
+
+        if (had_errors) return error.ModuleNotFound;
+
+        return clone;
+    }
+
+    inline fn resolveHelper(r: *bun.resolver.Resolver, path: *[]const u8, had_errors: *bool) void {
+        var result = r.resolve(r.fs.top_level_dir, path.*, .stmt) catch |err| {
+            bun.Output.err(err, "Failed to resolve '{s}' for framework", .{path.*});
+            had_errors.* = true;
+
+            return;
+        };
+        path.* = result.path().?.text; // TODO: what is the lifetime of this string
+    }
+};
 
 // TODO: this function leaks memory and bad error handling, but that is OK since
 // this API is not finalized.
@@ -59,7 +139,7 @@ fn devServerOptionsFromJs(global: *JSC.JSGlobalObject, options: JSValue) !DevSer
 
         const pattern = pattern_js.toBunString(global).toUTF8(bun.default_allocator);
         defer pattern.deinit();
-        // this dupe is stupid
+        // TODO: this dupe is stupid
         const pattern_z = try bun.default_allocator.dupeZ(u8, pattern.slice());
         const entry_point = entry_point_js.toBunString(global).toUTF8(bun.default_allocator).slice(); // leak
 
@@ -72,6 +152,7 @@ fn devServerOptionsFromJs(global: *JSC.JSGlobalObject, options: JSValue) !DevSer
     return .{
         .cwd = bun.getcwdAlloc(bun.default_allocator) catch bun.outOfMemory(),
         .routes = routes,
+        .framework = Framework.react(),
     };
 }
 
@@ -83,11 +164,17 @@ export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
 pub fn wipDevServer(options: DevServer.Options) noreturn {
     bun.Output.Source.configureNamedThread("Dev Server");
 
-    const dev = DevServer.init(options);
+    const dev = DevServer.init(options) catch |err| switch (err) {
+        error.FrameworkInitialization => bun.Global.exit(1),
+        else => {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            bun.Output.panic("Failed to init DevServer: {}", .{err});
+        },
+    };
     dev.runLoopForever();
 }
 
-pub fn getHmrRuntime(mode: enum { server, client }) []const u8 {
+pub fn getHmrRuntime(mode: Side) []const u8 {
     return if (Environment.embed_code)
         switch (mode) {
             .client => @embedFile("kit-codegen/kit.client.js"),
@@ -97,6 +184,56 @@ pub fn getHmrRuntime(mode: enum { server, client }) []const u8 {
         inline else => |m| bun.runtimeEmbedFile(.codegen, "kit." ++ @tagName(m) ++ ".js"),
     };
 }
+
+pub const Mode = enum { production, development };
+pub const Side = enum { client, server };
+pub const Renderer = enum {
+    client,
+    server,
+    /// Only used Framework has .server_components.separate_ssr_graph set
+    ssr,
+};
+
+pub fn addImportMetaDefines(
+    allocator: std.mem.Allocator,
+    define: *bun.options.Define,
+    mode: Mode,
+    side: Side,
+) !void {
+    const Define = bun.options.Define;
+
+    // The following are from Vite: https://vitejs.dev/guide/env-and-mode
+    // TODO: MODE, BASE_URL
+    try define.insert(
+        allocator,
+        "import.meta.env.DEV",
+        Define.Data.initBoolean(mode == .development),
+    );
+    try define.insert(
+        allocator,
+        "import.meta.env.PROD",
+        Define.Data.initBoolean(mode == .production),
+    );
+    try define.insert(
+        allocator,
+        "import.meta.env.SSR",
+        Define.Data.initBoolean(side == .server),
+    );
+}
+
+pub const server_virtual_source: bun.logger.Source = .{
+    .path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/server"),
+    .key_path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/server"),
+    .contents = "", // Virtual
+    .index = bun.JSAst.Index.kit_server_data,
+};
+
+pub const client_virtual_source: bun.logger.Source = .{
+    .path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/client"),
+    .key_path = bun.fs.Path.initWithNamespaceComptime("bun", "kit/client"),
+    .contents = "", // Virtual
+    .index = bun.JSAst.Index.kit_client_data,
+};
 
 pub const DevServer = @import("./DevServer.zig");
 

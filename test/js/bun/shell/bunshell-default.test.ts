@@ -23,6 +23,7 @@ test("default throw on command failure", async () => {
 
   await TestBuilder.command`echo ${code} > index.test.ts; ${bunExe()} test index.test.ts`
     .ensureTempDir()
+    .stdout(`bun test ${Bun.version_with_sha}\n`)
     .stderr(s => s.includes("1 pass"))
     .env(bunEnv)
     .run();
@@ -47,6 +48,7 @@ test("ShellError has .text()", async () => {
 
   await TestBuilder.command`echo ${code} > index.test.ts; ${bunExe()} test index.test.ts`
     .ensureTempDir()
+    .stdout(`bun test ${Bun.version_with_sha}\n`)
     .stderr(s => s.includes("1 pass"))
     .env(bunEnv)
     .run();

@@ -70,6 +70,8 @@ pub const JSBundler = struct {
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         packages: options.PackagesOption = .bundle,
+        format: options.Format = .esm,
+        bytecode: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -100,59 +102,6 @@ pub const JSBundler = struct {
                         globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                         return error.JSError;
                     }
-                    if (try plugin.getOwnObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
-                        if (internals.getOwn(globalThis, "router")) |router_value| {
-                            if (router_value.as(JSC.API.FileSystemRouter) != null) {
-                                this.server_components.router.set(globalThis, router_value);
-                            } else {
-                                globalThis.throwInvalidArguments("Expected router to be a Bun.FileSystemRouter", .{});
-                                return error.JSError;
-                            }
-                        }
-
-                        const directive_object = (try internals.getOwnObject(globalThis, "directive")) orelse {
-                            globalThis.throwInvalidArguments("Expected directive to be an object", .{});
-                            return error.JSError;
-                        };
-
-                        if (try directive_object.getArray(globalThis, "client")) |client_names_array| {
-                            var array_iter = client_names_array.arrayIterator(globalThis);
-                            while (array_iter.next()) |client_name| {
-                                var slice = client_name.toSliceOrNull(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                                    return error.JSError;
-                                };
-                                defer slice.deinit();
-                                try this.server_components.client.append(allocator, try OwnedString.initCopy(allocator, slice.slice()));
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                            return error.JSError;
-                        }
-
-                        if (try directive_object.getArray(globalThis, "server")) |server_names_array| {
-                            var array_iter = server_names_array.arrayIterator(globalThis);
-                            while (array_iter.next()) |server_name| {
-                                var slice = server_name.toSliceOrNull(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                                    return error.JSError;
-                                };
-                                defer slice.deinit();
-                                try this.server_components.server.append(allocator, try OwnedString.initCopy(allocator, slice.slice()));
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                            return error.JSError;
-                        }
-
-                        continue;
-                    }
-
-                    // var decl = PluginDeclaration{
-                    //     .name = OwnedString.initEmpty(allocator),
-                    //     .setup = .{},
-                    // };
-                    // defer decl.deinit();
 
                     if (plugin.getOwnOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
                         defer slice.deinit();
@@ -204,8 +153,23 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnOptional(globalThis, "bytecode", bool)) |bytecode| {
+                this.bytecode = bytecode;
+
+                if (bytecode) {
+                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    this.format = .cjs;
+                    this.target = .bun;
+                }
+            }
+
             if (try config.getOwnOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
+
+                if (target != .bun and this.bytecode) {
+                    globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    return error.JSError;
+                }
             }
 
             var has_out_dir = false;
@@ -237,12 +201,11 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOwnOptionalEnum(globalThis, "format", options.Format)) |format| {
-                switch (format) {
-                    .esm => {},
-                    else => {
-                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
-                        return error.JSError;
-                    },
+                this.format = format;
+
+                if (this.bytecode and format != .cjs) {
+                    globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    return error.JSError;
                 }
             }
 
@@ -1095,6 +1058,11 @@ pub const BuildArtifact = struct {
         @"use client",
         @"use server",
         sourcemap,
+        bytecode,
+
+        pub fn isFileInStandaloneMode(this: OutputKind) bool {
+            return this != .sourcemap and this != .bytecode;
+        }
     };
 
     pub fn deinit(this: *BuildArtifact) void {

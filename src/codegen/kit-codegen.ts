@@ -41,10 +41,14 @@ const results = await Promise.allSettled(
     // @ts-ignore
     let code = await result.outputs[0].text();
 
-    // A second pass is used to convert global variables into parameters, while
-    // allowing for renaming to properly function when minification is enabled.
-    const in_names = ["input_graph", "config", mode === "server" && "server_fetch_function"].filter(Boolean);
-    const combined_source = `
+  // A second pass is used to convert global variables into parameters, while
+  // allowing for renaming to properly function when minification is enabled.
+  const in_names = [
+    'input_graph',
+    'config',
+    mode === 'server' && 'server_exports'
+  ].filter(Boolean);
+  const combined_source = `
     __marker__;
     let ${in_names.join(",")};
     __marker__(${in_names.join(",")});

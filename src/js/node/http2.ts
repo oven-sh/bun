@@ -816,26 +816,26 @@ class Http2ServerResponse extends Stream {
   }
 
   writeEarlyHints(hints) {
-    //TODO: RE-ENABLE when tested
-    // validateObject(hints, "hints");
-    // const headers = { __proto__: null };
-    // const linkHeaderValue = validateLinkHeaderValue(hints.link);
-    // for (const key of ObjectKeys(hints)) {
-    //   if (key !== "link") {
-    //     headers[key] = hints[key];
+    //   validateObject(hints, "hints");
+    //   const headers = { __proto__: null };
+    //   const linkHeaderValue = validateLinkHeaderValue(hints.link);
+    //   for (const key of ObjectKeys(hints)) {
+    //     if (key !== "link") {
+    //       headers[key] = hints[key];
+    //     }
     //   }
+    //   if (linkHeaderValue.length === 0) {
+    //     return false;
+    //   }
+    //   const stream = this[kStream];
+    //   if (stream.headersSent || this[kState].closed) return false;
+    //   stream.additionalHeaders({
+    //     ...headers,
+    //     [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_EARLY_HINTS,
+    //     "Link": linkHeaderValue,
+    //   });
+    //   return true;
     // }
-    // if (linkHeaderValue.length === 0) {
-    //   return false;
-    // }
-    // const stream = this[kStream];
-    // if (stream.headersSent || this[kState].closed) return false;
-    // stream.additionalHeaders({
-    //   ...headers,
-    //   [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_EARLY_HINTS,
-    //   "Link": linkHeaderValue,
-    // });
-    // return true;
   }
 }
 
@@ -1861,6 +1861,13 @@ class ServerHttp2Session extends Http2Session {
     }
   }
 
+  altsvc() {
+    // throwNotImplemented("ServerHttp2Stream.prototype.altsvc()");
+  }
+  origin() {
+    // throwNotImplemented("ServerHttp2Stream.prototype.origin()");
+  }
+
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server) {
     super();
     this.#server = server;
@@ -1950,9 +1957,9 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get socket() {
+    if (this.#socket_proxy) return this.#socket_proxy;
     const socket = this[bunHTTP2Socket];
     if (!socket) return null;
-    if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }
@@ -2421,9 +2428,10 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize(windowSize);
   }
   get socket() {
+    if (this.#socket_proxy) return this.#socket_proxy;
+
     const socket = this[bunHTTP2Socket];
     if (!socket) return null;
-    if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }

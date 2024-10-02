@@ -141,16 +141,18 @@ extern "C" int __wrap_fcntl(int fd, int cmd, ...)
 {
     va_list va;
     va_start(va, cmd);
-    return __real_fcntl(fd, cmd, va_arg(va, void*));
+    int ret = __real_fcntl(fd, cmd, va_arg(va, void*));
     va_end(va);
+    return ret;
 }
 
 extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
 {
     va_list va;
     va_start(va, cmd);
-    return __real_fcntl(fd, cmd, va_arg(va, void*));
+    int ret = __real_fcntl(fd, cmd, va_arg(va, void*));
     va_end(va);
+    return ret;
 }
 
 extern "C" double __wrap_pow(double x, double y)

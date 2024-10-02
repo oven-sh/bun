@@ -12,7 +12,7 @@ const TLSSocket = @import("./socket.zig").TLSSocket;
 const TCPSocket = @import("./socket.zig").TCPSocket;
 const JSTLSSocket = JSC.Codegen.JSTLSSocket;
 const JSTCPSocket = JSC.Codegen.JSTCPSocket;
-
+const MAX_PAYLOAD_SIZE_WITHOUT_FRAME = 16384 - FrameHeader.byteSize - 1;
 const BunSocket = union(enum) {
     none: void,
     tls: *TLSSocket,
@@ -629,7 +629,7 @@ var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
 
-const ENABLE_AUTO_CORK = true;
+const ENABLE_AUTO_CORK = false;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
@@ -660,7 +660,7 @@ pub const H2FrameParser = struct {
     maxRejectedStreams: u32 = 100,
     rejectedStreams: u32 = 0,
     maxSessionMemory: u32 = 10, //this limit is in MB
-    enqueedDataSize: u64 = 0, // this is in bytes
+    queuedDataSize: u64 = 0, // this is in bytes
     maxOutstandingPings: u64 = 10,
     outStandingPings: u64 = 0,
     lastStreamID: u32 = 0,
@@ -716,17 +716,73 @@ pub const H2FrameParser = struct {
 
         // when we have backpressure we queue the data e round robin the Streams
         dataFrameQueue: PendingQueue,
-        fn alwaysEqual(_: u0, _: PendingFrame, _: PendingFrame) std.math.Order {
-            return .eq;
-        }
-        const PendingQueue = std.PriorityQueue(PendingFrame, u0, alwaysEqual);
+        const PendingQueue = struct {
+            data: std.ArrayListUnmanaged(PendingFrame) = .{},
+            front: usize = 0,
+            len: usize = 0,
+
+            pub fn deinit(self: *PendingQueue, allocator: Allocator) void {
+                self.front = 0;
+                self.len = 0;
+                if (self.data.capacity > 0) {
+                    self.data.clearAndFree(allocator);
+                }
+            }
+
+            pub fn enqueue(self: *PendingQueue, value: PendingFrame, allocator: Allocator) void {
+                self.data.append(allocator, value) catch bun.outOfMemory();
+                self.len += 1;
+            }
+
+            pub fn peek(self: *PendingQueue) ?*PendingFrame {
+                if (self.len == 0) {
+                    return null;
+                }
+                return &self.data.items[0];
+            }
+
+            pub fn peekLast(self: *PendingQueue) ?*PendingFrame {
+                if (self.len == 0 or self.data.items.len == 0) {
+                    return null;
+                }
+                return &self.data.items[self.data.items.len - 1];
+            }
+
+            pub fn slice(self: *PendingQueue) []PendingFrame {
+                if (self.len == 0) return &.{};
+                return self.data.items;
+            }
+
+            pub fn dequeue(self: *PendingQueue) ?PendingFrame {
+                if (self.len == 0) {
+                    return null;
+                }
+                const value = self.data.items[self.front];
+                self.len -= 1;
+                if (self.len == 0) {
+                    self.front = 0;
+                    self.data.clearRetainingCapacity();
+                } else {
+                    self.front += 1;
+                }
+                return value;
+            }
+
+            pub fn isEmpty(self: *PendingQueue) bool {
+                return self.len == 0;
+            }
+        };
         const PendingFrame = struct {
-            buffer: []const u8,
-            callback: JSC.Strong,
+            end_stream: bool = false, // end_stream flag
+            len: u32 = 0, // actually payload size
+            buffer: []u8, // allocated buffer if len > 0
+            callback: JSC.Strong, // JSCallback for done
 
             pub fn deinit(this: *PendingFrame, allocator: Allocator) void {
                 this.callback.deinit();
-                allocator.free(this.buffer);
+                if (this.buffer.len > 0) {
+                    allocator.free(this.buffer);
+                }
             }
         };
 
@@ -754,18 +810,54 @@ pub const H2FrameParser = struct {
             const client = this.client;
             if (this.canSendData()) {
                 // flush one frame
-                if (this.dataFrameQueue.removeOrNull()) |frame| {
+                if (this.dataFrameQueue.dequeue()) |frame| {
                     defer {
                         var _frame = frame;
                         if (_frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value);
                         _frame.deinit(client.allocator);
                     }
-                    const no_backpressure = client.write(frame.buffer);
-                    written.* += frame.buffer.len;
-                    log("frame flushed {}", .{frame.buffer.len});
+                    const no_backpressure = brk: {
+                        const writer = client.toWriter();
+
+                        if (frame.len == 0) {
+                            // flush a zero payload frame
+                            var dataHeader: FrameHeader = .{
+                                .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                                .flags = if (frame.end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                                .streamIdentifier = @intCast(this.id),
+                                .length = 0,
+                            };
+                            break :brk dataHeader.write(@TypeOf(writer), writer);
+                        } else {
+                            // flush with some payload
+                            client.queuedDataSize -= frame.len;
+                            const padding = this.getPadding(frame.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
+                            const payload_size = frame.len + (if (padding != 0) padding + 1 else 0);
+                            var flags: u8 = if (frame.end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
+                            if (padding != 0) {
+                                flags |= @intFromEnum(DataFrameFlags.PADDED);
+                            }
+                            var dataHeader: FrameHeader = .{
+                                .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                                .flags = flags,
+                                .streamIdentifier = @intCast(this.id),
+                                .length = @intCast(payload_size),
+                            };
+                            _ = dataHeader.write(@TypeOf(writer), writer);
+                            if (padding != 0) {
+                                var buffer = shared_request_buffer[0..];
+                                bun.memmove(buffer[1..frame.len], buffer[0..frame.len]);
+                                buffer[0] = padding;
+                                break :brk (writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0) != 0;
+                            } else {
+                                break :brk (writer.write(frame.buffer[0..frame.len]) catch 0) != 0;
+                            }
+                        }
+                    };
+                    written.* += frame.len;
+                    log("frame flushed {} {}", .{ frame.len, frame.end_stream });
                     client.outboundQueueSize -= 1;
-                    client.enqueedDataSize -= frame.buffer.len;
-                    if (this.dataFrameQueue.count() == 0) {
+                    if (this.dataFrameQueue.isEmpty()) {
                         if (this.closeAfterDrain) {
                             if (this.state == .HALF_CLOSED_REMOTE) {
                                 this.state = .CLOSED;
@@ -776,8 +868,9 @@ pub const H2FrameParser = struct {
                             if (this.waitForTrailers) {
                                 client.dispatch(.onWantTrailers, this.getIdentifier());
                             }
-
-                            client.dispatchWithExtra(.onStreamEnd, this.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(this.state)));
+                            if (this.state == .CLOSED) {
+                                client.dispatchWithExtra(.onStreamEnd, this.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(this.state)));
+                            }
                         }
                     }
                     return no_backpressure;
@@ -787,17 +880,68 @@ pub const H2FrameParser = struct {
             return true;
         }
 
-        pub fn queueFrame(this: *Stream, bytes: []const u8, callback: JSC.JSValue) void {
+        pub fn queueFrame(this: *Stream, bytes: []const u8, callback: JSC.JSValue, end_stream: bool) void {
             const client = this.client;
             const globalThis = client.globalThis;
+
+            if (this.dataFrameQueue.peekLast()) |last_frame| {
+                if (bytes.len == 0) {
+                    // just merge the end_stream
+                    last_frame.end_stream = end_stream;
+                    // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
+                    // this is fine is like a per-stream CORKING in a frame level
+                    if (last_frame.callback.get()) |old_callback| {
+                        client.dispatchArbitrary(old_callback);
+                        last_frame.callback.deinit();
+                    }
+                    last_frame.callback = JSC.Strong.create(callback, globalThis);
+                    return;
+                }
+                if (last_frame.len == 0) {
+                    // we have an empty frame with means we can just use this frame with a new buffer
+                    last_frame.buffer = client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory();
+                }
+                const max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
+                const remaining = max_size - last_frame.len;
+                if (remaining > 0) {
+                    // ok we can cork frames
+                    const consumed_len = @min(remaining, bytes.len);
+                    const merge = bytes[0..consumed_len];
+                    @memcpy(last_frame.buffer[last_frame.len .. last_frame.len + consumed_len], merge);
+                    last_frame.len += @intCast(consumed_len);
+                    client.queuedDataSize += consumed_len;
+                    //lets fallthrough if we still have some data
+                    const more_data = bytes[consumed_len..];
+                    if (more_data.len == 0) {
+                        last_frame.end_stream = end_stream;
+                        // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
+                        // this is fine is like a per-stream CORKING in a frame level
+                        if (last_frame.callback.get()) |old_callback| {
+                            client.dispatchArbitrary(old_callback);
+                            last_frame.callback.deinit();
+                        }
+                        last_frame.callback = JSC.Strong.create(callback, globalThis);
+                        return;
+                    }
+                    // we keep the old callback because the new will be part of another frame
+                    return this.queueFrame(more_data, callback, end_stream);
+                }
+            }
+            log("{s} queued {} {}", .{ if (client.isServer) "server" else "client", bytes.len, end_stream });
+
             const frame: PendingFrame = .{
+                .end_stream = end_stream,
+                .len = @intCast(bytes.len),
                 // we need to clone this data to send it later
-                .buffer = client.allocator.dupe(u8, bytes) catch bun.outOfMemory(),
+                .buffer = if (bytes.len == 0) "" else client.allocator.alloc(u8, MAX_PAYLOAD_SIZE_WITHOUT_FRAME) catch bun.outOfMemory(),
                 .callback = if (callback.isCallable(globalThis.vm())) JSC.Strong.create(callback, globalThis) else .{},
             };
-            this.dataFrameQueue.add(frame) catch bun.outOfMemory();
+            if (bytes.len > 0) {
+                @memcpy(frame.buffer[0..bytes.len], bytes);
+            }
+            this.dataFrameQueue.enqueue(frame, client.allocator);
             client.outboundQueueSize += 1;
-            client.enqueedDataSize += frame.buffer.len;
+            client.queuedDataSize += frame.buffer.len;
         }
 
         pub fn init(streamIdentifier: u32, initialWindowSize: u32, client: *H2FrameParser) Stream {
@@ -808,7 +952,7 @@ pub const H2FrameParser = struct {
                 .usedWindowSize = 0,
                 .weight = 36,
                 .client = client,
-                .dataFrameQueue = PendingQueue.init(client.allocator, 0),
+                .dataFrameQueue = .{},
             };
             return stream;
         }
@@ -858,17 +1002,15 @@ pub const H2FrameParser = struct {
         }
 
         pub fn cleanQueue(this: *Stream) void {
-            if (this.dataFrameQueue.cap > 0) {
+            if (this.dataFrameQueue.data.capacity > 0) {
                 const client = this.client;
                 var dataFrameQueue = this.dataFrameQueue;
-                this.dataFrameQueue = PendingQueue.init(client.allocator, 0);
+                this.dataFrameQueue = .{};
 
-                defer dataFrameQueue.deinit();
-
-                var it = dataFrameQueue.iterator();
-                while (it.next()) |item| {
+                defer dataFrameQueue.deinit(client.allocator);
+                for (dataFrameQueue.slice()) |item| {
                     var frame = item;
-                    client.enqueedDataSize -= item.buffer.len;
+                    client.queuedDataSize -= item.buffer.len;
                     frame.deinit(client.allocator);
                 }
             }
@@ -1657,6 +1799,8 @@ pub const H2FrameParser = struct {
                 if (stream.state == .HALF_CLOSED_REMOTE) {
                     // no more continuation headers we can call it closed
                     stream.state = .CLOSED;
+                } else {
+                    stream.state = .HALF_CLOSED_LOCAL;
                 }
                 this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                 stream.isWaitingMoreHeaders = false;
@@ -1845,7 +1989,7 @@ pub const H2FrameParser = struct {
 
         const buffered_data = this.readBuffer.list.items.len;
 
-        var header: FrameHeader = .{};
+        var header: FrameHeader = .{ .flags = 0 };
         // we can have less than 9 bytes buffered
         if (buffered_data > 0) {
             const total = buffered_data + bytes.len;
@@ -2457,11 +2601,11 @@ pub const H2FrameParser = struct {
     };
     // get memory usage in MB
     fn getSessionMemoryUsage(this: *H2FrameParser) usize {
-        return (this.pendingBuffer.len + this.writeBuffer.len + this.enqueedDataSize) / 1024 / 1024;
+        return (this.pendingBuffer.len + this.writeBuffer.len + this.queuedDataSize) / 1024 / 1024;
     }
 
     fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
-        log("sendData({}, {}, {})", .{ stream.id, payload.len, close });
+        log("{s} sendData({}, {}, {})", .{ if (stream.client.isServer) "server" else "client", stream.id, payload.len, close });
 
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
         const stream_id = stream.id;
@@ -2480,9 +2624,11 @@ pub const H2FrameParser = struct {
                 if (stream.waitForTrailers) {
                     this.dispatch(.onWantTrailers, stream.getIdentifier());
                 }
+                if (stream.state == .CLOSED) {
+                    this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+                }
             }
         };
-
         if (payload.len == 0) {
             // empty payload we still need to send a frame
             var dataHeader: FrameHeader = .{
@@ -2491,10 +2637,15 @@ pub const H2FrameParser = struct {
                 .streamIdentifier = @intCast(stream_id),
                 .length = 0,
             };
-            _ = dataHeader.write(@TypeOf(writer), writer);
+            if (this.hasBackpressure() or this.outboundQueueSize > 0) {
+                enqueued = true;
+                stream.queueFrame("", callback, close);
+            } else {
+                _ = dataHeader.write(@TypeOf(writer), writer);
+            }
         } else {
             // max frame size will always be at least 16384
-            const max_size = 16384 - FrameHeader.byteSize - 1;
+            const max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
 
             var offset: usize = 0;
 
@@ -2502,42 +2653,31 @@ pub const H2FrameParser = struct {
                 const size = @min(payload.len - offset, max_size);
                 const slice = payload[offset..(size + offset)];
                 offset += size;
-                const padding = stream.getPadding(size, max_size - 1);
-                const payload_size = size + (if (padding != 0) padding + 1 else 0);
-                var flags: u8 = if (offset >= payload.len and close) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
-                if (padding != 0) {
-                    flags |= @intFromEnum(DataFrameFlags.PADDED);
-                }
-                var dataHeader: FrameHeader = .{
-                    .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                    .flags = flags,
-                    .streamIdentifier = @intCast(stream_id),
-                    .length = payload_size,
-                };
-                if (this.hasBackpressure()) {
-                    enqueued = true;
-                    log("queued! {}", .{slice.len});
+                const end_stream = offset >= payload.len and close;
 
+                if (this.hasBackpressure() or this.outboundQueueSize > 0) {
+                    enqueued = true;
                     // write the full frame in memory and queue the frame
-                    if (padding != 0) {
-                        // for padding support we need one extra byte + padding bytes
-                        var memWriter: MemoryWriter = .{ .buffer = shared_request_buffer[0..] };
-                        _ = dataHeader.write(@TypeOf(&memWriter), &memWriter);
-                        _ = memWriter.write(&[_]u8{padding}) catch 0;
-                        _ = memWriter.write(slice) catch 0;
-                        stream.queueFrame(memWriter.buffer[0 .. FrameHeader.byteSize + payload_size], callback);
-                    } else {
-                        var memWriter: MemoryWriter = .{ .buffer = shared_request_buffer[0..] };
-                        _ = dataHeader.write(@TypeOf(&memWriter), &memWriter);
-                        _ = memWriter.write(slice) catch 0;
-                        stream.queueFrame(memWriter.slice(), callback);
-                    }
+                    stream.queueFrame(slice, callback, end_stream);
                 } else {
+                    const padding = stream.getPadding(size, max_size - 1);
+                    const payload_size = size + (if (padding != 0) padding + 1 else 0);
+                    var flags: u8 = if (end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
+                    if (padding != 0) {
+                        flags |= @intFromEnum(DataFrameFlags.PADDED);
+                    }
+                    var dataHeader: FrameHeader = .{
+                        .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
+                        .flags = flags,
+                        .streamIdentifier = @intCast(stream_id),
+                        .length = payload_size,
+                    };
                     _ = dataHeader.write(@TypeOf(writer), writer);
                     if (padding != 0) {
-                        bun.memmove(shared_request_buffer[1..size], shared_request_buffer[0..size]);
-                        shared_request_buffer[0] = padding;
-                        _ = writer.write(shared_request_buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0;
+                        var buffer = shared_request_buffer[0..];
+                        bun.memmove(buffer[1..size], buffer[0..size]);
+                        buffer[0] = padding;
+                        _ = writer.write(buffer[0 .. FrameHeader.byteSize + payload_size]) catch 0;
                     } else {
                         _ = writer.write(slice) catch 0;
                     }
@@ -2586,7 +2726,6 @@ pub const H2FrameParser = struct {
 
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
-
         var encoded_size: usize = 0;
 
         var iter = JSC.JSPropertyIterator(.{
@@ -2889,7 +3028,6 @@ pub const H2FrameParser = struct {
 
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
-
         var encoded_size: usize = 0;
 
         const stream_id: u32 = if (!stream_id_arg.isEmptyOrUndefinedOrNull() and stream_id_arg.isNumber()) stream_id_arg.to(u32) else this.getNextStreamID();

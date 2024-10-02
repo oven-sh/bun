@@ -1419,6 +1419,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached()) return;
             if (this.native_callbacks.onWritable) |nativeCallback| {
                 nativeCallback(this.native_callbacks.ctx);
+                return;
             }
             const handlers = this.handlers;
             const callback = handlers.onWritable;

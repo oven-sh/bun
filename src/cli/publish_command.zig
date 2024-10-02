@@ -373,7 +373,7 @@ pub const PublishCommand = struct {
 
             Output.prettyln("\n<green> +<r> {s}@{s}{s}", .{
                 context.package_name,
-                context.package_version,
+                Dependency.withoutBuildTag(context.package_version),
                 if (manager.options.dry_run) " (dry-run)" else "",
             });
 
@@ -420,7 +420,7 @@ pub const PublishCommand = struct {
 
         Output.prettyln("\n<green> +<r> {s}@{s}{s}", .{
             context.package_name,
-            context.package_version,
+            Dependency.withoutBuildTag(context.package_version),
             if (manager.options.dry_run) " (dry-run)" else "",
         });
 
@@ -981,11 +981,12 @@ pub const PublishCommand = struct {
             "latest";
 
         const encoded_tarball_len = std.base64.standard.Encoder.calcSize(ctx.tarball_bytes.len);
+        const version_without_build_tag = Dependency.withoutBuildTag(ctx.package_version);
 
         var buf = try std.ArrayListUnmanaged(u8).initCapacity(
             ctx.allocator,
             ctx.package_name.len * 5 +
-                ctx.package_version.len * 4 +
+                version_without_build_tag.len * 4 +
                 ctx.abs_tarball_path.len +
                 encoded_tarball_len,
         );
@@ -998,20 +999,20 @@ pub const PublishCommand = struct {
 
         try writer.print(",\"dist-tags\":{{\"{s}\":\"{s}\"}}", .{
             tag,
-            ctx.package_version,
+            version_without_build_tag,
         });
 
         // "versions"
         {
             try writer.print(",\"versions\":{{\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\"", .{
-                ctx.package_version,
+                version_without_build_tag,
                 ctx.package_name,
-                ctx.package_version,
+                version_without_build_tag,
             });
 
             try writer.print(",\"_id\": \"{s}@{s}\"", .{
                 ctx.package_name,
-                ctx.package_version,
+                version_without_build_tag,
             });
 
             try writer.print(",\"_integrity\":\"{}\"", .{

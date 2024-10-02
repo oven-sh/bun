@@ -298,6 +298,11 @@ pub fn isScopedPackageName(name: string) error{InvalidPackageName}!bool {
     return error.InvalidPackageName;
 }
 
+/// assumes version is valid
+pub fn withoutBuildTag(version: string) string {
+    if (strings.indexOfChar(version, '+')) |plus| return version[0..plus] else return version;
+}
+
 pub const Version = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},

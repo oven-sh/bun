@@ -1338,18 +1338,20 @@ pub const PackCommand = struct {
 
             printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
 
-            if (manager.options.pack_destination.len == 0) {
-                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
-            } else {
-                var dest_buf: PathBuffer = undefined;
-                const abs_tarball_dest, _ = absTarballDestination(
-                    ctx.manager.options.pack_destination,
-                    abs_workspace_path,
-                    package_name,
-                    package_version,
-                    &dest_buf,
-                );
-                Output.pretty("\n{s}\n", .{abs_tarball_dest});
+            if (comptime !for_publish) {
+                if (manager.options.pack_destination.len == 0) {
+                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
+                } else {
+                    var dest_buf: PathBuffer = undefined;
+                    const abs_tarball_dest, _ = absTarballDestination(
+                        ctx.manager.options.pack_destination,
+                        abs_workspace_path,
+                        package_name,
+                        package_version,
+                        &dest_buf,
+                    );
+                    Output.pretty("\n{s}\n", .{abs_tarball_dest});
+                }
             }
 
             Context.printSummary(ctx.stats, null, null, log_level);

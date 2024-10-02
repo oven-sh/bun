@@ -517,6 +517,16 @@ JSValue fetchCommonJSModule(
 
         auto tag = res->result.value.tag;
         switch (tag) {
+        case SyntheticModuleType::NodeModule: {
+            target->setExportsObject(globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject));
+            target->hasEvaluated = true;
+            RELEASE_AND_RETURN(scope, target);
+        }
+        case SyntheticModuleType::NodeProcess: {
+            target->setExportsObject(globalObject->processObject());
+            target->hasEvaluated = true;
+            RELEASE_AND_RETURN(scope, target);
+        }
 // Generated native module cases
 #define CASE(str, name)                                                                                           \
     case SyntheticModuleType::name: {                                                                             \
@@ -524,7 +534,7 @@ JSValue fetchCommonJSModule(
         RETURN_IF_EXCEPTION(scope, {});                                                                           \
         RELEASE_AND_RETURN(scope, target);                                                                        \
     }
-            BUN_FOREACH_NATIVE_MODULE(CASE)
+            BUN_FOREACH_CJS_NATIVE_MODULE(CASE)
 #undef CASE
 
         case SyntheticModuleType::ESM: {
@@ -746,7 +756,7 @@ static JSValue fetchESMSourceCode(
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTFMove(moduleKey))); \
         return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));                                                                         \
     }
-            BUN_FOREACH_NATIVE_MODULE(CASE)
+            BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
 #undef CASE
 
         // CommonJS modules from src/js/*

@@ -34,8 +34,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceMap);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
-JSC_DECLARE_CUSTOM_GETTER(get_resolveFilename);
-JSC_DECLARE_CUSTOM_SETTER(set_resolveFilename);
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 
@@ -342,7 +340,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
   }
 }
 
-JSC_DEFINE_CUSTOM_GETTER(get_resolveFilename,
+JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
                          (JSGlobalObject * lexicalGlobalObject,
                           EncodedJSValue thisValue,
                           PropertyName propertyName)) {
@@ -353,7 +351,7 @@ JSC_DEFINE_CUSTOM_GETTER(get_resolveFilename,
           globalObject));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(set_resolveFilename,
+JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
                          (JSGlobalObject * lexicalGlobalObject,
                           EncodedJSValue thisValue, EncodedJSValue encodedValue,
                           PropertyName propertyName)) {
@@ -608,6 +606,7 @@ static JSValue getModulePrototypeObject(VM &vm, JSObject *moduleObject) {
   auto *globalObject = defaultGlobalObject(moduleObject->globalObject());
   auto prototype =
       constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+
   prototype->putDirectCustomAccessor(
       vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
       JSC::CustomGetterSetter::create(vm, getterRequireFunction,
@@ -671,7 +670,7 @@ _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
-_resolveFilename        jsFunctionResolveFileName         Function 2
+_resolveFilename        nodeModuleResolveFilename         CustomAccessor
 _resolveLookupPaths     jsFunctionResolveLookupPaths      Function 2
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
@@ -762,4 +761,59 @@ void addNodeModuleConstructorProperties(JSC::VM &vm,
       });
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
+                         (JSGlobalObject * globalObject,
+                          CallFrame *callframe)) {
+  return JSValue::encode(
+      jsBoolean(defaultGlobalObject(globalObject)
+                    ->hasOverridenModuleResolveFilenameFunction));
+}
+
 } // namespace Bun
+
+namespace Zig {
+void generateNativeModule_NodeModule(JSC::JSGlobalObject *lexicalGlobalObject,
+                                     JSC::Identifier moduleKey,
+                                     Vector<JSC::Identifier, 4> &exportNames,
+                                     JSC::MarkedArgumentBuffer &exportValues) {
+  Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
+  auto &vm = globalObject->vm();
+  auto catchScope = DECLARE_CATCH_SCOPE(vm);
+  auto *constructor =
+      globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(
+          globalObject);
+  if (constructor->hasNonReifiedStaticProperties()) {
+    constructor->reifyAllStaticProperties(globalObject);
+    if (catchScope.exception()) {
+      catchScope.clearException();
+    }
+  }
+
+  exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) +
+                              1);
+  exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) +
+                              1);
+
+  for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
+       ++i) {
+    const auto &entry = Bun::nodeModuleObjectTableValues[i];
+    const auto &property = Identifier::fromString(vm, entry.m_key);
+    JSValue value = constructor->getIfPropertyExists(globalObject, property);
+
+    if (UNLIKELY(catchScope.exception())) {
+      value = {};
+      catchScope.clearException();
+    }
+    if (UNLIKELY(value.isEmpty())) {
+      value = JSC::jsUndefined();
+    }
+
+    exportNames.append(property);
+    exportValues.append(value);
+  }
+
+  exportNames.append(vm.propertyNames->defaultKeyword);
+  exportValues.append(constructor);
+}
+
+} // namespace Zig

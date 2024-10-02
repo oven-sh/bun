@@ -3969,7 +3969,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     ASSERT(startRefCount == moduleName.impl()->refCount());
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
-        return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+        return promise->rejectWithCaughtException(globalObject, scope);
     }
 
     JSC::Identifier resolvedIdentifier;

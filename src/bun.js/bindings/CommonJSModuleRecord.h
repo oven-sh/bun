@@ -102,6 +102,7 @@ public:
         JSC::MarkedArgumentBuffer& exportValues);
 
     JSValue exportsObject();
+    void setExportsObject(JSC::JSValue exportsObject);
     JSValue id();
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);

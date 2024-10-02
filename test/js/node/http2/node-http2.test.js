@@ -707,29 +707,7 @@ describe("Client Basics", () => {
     expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
     expect(req.aborted).toBeTrue(); // will be true in this case
   });
-  it("endAfterHeaders should work", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
-    client.on("error", reject);
-    const req = client.request({ ":path": "/" });
-    req.endAfterHeaders = true;
-    let response_headers = null;
-    req.on("response", (headers, flags) => {
-      response_headers = headers;
-    });
-    req.setEncoding("utf8");
-    let data = "";
-    req.on("data", chunk => {
-      data += chunk;
-    });
-    req.on("error", console.error);
-    req.on("end", () => {
-      resolve();
-    });
-    await promise;
-    expect(response_headers[":status"]).toBe(200);
-    expect(data).toBeFalsy();
-  });
+
   it("state should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);

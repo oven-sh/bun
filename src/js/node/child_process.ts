@@ -1293,7 +1293,7 @@ class ChildProcess extends EventEmitter {
       options = undefined;
     } else if (options !== undefined) {
       if (typeof options !== "object" || options === null) {
-        throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+        throw ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
 
@@ -1765,7 +1765,7 @@ class AbortError extends Error {
   name = "AbortError";
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw ERR_INVALID_ARG_TYPE("options", "Object", options);
+      throw ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(message, options);
   }

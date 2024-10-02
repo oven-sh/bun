@@ -2251,6 +2251,7 @@ class ClientHttp2Session extends Http2Session {
     // redirect the queued buffers
     const queue = this.#queue;
     while (queue.length) {
+      console.error("queue", queue);
       socket.write(queue.shift());
     }
     this.#parser.flush();
@@ -2574,7 +2575,6 @@ class ClientHttp2Session extends Http2Session {
       this.emit("error", error);
       return null;
     }
-
     if (typeof options === "undefined") {
       this.#parser.request(stream_id, req, headers, sensitiveNames);
     } else {

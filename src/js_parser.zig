@@ -21925,6 +21925,16 @@ fn NewParser_(
             );
         }
 
+        fn anyDeclInConstValues(p: *P, decls: G.Decl.List) bool {
+            for (decls.slice()) |decl| {
+                if (decl.binding.data != .b_identifier) continue;
+                if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // Try separating the list for appending, so that it's not a pointer.
         fn visitStmts(p: *P, stmts: *ListManaged(Stmt), kind: StmtsKind) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {
@@ -22198,7 +22208,7 @@ fn NewParser_(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
-                                if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
+                                if (!local.is_export and (local.kind == .k_const or p.anyDeclInConstValues(local.decls)) and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
                                     for (decls) |decl| {

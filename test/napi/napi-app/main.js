@@ -47,5 +47,5 @@ try {
     throw new Error(result);
   }
 } catch (e) {
-  console.error("synchronously threw:", e);
+  console.log("synchronously threw:", e.name);
 }

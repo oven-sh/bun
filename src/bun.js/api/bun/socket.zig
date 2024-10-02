@@ -1839,6 +1839,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (this.native_callbacks.onData) |nativeCallback| {
                 nativeCallback(this.native_callbacks.ctx, data);
+                return;
             }
 
             const handlers = this.handlers;

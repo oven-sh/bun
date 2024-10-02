@@ -2736,10 +2736,11 @@ pub const H2FrameParser = struct {
 
         // TODO: support CONTINUE for more headers if headers are too big
         while (iter.next()) |header_name| {
+            if (header_name.length() == 0) continue;
+
             const name_slice = header_name.toUTF8(bun.default_allocator);
             defer name_slice.deinit();
             const name = name_slice.slice();
-            if (header_name.length() == 0) continue;
 
             if (header_name.charAt(0) == ':') {
                 const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}, globalObject);
@@ -3046,9 +3047,12 @@ pub const H2FrameParser = struct {
             iter.reset();
 
             while (iter.next()) |header_name| {
+                if (header_name.length() == 0) continue;
+
                 const name_slice = header_name.toUTF8(bun.default_allocator);
                 defer name_slice.deinit();
                 const name = name_slice.slice();
+
                 defer header_count += 1;
                 if (this.maxHeaderListPairs < header_count) {
                     this.rejectedStreams += 1;

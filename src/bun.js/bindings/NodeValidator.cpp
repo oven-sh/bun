@@ -397,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
-    auto name = callFrame->argument(0);
+    auto name = callFrame->argument(1);
 
     if (!value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);

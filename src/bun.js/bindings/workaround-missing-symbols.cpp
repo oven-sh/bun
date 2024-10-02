@@ -55,11 +55,11 @@ extern "C" int kill(int pid, int sig)
 #if defined(__linux__)
 
 #include <fcntl.h>
-// #include <sys/stat.h>
-#include <stdarg.h>
-#include <math.h>
-#include <errno.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <linux/fcntl.h>
+#include <math.h>
+#include <stdarg.h>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)
@@ -142,13 +142,73 @@ int __wrap_fcntl(int fd, int cmd, ...)
 
 int __wrap_fcntl64(int fd, int cmd, ...)
 {
-    va_list args;
-    va_start(args, cmd);
-    void* arg = va_arg(args, void*);
-    va_end(args);
-    return fcntl(fd, cmd, arg);
-}
+    va_list ap;
+    void* arg;
 
+    va_start(ap, cmd);
+
+    switch (cmd) {
+    // Commands that take no argument
+    case F_GETFD:
+    case F_GETFL:
+    case F_GETOWN:
+    case F_GETSIG:
+    case F_GETLEASE:
+    case F_GETPIPE_SZ:
+#ifdef F_GET_SEALS
+    case F_GET_SEALS:
+#endif
+        va_end(ap);
+        return fcntl(fd, cmd);
+
+    // Commands that take an integer argument
+    case F_DUPFD:
+    case F_DUPFD_CLOEXEC:
+    case F_SETFD:
+    case F_SETFL:
+    case F_SETOWN:
+    case F_SETSIG:
+    case F_SETLEASE:
+    case F_NOTIFY:
+    case F_SETPIPE_SZ:
+#ifdef F_ADD_SEALS
+    case F_ADD_SEALS:
+#endif
+        arg = va_arg(ap, int*);
+        va_end(ap);
+        return fcntl(fd, cmd, *(int*)arg);
+
+    // Commands that take a struct flock *
+    case F_GETLK:
+    case F_SETLK:
+    case F_SETLKW:
+        arg = va_arg(ap, struct flock**);
+        va_end(ap);
+        return fcntl(fd, cmd, *(struct flock**)arg);
+
+    // Commands that take a struct f_owner_ex *
+    case F_GETOWN_EX:
+    case F_SETOWN_EX:
+        arg = va_arg(ap, struct f_owner_ex**);
+        va_end(ap);
+        return fcntl(fd, cmd, *(struct f_owner_ex**)arg);
+
+#ifdef F_OFD_GETLK
+    // Commands that take a struct f_owner_exlock *
+    case F_OFD_GETLK:
+    case F_OFD_SETLK:
+    case F_OFD_SETLKW:
+        arg = va_arg(ap, struct f_owner_exlock**);
+        va_end(ap);
+        return fcntl(fd, cmd, *(struct f_owner_exlock**)arg);
+#endif
+
+    default:
+        va_end(ap);
+        errno = EINVAL;
+        return -1;
+    }
+}
 double __wrap_exp(double x) { return exp(x); }
 double __wrap_fmod(double x, double y) { return fmod(x, y); }
 double __wrap_log(double x) { return log(x); }

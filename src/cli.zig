@@ -1171,6 +1171,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>publish<r>                        Publish a package to the npm registry
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\

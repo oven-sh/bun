@@ -94,6 +94,8 @@ const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
 const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2WantTrailers = Symbol.for("::bunhttp2WantTrailers::");
+const bunHTTP2StreamEnded = Symbol.for("::bunhttp2StreamEnded::");
+
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 
@@ -1298,7 +1300,7 @@ hideFromStack(assertSession);
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | null = null;
-  #endStream: boolean = false;
+  [bunHTTP2StreamEnded]: boolean = false;
   [bunHTTP2WantTrailers]: boolean = false;
   [bunHTTP2Closed]: boolean = false;
   rstCode: number | undefined = undefined;
@@ -1498,7 +1500,7 @@ class Http2Stream extends Duplex {
     if (!chunk) {
       chunk = Buffer.alloc(0);
     }
-    this.#endStream = true;
+    this[bunHTTP2StreamEnded] = true;
     return super.end(chunk, encoding, callback);
   }
 
@@ -1508,7 +1510,7 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native.writeStream(this.#id, chunk, this.#endStream, callback);
+        native.writeStream(this.#id, chunk, this[bunHTTP2StreamEnded], callback);
         return;
       }
       if (typeof callback == "function") {
@@ -1691,7 +1693,6 @@ class ServerHttp2Stream extends Http2Stream {
       throw error;
     }
     if (this.headersSent) throw new ERR_HTTP2_HEADERS_SENT();
-
     if (this.sentTrailers) {
       const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
       error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
@@ -1782,6 +1783,7 @@ class ServerHttp2Session extends Http2Session {
   #queue: Array<Buffer> = [];
   #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
+  [bunHTTP2WantTrailers]: any;
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
@@ -1811,7 +1813,7 @@ class ServerHttp2Session extends Http2Session {
       self.#parser?.setStreamContext(stream_id, stream);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Session, error: any, old_state: number) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
 
       if (!stream[bunHTTP2Closed]) {
         stream[bunHTTP2Closed] = true;
@@ -1827,7 +1829,7 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
@@ -1849,7 +1851,7 @@ class ServerHttp2Session extends Http2Session {
       }
     },
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       const queue = stream[bunHTTP2StreamReadQueue];
 
       if (queue.isEmpty()) {
@@ -1875,7 +1877,6 @@ class ServerHttp2Session extends Http2Session {
           headers[key] = value.join(", ");
         }
       }
-      self.#server.emit("stream", stream, headers, flags, rawheaders);
       if (stream[bunHTTP2StreamResponded]) {
         try {
           stream.emit("trailers", headers, flags, rawheaders);
@@ -1883,8 +1884,9 @@ class ServerHttp2Session extends Http2Session {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
+        self.#server.emit("stream", stream, headers, flags, rawheaders);
+
         stream[bunHTTP2StreamResponded] = true;
-        stream.emit("response", headers, flags);
         self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
@@ -1922,8 +1924,9 @@ class ServerHttp2Session extends Http2Session {
       self.#parser = null;
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Session) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
 
+      if (stream[bunHTTP2WantTrailers]) return;
       stream[bunHTTP2WantTrailers] = true;
       stream.emit("wantTrailers");
     },
@@ -2236,7 +2239,7 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
 
       if (!stream[bunHTTP2Closed]) {
         stream[bunHTTP2Closed] = true;
@@ -2251,7 +2254,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
@@ -2273,7 +2276,7 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       const queue = stream[bunHTTP2StreamReadQueue];
 
       if (queue.isEmpty()) {
@@ -2308,7 +2311,7 @@ class ClientHttp2Session extends Http2Session {
       }
       if (stream[bunHTTP2StreamResponded]) {
         try {
-          stream.emit("trailers", headers, flags, rawheaders);
+          stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags, rawheaders);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
@@ -2353,8 +2356,9 @@ class ClientHttp2Session extends Http2Session {
     },
 
     wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
 
+      if (stream[bunHTTP2WantTrailers]) return;
       stream[bunHTTP2WantTrailers] = true;
       stream.emit("wantTrailers");
     },

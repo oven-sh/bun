@@ -5,6 +5,8 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
@@ -830,6 +832,9 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
 
   // Get the stream controller
   // We need the pointer to the underlying stream controller for the NativeReadable
+  if (start && typeof start !== "number") throw ERR_INVALID_ARG_TYPE("options.start", "number", start);
+  if (end && typeof end !== "number") throw ERR_INVALID_ARG_TYPE("options.end", "number", end);
+
   const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
   var ptr = stream.$bunNativePtr;
   if (!ptr) {
@@ -1067,6 +1072,8 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
     fd = defaultWriteStreamOptions.fd,
     pos = defaultWriteStreamOptions.pos,
   } = options;
+
+  if (start && typeof start !== "number") throw ERR_INVALID_ARG_TYPE("options.start", "number", start);
 
   var tempThis = {};
   var handle = null;

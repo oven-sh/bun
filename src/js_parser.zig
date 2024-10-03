@@ -22865,13 +22865,21 @@ fn NewParser_(
                 var end: u32 = 0;
                 for (stmts) |stmt| {
                     switch (stmt.data) {
-                        .s_directive,
-                        .s_import,
-                        .s_export_from,
-                        .s_export_star,
-                        => {
+                        .s_directive, .s_import, .s_export_from, .s_export_star => {
                             // These can't go in a try/catch block
                             result.append(stmt) catch bun.outOfMemory();
+                            continue;
+                        },
+
+                        .s_class => {
+                            if (stmt.data.s_class.is_export) {
+                                // can't go in try/catch; hoist out
+                                result.append(stmt) catch bun.outOfMemory();
+                                continue;
+                            }
+                        },
+
+                        .s_export_default => {
                             continue;
                         },
 

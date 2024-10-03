@@ -1883,23 +1883,53 @@ describe("bundler", () => {
     target: "browser",
     run: { stdout: `123` },
   });
-  itBundled('edgecase/UninitializedVariablesMoved', {
+  itBundled("edgecase/UninitializedVariablesMoved", {
     files: {
-      '/entry.ts': `
+      "/entry.ts": `
         await import('./b.js');
       `,
-      '/b.js': `
+      "/b.js": `
         export var a = 32;
         export var b;
         (function (c) {
             c.d = 1;
         })(b ?? {});
         +a;
-      `
+      `,
     },
-    minifySyntax:true,
+    minifySyntax: true,
     run: true, // pass if no thrown error
-  })
+  });
+  itBundled("edgecase/UsingExportDefault", {
+    files: {
+      "/entry.ts": `
+        using a = {
+          [Symbol.dispose]: () => { 
+            console.info("Disposing");
+          }
+        };
+        export default {};
+      `,
+    },
+    run: {
+      stdout: "Disposing",
+    },
+  });
+  itBundled("edgecase/UsingExport", {
+    files: {
+      "/entry.ts": `
+        export class A {
+          [Symbol.dispose](){
+            console.info("Disposing");
+          }
+        }
+        using a = new A();
+      `,
+    },
+    run: {
+      stdout: "Disposing",
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

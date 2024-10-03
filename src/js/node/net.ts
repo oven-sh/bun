@@ -1044,6 +1044,9 @@ class Server extends EventEmitter {
       } else {
         options.InternalSocketClass = SocketClass;
       }
+      if (hostname === "127.0.0.1" || hostname === "::1") {
+        hostname = "localhost";
+      }
 
       listenInCluster(
         this,

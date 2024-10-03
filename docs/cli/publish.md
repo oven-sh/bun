@@ -44,7 +44,7 @@ $ bun publish ./package.tgz
 
 ### `--access`
 
-The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Uscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.
+The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Unscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.
 
 ```sh
 $ bun publish --access public

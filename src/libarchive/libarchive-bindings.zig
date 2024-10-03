@@ -53,6 +53,7 @@ pub const Flags = struct {
         safe_writes = ARCHIVE_EXTRACT_SAFE_WRITES,
     };
 
+    // Deprecated
     // pub const Compression = enum(c_int) {
     //     none = ARCHIVE_COMPRESSION_NONE,
     //     gzip = ARCHIVE_COMPRESSION_GZIP,
@@ -206,6 +207,7 @@ const ARCHIVE_FILTER_LZOP = @as(c_int, 11);
 const ARCHIVE_FILTER_GRZIP = @as(c_int, 12);
 const ARCHIVE_FILTER_LZ4 = @as(c_int, 13);
 const ARCHIVE_FILTER_ZSTD = @as(c_int, 14);
+// Deprecated
 // pub const ARCHIVE_COMPRESSION_NONE = ARCHIVE_FILTER_NONE;
 // pub const ARCHIVE_COMPRESSION_GZIP = ARCHIVE_FILTER_GZIP;
 // pub const ARCHIVE_COMPRESSION_BZIP2 = ARCHIVE_FILTER_BZIP2;
@@ -1046,6 +1048,7 @@ pub extern fn archive_write_get_bytes_per_block(*struct_archive) c_int;
 pub extern fn archive_write_set_bytes_in_last_block(*struct_archive, bytes_in_last_block: c_int) c_int;
 pub extern fn archive_write_get_bytes_in_last_block(*struct_archive) c_int;
 pub extern fn archive_write_set_skip_file(*struct_archive, la_int64_t, la_int64_t) c_int;
+// Deprecated
 // pub extern fn archive_write_set_compression_bzip2(*struct_archive) c_int;
 // pub extern fn archive_write_set_compression_compress(*struct_archive) c_int;
 // pub extern fn archive_write_set_compression_lzip(*struct_archive) c_int;

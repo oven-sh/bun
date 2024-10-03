@@ -9298,6 +9298,7 @@ pub const PackageManager = struct {
         clap.parseParam("--tag <STR>                            Tag the release. Default is \"latest\"") catch unreachable,
         clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
         clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
+        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
     });
 
     pub const CommandLineArguments = struct {
@@ -9692,7 +9693,7 @@ pub const PackageManager = struct {
                 // cli.json_output = args.flag("--json");
             }
 
-            if (comptime subcommand == .pack or subcommand == .pm) {
+            if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
                 if (args.option("--destination")) |dest| {
                     cli.pack_destination = dest;
                 }

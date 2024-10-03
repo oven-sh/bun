@@ -347,7 +347,7 @@ pub const Arguments = struct {
                             }
                         }
                         if (ctx.log.hasAny()) Output.printError("\n", .{});
-                        Output.err(err, "failed to load config", .{});
+                        Output.err(err, "failed to load bunfig", .{});
                         Global.crash();
                     };
                 }
@@ -406,7 +406,7 @@ pub const Arguments = struct {
                 }
             }
             if (ctx.log.hasAny()) Output.printError("\n", .{});
-            Output.err(err, "failed to load config", .{});
+            Output.err(err, "failed to load bunfig", .{});
             Global.crash();
         };
     }

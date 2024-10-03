@@ -216,60 +216,49 @@ pub fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-// TODO: copy https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
-// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
-pub fn isNpmSecret(str: string) bool {
-    _ = str;
-    // if (!strings.hasPrefixComptime(str, "npm")) return false;
-    // var remain = str["npm".len..];
-    // if (remain.len == 0) return false;
-    // if (remain[0] != '_') {
-    //     if (remain[0] == 's')
-    // }
-
-}
-
 pub fn startsWithUUID(str: string) bool {
     const uuid_len = 36;
     if (str.len < uuid_len) return false;
     for (0..8) |i| {
         switch (str[i]) {
-            '0'...'9', 'a'...'f' => {},
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
             else => return false,
         }
     }
     if (str[8] != '-') return false;
     for (9..13) |i| {
         switch (str[i]) {
-            '0'...'9', 'a'...'f' => {},
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
             else => return false,
         }
     }
     if (str[13] != '-') return false;
     for (14..18) |i| {
         switch (str[i]) {
-            '0'...'9', 'a'...'f' => {},
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
             else => return false,
         }
     }
     if (str[18] != '-') return false;
     for (19..23) |i| {
         switch (str[i]) {
-            '0'...'9', 'a'...'f' => {},
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
             else => return false,
         }
     }
     if (str[23] != '-') return false;
     for (24..36) |i| {
         switch (str[i]) {
-            '0'...'9', 'a'...'f' => {},
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
             else => return false,
         }
     }
     return true;
 }
 
-// Returns the length of the secret if one exist.
+/// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
+/// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
+/// Returns the length of the secret if one exist.
 pub fn startsWithNpmSecret(str: string) u8 {
     if (str.len < "npm_".len + 36) return 0;
 

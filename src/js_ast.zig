@@ -3527,7 +3527,10 @@ pub const Expr = struct {
 
     pub fn asArray(expr: *const Expr) ?ArrayIterator {
         if (std.meta.activeTag(expr.data) != .e_array) return null;
-        return .{ .array = expr.data.e_array, .index = 0 };
+        const array = expr.data.e_array;
+        if (array.items.len == 0 or @intFromPtr(array.items.ptr) == 0) return null;
+
+        return ArrayIterator{ .array = array, .index = 0 };
     }
 
     pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {

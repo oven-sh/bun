@@ -592,7 +592,8 @@ pub const PublishCommand = struct {
 
                 if (!prompt_for_otp) {
                     // general error
-                    return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, true);
+                    const otp_response = false;
+                    return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, otp_response);
                 }
 
                 const otp = try getOTP(directory_publish, ctx, registry, &response_buf, &print_buf);
@@ -634,7 +635,8 @@ pub const PublishCommand = struct {
 
                 switch (otp_res.status_code) {
                     400...std.math.maxInt(@TypeOf(otp_res.status_code)) => {
-                        return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, true);
+                        const otp_response = true;
+                        return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, otp_response);
                     },
                     else => {},
                 }
@@ -649,7 +651,7 @@ pub const PublishCommand = struct {
         req: *const http.AsyncHTTP,
         res: *const bun.picohttp.Response,
         response_body: *MutableString,
-        comptime check_for_success: bool,
+        comptime otp_response: bool,
     ) OOM!void {
         const message = message: {
             const source = logger.Source.initPathString("???", response_body.list.items);
@@ -660,29 +662,40 @@ pub const PublishCommand = struct {
                 }
             };
 
-            if (comptime check_for_success) {
-                if (json.get("success")) |success_expr| {
-                    if (success_expr.asBool()) |successful| {
-                        if (successful) {
-                            // possible to hit this with otp responses
-                            return;
-                        }
-                    }
-                }
-            }
+            // I don't think we should make this check, I cannot find code in npm
+            // that does this
+            // if (comptime otp_response) {
+            //     if (json.get("success")) |success_expr| {
+            //         if (success_expr.asBool()) |successful| {
+            //             if (successful) {
+            //                 // possible to hit this with otp responses
+            //                 return;
+            //             }
+            //         }
+            //     }
+            // }
 
             const @"error", _ = try json.getString(ctx.allocator, "error") orelse break :message null;
             break :message @"error";
         };
 
-        Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n{s}{s}", .{
+        Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n", .{
             res.status_code,
             if (res.status.len > 0) " " else "",
             res.status,
             bun.fmt.redactedNpmUrl(req.url.href),
-            if (message != null) "\n - " else "",
-            message orelse "",
         });
+
+        if (message) |msg| {
+            if (comptime otp_response) {
+                if (res.status_code == 401 and strings.containsComptime(msg, "You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.")) {
+                    Output.prettyErrorln("\n - Received invalid OTP", .{});
+                    Global.crash();
+                }
+            }
+            Output.prettyErrorln("\n - {s}", .{msg});
+        }
+
         Global.crash();
     }
 
@@ -843,7 +856,8 @@ pub const PublishCommand = struct {
                         };
                     },
                     else => {
-                        try handleResponseErrors(directory_publish, ctx, &req, &res, response_buf, false);
+                        const otp_response = false;
+                        try handleResponseErrors(directory_publish, ctx, &req, &res, response_buf, otp_response);
                     },
                 }
             }

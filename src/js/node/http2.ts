@@ -51,6 +51,7 @@ class ERR_HTTP2_INVALID_PSEUDOHEADER extends TypeError {
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
+const kInfoHeaders = Symbol("sent-info-headers");
 
 const Stream = require("node:stream");
 const { Readable } = Stream;
@@ -1320,8 +1321,7 @@ class Http2Stream extends Duplex {
   }
 
   get sentInfoHeaders() {
-    // TODO CONTINUE frames here
-    return [];
+    return this[kInfoHeaders] || [];
   }
 
   get sentTrailers() {
@@ -1504,12 +1504,14 @@ class ClientHttp2Stream extends Http2Stream {
   }
 }
 class ServerHttp2Stream extends Http2Stream {
+  headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
   }
   pushStream() {
     throwNotImplemented("ServerHttp2Stream.prototype.pushStream()");
   }
+
   respondWithFile(path, headers, options) {
     // TODO: optimize this
     let { statCheck, offset, length, onError } = options || {};
@@ -1561,8 +1563,7 @@ class ServerHttp2Stream extends Http2Stream {
     this.respond(headers, options);
     fs.createReadStream(null, { fd: fd, autoClose: false, start: offset, end, emitClose: false }).pipe(this);
   }
-
-  respond(headers: any, options?: any) {
+  additionalHeaders(headers) {
     if (this.destroyed || this.closed) {
       const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
       error.code = "ERR_HTTP2_INVALID_STREAM";
@@ -1574,7 +1575,62 @@ class ServerHttp2Stream extends Http2Stream {
       error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
       throw error;
     }
+    if (this.headersSent) throw new ERR_HTTP2_HEADERS_SENT();
 
+    if (headers == undefined) {
+      headers = {};
+    }
+
+    if (!$isObject(headers)) {
+      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    }
+
+    const sensitives = headers[sensitiveHeaders];
+    const sensitiveNames = {};
+    if (sensitives) {
+      if (!$isArray(sensitives)) {
+        throw new ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]");
+      }
+      for (let i = 0; i < sensitives.length; i++) {
+        sensitiveNames[sensitives[i]] = true;
+      }
+    }
+    if (headers[":status"] === undefined) {
+      headers[":status"] = 200;
+    }
+    const statusCode = (headers[":status"] |= 0);
+
+    // Payload/DATA frames are not permitted in these cases
+    if (
+      statusCode === constants.HTTP_STATUS_NO_CONTENT ||
+      statusCode === constants.HTTP_STATUS_RESET_CONTENT ||
+      statusCode === constants.HTTP_STATUS_NOT_MODIFIED ||
+      this.headRequest
+    ) {
+      const error = new Error(
+        `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
+      );
+      error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
+      throw error;
+    }
+    const session = this[bunHTTP2Session];
+    assertSession(session);
+    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
+    this[kInfoHeaders] = headers;
+  }
+  respond(headers: any, options?: any) {
+    if (this.destroyed || this.closed) {
+      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
+      error.code = "ERR_HTTP2_INVALID_STREAM";
+      throw error;
+    }
+    if (this.headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+
+    if (this.sentTrailers) {
+      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
+      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
+      throw error;
+    }
     if (headers == undefined) {
       headers = {};
     }
@@ -1598,6 +1654,8 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
+    this.headersSent = true;
+
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
@@ -1703,7 +1761,7 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       if (stream.rstCode === undefined) {
         stream.rstCode = 0;
         stream.emit("end");
@@ -1734,7 +1792,7 @@ class ServerHttp2Session extends Http2Session {
       headers: Record<string, string | string[]>,
       flags: number,
     ) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       stream[bunHTTP2Headers] = headers;
 
       let cookie = headers["cookie"];
@@ -2122,7 +2180,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       if (stream.rstCode === undefined) {
         stream.rstCode = 0;
         stream.emit("end");
@@ -2153,7 +2211,7 @@ class ClientHttp2Session extends Http2Session {
       headers: Record<string, string | string[]>,
       flags: number,
     ) {
-      if (!self) return;
+      if (!self || typeof stream !== "object") return;
       stream[bunHTTP2Headers] = headers;
 
       let status: string | number = headers[":status"] as string;

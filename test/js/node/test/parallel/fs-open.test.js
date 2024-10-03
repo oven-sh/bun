@@ -27,10 +27,25 @@ test('fs.open succeeds with various valid arguments', async () => {
 });
 
 test('fs.open throws for invalid mode argument', () => {
-  expect(() => fs.open(__filename, 'r', 'boom', () => {})).toThrow(expect.objectContaining({
+  expect(() => fs.open(__filename, 'r', 'boom', () => {})).toThrow(({
     code: 'ERR_INVALID_ARG_VALUE',
     name: 'TypeError',
-    message: expect.any(String)
+    message: `The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received boom`
+  }));
+  expect(() => fs.open(__filename, 'r', 5.5, () => {})).toThrow(({
+    code: 'ERR_OUT_OF_RANGE',
+    name: 'RangeError',
+    message: `The value of "mode" is out of range. It must be an integer. Received 5.5`
+  }));
+  expect(() => fs.open(__filename, 'r', -7, () => {})).toThrow(({
+    code: 'ERR_OUT_OF_RANGE',
+    name: 'RangeError',
+    message: `The value of "mode" is out of range. It must be >= 0 and <= 4294967295. Received -7`
+  }));
+  expect(() => fs.open(__filename, 'r', 4304967295, () => {})).toThrow(({
+    code: 'ERR_OUT_OF_RANGE',
+    name: 'RangeError',
+    message: `The value of "mode" is out of range. It must be >= 0 and <= 4294967295. Received 4304967295`
   }));
 });
 

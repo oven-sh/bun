@@ -2010,16 +2010,21 @@ describe("bundler", () => {
   itBundled("edgecase/UsingExportFails", {
     files: {
       "/entry.ts": `
+        import a from "./import.ts";
+        console.log(a.ok);
+      `,
+      "/import.ts": `
         using a = {
           [Symbol.dispose]: () => {
             console.log("Disposing");
-          }
+          },
+          ok: true,
         };
         export default a;
       `,
     },
     run: {
-      stdout: "Disposing",
+      stdout: "Disposing\ntrue",
     },
   });
 

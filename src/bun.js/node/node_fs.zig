@@ -3097,6 +3097,7 @@ pub const Arguments = struct {
                 .buffer = buffer,
             };
 
+            var defined_length = false;
             if (arguments.next()) |current| {
                 arguments.eat();
                 if (current.isNumber() or current.isBigInt()) {
@@ -3109,6 +3110,7 @@ pub const Arguments = struct {
 
                     const arg_length = arguments.next().?;
                     arguments.eat();
+                    defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = arg_length.to(u52);
@@ -3135,6 +3137,7 @@ pub const Arguments = struct {
                         if (num.isNumber() or num.isBigInt()) {
                             args.length = num.to(u52);
                         }
+                        defined_length = true;
                     }
 
                     if (current.getTruthy(ctx.ptr(), "position")) |num| {
@@ -3145,7 +3148,7 @@ pub const Arguments = struct {
                 }
             }
 
-            if (args.length > 0 and buffer.slice().len == 0) {
+            if (defined_length and args.length > 0 and buffer.slice().len == 0) {
                 var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
                 ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
                 return null;

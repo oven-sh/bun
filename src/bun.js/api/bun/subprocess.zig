@@ -2326,7 +2326,7 @@ pub const Subprocess = struct {
                 abort_signal = null;
             }
             if (!subprocess.process.hasExited()) {
-                jsc_vm.onProcessSpawn(subprocess.process);
+                jsc_vm.onSubprocessSpawn(subprocess.process);
             }
             return out;
         }
@@ -2350,7 +2350,7 @@ pub const Subprocess = struct {
         }
 
         if (!subprocess.process.hasExited()) {
-            jsc_vm.onProcessSpawn(subprocess.process);
+            jsc_vm.onSubprocessSpawn(subprocess.process);
         }
 
         while (subprocess.hasPendingActivityNonThreadsafe()) {

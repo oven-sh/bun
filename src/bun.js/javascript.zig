@@ -756,7 +756,7 @@ const AutoKiller = struct {
         this.processes.clearRetainingCapacity();
     }
 
-    pub fn onSpawnProcess(this: *AutoKiller, process: *bun.spawn.Process) void {
+    pub fn onSubprocessSpawn(this: *AutoKiller, process: *bun.spawn.Process) void {
         if (this.enabled)
             this.processes.put(bun.default_allocator, process, {}) catch {};
     }
@@ -953,8 +953,8 @@ pub const VirtualMachine = struct {
         return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
     }
 
-    pub fn onProcessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
-        this.auto_killer.onSpawnProcess(process);
+    pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
+        this.auto_killer.onSubprocessSpawn(process);
     }
 
     pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {

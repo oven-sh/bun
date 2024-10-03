@@ -1994,9 +1994,9 @@ pub const H2FrameParser = struct {
             this.readBuffer.reset();
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
-                stream.endAfterHeaders = true;
-
-                if (!stream.isWaitingMoreHeaders) {
+                if (stream.isWaitingMoreHeaders) {
+                    stream.state = .HALF_CLOSED_REMOTE;
+                } else {
                     // no more continuation headers we can call it closed
                     if (stream.state == .HALF_CLOSED_LOCAL) {
                         stream.state = .CLOSED;

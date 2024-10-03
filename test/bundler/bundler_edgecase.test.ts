@@ -1900,22 +1900,28 @@ describe("bundler", () => {
     minifySyntax: true,
     run: true, // pass if no thrown error
   });
+
   itBundled("edgecase/UsingExportDefault", {
     files: {
       "/entry.ts": `
+        import module from "./module.ts";
+        console.log(module.x);
+      `,
+      "/module.ts": `
         using a = {
           [Symbol.dispose]: () => { 
-            console.info("Disposing");
+            console.log("Disposing");
           }
         };
-        export default {};
+        export default {x: 1};
       `,
     },
     run: {
-      stdout: "Disposing",
+      stdout: "Disposing\n1",
     },
   });
-  itBundled("edgecase/UsingExport", {
+
+  itBundled("edgecase/UsingExportClass", {
     files: {
       "/entry.ts": `
         export class A {
@@ -1924,6 +1930,92 @@ describe("bundler", () => {
           }
         }
         using a = new A();
+      `,
+    },
+    run: {
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultThrows", {
+    files: {
+      "/entry.ts": `
+        import("./module.ts").catch(error => {
+          console.log("Caught error:", error.message);
+        });
+      `,
+      "/module.ts": `
+        function somethingThatThrows() {
+          throw new Error("This function throws");
+        }
+
+        using disposable = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        };
+
+        export default somethingThatThrows();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nCaught error: This function throws",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultAsync", {
+    files: {
+      "/entry.ts": `
+        const result = await import("./importer.ts");
+        console.log(await result.default);
+      `,
+      "/importer.ts": `
+        async function main() {
+          using disposable = {
+            [Symbol.dispose]: () => {
+              console.log("Disposing");
+            }
+          };
+          return "Success";
+        }
+        export default main();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nSuccess",
+    },
+  });
+
+  itBundled("edgecase/UsingDisposeThrowDoesntMask", {
+    files: {
+      "/entry.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            throw new Error("Error");
+          }
+        };
+        using b = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        }
+      `,
+    },
+    run: {
+      error: "error: Error",
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportFails", {
+    files: {
+      "/entry.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        };
+        export default a;
       `,
     },
     run: {

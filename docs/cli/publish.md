@@ -1,8 +1,11 @@
 ## `bun publish`
 
-To publish a package to the npm registry, use `bun publish`. `bun publish` will automatically pack your package into a tarball and send it off to the configured npm registry from your config files.
+Use `bun publish` to publish a package to the npm registry.
+
+`bun publish` will automatically pack your package into a tarball, strip workspace protocols from the `package.json` (resolving versions if necessary), and publish to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh
+## Publishing the package from the current working directory
 $ bun publish
 
 ## Output
@@ -97,4 +100,4 @@ Enter OTP: 123456
 
 ### `--gzip-level`
 
-Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument.
+Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).

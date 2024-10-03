@@ -38,6 +38,7 @@ pub const PrinterOptions = struct {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pseudo_classes: ?PseudoClasses = null,
+    public_path: []const u8 = "",
 };
 
 /// A mapping of user action pseudo classes to replace with class names.
@@ -96,6 +97,8 @@ pub fn Printer(comptime Writer: type) type {
         ctx: ?*const css.StyleContext = null,
         scratchbuf: std.ArrayList(u8),
         error_kind: ?css.PrinterError = null,
+        import_records: ?*const bun.BabyList(bun.ImportRecord),
+        public_path: []const u8,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
         // TODO: finish the fields
@@ -129,6 +132,15 @@ pub fn Printer(comptime Writer: type) type {
                 .kind = .fmt_error,
                 .loc = null,
             };
+            return PrintErr.lol;
+        }
+
+        pub fn addNoImportRecordError(this: *This) PrintErr!void {
+            this.error_kind = css.PrinterError{
+                .kind = .no_import_records,
+                .loc = null,
+            };
+            return PrintErr.lol;
         }
 
         /// Returns an error of the given kind at the provided location in the current source file.
@@ -157,7 +169,14 @@ pub fn Printer(comptime Writer: type) type {
             }
         }
 
-        pub fn new(allocator: Allocator, scratchbuf: std.ArrayList(u8), dest: Writer, options: PrinterOptions) This {
+        /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
+        pub fn new(
+            allocator: Allocator,
+            scratchbuf: std.ArrayList(u8),
+            dest: Writer,
+            options: PrinterOptions,
+            import_records: ?*const bun.BabyList(bun.ImportRecord),
+        ) This {
             return .{
                 .sources = null,
                 .dest = dest,
@@ -167,14 +186,39 @@ pub fn Printer(comptime Writer: type) type {
                 .remove_imports = options.analyze_dependencies != null and options.analyze_dependencies.?.remove_imports,
                 .pseudo_classes = options.pseudo_classes,
                 .indentation_buf = std.ArrayList(u8).init(allocator),
+                .import_records = import_records,
                 .scratchbuf = scratchbuf,
                 .allocator = allocator,
+                .public_path = options.public_path,
                 .loc = Location{
                     .source_index = 0,
                     .line = 0,
                     .column = 1,
                 },
             };
+        }
+
+        pub inline fn getImportRecords(this: *This) PrintErr!*const bun.BabyList(bun.ImportRecord) {
+            if (this.import_records) |import_records| return import_records;
+            try this.addNoImportRecordError();
+            unreachable;
+        }
+
+        pub fn printImportRecord(this: *This, import_record_idx: u32) PrintErr!void {
+            if (this.import_records) |import_records| {
+                const import_record = import_records.at(import_record_idx);
+                const a, const b = bun.bundle_v2.cheapPrefixNormalizer(this.public_path, import_record.path.pretty);
+                try this.writeStr(a);
+                try this.writeStr(b);
+                return;
+            }
+            return this.addNoImportRecordError();
+        }
+
+        pub inline fn importRecord(this: *Printer(Writer), import_record_idx: u32) PrintErr!*const bun.ImportRecord {
+            if (this.import_records) |import_records| return import_records.at(import_record_idx);
+            try this.addNoImportRecordError();
+            unreachable;
         }
 
         pub fn context(this: *const Printer(Writer)) ?*const css.StyleContext {

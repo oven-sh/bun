@@ -828,7 +828,7 @@ pub const PseudoClass = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -2141,7 +2141,7 @@ pub const PseudoElement = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }

@@ -84,10 +84,12 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         break :parser_options opts;
     };
 
+    var import_records = bun.BabyList(bun.ImportRecord){};
     switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
         alloc,
         source.slice(),
         parser_options,
+        &import_records,
     )) {
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
@@ -111,7 +113,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                     .normal => false,
                     .prefix => false,
                 },
-            }) catch |e| {
+            }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                 return .undefined;
             };
@@ -251,7 +253,8 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
 
     const parser_options = bun.css.ParserOptions.default(alloc, &log);
 
-    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options)) {
+    var import_records = bun.BabyList(bun.ImportRecord){};
+    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options, &import_records)) {
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
@@ -261,7 +264,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
             const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
                 .minify = minify,
                 .targets = targets,
-            }) catch |e| {
+            }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                 return .undefined;
             };

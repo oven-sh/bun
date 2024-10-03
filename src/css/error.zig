@@ -157,6 +157,7 @@ pub const PrinterErrorKind = union(enum) {
     invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
+    no_import_records,
 };
 
 /// A parser error.

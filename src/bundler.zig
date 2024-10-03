@@ -950,11 +950,11 @@ pub const Bundler = struct {
                     };
                     const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                     _ = source; //
-                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log))) {
+                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| {
                             const result = v.toCss(alloc, bun.css.PrinterOptions{
                                 .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
-                            }) catch |e| {
+                            }, null) catch |e| {
                                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                                 return null;
                             };

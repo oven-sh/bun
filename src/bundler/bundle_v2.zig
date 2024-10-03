@@ -3117,6 +3117,11 @@ pub const ParseTask = struct {
             },
             .css => {
                 if (comptime bun.FeatureFlags.css) {
+                    const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    unique_key_for_additional_file.* = unique_key;
+                    const root = Expr.init(E.String, E.String{
+                        .data = unique_key,
+                    }, Logger.Loc{ .start = 0 });
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     const css_ast =
@@ -3133,19 +3138,14 @@ pub const ParseTask = struct {
                         },
                     };
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                    return js_ast.BundledAst{
-                        .top_level_await_keyword = Logger.Range.None,
-                        .approximate_newline_count = 0, // TODO: this
-                        .import_records = import_records,
-                        .css = css_ast_heap,
-                        // .allocator = bundler.allocator,
-                        .parts = js_ast.Part.List.fromSlice(bundler.allocator, &.{ .{}, .{} }) catch bun.outOfMemory(),
-                    };
+                    var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                    ast.css = css_ast_heap;
+                    ast.import_records = import_records;
+                    return ast;
                 }
             },
             else => {},
         }
-
         const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
         const root = Expr.init(E.String, E.String{
             .data = unique_key,
@@ -4912,37 +4912,41 @@ pub const LinkerContext = struct {
         const css_reprs = this.graph.ast.items(.css);
 
         // Figure out which JS files are in which chunk
-        for (this.graph.reachable_files) |source_index| {
-            if (this.graph.files_live.isSet(source_index.get())) {
-                const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
-                if (css_reprs[source_index.get()] != null) continue;
+        if (js_chunks.count() > 0) {
+            for (this.graph.reachable_files) |source_index| {
+                if (this.graph.files_live.isSet(source_index.get())) {
+                    if (this.graph.ast.items(.css)[source_index.get()] == null) {
+                        const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
+                        if (css_reprs[source_index.get()] != null) continue;
 
-                if (this.graph.code_splitting) {
-                    var js_chunk_entry = try js_chunks.getOrPut(
-                        try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
-                    );
+                        if (this.graph.code_splitting) {
+                            var js_chunk_entry = try js_chunks.getOrPut(
+                                try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
+                            );
 
-                    if (!js_chunk_entry.found_existing) {
-                        js_chunk_entry.value_ptr.* = .{
-                            .entry_bits = entry_bits.*,
-                            .entry_point = .{
-                                .source_index = source_index.get(),
-                            },
-                            .content = .{
-                                .javascript = .{},
-                            },
-                            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                        };
+                            if (!js_chunk_entry.found_existing) {
+                                js_chunk_entry.value_ptr.* = .{
+                                    .entry_bits = entry_bits.*,
+                                    .entry_point = .{
+                                        .source_index = source_index.get(),
+                                    },
+                                    .content = .{
+                                        .javascript = .{},
+                                    },
+                                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                                };
+                            }
+
+                            _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        } else {
+                            var handler = Handler{
+                                .chunks = js_chunks.values(),
+                                .allocator = this.allocator,
+                                .source_id = source_index.get(),
+                            };
+                            entry_bits.forEach(Handler, &handler, Handler.next);
+                        }
                     }
-
-                    _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
-                } else {
-                    var handler = Handler{
-                        .chunks = js_chunks.values(),
-                        .allocator = this.allocator,
-                        .source_id = source_index.get(),
-                    };
-                    entry_bits.forEach(Handler, &handler, Handler.next);
                 }
             }
         }
@@ -5411,6 +5415,7 @@ pub const LinkerContext = struct {
                                             .external_path = record.path,
                                         },
                                         .conditions = all_conditions,
+                                        // .condition_import_records = wrapping_import_records.*,
                                     },
                                 ) catch bun.outOfMemory();
                             } else {
@@ -5421,6 +5426,7 @@ pub const LinkerContext = struct {
                                             .external_path = record.path,
                                         },
                                         .conditions = wrapping_conditions.*,
+                                        // .condition_import_records = visitor.all,
                                     },
                                 ) catch bun.outOfMemory();
                             }
@@ -5565,9 +5571,9 @@ pub const LinkerContext = struct {
 
         if (bun.Environment.isDebug) {
             std.debug.print("CSS order:\n", .{});
-            // for (order.slice()) |entry| {
-            //     std.debug.print("  {s}\n", .{entry.toString(temp_allocator)});
-            // }
+            for (order.slice(), 0..) |entry, i| {
+                std.debug.print("  {d}: {}\n", .{ i, entry });
+            }
         }
 
         return order;
@@ -7380,6 +7386,10 @@ pub const LinkerContext = struct {
 
             // Go over each file in this chunk
             for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
+                // TODO: make this switch
+                if (chunk.content == .css) {
+                    continue;
+                }
                 if (chunk.content != .javascript) continue;
 
                 // Go over each part in this file that's marked for inclusion in this chunk
@@ -8106,12 +8116,25 @@ pub const LinkerContext = struct {
                     },
                 };
             },
-            .external_path => {
+            .external_path => |p| {
+                const import_records_ = [_]ImportRecord{
+                    ImportRecord{
+                        .kind = .at,
+                        .path = p,
+                        .range = Logger.Range.None,
+                    },
+                };
+                var import_records = BabyList(ImportRecord).init(&import_records_);
                 const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
-                _ = css.toCssWithWriter(worker.allocator, &buffer_writer, bun.css.PrinterOptions{
-                    // TODO: make this more configurable
-                    .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
-                }) catch {
+                _ = css.toCssWithWriter(
+                    worker.allocator,
+                    &buffer_writer,
+                    bun.css.PrinterOptions{
+                        // TODO: make this more configurable
+                        .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                    },
+                    &import_records,
+                ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");
                 };
                 return CompileResult{
@@ -8123,10 +8146,15 @@ pub const LinkerContext = struct {
             },
             .source_index => |idx| {
                 const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
-                _ = css.toCssWithWriter(worker.allocator, &buffer_writer, bun.css.PrinterOptions{
-                    // TODO: make this more configurable
-                    .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
-                }) catch {
+                _ = css.toCssWithWriter(
+                    worker.allocator,
+                    &buffer_writer,
+                    bun.css.PrinterOptions{
+                        // TODO: make this more configurable
+                        .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                    },
+                    &c.graph.ast.items(.import_records)[idx.get()],
+                ) catch {
                     @panic("TODO: HANDLE THIS ERROR!");
                 };
                 return CompileResult{
@@ -13894,7 +13922,7 @@ pub const Chunk = struct {
 
     pub const CssImportOrder = struct {
         conditions: BabyList(bun.css.ImportConditions) = .{},
-        // TODO: import records
+        // TODO: unfuck this
         condition_import_records: BabyList(ImportRecord) = .{},
 
         kind: union(enum) {
@@ -13905,6 +13933,26 @@ pub const Chunk = struct {
             // kind == .source_idnex
             source_index: Index,
         },
+
+        pub fn format(this: *const CssImportOrder, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("{s} = ", .{@tagName(this.kind)});
+            switch (this.kind) {
+                .layers => |layers| {
+                    try writer.print("[", .{});
+                    for (layers, 0..) |layer, i| {
+                        if (i > 0) try writer.print(", ", .{});
+                        try writer.print("\"{s}\"", .{layer});
+                    }
+                    try writer.print("]", .{});
+                },
+                .external_path => |path| {
+                    try writer.print("\"{s}\"", .{path.pretty});
+                },
+                .source_index => |source_index| {
+                    try writer.print("{d}", .{source_index.get()});
+                },
+            }
+        }
     };
 
     pub const ImportsFromOtherChunks = std.AutoArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List);
@@ -14087,7 +14135,7 @@ const ContentHasher = struct {
 // meant to be fast but not 100% thorough
 // users can correctly put in a trailing slash if they want
 // this is just being nice
-fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
+pub fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
     if (prefix.len == 0) {
         const suffix_no_slash = bun.strings.removeLeadingDotSlash(suffix);
         return .{

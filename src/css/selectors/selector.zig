@@ -268,7 +268,7 @@ pub const serialize = struct {
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
-                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{});
+                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{}, dest.import_records);
 
                     if (id.items.len > 0 and id.items.len < s.len) {
                         try dest.writeStr(id.items);

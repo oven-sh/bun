@@ -263,6 +263,22 @@ pub const Property = union(PropertyIdTag) {
     @"border-bottom-width": BorderSideWidth,
     @"border-left-width": BorderSideWidth,
     @"border-right-width": BorderSideWidth,
+    @"border-block-start-width": BorderSideWidth,
+    @"border-block-end-width": BorderSideWidth,
+    @"border-inline-start-width": BorderSideWidth,
+    @"border-inline-end-width": BorderSideWidth,
+    @"border-top-left-radius": struct { Size2D(LengthPercentage), VendorPrefix },
+    @"border-top-right-radius": struct { Size2D(LengthPercentage), VendorPrefix },
+    @"border-bottom-left-radius": struct { Size2D(LengthPercentage), VendorPrefix },
+    @"border-bottom-right-radius": struct { Size2D(LengthPercentage), VendorPrefix },
+    @"border-start-start-radius": Size2D(LengthPercentage),
+    @"border-start-end-radius": Size2D(LengthPercentage),
+    @"border-end-start-radius": Size2D(LengthPercentage),
+    @"border-end-end-radius": Size2D(LengthPercentage),
+    @"border-top": BorderTop,
+    @"border-bottom": BorderBottom,
+    @"border-left": BorderLeft,
+    @"border-right": BorderRight,
     composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
@@ -421,6 +437,118 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"border-block-start-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-start-width" = c } };
+                    }
+                }
+            },
+            .@"border-block-end-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-end-width" = c } };
+                    }
+                }
+            },
+            .@"border-inline-start-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start-width" = c } };
+                    }
+                }
+            },
+            .@"border-inline-end-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end-width" = c } };
+                    }
+                }
+            },
+            .@"border-top-left-radius" => |pre| {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-left-radius" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"border-top-right-radius" => |pre| {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-right-radius" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"border-bottom-left-radius" => |pre| {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-left-radius" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"border-bottom-right-radius" => |pre| {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-right-radius" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"border-start-start-radius" => {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-start-start-radius" = c } };
+                    }
+                }
+            },
+            .@"border-start-end-radius" => {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-start-end-radius" = c } };
+                    }
+                }
+            },
+            .@"border-end-start-radius" => {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-end-start-radius" = c } };
+                    }
+                }
+            },
+            .@"border-end-end-radius" => {
+                if (css.generic.parseWithOptions(Size2D(LengthPercentage), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-end-end-radius" = c } };
+                    }
+                }
+            },
+            .@"border-top" => {
+                if (css.generic.parseWithOptions(BorderTop, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top" = c } };
+                    }
+                }
+            },
+            .@"border-bottom" => {
+                if (css.generic.parseWithOptions(BorderBottom, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom" = c } };
+                    }
+                }
+            },
+            .@"border-left" => {
+                if (css.generic.parseWithOptions(BorderLeft, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left" = c } };
+                    }
+                }
+            },
+            .@"border-right" => {
+                if (css.generic.parseWithOptions(BorderRight, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right" = c } };
+                    }
+                }
+            },
             .composes => {
                 if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -473,6 +601,22 @@ pub const Property = union(PropertyIdTag) {
             .@"border-bottom-width" => .{ "border-bottom-width", VendorPrefix{ .none = true } },
             .@"border-left-width" => .{ "border-left-width", VendorPrefix{ .none = true } },
             .@"border-right-width" => .{ "border-right-width", VendorPrefix{ .none = true } },
+            .@"border-block-start-width" => .{ "border-block-start-width", VendorPrefix{ .none = true } },
+            .@"border-block-end-width" => .{ "border-block-end-width", VendorPrefix{ .none = true } },
+            .@"border-inline-start-width" => .{ "border-inline-start-width", VendorPrefix{ .none = true } },
+            .@"border-inline-end-width" => .{ "border-inline-end-width", VendorPrefix{ .none = true } },
+            .@"border-top-left-radius" => |*x| .{ "border-top-left-radius", x.@"1" },
+            .@"border-top-right-radius" => |*x| .{ "border-top-right-radius", x.@"1" },
+            .@"border-bottom-left-radius" => |*x| .{ "border-bottom-left-radius", x.@"1" },
+            .@"border-bottom-right-radius" => |*x| .{ "border-bottom-right-radius", x.@"1" },
+            .@"border-start-start-radius" => .{ "border-start-start-radius", VendorPrefix{ .none = true } },
+            .@"border-start-end-radius" => .{ "border-start-end-radius", VendorPrefix{ .none = true } },
+            .@"border-end-start-radius" => .{ "border-end-start-radius", VendorPrefix{ .none = true } },
+            .@"border-end-end-radius" => .{ "border-end-end-radius", VendorPrefix{ .none = true } },
+            .@"border-top" => .{ "border-top", VendorPrefix{ .none = true } },
+            .@"border-bottom" => .{ "border-bottom", VendorPrefix{ .none = true } },
+            .@"border-left" => .{ "border-left", VendorPrefix{ .none = true } },
+            .@"border-right" => .{ "border-right", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
@@ -510,6 +654,22 @@ pub const Property = union(PropertyIdTag) {
             .@"border-bottom-width" => |*value| value.toCss(W, dest),
             .@"border-left-width" => |*value| value.toCss(W, dest),
             .@"border-right-width" => |*value| value.toCss(W, dest),
+            .@"border-block-start-width" => |*value| value.toCss(W, dest),
+            .@"border-block-end-width" => |*value| value.toCss(W, dest),
+            .@"border-inline-start-width" => |*value| value.toCss(W, dest),
+            .@"border-inline-end-width" => |*value| value.toCss(W, dest),
+            .@"border-top-left-radius" => |*value| value[0].toCss(W, dest),
+            .@"border-top-right-radius" => |*value| value[0].toCss(W, dest),
+            .@"border-bottom-left-radius" => |*value| value[0].toCss(W, dest),
+            .@"border-bottom-right-radius" => |*value| value[0].toCss(W, dest),
+            .@"border-start-start-radius" => |*value| value.toCss(W, dest),
+            .@"border-start-end-radius" => |*value| value.toCss(W, dest),
+            .@"border-end-start-radius" => |*value| value.toCss(W, dest),
+            .@"border-end-end-radius" => |*value| value.toCss(W, dest),
+            .@"border-top" => |*value| value.toCss(W, dest),
+            .@"border-bottom" => |*value| value.toCss(W, dest),
+            .@"border-left" => |*value| value.toCss(W, dest),
+            .@"border-right" => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
@@ -519,8 +679,11 @@ pub const Property = union(PropertyIdTag) {
 
     /// Returns the given longhand property for a shorthand.
     pub fn longhand(this: *const Property, property_id: *const PropertyId) ?Property {
-        _ = property_id; // autofix
         switch (this.*) {
+            .@"border-top" => |*v| return v.longhand(property_id),
+            .@"border-bottom" => |*v| return v.longhand(property_id),
+            .@"border-left" => |*v| return v.longhand(property_id),
+            .@"border-right" => |*v| return v.longhand(property_id),
             else => {},
         }
         return null;
@@ -548,6 +711,22 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-bottom-width",
     @"border-left-width",
     @"border-right-width",
+    @"border-block-start-width",
+    @"border-block-end-width",
+    @"border-inline-start-width",
+    @"border-inline-end-width",
+    @"border-top-left-radius": VendorPrefix,
+    @"border-top-right-radius": VendorPrefix,
+    @"border-bottom-left-radius": VendorPrefix,
+    @"border-bottom-right-radius": VendorPrefix,
+    @"border-start-start-radius",
+    @"border-start-end-radius",
+    @"border-end-start-radius",
+    @"border-end-end-radius",
+    @"border-top",
+    @"border-bottom",
+    @"border-left",
+    @"border-right",
     composes,
     all,
     unparsed,
@@ -584,6 +763,22 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom-width" => VendorPrefix.empty(),
             .@"border-left-width" => VendorPrefix.empty(),
             .@"border-right-width" => VendorPrefix.empty(),
+            .@"border-block-start-width" => VendorPrefix.empty(),
+            .@"border-block-end-width" => VendorPrefix.empty(),
+            .@"border-inline-start-width" => VendorPrefix.empty(),
+            .@"border-inline-end-width" => VendorPrefix.empty(),
+            .@"border-top-left-radius" => |p| p,
+            .@"border-top-right-radius" => |p| p,
+            .@"border-bottom-left-radius" => |p| p,
+            .@"border-bottom-right-radius" => |p| p,
+            .@"border-start-start-radius" => VendorPrefix.empty(),
+            .@"border-start-end-radius" => VendorPrefix.empty(),
+            .@"border-end-start-radius" => VendorPrefix.empty(),
+            .@"border-end-end-radius" => VendorPrefix.empty(),
+            .@"border-top" => VendorPrefix.empty(),
+            .@"border-bottom" => VendorPrefix.empty(),
+            .@"border-left" => VendorPrefix.empty(),
+            .@"border-right" => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
@@ -654,6 +849,54 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-width")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-right-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-start-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-start-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-end-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-start-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-end-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-left-radius")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"border-top-left-radius" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-right-radius")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"border-top-right-radius" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-left-radius")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-left-radius" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-right-radius")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-right-radius" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-start-start-radius")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-start-start-radius";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-start-end-radius")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-start-end-radius";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-end-start-radius")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-end-start-radius";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-end-end-radius")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-end-end-radius";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-top";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-bottom";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-left";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-right";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
@@ -665,7 +908,6 @@ pub const PropertyId = union(PropertyIdTag) {
     }
 
     pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
-        _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => .@"background-color",
             .color => .color,
@@ -688,13 +930,28 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom-width" => .@"border-bottom-width",
             .@"border-left-width" => .@"border-left-width",
             .@"border-right-width" => .@"border-right-width",
+            .@"border-block-start-width" => .@"border-block-start-width",
+            .@"border-block-end-width" => .@"border-block-end-width",
+            .@"border-inline-start-width" => .@"border-inline-start-width",
+            .@"border-inline-end-width" => .@"border-inline-end-width",
+            .@"border-top-left-radius" => .{ .@"border-top-left-radius" = pre },
+            .@"border-top-right-radius" => .{ .@"border-top-right-radius" = pre },
+            .@"border-bottom-left-radius" => .{ .@"border-bottom-left-radius" = pre },
+            .@"border-bottom-right-radius" => .{ .@"border-bottom-right-radius" = pre },
+            .@"border-start-start-radius" => .@"border-start-start-radius",
+            .@"border-start-end-radius" => .@"border-start-end-radius",
+            .@"border-end-start-radius" => .@"border-end-start-radius",
+            .@"border-end-end-radius" => .@"border-end-end-radius",
+            .@"border-top" => .@"border-top",
+            .@"border-bottom" => .@"border-bottom",
+            .@"border-left" => .@"border-left",
+            .@"border-right" => .@"border-right",
             .composes => .composes,
             else => this.*,
         };
     }
 
     pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
-        _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => {},
             .color => {},
@@ -717,6 +974,30 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom-width" => {},
             .@"border-left-width" => {},
             .@"border-right-width" => {},
+            .@"border-block-start-width" => {},
+            .@"border-block-end-width" => {},
+            .@"border-inline-start-width" => {},
+            .@"border-inline-end-width" => {},
+            .@"border-top-left-radius" => |*p| {
+                p.insert(pre);
+            },
+            .@"border-top-right-radius" => |*p| {
+                p.insert(pre);
+            },
+            .@"border-bottom-left-radius" => |*p| {
+                p.insert(pre);
+            },
+            .@"border-bottom-right-radius" => |*p| {
+                p.insert(pre);
+            },
+            .@"border-start-start-radius" => {},
+            .@"border-start-end-radius" => {},
+            .@"border-end-start-radius" => {},
+            .@"border-end-end-radius" => {},
+            .@"border-top" => {},
+            .@"border-bottom" => {},
+            .@"border-left" => {},
+            .@"border-right" => {},
             .composes => {},
             else => {},
         };
@@ -744,6 +1025,22 @@ pub const PropertyIdTag = enum(u16) {
     @"border-bottom-width",
     @"border-left-width",
     @"border-right-width",
+    @"border-block-start-width",
+    @"border-block-end-width",
+    @"border-inline-start-width",
+    @"border-inline-end-width",
+    @"border-top-left-radius",
+    @"border-top-right-radius",
+    @"border-bottom-left-radius",
+    @"border-bottom-right-radius",
+    @"border-start-start-radius",
+    @"border-start-end-radius",
+    @"border-end-start-radius",
+    @"border-end-end-radius",
+    @"border-top",
+    @"border-bottom",
+    @"border-left",
+    @"border-right",
     composes,
     all,
     unparsed,

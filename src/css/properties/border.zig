@@ -54,6 +54,94 @@ pub fn GenericBorder(comptime S: type, comptime P: u8) type {
         style: S,
         /// The border color.
         color: CssColor,
+
+        const This = @This();
+
+        pub fn parse(input: *css.Parser) css.Result(@This()) {
+            // Order doesn't matter
+            var color: ?CssColor = null;
+            var style: ?S = null;
+            var width: ?BorderSideWidth = null;
+            var any = false;
+
+            while (true) {
+                if (width == null) {
+                    if (input.tryParse(BorderSideWidth.parse, .{}).asValue()) |value| {
+                        width = value;
+                        any = true;
+                    }
+                }
+
+                if (style == null) {
+                    if (input.tryParse(S.parse, .{}).asValue()) |value| {
+                        style = value;
+                        any = true;
+                        continue;
+                    }
+                }
+
+                if (color == null) {
+                    if (input.tryParse(CssColor.parse, .{}).asValue()) |value| {
+                        color = value;
+                        any = true;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            if (any) {
+                return .{
+                    .result = This{
+                        .width = width orelse BorderSideWidth.medium,
+                        .style = style orelse S.default(),
+                        .color = color orelse CssColor.current_color,
+                    },
+                };
+            }
+
+            return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
+        }
+
+        pub fn toCss(this: *const This, W: anytype, dest: *Printer(W)) PrintErr!void {
+            if (this.eql(&This.default())) {
+                try this.style.toCss(W, dest);
+                return;
+            }
+
+            var needs_space = false;
+            if (!this.width.eql(&BorderSideWidth.default())) {
+                try this.width.toCss(W, dest);
+                needs_space = true;
+            }
+            if (!this.style.eql(&S.default())) {
+                if (needs_space) {
+                    try dest.writeStr(" ");
+                }
+                try this.style.toCss(W, dest);
+                needs_space = true;
+            }
+            if (!this.color.eql(&CssColor{ .current_color = {} })) {
+                if (needs_space) {
+                    try dest.writeStr(" ");
+                }
+                try this.style.toCss(W, dest);
+                needs_space = true;
+            }
+            return;
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return this.width.eql(&other.width) and this.style.eql(&other.style) and this.color.eql(&other.color);
+        }
+
+        pub inline fn default() This {
+            return This{
+                .width = .medium,
+                .style = S.default(),
+                .color = CssColor.current_color,
+            };
+        }
     };
 }
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
@@ -81,6 +169,14 @@ pub const LineStyle = enum {
     double,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub inline fn eql(this: *const @This(), other: *const @This()) bool {
+        return this.* == other.*;
+    }
+
+    pub fn default() LineStyle {
+        return .none;
+    }
 };
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
@@ -96,6 +192,31 @@ pub const BorderSideWidth = union(enum) {
 
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn default() BorderSideWidth {
+        return .medium;
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return switch (this.*) {
+            .thin => switch (other.*) {
+                .thin => true,
+                else => false,
+            },
+            .medium => switch (other.*) {
+                .medium => true,
+                else => false,
+            },
+            .thick => switch (other.*) {
+                .thick => true,
+                else => false,
+            },
+            .length => switch (other.*) {
+                .length => this.length.eql(&other.length),
+                else => false,
+            },
+        };
+    }
 };
 
 /// A value for the [border-color](https://drafts.csswg.org/css-backgrounds/#propdef-border-color) shorthand property.

@@ -556,58 +556,58 @@ generateCode({
     ty: "BorderSideWidth",
     logical_group: { ty: "border_width", category: "physical" },
   },
-  // "border-block-start-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "logical" },
-  // },
-  // "border-block-end-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "logical" },
-  // },
-  // "border-inline-start-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "logical" },
-  // },
-  // "border-inline-end-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "logical" },
-  // },
-  // "border-top-left-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   logical_group: { ty: "border_radius", category: "physical" },
-  // },
-  // "border-top-right-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   logical_group: { ty: "border_radius", category: "physical" },
-  // },
-  // "border-bottom-left-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   logical_group: { ty: "border_radius", category: "physical" },
-  // },
-  // "border-bottom-right-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   logical_group: { ty: "border_radius", category: "physical" },
-  // },
-  // "border-start-start-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   logical_group: { ty: "border_radius", category: "logical" },
-  // },
-  // "border-start-end-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   logical_group: { ty: "border_radius", category: "logical" },
-  // },
-  // "border-end-start-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   logical_group: { ty: "border_radius", category: "logical" },
-  // },
-  // "border-end-end-radius": {
-  //   ty: "Size2D(LengthPercentage)",
-  //   logical_group: { ty: "border_radius", category: "logical" },
-  // },
+  "border-block-start-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "logical" },
+  },
+  "border-block-end-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "logical" },
+  },
+  "border-inline-start-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "logical" },
+  },
+  "border-inline-end-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "logical" },
+  },
+  "border-top-left-radius": {
+    ty: "Size2D(LengthPercentage)",
+    valid_prefixes: ["webkit", "moz"],
+    logical_group: { ty: "border_radius", category: "physical" },
+  },
+  "border-top-right-radius": {
+    ty: "Size2D(LengthPercentage)",
+    valid_prefixes: ["webkit", "moz"],
+    logical_group: { ty: "border_radius", category: "physical" },
+  },
+  "border-bottom-left-radius": {
+    ty: "Size2D(LengthPercentage)",
+    valid_prefixes: ["webkit", "moz"],
+    logical_group: { ty: "border_radius", category: "physical" },
+  },
+  "border-bottom-right-radius": {
+    ty: "Size2D(LengthPercentage)",
+    valid_prefixes: ["webkit", "moz"],
+    logical_group: { ty: "border_radius", category: "physical" },
+  },
+  "border-start-start-radius": {
+    ty: "Size2D(LengthPercentage)",
+    logical_group: { ty: "border_radius", category: "logical" },
+  },
+  "border-start-end-radius": {
+    ty: "Size2D(LengthPercentage)",
+    logical_group: { ty: "border_radius", category: "logical" },
+  },
+  "border-end-start-radius": {
+    ty: "Size2D(LengthPercentage)",
+    logical_group: { ty: "border_radius", category: "logical" },
+  },
+  "border-end-end-radius": {
+    ty: "Size2D(LengthPercentage)",
+    logical_group: { ty: "border_radius", category: "logical" },
+  },
   // "border-radius": {
   //   ty: "BorderRadius",
   //   valid_prefixes: ["webkit", "moz"],
@@ -673,22 +673,22 @@ generateCode({
   //   ty: "Border",
   //   shorthand: true,
   // },
-  // "border-top": {
-  //   ty: "BorderTop",
-  //   shorthand: true,
-  // },
-  // "border-bottom": {
-  //   ty: "BorderBottom",
-  //   shorthand: true,
-  // },
-  // "border-left": {
-  //   ty: "BorderLeft",
-  //   shorthand: true,
-  // },
-  // "border-right": {
-  //   ty: "BorderRight",
-  //   shorthand: true,
-  // },
+  "border-top": {
+    ty: "BorderTop",
+    shorthand: true,
+  },
+  "border-bottom": {
+    ty: "BorderBottom",
+    shorthand: true,
+  },
+  "border-left": {
+    ty: "BorderLeft",
+    shorthand: true,
+  },
+  "border-right": {
+    ty: "BorderRight",
+    shorthand: true,
+  },
   // "border-block": {
   //   ty: "BorderBlock",
   //   shorthand: true,

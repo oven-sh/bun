@@ -9207,7 +9207,7 @@ fn NewParser_(
                         }
                     }
                 }
-            } else if (import_tag == .kit_resolve_to_ssr_graph) {
+            } else if (import_tag == .bake_resolve_to_ssr_graph) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
             }
         }
@@ -12217,7 +12217,7 @@ fn NewParser_(
                 const SupportedAttribute = enum {
                     type,
                     embed,
-                    bunKitGraph,
+                    bunBakeGraph,
                 };
 
                 var has_seen_embed_true = false;
@@ -12280,11 +12280,11 @@ fn NewParser_(
                                         }
                                     }
                                 },
-                                .bunKitGraph => {
+                                .bunBakeGraph => {
                                     if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
-                                        path.import_tag = .kit_resolve_to_ssr_graph;
+                                        path.import_tag = .bake_resolve_to_ssr_graph;
                                     } else {
-                                        try p.lexer.addRangeError(p.lexer.range(), "'bunKitGraph' can only be set to 'ssr'", .{}, true);
+                                        try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
                                     }
                                 },
                             }
@@ -23272,7 +23272,7 @@ fn NewParser_(
                 });
 
                 for (parts) |part| {
-                    // Kit does not care about 'import =', as it handles it on it's own
+                    // Bake does not care about 'import =', as it handles it on it's own
                     _ = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none, true, &hmr_transform_ctx);
                 }
 

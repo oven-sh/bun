@@ -21,13 +21,13 @@ if (!codegen_root) {
 }
 if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
 
-const kit_dir = join(import.meta.dirname, "../kit");
-process.chdir(kit_dir); // to make bun build predictable in development
+const base_dir = join(import.meta.dirname, "../bake");
+process.chdir(base_dir); // to make bun build predictable in development
 
 const results = await Promise.allSettled(
   ["client", "server"].map(async side => {
     let result = await Bun.build({
-      entrypoints: [join(kit_dir, `hmr-runtime-${side}.ts`)],
+      entrypoints: [join(base_dir, `hmr-runtime-${side}.ts`)],
       define: {
         side: JSON.stringify(side),
         IS_BUN_DEVELOPMENT: String(!!debug),
@@ -54,7 +54,7 @@ const results = await Promise.allSettled(
     __marker__(${in_names.join(",")});
     ${code};
   `;
-    const generated_entrypoint = join(kit_dir, `.runtime-${side}.generated.ts`);
+    const generated_entrypoint = join(base_dir, `.runtime-${side}.generated.ts`);
 
     writeFileSync(generated_entrypoint, combined_source);
     using _ = { [Symbol.dispose] : () => {
@@ -101,7 +101,7 @@ const results = await Promise.allSettled(
       code = `export default await ${code}`;
     }
 
-    writeFileSync(join(codegen_root, `kit.${side}.js`), code);
+    writeFileSync(join(codegen_root, `bake.${side}.js`), code);
   }),
 );
 
@@ -140,14 +140,14 @@ if (failed.length > 0) {
   for (const { kind, err } of flattened_errors) {
     if (kind !== current) {
       const map = { both: "runtime", client: "client runtime", server: "server runtime" };
-      console.error(`Errors while bundling Kit ${map[kind]}:`);
+      console.error(`Errors while bundling HMR ${map[kind]}:`);
     }
     console.error(err);
   }
   process.exit(1);
 } else {
-  console.log("-> kit.client.js, kit.server.js");
+  console.log("-> bake.client.js, bake.server.js");
 
-  const empty_file = join(codegen_root, "kit_empty_file");
+  const empty_file = join(codegen_root, "bake_empty_file");
   if (!existsSync(empty_file)) writeFileSync(empty_file, "this is used to fulfill a cmake dependency");
 }

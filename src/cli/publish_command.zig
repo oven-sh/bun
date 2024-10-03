@@ -561,14 +561,7 @@ pub const PublishCommand = struct {
                 const prompt_for_otp = prompt_for_otp: {
                     if (res.status_code != 401) break :prompt_for_otp false;
 
-                    if (authenticate: {
-                        for (res.headers) |header| {
-                            if (strings.eqlCaseInsensitiveASCII(header.name, "www-authenticate", true)) {
-                                break :authenticate header.value;
-                            }
-                        }
-                        break :authenticate null;
-                    }) |@"www-authenticate"| {
+                    if (res.headers.get("www-authenticate")) |@"www-authenticate"| {
                         var iter = strings.split(@"www-authenticate", ",");
                         while (iter.next()) |part| {
                             const trimmed = strings.trim(part, &strings.whitespace_chars);
@@ -583,7 +576,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("unable to authenticate, need: {s}", .{@"www-authenticate"});
                         Global.crash();
                     } else if (strings.containsComptime(response_buf.list.items, "one-time pass")) {
-                        // missing www-authenticate header but one-time pass is still included
+                        // missing www-authenicate header but one-time pass is still included
                         break :prompt_for_otp true;
                     }
 
@@ -594,6 +587,12 @@ pub const PublishCommand = struct {
                     // general error
                     const otp_response = false;
                     return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, otp_response);
+                }
+
+                if (res.headers.get("npm-notice")) |notice| {
+                    Output.printError("\n", .{});
+                    Output.note("{s}", .{notice});
+                    Output.flush();
                 }
 
                 const otp = try getOTP(directory_publish, ctx, registry, &response_buf, &print_buf);
@@ -638,7 +637,13 @@ pub const PublishCommand = struct {
                         const otp_response = true;
                         return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, otp_response);
                     },
-                    else => {},
+                    else => {
+                        if (otp_res.headers.get("npm-notice")) |notice| {
+                            Output.printError("\n", .{});
+                            Output.note("{s}", .{notice});
+                            Output.flush();
+                        }
+                    },
                 }
             },
             else => {},
@@ -823,12 +828,10 @@ pub const PublishCommand = struct {
                     202 => {
                         // retry
                         const nanoseconds = nanoseconds: {
-                            default: for (res.headers) |header| {
-                                if (strings.eqlCaseInsensitiveASCII(header.name, "retry-after", true)) {
-                                    const trimmed = strings.trim(header.value, &strings.whitespace_chars);
-                                    const seconds = bun.fmt.parseInt(u32, trimmed, 10) catch break :default;
-                                    break :nanoseconds seconds * std.time.ns_per_s;
-                                }
+                            if (res.headers.get("retry-after")) |retry| default: {
+                                const trimmed = strings.trim(retry, &strings.whitespace_chars);
+                                const seconds = bun.fmt.parseInt(u32, trimmed, 10) catch break :default;
+                                break :nanoseconds seconds * std.time.ns_per_s;
                             }
 
                             break :nanoseconds 500 * std.time.ns_per_ms;
@@ -850,10 +853,18 @@ pub const PublishCommand = struct {
                             }
                         };
 
-                        return try otp_done_json.getStringCloned(ctx.allocator, "token") orelse {
+                        const token = try otp_done_json.getStringCloned(ctx.allocator, "token") orelse {
                             Output.err("WebLogin", "missing `token` field in reponse json", .{});
                             Global.crash();
                         };
+
+                        if (res.headers.get("npm-notice")) |notice| {
+                            Output.printError("\n", .{});
+                            Output.note("{s}", .{notice});
+                            Output.flush();
+                        }
+
+                        return token;
                     },
                     else => {
                         const otp_response = false;

@@ -2790,10 +2790,10 @@ pub const HTTPResponseMetadata = struct {
     response: picohttp.Response = .{},
     pub fn deinit(this: *HTTPResponseMetadata, allocator: std.mem.Allocator) void {
         if (this.owned_buf.len > 0) allocator.free(this.owned_buf);
-        if (this.response.headers.len > 0) allocator.free(this.response.headers);
+        if (this.response.headers.list.len > 0) allocator.free(this.response.headers.list);
         this.owned_buf = &.{};
         this.url = "";
-        this.response.headers = &.{};
+        this.response.headers = .{};
         this.response.status = "";
     }
 };
@@ -3204,11 +3204,11 @@ pub fn handleOnDataHeaders(
         return;
     };
 
-    if (this.state.content_encoding_i < response.headers.len and !this.state.flags.did_set_content_encoding) {
+    if (this.state.content_encoding_i < response.headers.list.len and !this.state.flags.did_set_content_encoding) {
         // if it compressed with this header, it is no longer because we will decompress it
-        const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+        const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers.list, .capacity = response.headers.list.len };
         this.state.flags.did_set_content_encoding = true;
-        response.headers = mutable_headers.items;
+        response.headers = .{ .list = mutable_headers.items };
         this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
         // we need to reset the pending response because we removed a header
         this.state.pending_response = response;
@@ -3390,7 +3390,7 @@ fn cloneMetadata(this: *HTTPClient) void {
         builder.count(this.url.href);
         builder.allocate(this.allocator) catch unreachable;
         // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        const headers_buf = this.allocator.alloc(picohttp.Header, response.headers.len) catch unreachable;
+        const headers_buf = this.allocator.alloc(picohttp.Header, response.headers.list.len) catch unreachable;
         const cloned_response = response.clone(headers_buf, builder);
 
         // we clean the temporary response since cloned_metadata is now the owner
@@ -3852,7 +3852,7 @@ pub fn handleResponseMetadata(
     var location: string = "";
     var pretend_304 = false;
     var is_server_sent_events = false;
-    for (response.headers, 0..) |header, header_i| {
+    for (response.headers.list, 0..) |header, header_i| {
         switch (hashHeaderName(header.name)) {
             hashHeaderConst("Content-Length") => {
                 const content_length = std.fmt.parseInt(usize, header.value, 10) catch 0;

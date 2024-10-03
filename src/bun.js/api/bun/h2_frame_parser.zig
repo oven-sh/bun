@@ -925,7 +925,7 @@ pub const H2FrameParser = struct {
                             // flush a zero payload frame
                             var dataHeader: FrameHeader = .{
                                 .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                                .flags = if (frame.end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                                .flags = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
                                 .streamIdentifier = @intCast(this.id),
                                 .length = 0,
                             };
@@ -935,7 +935,7 @@ pub const H2FrameParser = struct {
                             client.queuedDataSize -= frame.len;
                             const padding = this.getPadding(frame.len, MAX_PAYLOAD_SIZE_WITHOUT_FRAME - 1);
                             const payload_size = frame.len + (if (padding != 0) padding + 1 else 0);
-                            var flags: u8 = if (frame.end_stream) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
+                            var flags: u8 = if (frame.end_stream and !this.waitForTrailers) @intFromEnum(DataFrameFlags.END_STREAM) else 0;
                             if (padding != 0) {
                                 flags |= @intFromEnum(DataFrameFlags.PADDED);
                             }
@@ -960,16 +960,16 @@ pub const H2FrameParser = struct {
                     log("frame flushed {} {}", .{ frame.len, frame.end_stream });
                     client.outboundQueueSize -= 1;
                     if (this.dataFrameQueue.isEmpty()) {
-                        if (this.closeAfterDrain) {
+                        if (frame.end_stream) {
+                            if (this.waitForTrailers) {
+                                client.dispatch(.onWantTrailers, this.getIdentifier());
+                            }
                             if (this.state == .HALF_CLOSED_REMOTE) {
                                 this.state = .CLOSED;
                             } else {
                                 this.state = .HALF_CLOSED_LOCAL;
                             }
                             this.cleanQueue();
-                            if (this.waitForTrailers) {
-                                client.dispatch(.onWantTrailers, this.getIdentifier());
-                            }
                             if (this.state == .CLOSED) {
                                 client.dispatchWithExtra(.onStreamEnd, this.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(this.state)));
                             }
@@ -2712,31 +2712,29 @@ pub const H2FrameParser = struct {
 
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
         const stream_id = stream.id;
-        if (close) {
-            stream.closeAfterDrain = close;
-        }
         var enqueued = false;
         defer if (!enqueued) {
             this.dispatchArbitrary(callback);
             if (close) {
+                if (stream.waitForTrailers) {
+                    this.dispatch(.onWantTrailers, stream.getIdentifier());
+                }
                 if (stream.state == .HALF_CLOSED_REMOTE) {
                     stream.state = .CLOSED;
                 } else {
                     stream.state = .HALF_CLOSED_LOCAL;
-                }
-                if (stream.waitForTrailers) {
-                    this.dispatch(.onWantTrailers, stream.getIdentifier());
                 }
                 if (stream.state == .CLOSED) {
                     this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                 }
             }
         };
+        const can_close = close and !stream.waitForTrailers;
         if (payload.len == 0) {
             // empty payload we still need to send a frame
             var dataHeader: FrameHeader = .{
                 .type = @intFromEnum(FrameType.HTTP_FRAME_DATA),
-                .flags = if (close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
+                .flags = if (can_close) @intFromEnum(DataFrameFlags.END_STREAM) else 0,
                 .streamIdentifier = @intCast(stream_id),
                 .length = 0,
             };
@@ -2756,12 +2754,12 @@ pub const H2FrameParser = struct {
                 const size = @min(payload.len - offset, max_size);
                 const slice = payload[offset..(size + offset)];
                 offset += size;
-                const end_stream = offset >= payload.len and close;
+                const end_stream = offset >= payload.len and can_close;
 
                 if (this.firstSettingsACK and (this.hasBackpressure() or this.outboundQueueSize > 0)) {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
-                    stream.queueFrame(slice, callback, end_stream);
+                    stream.queueFrame(slice, callback, offset >= payload.len and close);
                 } else {
                     const padding = stream.getPadding(size, max_size - 1);
                     const payload_size = size + (if (padding != 0) padding + 1 else 0);
@@ -2958,20 +2956,20 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
-        if (!stream.canSendData() or stream.closeAfterDrain) {
+        if (!stream.canSendData()) {
             this.dispatchArbitrary(callback_arg);
             return JSC.JSValue.jsBoolean(false);
         }
 
         if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
             const payload = array_buffer.slice();
-            this.sendData(stream, payload, close and !stream.waitForTrailers, callback_arg);
+            this.sendData(stream, payload, close, callback_arg);
         } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
             defer bun_str.deref();
             var zig_str = bun_str.toUTF8WithoutRef(bun.default_allocator);
             defer zig_str.deinit();
             const payload = zig_str.slice();
-            this.sendData(stream, payload, close and !stream.waitForTrailers, callback_arg);
+            this.sendData(stream, payload, close, callback_arg);
         } else {
             if (!globalObject.hasException())
                 globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});

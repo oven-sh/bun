@@ -1870,8 +1870,8 @@ class ServerHttp2Session extends Http2Session {
     super();
     this.#server = server;
     this.#connected = true;
-    // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
+      // server will receive the preface to know if is or not h2
       this.#alpnProtocol = "h2";
 
       const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
@@ -2272,6 +2272,13 @@ class ClientHttp2Session extends Http2Session {
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
+      // client must check alpnProtocol
+      if (socket.alpnProtocol !== "h2") {
+        socket.end();
+        const error = new Error("ERR_HTTP2_ERROR: h2 is not supported");
+        error.code = "ERR_HTTP2_ERROR";
+        this.emit("error", error);
+      }
       this.#alpnProtocol = "h2";
 
       const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;

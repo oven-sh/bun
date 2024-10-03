@@ -399,6 +399,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
+  ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -408,7 +409,9 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/BunProcess.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
+  ${CODEGEN_PATH}/NodeModuleModule.lut.h
 )
+
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)

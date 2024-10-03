@@ -149,6 +149,7 @@
 #include "ErrorCode.h"
 #include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
+#include "NodeModuleModule.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -2685,6 +2686,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_commonStrings.initialize();
 
+    Bun::addNodeModuleConstructorProperties(vm, this);
+
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
@@ -3602,7 +3605,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_readableStreamToJSON);
     visitor.append(thisObject->m_readableStreamToText);
     visitor.append(thisObject->m_readableStreamToFormData);
-    visitor.append(thisObject->m_nodeModuleOverriddenResolveFilename);
 
     visitor.append(thisObject->m_nextTickQueue);
     visitor.append(thisObject->m_errorConstructorPrepareStackTraceValue);
@@ -3612,6 +3614,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_currentNapiHandleScopeImpl);
 
+    thisObject->m_moduleResolveFilenameFunction.visit(visitor);
+    thisObject->m_nodeModuleConstructor.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
     thisObject->m_cachedNodeVMGlobalObjectStructure.visit(visitor);
@@ -3965,7 +3969,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     ASSERT(startRefCount == moduleName.impl()->refCount());
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
-        return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+        return promise->rejectWithCaughtException(globalObject, scope);
     }
 
     JSC::Identifier resolvedIdentifier;

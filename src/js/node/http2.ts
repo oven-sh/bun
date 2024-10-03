@@ -1549,7 +1549,7 @@ class ServerHttp2Stream extends Http2Stream {
       if (typeof statCheck === "function") {
         const stat = fs.fstatSync(fd);
         statCheck(stat, headers, {
-          offset: offset || 0,
+          offset: offset,
           length: length !== undefined ? length : -1,
         });
       }
@@ -1580,7 +1580,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (typeof statCheck === "function") {
       const stat = fs.fstatSync(fd);
       statCheck(stat, headers, {
-        offset: offset || 0,
+        offset: offset,
         length: length !== undefined ? length : -1,
       });
     }
@@ -2723,11 +2723,6 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options === "undefined") {
       this.#parser.request(stream_id, req, headers, sensitiveNames);
     } else {
-      if (options.sendDate == null || options.sendDate) {
-        if (headers["date"] === null || headers["date"] === undefined) {
-          headers["date"] = utcDate();
-        }
-      }
       this.#parser.request(stream_id, req, headers, sensitiveNames, options);
     }
     req.emit("ready");

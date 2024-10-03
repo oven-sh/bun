@@ -541,7 +541,7 @@ async function authBunfig(user: string) {
         `;
 }
 
-describe.only("publish", async () => {
+describe("publish", async () => {
   describe("otp", async () => {
     const mockRegistryFetch = function (opts: {
       token: string;

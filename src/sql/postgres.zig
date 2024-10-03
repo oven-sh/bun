@@ -1917,7 +1917,7 @@ pub const types = struct {
             defer value.deinit();
             var str = bun.String.fromUTF8(value.slice());
             defer str.deref();
-            const parse_result = JSValue.parseJSON(str.toJS(globalObject), globalObject);
+            const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
             if (parse_result.isAnyError()) {
                 globalObject.throwValue(parse_result);
                 return error.JSError;

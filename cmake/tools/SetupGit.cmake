@@ -11,7 +11,7 @@ if(NOT GIT_PROGRAM)
   return()
 endif()
 
-set(GIT_DIFF_COMMAND ${GIT_PROGRAM} diff --no-color --name-only --diff-filter=AMCR)
+set(GIT_DIFF_COMMAND ${GIT_PROGRAM} diff --no-color --name-only --diff-filter=AMCR origin/main HEAD)
 
 execute_process(
   COMMAND
@@ -34,5 +34,10 @@ if(NOT GIT_DIFF_RESULT EQUAL 0)
 endif()
 
 string(REPLACE "\n" ";" GIT_CHANGED_SOURCES "${GIT_DIFF}")
+
+if(CI)
+  setx(GIT_CHANGED_SOURCES ${GIT_CHANGED_SOURCES})
+endif()
+
 list(TRANSFORM GIT_CHANGED_SOURCES PREPEND ${CWD}/)
 list(LENGTH GIT_CHANGED_SOURCES GIT_CHANGED_SOURCES_COUNT)

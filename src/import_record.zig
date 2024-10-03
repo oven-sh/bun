@@ -117,8 +117,6 @@ pub const ImportRecord = struct {
 
     is_internal: bool = false,
 
-    calls_runtime_require: bool = false,
-
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn
     /// out to be type-only imports after analyzing the whole file.

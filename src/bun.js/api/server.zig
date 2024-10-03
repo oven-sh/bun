@@ -5607,9 +5607,9 @@ pub const ServerWebSocket = struct {
         log("getBinaryType()", .{});
 
         return switch (this.flags.binary_type) {
-            .Uint8Array => ZigString.static("uint8array").toJS(globalThis),
-            .Buffer => ZigString.static("nodebuffer").toJS(globalThis),
-            .ArrayBuffer => ZigString.static("arraybuffer").toJS(globalThis),
+            .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
+            .Buffer => bun.String.static("nodebuffer").toJS(globalThis),
+            .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
             else => @panic("Invalid binary type"),
         };
     }

@@ -114,7 +114,7 @@ pub const Ref = packed struct(u64) {
         allocated_name,
         source_contents_slice,
         symbol,
-    } = .invalid,
+    },
 
     source_index: Int = 0,
 

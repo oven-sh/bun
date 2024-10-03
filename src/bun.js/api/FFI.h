@@ -60,8 +60,8 @@ typedef enum {
   napi_detachable_arraybuffer_expected,
   napi_would_deadlock // unused
 } napi_status;
-void* NapiHandleScope__push(void* jsGlobalObject, bool detached);
-void NapiHandleScope__pop(void* jsGlobalObject, void* handleScope);
+void* NapiHandleScope__open(void* jsGlobalObject, bool detached);
+void NapiHandleScope__close(void* jsGlobalObject, void* handleScope);
 #endif
 
 

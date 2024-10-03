@@ -1778,7 +1778,7 @@ pub const Formatter = struct {
 
                         writer.print(
                             comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                            .{JSPrinter.formatJSONString(key.slice())},
+                            .{bun.fmt.formatJSONString(key.slice())},
                         );
                     }
                 } else if (Environment.isDebug and is_private_symbol) {

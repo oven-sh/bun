@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
+#include "BunClientData.h"
 
 namespace Zig {
 class GlobalObject;
@@ -17,6 +18,8 @@ class AbstractModuleRecord;
 }
 
 namespace Bun {
+
+using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);

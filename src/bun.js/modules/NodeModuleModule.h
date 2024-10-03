@@ -6,12 +6,12 @@
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-
 
 using namespace Zig;
 using namespace JSC;

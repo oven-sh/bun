@@ -343,7 +343,11 @@ Depending on the target, Bun will apply different module resolution rules and op
 
 Specifies the module format to be used in the generated bundles.
 
-Currently the bundler only supports one module format: `"esm"`. Support for `"cjs"` and `"iife"` are planned.
+Bun defaults to `"esm"`, and provides experimental support for `"cjs"` and `"iife"`.
+
+#### `format: "esm"` - ES Module
+
+This is the default format, which supports ES Module syntax including top-level `await`, import.meta, and more.
 
 {% codetabs %}
 
@@ -361,44 +365,31 @@ $ bun build ./index.tsx --outdir ./out --format esm
 
 {% /codetabs %}
 
-<!-- ### `bundling`
+To use ES Module syntax in browsers, set `format` to `"esm"` and make sure your `<script type="module">` tag has `type="module"` set.
 
-Whether to enable bundling.
+#### `format: "cjs"` - CommonJS
 
-{% codetabs group="a" %}
+To build a CommonJS module, set `format` to `"cjs"`. When choosing `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs", target: "node"` can be executed in both Bun and Node.js (assuming the APIs in use are supported by both).
+
+{% codetabs %}
 
 ```ts#JavaScript
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  bundling: true, // default
+  format: "cjs",
 })
 ```
 
 ```bash#CLI
-# bundling is enabled by default
-$ bun build ./index.tsx --outdir ./out
+$ bun build ./index.tsx --outdir ./out --format cjs
 ```
 
 {% /codetabs %}
 
-Set to `false` to disable bundling. Instead, files will be transpiled and individually written to `outdir`.
+#### `format: "iife"` - IIFE
 
-{% codetabs group="a" %}
-
-```ts#JavaScript
-await Bun.build({
-  entrypoints: ['./index.tsx'],
-  outdir: './out',
-  bundling: false,
-})
-```
-
-```bash#CLI
-$ bun build ./index.tsx --outdir ./out --no-bundling
-```
-
-{% /codetabs %} -->
+TODO: document IIFE once we support globalNames.
 
 ### `splitting`
 
@@ -1140,7 +1131,7 @@ Each artifact also contains the following properties:
 ---
 
 - `kind`
-- What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, and copied assets (like images).
+- What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, and copied assets (like images).
 
 ---
 
@@ -1156,11 +1147,6 @@ Each artifact also contains the following properties:
 
 - `hash`
 - The hash of the file contents. Always defined for assets.
-
----
-
-- `bytecode`
-- Generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint
 
 ---
 
@@ -1206,6 +1192,26 @@ BuildArtifact (entry-point) {
   },
   sourcemap: null
 }
+```
+
+{% /codetabs %}
+
+### Bytecode
+
+The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  bytecode: true,
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --bytecode
 ```
 
 {% /codetabs %}

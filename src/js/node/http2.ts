@@ -2797,6 +2797,7 @@ class Http2Server extends net.Server {
   #timeout = 0;
   #hasTimeoutEvent = false;
   static #connectionListener(socket: Socket) {
+    socket.setTimeout(0);
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }
@@ -2847,6 +2848,7 @@ class Http2SecureServer extends tls.Server {
   #timeout = 0;
   #hasTimeoutEvent = false;
   static #connectionListener(socket: TLSSocket | Socket) {
+    socket.setTimeout(0);
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }

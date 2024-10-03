@@ -541,17 +541,21 @@ async function authBunfig(user: string) {
         `;
 }
 
-describe("publish", async () => {
+describe.only("publish", async () => {
   describe("otp", async () => {
     const mockRegistryFetch = function (opts: {
       token: string;
       setAuthHeader?: boolean;
       otpFail?: boolean;
       npmNotice?: boolean;
+      expectedCI?: string;
     }) {
       return async function (req: Request) {
         const { token, setAuthHeader = true, otpFail = false, npmNotice = false } = opts;
         if (req.url.includes("otp-pkg")) {
+          if (opts.expectedCI) {
+            expect(req.headers.get("user-agent")).toContain("ci/" + opts.expectedCI);
+          }
           if (req.headers.get("npm-otp") === token) {
             if (otpFail) {
               return new Response(
@@ -698,6 +702,47 @@ describe("publish", async () => {
       expect(exitCode).toBe(0);
       expect(err).toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
     });
+
+    const fakeCIEnvs = [
+      { ci: "expo-application-services", envs: { EAS_BUILD: "hi" } },
+      { ci: "codemagic", envs: { CM_BUILD_ID: "hi" } },
+      { ci: "vercel", envs: { "NOW_BUILDER": "hi" } },
+    ];
+    for (const envInfo of fakeCIEnvs) {
+      test(`CI user agent name: ${envInfo.ci}`, async () => {
+        const token = await generateRegistryUser(`otp-${envInfo.ci}`, "otp");
+        using mockRegistry = Bun.serve({
+          port: 0,
+          fetch: mockRegistryFetch({ token, expectedCI: envInfo.ci }),
+        });
+
+        const bunfig = `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "otp-pkg-4"), { recursive: true, force: true }),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "otp-pkg-4",
+              version: "4.4.4",
+              dependencies: {
+                "otp-pkg-4": "4.4.4",
+              },
+            }),
+          ),
+        ]);
+
+        const { out, err, exitCode } = await publish(
+          { ...env, ...envInfo.envs, ...{ BUILDKITE: undefined, GITHUB_ACTIONS: undefined } },
+          packageDir,
+        );
+        expect(exitCode).toBe(0);
+      });
+    }
   });
 
   test("can publish a package then install it", async () => {

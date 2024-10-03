@@ -5,7 +5,8 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { validateInteger } = require("internal/validators");
 
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
@@ -832,8 +833,17 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
 
   // Get the stream controller
   // We need the pointer to the underlying stream controller for the NativeReadable
-  if (start && typeof start !== "number") throw ERR_INVALID_ARG_TYPE("options.start", "number", start);
-  if (end && typeof end !== "number") throw ERR_INVALID_ARG_TYPE("options.end", "number", end);
+  if (start !== undefined) {
+    validateInteger(start, "start", 0);
+  }
+  if (end === undefined) {
+    end = Infinity;
+  } else if (end !== Infinity) {
+    validateInteger(end, "end", 0);
+    if (start !== undefined && start > end) {
+      throw new ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
+    }
+  }
 
   const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
   var ptr = stream.$bunNativePtr;
@@ -1073,7 +1083,10 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
     pos = defaultWriteStreamOptions.pos,
   } = options;
 
-  if (start && typeof start !== "number") throw ERR_INVALID_ARG_TYPE("options.start", "number", start);
+  if (start !== undefined) {
+    validateInteger(start, "start", 0);
+    options.pos = start;
+  }
 
   var tempThis = {};
   var handle = null;

@@ -731,7 +731,7 @@ var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
 
-const ENABLE_AUTO_CORK = false;
+const ENABLE_AUTO_CORK = true;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
@@ -1432,15 +1432,7 @@ pub const H2FrameParser = struct {
 
     pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
         log("_genericWrite {}", .{bytes.len});
-        defer {
-            // lets keep size under control
-            if (this.writeBuffer.cap > MAX_BUFFER_SIZE and this.writeBuffer.len <= MAX_BUFFER_SIZE) {
-                const old_len = this.writeBuffer.len;
-                this.writeBuffer.len = MAX_BUFFER_SIZE;
-                this.writeBuffer.shrinkAndFree(this.allocator, MAX_BUFFER_SIZE);
-                this.writeBuffer.len = old_len;
-            }
-        }
+
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
             {
@@ -1467,6 +1459,12 @@ pub const H2FrameParser = struct {
                     log("_genericWrite buffered more {}", .{bytes[written..].len});
                     return false;
                 }
+            }
+            // lets keep size under control
+            if (this.writeBuffer.cap > MAX_BUFFER_SIZE) {
+                this.writeBuffer.len = MAX_BUFFER_SIZE;
+                this.writeBuffer.shrinkAndFree(this.allocator, MAX_BUFFER_SIZE);
+                this.writeBuffer.clearRetainingCapacity();
             }
             return true;
         }
@@ -1915,6 +1913,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
     pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        log("handleContinuationFrame", .{});
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID);
             return data.len;
@@ -1947,6 +1946,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        log("handleHeadersFrame", .{});
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID);
             return data.len;
@@ -1987,6 +1987,7 @@ pub const H2FrameParser = struct {
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
                 stream.endAfterHeaders = true;
+
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
@@ -1998,8 +1999,6 @@ pub const H2FrameParser = struct {
                     }
 
                     this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-
-                    return content.end;
                 }
             }
             return content.end;

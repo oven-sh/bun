@@ -762,7 +762,8 @@ const AutoKiller = struct {
     }
 
     pub fn onProcessExit(this: *AutoKiller, process: *bun.spawn.Process) void {
-        _ = this.processes.swapRemove(process);
+        if (this.ever_enabled)
+            _ = this.processes.swapRemove(process);
     }
 
     pub fn deinit(this: *AutoKiller) void {
@@ -953,11 +954,11 @@ pub const VirtualMachine = struct {
     }
 
     pub fn onProcessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
-        if (this.auto_killer.ever_enabled) this.auto_killer.onSpawnProcess(process);
+        this.auto_killer.onSpawnProcess(process);
     }
 
     pub fn onProcessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
-        if (this.auto_killer.ever_enabled) this.auto_killer.onProcessExit(process);
+        this.auto_killer.onProcessExit(process);
     }
 
     pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {

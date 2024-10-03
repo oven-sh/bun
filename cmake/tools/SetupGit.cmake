@@ -11,7 +11,28 @@ if(NOT GIT_PROGRAM)
   return()
 endif()
 
-set(GIT_DIFF_COMMAND ${GIT_PROGRAM} diff --no-color --name-only --diff-filter=AMCR origin/main HEAD)
+set(GIT_MERGEBASE_COMMAND ${GIT_PROGRAM} merge-base origin/main HEAD)
+
+execute_process(
+  COMMAND
+    ${GIT_MERGEBASE_COMMAND}
+  WORKING_DIRECTORY
+    ${CWD}
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  OUTPUT_VARIABLE
+    GIT_MERGEBASE
+  ERROR_STRIP_TRAILING_WHITESPACE
+  ERROR_VARIABLE
+    GIT_MERGEBASE_ERROR
+  RESULT_VARIABLE
+    GIT_MERGEBASE_RESULT
+)
+if(NOT GIT_MERGEBASE_RESULT EQUAL 0)
+  message(${WARNING} "Command failed: ${GIT_MERGEBASE_COMMAND} ${GIT_MERGEBASE_ERROR}")
+  return()
+endif()
+
+set(GIT_DIFF_COMMAND ${GIT_PROGRAM} diff --no-color --name-only --diff-filter=AMCR ${GIT_MERGEBASE} HEAD)
 
 execute_process(
   COMMAND

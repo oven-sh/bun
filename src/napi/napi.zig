@@ -1212,7 +1212,6 @@ pub const napi_async_work = struct {
         this.wait_for_deinit = true;
     }
 
-
     fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
         const handle_scope = NapiHandleScope.open(this.global, false);
         defer if (handle_scope) |scope| scope.close(this.global);

@@ -31,4 +31,17 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_get_exception = (_, value) => {
+  function thrower() {
+    throw value;
+  }
+  try {
+    const result = nativeTests.call_and_get_exception(thrower);
+    console.log("got same exception back?", result === value);
+  } catch (e) {
+    console.log("native module threw", typeof e, e);
+    throw e;
+  }
+};
+
 module.exports = nativeTests;

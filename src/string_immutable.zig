@@ -216,6 +216,83 @@ pub fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
+pub fn startsWithUUID(str: string) bool {
+    const uuid_len = 36;
+    if (str.len < uuid_len) return false;
+    for (0..8) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
+            else => return false,
+        }
+    }
+    if (str[8] != '-') return false;
+    for (9..13) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
+            else => return false,
+        }
+    }
+    if (str[13] != '-') return false;
+    for (14..18) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
+            else => return false,
+        }
+    }
+    if (str[18] != '-') return false;
+    for (19..23) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
+            else => return false,
+        }
+    }
+    if (str[23] != '-') return false;
+    for (24..36) |i| {
+        switch (str[i]) {
+            '0'...'9', 'a'...'f', 'A'...'F' => {},
+            else => return false,
+        }
+    }
+    return true;
+}
+
+/// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
+/// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
+/// Returns the length of the secret if one exist.
+pub fn startsWithNpmSecret(str: string) u8 {
+    if (str.len < "npm_".len + 36) return 0;
+
+    if (!strings.hasPrefixCaseInsensitive(str, "npm")) return 0;
+
+    var i: u8 = "npm".len;
+
+    if (str[i] == '_') {
+        i += 1;
+    } else if (str[i] == 's' or str[i] == 'S') {
+        i += 1;
+        if (str[i] != '_') return 0;
+        i += 1;
+    } else {
+        return 0;
+    }
+
+    const min_len = i + 36;
+    const max_len = i + 48;
+
+    while (i < max_len) : (i += 1) {
+        if (i == str.len) {
+            return if (i >= min_len) i else 0;
+        }
+
+        switch (str[i]) {
+            '0'...'9', 'a'...'z', 'A'...'Z' => {},
+            else => return if (i >= min_len) i else 0,
+        }
+    }
+
+    return i;
+}
+
 pub fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
@@ -917,6 +994,31 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
     bun.unsafeAssert(a.len > 0);
 
     return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
+}
+
+pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
+    if (a.len != b.len or a.len == 0) return false;
+    if (comptime T == u8) return eqlCaseInsensitiveASCIIIgnoreLength(a, b);
+
+    for (a, b) |c, d| {
+        switch (c) {
+            'a'...'z' => if (c != d and c & 0b11011111 != d) return false,
+            'A'...'Z' => if (c != d and c | 0b00100000 != d) return false,
+            else => if (c != d) return false,
+        }
+    }
+
+    return true;
+}
+
+pub fn hasPrefixCaseInsensitiveT(comptime T: type, str: []const T, prefix: []const u8) bool {
+    if (str.len < prefix.len) return false;
+
+    return eqlCaseInsensitiveT(T, str[0..prefix.len], prefix);
+}
+
+pub fn hasPrefixCaseInsensitive(str: []const u8, prefix: []const u8) bool {
+    return hasPrefixCaseInsensitiveT(u8, str, prefix);
 }
 
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {

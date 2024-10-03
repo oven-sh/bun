@@ -2653,6 +2653,8 @@ it("fs.constants", () => {
       COPYFILE_FICLONE: 2,
       UV_FS_COPYFILE_FICLONE_FORCE: 4,
       COPYFILE_FICLONE_FORCE: 4,
+      EXTENSIONLESS_FORMAT_JAVASCRIPT: 0,
+      EXTENSIONLESS_FORMAT_WASM: 1,
     } as any);
     return;
   }

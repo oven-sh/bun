@@ -700,6 +700,77 @@ const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
 pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
 const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
 
+const AutoKiller = struct {
+    const log = Output.scoped(.AutoKiller, true);
+    processes: std.AutoArrayHashMapUnmanaged(*bun.spawn.Process, void) = .{},
+    enabled: bool = false,
+    ever_enabled: bool = false,
+
+    pub fn enable(this: *AutoKiller) void {
+        this.enabled = true;
+        this.ever_enabled = true;
+    }
+
+    pub fn disable(this: *AutoKiller) void {
+        this.enabled = false;
+    }
+
+    pub const Result = struct {
+        processes: u32 = 0,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+            switch (self.processes) {
+                0 => {},
+                1 => {
+                    try writer.writeAll("killed 1 dangling process");
+                },
+                else => {
+                    try std.fmt.format(writer, "killed {d} dangling processes", .{self.processes});
+                },
+            }
+        }
+    };
+
+    pub fn kill(this: *AutoKiller) Result {
+        return .{
+            .processes = this.killProcesses(),
+        };
+    }
+
+    fn killProcesses(this: *AutoKiller) u32 {
+        var count: u32 = 0;
+        while (this.processes.popOrNull()) |process| {
+            if (!process.key.hasExited()) {
+                log("process.kill {d}", .{process.key.pid});
+                count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.default) == .result));
+            }
+        }
+        return count;
+    }
+
+    pub fn clear(this: *AutoKiller) void {
+        if (this.processes.capacity() > 256) {
+            this.processes.clearAndFree(bun.default_allocator);
+        }
+
+        this.processes.clearRetainingCapacity();
+    }
+
+    pub fn onSubprocessSpawn(this: *AutoKiller, process: *bun.spawn.Process) void {
+        if (this.enabled)
+            this.processes.put(bun.default_allocator, process, {}) catch {};
+    }
+
+    pub fn onSubprocessExit(this: *AutoKiller, process: *bun.spawn.Process) void {
+        if (this.ever_enabled)
+            _ = this.processes.swapRemove(process);
+    }
+
+    pub fn deinit(this: *AutoKiller) void {
+        this.processes.deinit(bun.default_allocator);
+    }
+};
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -765,6 +836,9 @@ pub const VirtualMachine = struct {
     macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
     macro_mode: bool = false,
     no_macros: bool = false,
+    auto_killer: AutoKiller = .{
+        .enabled = false,
+    },
 
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,
@@ -877,6 +951,14 @@ pub const VirtualMachine = struct {
 
     pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
         return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
+        this.auto_killer.onSubprocessSpawn(process);
+    }
+
+    pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
+        this.auto_killer.onSubprocessExit(process);
     }
 
     pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
@@ -2561,6 +2643,8 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        this.auto_killer.deinit();
+
         if (source_code_printer) |print| {
             print.getMutableBuffer().deinit();
             print.ctx.written = &.{};
@@ -2666,7 +2750,7 @@ pub const VirtualMachine = struct {
                         "{s} resolving preload {}",
                         .{
                             @errorName(e),
-                            js_printer.formatJSONString(preload),
+                            bun.fmt.formatJSONString(preload),
                         },
                     ) catch unreachable;
                     return e;
@@ -2678,7 +2762,7 @@ pub const VirtualMachine = struct {
                         this.allocator,
                         "preload not found {}",
                         .{
-                            js_printer.formatJSONString(preload),
+                            bun.fmt.formatJSONString(preload),
                         },
                     ) catch unreachable;
                     return error.ModuleNotFound;

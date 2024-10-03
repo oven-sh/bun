@@ -9639,7 +9639,6 @@ fn NewParser_(
                             if (p.lexer.isContextualKeyword("async")) {
                                 const async_range = p.lexer.range();
                                 try p.lexer.next();
-                                var defaultName: js_ast.LocRef = undefined;
                                 if (p.lexer.token == T.t_function and !p.lexer.has_newline_before) {
                                     try p.lexer.next();
                                     var stmtOpts = ParseStatementOptions{
@@ -9652,16 +9651,16 @@ fn NewParser_(
                                         return stmt;
                                     }
 
-                                    if (stmt.data.s_function.func.name) |name| {
-                                        defaultName = js_ast.LocRef{ .loc = name.loc, .ref = name.ref };
-                                    } else {
-                                        defaultName = try p.createDefaultName(defaultLoc);
-                                    }
+                                    const defaultName = if (stmt.data.s_function.func.name) |name|
+                                        js_ast.LocRef{ .loc = name.loc, .ref = name.ref }
+                                    else
+                                        try p.createDefaultName(defaultLoc);
+
                                     const value = js_ast.StmtOrExpr{ .stmt = stmt };
                                     return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                                 }
 
-                                defaultName = try createDefaultName(p, loc);
+                                const defaultName = try createDefaultName(p, loc);
 
                                 const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
                                 const expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
@@ -19157,7 +19156,7 @@ fn NewParser_(
                     }
 
                     switch (data.value) {
-                        .expr => |expr| brk_expr: {
+                        .expr => |expr| {
                             const was_anonymous_named_expr = expr.isAnonymousNamed();
 
                             data.value.expr = p.visitExpr(expr);
@@ -19192,6 +19191,10 @@ fn NewParser_(
                                 }
                             }
 
+                            if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
+                            }
+
                             // If there are lowered "using" declarations, change this into a "var"
                             if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
                                 try stmts.ensureUnusedCapacity(2);
@@ -19199,7 +19202,7 @@ fn NewParser_(
                                 const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
                                 decls[0] = .{
                                     .binding = p.b(B.Identifier{ .ref = data.default_name.ref.? }, data.default_name.loc),
-                                    .value = expr,
+                                    .value = data.value.expr,
                                 };
                                 stmts.appendAssumeCapacity(p.s(S.Local{
                                     .decls = G.Decl.List.init(decls),
@@ -19213,7 +19216,6 @@ fn NewParser_(
                                 stmts.appendAssumeCapacity(p.s(S.ExportClause{
                                     .items = items,
                                 }, stmt.loc));
-                                break :brk_expr;
                             }
 
                             if (mark_for_replace) {
@@ -19224,10 +19226,6 @@ fn NewParser_(
                                     _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
                                     return;
                                 }
-                            }
-
-                            if (data.default_name.ref.?.isSourceContentsSlice()) {
-                                data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
                             }
                         },
 
@@ -22864,14 +22862,22 @@ fn NewParser_(
                 var end: u32 = 0;
                 for (stmts) |stmt| {
                     switch (stmt.data) {
-                        .s_directive,
-                        .s_import,
-                        .s_export_from,
-                        .s_export_star,
-                        => {
+                        .s_directive, .s_import, .s_export_from, .s_export_star => {
                             // These can't go in a try/catch block
                             result.append(stmt) catch bun.outOfMemory();
                             continue;
+                        },
+
+                        .s_class => {
+                            if (stmt.data.s_class.is_export) {
+                                // can't go in try/catch; hoist out
+                                result.append(stmt) catch bun.outOfMemory();
+                                continue;
+                            }
+                        },
+
+                        .s_export_default => {
+                            continue; // this prevents re-exporting default since we already have it as an .s_export_clause
                         },
 
                         .s_export_clause => |data| {

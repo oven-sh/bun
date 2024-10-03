@@ -1455,9 +1455,9 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.ParseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.ParseJSON(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

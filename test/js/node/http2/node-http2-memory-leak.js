@@ -89,6 +89,8 @@ async function main() {
     await runRequests(ITERATIONS);
     await sleep(10);
     gc(true);
+    await sleep(10);
+
     // take a baseline
     const baseline = process.memoryUsage.rss();
     console.error("Initial memory usage", (baseline / 1024 / 1024) | 0, "MB");
@@ -97,6 +99,7 @@ async function main() {
     await runRequests(ITERATIONS);
     await sleep(10);
     gc(true);
+    await sleep(10);
     // take an end snapshot
     const end = process.memoryUsage.rss();
 
@@ -106,7 +109,7 @@ async function main() {
 
     // we executed 100 requests per iteration, memory usage should not go up by 10 MB
     if (deltaMegaBytes > 20) {
-      console.log("Too many bodies leaked", deltaMegaBytes);
+      console.error("Too many bodies leaked", deltaMegaBytes);
       process.exit(1);
     }
 

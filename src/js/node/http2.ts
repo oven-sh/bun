@@ -1503,8 +1503,7 @@ class Http2Stream extends Duplex {
       chunk = Buffer.alloc(0);
     }
     this[bunHTTP2StreamEnded] = true;
-    const result = super.end(chunk, encoding, callback);
-    return result;
+    return super.end(chunk, encoding, callback);
   }
 
   _write(chunk, encoding, callback) {
@@ -2798,7 +2797,6 @@ class Http2Server extends net.Server {
   #timeout = 0;
   #hasTimeoutEvent = false;
   static #connectionListener(socket: Socket) {
-    socket.setTimeout(0);
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }
@@ -2849,7 +2847,6 @@ class Http2SecureServer extends tls.Server {
   #timeout = 0;
   #hasTimeoutEvent = false;
   static #connectionListener(socket: TLSSocket | Socket) {
-    socket.setTimeout(0);
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }

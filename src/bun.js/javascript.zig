@@ -4167,7 +4167,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub const HotReloadTask = struct {
             count: u8 = 0,
             hashes: [8]u32,
-            paths: if (Ctx == bun.kit.DevServer) [8][]const u8 else void,
+            paths: if (Ctx == bun.bake.DevServer) [8][]const u8 else void,
             /// Left uninitialized until .enqueue
             concurrent_task: JSC.ConcurrentTask,
             reloader: *Reloader,
@@ -4177,7 +4177,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .reloader = reloader,
 
                     .hashes = [_]u32{0} ** 8,
-                    .paths = if (Ctx == bun.kit.DevServer) [_][]const u8{&.{}} ** 8,
+                    .paths = if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8,
                     .count = 0,
                     .concurrent_task = undefined,
                 };
@@ -4191,7 +4191,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                 this.hashes[this.count] = id;
                 // TODO(@paperdave/bake): this allocation is terrible and must be removed
-                if (Ctx == bun.kit.DevServer)
+                if (Ctx == bun.bake.DevServer)
                     this.paths[this.count] = default_allocator.dupe(u8, path) catch bun.outOfMemory();
                 this.count += 1;
             }

@@ -190,8 +190,8 @@ pub const ImportRecord = struct {
         react_server_component,
 
         /// For Bun Kit, if a module in the server graph should actually
-        /// crossover to the SSR graph. See kit.Framework.ServerComponents.separate_ssr_graph
-        kit_resolve_to_ssr_graph,
+        /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
+        bake_resolve_to_ssr_graph,
 
         with_type_sqlite,
         with_type_sqlite_embedded,

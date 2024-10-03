@@ -384,7 +384,7 @@ pub const Target = enum {
     bun_macro,
     node,
 
-    /// This is used by kit.Framework.ServerComponents.separate_ssr_graph
+    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
     kit_server_components_ssr,
 
     pub const Map = bun.ComptimeStringMap(Target, .{
@@ -441,7 +441,7 @@ pub const Target = enum {
         };
     }
 
-    pub fn kitRenderer(target: Target) bun.kit.Renderer {
+    pub fn bakeRenderer(target: Target) bun.bake.Renderer {
         return switch (target) {
             .browser => .client,
             .kit_server_components_ssr => .ssr,
@@ -580,8 +580,8 @@ pub const Format = enum {
     /// CommonJS
     cjs,
 
-    /// Kit's uses a special module format for Hot-module-reloading. It includes a
-    /// runtime payload, sourced from src/kit/hmr-runtime.ts.
+    /// Bake uses a special module format for Hot-module-reloading. It includes a
+    /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
     ///
     /// ((input_graph, config) => {
     ///   ... runtime code ...
@@ -589,7 +589,7 @@ pub const Format = enum {
     ///   "module1.ts"(module) { ... },
     ///   "module2.ts"(module) { ... },
     /// }, { metadata });
-    internal_kit_dev,
+    internal_bake_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
         return this == .esm;
@@ -609,7 +609,7 @@ pub const Format = enum {
         .{ "iife", .iife },
 
         // TODO: Disable this outside of debug builds
-        .{ "internal_kit_dev", .internal_kit_dev },
+        .{ "internal_bake_dev", .internal_bake_dev },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
@@ -1494,11 +1494,11 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
 
-    /// Set when kit.DevServer is bundling. This changes the interface of the
+    /// Set when bake.DevServer is bundling. This changes the interface of the
     /// bundler from emitting OutputFile to only emitting []CompileResult
-    kit: ?*bun.kit.DevServer = null,
-    /// Set when Kit is bundling. Affects module resolution.
-    framework: ?*bun.kit.Framework = null,
+    dev_server: ?*bun.bake.DevServer = null,
+    /// Set when Bake is bundling. Affects module resolution.
+    framework: ?*bun.bake.Framework = null,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.

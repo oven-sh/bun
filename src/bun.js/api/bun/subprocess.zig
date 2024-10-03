@@ -1449,7 +1449,7 @@ pub const Subprocess = struct {
         defer this.deref();
         defer this.disconnectIPC(true);
 
-        jsc_vm.onProcessExit(process);
+        jsc_vm.onSubprocessExit(process);
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;

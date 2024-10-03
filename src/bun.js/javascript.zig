@@ -761,7 +761,7 @@ const AutoKiller = struct {
             this.processes.put(bun.default_allocator, process, {}) catch {};
     }
 
-    pub fn onProcessExit(this: *AutoKiller, process: *bun.spawn.Process) void {
+    pub fn onSubprocessExit(this: *AutoKiller, process: *bun.spawn.Process) void {
         if (this.ever_enabled)
             _ = this.processes.swapRemove(process);
     }
@@ -957,7 +957,7 @@ pub const VirtualMachine = struct {
         this.auto_killer.onSpawnProcess(process);
     }
 
-    pub fn onProcessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
+    pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
         this.auto_killer.onProcessExit(process);
     }
 

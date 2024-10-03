@@ -1847,11 +1847,13 @@ pub const H2FrameParser = struct {
             const rst_code = UInt31WithReserved.fromBytes(payload).toUInt32();
             stream.rstCode = rst_code;
             this.readBuffer.reset();
-            if (rst_code != @intFromEnum(ErrorCode.NO_ERROR)) {
-                this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsNumber(rst_code));
+            stream.state = .CLOSED;
+            stream.cleanQueue();
+            if (rst_code == @intFromEnum(ErrorCode.NO_ERROR)) {
+                this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+            } else {
+                this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), JSC.JSValue.jsNumber(rst_code));
             }
-            this.endStream(stream, ErrorCode.NO_ERROR);
-
             return content.end;
         }
         return data.len;
@@ -1930,13 +1932,17 @@ pub const H2FrameParser = struct {
             this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags);
             this.readBuffer.reset();
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
-                if (stream.state == .HALF_CLOSED_REMOTE) {
-                    // no more continuation headers we can call it closed
-                    stream.state = .CLOSED;
-                } else {
-                    stream.state = .HALF_CLOSED_LOCAL;
+                if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
+                    stream.endAfterHeaders = true;
+
+                    if (stream.state == .HALF_CLOSED_REMOTE) {
+                        // no more continuation headers we can call it closed
+                        stream.state = .CLOSED;
+                    } else {
+                        stream.state = .HALF_CLOSED_LOCAL;
+                    }
+                    this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                 }
-                this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                 stream.isWaitingMoreHeaders = false;
             }
 
@@ -1990,9 +1996,7 @@ pub const H2FrameParser = struct {
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
                 stream.endAfterHeaders = true;
 
-                if (stream.isWaitingMoreHeaders) {
-                    stream.state = .HALF_CLOSED_REMOTE;
-                } else {
+                if (!stream.isWaitingMoreHeaders) {
                     // no more continuation headers we can call it closed
                     if (stream.state == .HALF_CLOSED_LOCAL) {
                         stream.state = .CLOSED;
@@ -2083,13 +2087,14 @@ pub const H2FrameParser = struct {
     }
 
     pub fn readBytes(this: *H2FrameParser, bytes: []const u8) usize {
-        log("read {s}", .{bytes});
+        log("read {}", .{bytes.len});
         if (this.isServer and this.prefaceReceivedLen < 24) {
             // Handle Server Preface
             const preface_missing: usize = 24 - this.prefaceReceivedLen;
             const preface_available = @min(preface_missing, bytes.len);
             if (!strings.eql(bytes[0..preface_available], "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[this.prefaceReceivedLen .. preface_available + this.prefaceReceivedLen])) {
                 // invalid preface
+                log("invalid preface", .{});
                 this.sendGoAway(0, ErrorCode.PROTOCOL_ERROR, "Invalid preface", this.lastStreamID, true);
                 return bytes.len;
             }

@@ -92,6 +92,7 @@ const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
 const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
 const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
+
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2WantTrailers = Symbol.for("::bunhttp2WantTrailers::");
 const bunHTTP2StreamEnded = Symbol.for("::bunhttp2StreamEnded::");
@@ -863,7 +864,7 @@ class Http2ServerResponse extends Stream {
   }
 }
 
-function onServerStream(stream, headers, flags, rawHeaders) {
+function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers, flags, rawHeaders) {
   const server = this;
   const request = new Http2ServerRequest(stream, headers, undefined, rawHeaders);
   const response = new Http2ServerResponse(stream);
@@ -1465,6 +1466,8 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
+    this.push(null);
+
     if (!this[bunHTTP2Closed]) {
       this[bunHTTP2Closed] = true;
 
@@ -1480,7 +1483,6 @@ class Http2Stream extends Duplex {
   }
 
   _final(callback) {
-    this[bunHTTP2Closed] = true;
     callback();
   }
 
@@ -1501,7 +1503,8 @@ class Http2Stream extends Duplex {
       chunk = Buffer.alloc(0);
     }
     this[bunHTTP2StreamEnded] = true;
-    return super.end(chunk, encoding, callback);
+    const result = super.end(chunk, encoding, callback);
+    return result;
   }
 
   _write(chunk, encoding, callback) {
@@ -1838,6 +1841,7 @@ class ServerHttp2Session extends Http2Session {
         stream.rstCode = 0;
         stream.emit("end");
       }
+
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
         stream[bunHTTP2Closed] = true;
@@ -2008,7 +2012,7 @@ class ServerHttp2Session extends Http2Session {
     this.#connected = true;
     if (socket instanceof TLSSocket) {
       // server will receive the preface to know if is or not h2
-      this.#alpnProtocol = "h2";
+      this.#alpnProtocol = socket.alpnProtocol || "h2";
 
       const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
       this.#originSet.add(origin);
@@ -2317,8 +2321,8 @@ class ClientHttp2Session extends Http2Session {
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
-        stream.emit("response", headers, flags, rawheaders);
         self.emit("stream", stream, headers, flags, rawheaders);
+        stream.emit("response", headers, flags, rawheaders);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
@@ -2350,7 +2354,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       const error_instance = sessionErrorFromCode(errorCode);
       self.emit("error", error_instance);
-      self[bunHTTP2Socket]?.end();
+      self[bunHTTP2Socket]?.destroy();
       self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
@@ -2784,13 +2788,17 @@ function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Fu
 function setupCompat(ev) {
   if (ev === "request") {
     this.removeListener("newListener", setupCompat);
-    this.on("stream", FunctionPrototypeBind(onServerStream, this));
+    const options = this[bunSocketServerOptions];
+    const ServerRequest = options?.Http2ServerRequest || Http2ServerRequest;
+    const ServerResponse = options?.Http2ServerResponse || Http2ServerResponse;
+    this.on("stream", FunctionPrototypeBind(onServerStream, this, ServerRequest, ServerResponse));
   }
 }
 class Http2Server extends net.Server {
   #timeout = 0;
   #hasTimeoutEvent = false;
   static #connectionListener(socket: Socket) {
+    socket.setTimeout(0);
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }
@@ -2841,6 +2849,7 @@ class Http2SecureServer extends tls.Server {
   #timeout = 0;
   #hasTimeoutEvent = false;
   static #connectionListener(socket: TLSSocket | Socket) {
+    socket.setTimeout(0);
     const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
     this.emit("session", session);
   }

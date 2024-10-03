@@ -1154,7 +1154,7 @@ pub const H2FrameParser = struct {
                 increment_size = this.windowSize -| MAX_WINDOW_SIZE;
             }
             if (new_size == this.windowSize) {
-                this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID);
+                this.sendGoAway(0, .FLOW_CONTROL_ERROR, "Window size overflow", this.lastStreamID, true);
                 return;
             }
             this.windowSize = new_size;
@@ -1248,7 +1248,7 @@ pub const H2FrameParser = struct {
         _ = this.write(&buffer);
     }
 
-    pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32) void {
+    pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32, emitError: bool) void {
         var buffer: [FrameHeader.byteSize + 8]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1271,11 +1271,14 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
-        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
-        if (rstCode != .NO_ERROR) {
-            this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(rstCode)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
+
+        if (emitError) {
+            const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
+            if (rstCode != .NO_ERROR) {
+                this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(rstCode)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
+            }
+            this.dispatchWithExtra(.onEnd, JSC.JSValue.jsNumber(this.lastStreamID), chunk);
         }
-        this.dispatchWithExtra(.onEnd, JSC.JSValue.jsNumber(this.lastStreamID), chunk);
     }
 
     pub fn sendPing(this: *H2FrameParser, ack: bool, payload: []const u8) void {
@@ -1603,7 +1606,7 @@ pub const H2FrameParser = struct {
             _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
             return null;
         } else if (this.remainingLength < 0) {
-            this.sendGoAway(streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid frame size", this.lastStreamID);
+            this.sendGoAway(streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid frame size", this.lastStreamID, true);
             return null;
         }
 
@@ -1627,7 +1630,7 @@ pub const H2FrameParser = struct {
     pub fn handleWindowUpdateFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream: ?*Stream) usize {
         // must be always 4 bytes (https://datatracker.ietf.org/doc/html/rfc7540#section-6.9)
         if (frame.length != 4) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1667,7 +1670,7 @@ pub const H2FrameParser = struct {
             offset += header.next;
             log("header {s} {s}", .{ header.name, header.value });
             if (this.isServer and strings.eqlComptime(header.name, ":status")) {
-                this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID);
+                this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
                 return;
             }
 
@@ -1681,7 +1684,7 @@ pub const H2FrameParser = struct {
                 if (this.maxHeaderListPairs < count) {
                     this.rejectedStreams += 1;
                     if (this.maxRejectedStreams <= this.rejectedStreams) {
-                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID);
+                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
                     } else {
                         this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                     }
@@ -1708,7 +1711,7 @@ pub const H2FrameParser = struct {
                 if (this.maxHeaderListPairs < count) {
                     this.rejectedStreams += 1;
                     if (this.maxRejectedStreams <= this.rejectedStreams) {
-                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID);
+                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
                     } else {
                         this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                     }
@@ -1730,14 +1733,14 @@ pub const H2FrameParser = struct {
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
             return data.len;
         };
 
         const settings = this.remoteSettings orelse this.localSettings;
 
         if (frame.length > settings.maxFrameSize) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1769,7 +1772,7 @@ pub const H2FrameParser = struct {
         }
 
         if (this.remainingLength < 0) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid data frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid data frame size", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1799,13 +1802,13 @@ pub const H2FrameParser = struct {
     }
     pub fn handleGoAwayFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         if (stream_ != null) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "GoAway frame on stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "GoAway frame on stream", this.lastStreamID, true);
             return data.len;
         }
         const settings = this.remoteSettings orelse this.localSettings;
 
         if (frame.length < 8 or frame.length > settings.maxFrameSize) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid GoAway frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid GoAway frame size", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1826,17 +1829,17 @@ pub const H2FrameParser = struct {
     }
     pub fn handleRSTStreamFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame on connection stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame on connection stream", this.lastStreamID, true);
             return data.len;
         };
 
         if (frame.length != 4) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid RST_STREAM frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid RST_STREAM frame size", this.lastStreamID, true);
             return data.len;
         }
 
         if (stream.isWaitingMoreHeaders) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame without continuation", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame without continuation", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1856,12 +1859,12 @@ pub const H2FrameParser = struct {
     }
     pub fn handlePingFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         if (stream_ != null) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Ping frame on stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Ping frame on stream", this.lastStreamID, true);
             return data.len;
         }
 
         if (frame.length != 8) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid ping frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid ping frame size", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1883,12 +1886,12 @@ pub const H2FrameParser = struct {
     }
     pub fn handlePriorityFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Priority frame on connection stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Priority frame on connection stream", this.lastStreamID, true);
             return data.len;
         };
 
         if (frame.length != StreamPriority.byteSize) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Priority frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Priority frame size", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1900,7 +1903,7 @@ pub const H2FrameParser = struct {
 
             const stream_identifier = UInt31WithReserved.from(priority.streamIdentifier);
             if (stream_identifier.uint31 == stream.id) {
-                this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Priority frame with self dependency", this.lastStreamID);
+                this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Priority frame with self dependency", this.lastStreamID, true);
                 return data.len;
             }
             stream.streamDependency = stream_identifier.uint31;
@@ -1915,12 +1918,12 @@ pub const H2FrameParser = struct {
     pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         log("handleContinuationFrame", .{});
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation on connection stream", this.lastStreamID, true);
             return data.len;
         };
 
         if (!stream.isWaitingMoreHeaders) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation without headers", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Continuation without headers", this.lastStreamID, true);
             return data.len;
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
@@ -1948,18 +1951,18 @@ pub const H2FrameParser = struct {
     pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         log("handleHeadersFrame", .{});
         var stream = stream_ orelse {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID, true);
             return data.len;
         };
 
         const settings = this.remoteSettings orelse this.localSettings;
         if (frame.length > settings.maxFrameSize) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
             return data.len;
         }
 
         if (stream.isWaitingMoreHeaders) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame without continuation", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame without continuation", this.lastStreamID, true);
             return data.len;
         }
 
@@ -1979,7 +1982,7 @@ pub const H2FrameParser = struct {
             const end = payload.len - padding;
             if (offset > end) {
                 this.readBuffer.reset();
-                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID);
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
                 return data.len;
             }
             this.decodeHeaderBlock(payload[offset..end], stream, frame.flags);
@@ -2009,7 +2012,7 @@ pub const H2FrameParser = struct {
     }
     pub fn handleSettingsFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8) usize {
         if (frame.streamIdentifier != 0) {
-            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID);
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID, true);
             return data.len;
         }
 
@@ -2017,7 +2020,7 @@ pub const H2FrameParser = struct {
         if (frame.length > 0) {
             if (frame.flags & @intFromEnum(SettingsFlags.ACK) != 0 or frame.length % settingByteSize != 0) {
                 log("invalid settings frame size", .{});
-                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID);
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID, true);
                 return data.len;
             }
         } else {
@@ -2109,7 +2112,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes, stream),
                 else => {
-                    this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID);
+                    this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
                 },
             };
@@ -2154,7 +2157,7 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
                 else => {
-                    this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID);
+                    this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
                 },
             };
@@ -2184,7 +2187,7 @@ pub const H2FrameParser = struct {
             @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             else => {
-                this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID);
+                this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                 return bytes.len;
             },
         };
@@ -2409,14 +2412,14 @@ pub const H2FrameParser = struct {
                 if (!opaque_data_arg.isEmptyOrUndefinedOrNull()) {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                         const slice = array_buffer.byteSlice();
-                        this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
+                        this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID, false);
                         return .undefined;
                     }
                 }
             }
         }
 
-        this.sendGoAway(0, @enumFromInt(errorCode), "", lastStreamID);
+        this.sendGoAway(0, @enumFromInt(errorCode), "", lastStreamID, false);
         return .undefined;
     }
 
@@ -2607,7 +2610,7 @@ pub const H2FrameParser = struct {
             silent = js_silent.toBoolean();
         }
         if (parent_id == stream.id) {
-            this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID);
+            this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Stream with self dependency", this.lastStreamID, true);
             return JSC.JSValue.jsBoolean(false);
         }
 

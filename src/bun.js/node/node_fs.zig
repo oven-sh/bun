@@ -3115,10 +3115,6 @@ pub const Arguments = struct {
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = arg_length.to(u52);
                     }
-                    if (args.length == 0) {
-                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
-                        return null;
-                    }
 
                     if (arguments.next()) |arg_position| {
                         arguments.eat();
@@ -5157,6 +5153,11 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        const len1 = args.buffer.slice().len;
+        const len2 = args.length;
+        if (len1 == 0 or len2 == 0) {
+            return Maybe(Return.Read).initResult(.{ .bytes_read = 0 });
+        }
         return if (args.position != null)
             this._pread(
                 args,

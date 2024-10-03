@@ -14,6 +14,7 @@ import {
   randomPort,
   runBunInstall,
   runBunUpdate,
+  pack,
   tempDirWithFiles,
   tmpdirSync,
   toBeValidBin,
@@ -108,7 +109,6 @@ function registryUrl() {
  * Returns auth token
  */
 async function generateRegistryUser(username: string, password: string): Promise<string> {
-  console.log("GENERATE REGISTRY USER");
   if (users[username]) {
     throw new Error("that user already exists");
   } else users[username] = password;
@@ -130,7 +130,6 @@ async function generateRegistryUser(username: string, password: string): Promise
 
   if (response.ok) {
     const data = await response.json();
-    console.log(`Token: ${data.token}`);
     return data.token;
   } else {
     throw new Error("Failed to create user:", response.statusText);
@@ -512,6 +511,446 @@ ${Object.keys(opts)
       expect(stderr).toContain("got an empty string");
     },
   );
+});
+
+export async function publish(
+  env: any,
+  cwd: string,
+  ...args: string[]
+): Promise<{ out: string; err: string; exitCode: number }> {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "publish", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const out = await Bun.readableStreamToText(stdout);
+  const err = await Bun.readableStreamToText(stderr);
+  const exitCode = await exited;
+  return { out, err, exitCode };
+}
+
+async function authBunfig(user: string) {
+  const authToken = await generateRegistryUser(user, user);
+  return `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${port}/", token = "${authToken}" }
+        `;
+}
+
+describe("publish", async () => {
+  describe("otp", async () => {
+    for (const setAuthHeader of [true, false]) {
+      test("mock web login" + (setAuthHeader ? "" : " (without auth header)"), async () => {
+        using mockRegistry = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            if (req.url.endsWith("otp-pkg-1")) {
+              if (req.headers.get("npm-otp") === authToken) {
+                return new Response("OK", { status: 200 });
+              } else {
+                const headers = new Headers();
+                if (setAuthHeader) headers.set("www-authenticate", "OTP");
+                return new Response(
+                  JSON.stringify({
+                    // this isn't accurate, but we just want to check that finding this string works
+                    mock: setAuthHeader ? "" : "one-time password",
+
+                    authUrl: `http://localhost:${this.port}/auth`,
+                    doneUrl: `http://localhost:${this.port}/done`,
+                  }),
+                  {
+                    status: 401,
+                    headers,
+                  },
+                );
+              }
+            } else if (req.url.endsWith("auth")) {
+              expect.unreachable("url given to user, bun publish should not request");
+            } else if (req.url.endsWith("done")) {
+              // send a fake response saying the user has authenticated successfully with the auth url
+              return new Response(JSON.stringify({ token: authToken }), { status: 200 });
+            }
+
+            expect.unreachable("unexpected url");
+          },
+        });
+
+        const authToken = await generateRegistryUser("otp" + (setAuthHeader ? "" : "noheader"), "otp");
+        const bunfig = `
+      [install]
+      cache = false
+      registry = { url = "http://localhost:${mockRegistry.port}", token = "${authToken}" }`;
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "otp-pkg-1"), { recursive: true, force: true }),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "otp-pkg-1",
+              version: "2.2.2",
+              dependencies: {
+                "otp-pkg-1": "2.2.2",
+              },
+            }),
+          ),
+        ]);
+
+        const { out, err, exitCode } = await publish(env, packageDir);
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
+  test("can publish a package then install it", async () => {
+    const bunfig = await authBunfig("basic");
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-1"), { recursive: true, force: true }),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "publish-pkg-1",
+          version: "1.1.1",
+          dependencies: {
+            "publish-pkg-1": "1.1.1",
+          },
+        }),
+      ),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+
+    const { out, err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "node_modules", "publish-pkg-1", "package.json"))).toBeTrue();
+  });
+  test("can publish from a tarball", async () => {
+    const bunfig = await authBunfig("tarball");
+    const json = {
+      name: "publish-pkg-2",
+      version: "2.2.2",
+      dependencies: {
+        "publish-pkg-2": "2.2.2",
+      },
+    };
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
+      write(join(packageDir, "package.json"), JSON.stringify(json)),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+
+    await pack(packageDir, env);
+
+    let { out, err, exitCode } = await publish(env, packageDir, "./publish-pkg-2-2.2.2.tgz");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "node_modules", "publish-pkg-2", "package.json"))).toBeTrue();
+
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
+      rm(join(packageDir, "bun.lockb"), { recursive: true, force: true }),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+
+    // now with an absoute path
+    ({ out, err, exitCode } = await publish(env, packageDir, join(packageDir, "publish-pkg-2-2.2.2.tgz")));
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
+  });
+
+  test("can publish workspace package", async () => {
+    const bunfig = await authBunfig("workspace");
+    const pkgJson = {
+      name: "publish-pkg-3",
+      version: "3.3.3",
+      dependencies: {
+        "publish-pkg-3": "3.3.3",
+      },
+    };
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+        }),
+      ),
+      write(join(packageDir, "packages", "publish-pkg-3", "package.json"), JSON.stringify(pkgJson)),
+    ]);
+
+    await publish(env, join(packageDir, "packages", "publish-pkg-3"));
+
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", "dependencies": { "publish-pkg-3": "3.3.3" } }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    expect(await file(join(packageDir, "node_modules", "publish-pkg-3", "package.json")).json()).toEqual(pkgJson);
+  });
+
+  describe("--dry-run", async () => {
+    test("does not publish", async () => {
+      const bunfig = await authBunfig("dryrun");
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "dry-run-1"), { recursive: true, force: true }),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "dry-run-1",
+            version: "1.1.1",
+            dependencies: {
+              "dry-run-1": "1.1.1",
+            },
+          }),
+        ),
+      ]);
+
+      const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
+      expect(exitCode).toBe(0);
+
+      expect(await exists(join(import.meta.dir, "packages", "dry-run-1"))).toBeFalse();
+    });
+    test("does not publish from tarball path", async () => {
+      const bunfig = await authBunfig("dryruntarball");
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "dry-run-2"), { recursive: true, force: true }),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "dry-run-2",
+            version: "2.2.2",
+            dependencies: {
+              "dry-run-2": "2.2.2",
+            },
+          }),
+        ),
+      ]);
+
+      await pack(packageDir, env);
+
+      const { out, err, exitCode } = await publish(env, packageDir, "./dry-run-2-2.2.2.tgz", "--dry-run");
+      expect(exitCode).toBe(0);
+
+      expect(await exists(join(import.meta.dir, "packages", "dry-run-2"))).toBeFalse();
+    });
+  });
+
+  describe("lifecycle scripts", async () => {
+    const script = `const fs = require("fs");
+    fs.writeFileSync(process.argv[2] + ".txt", \`
+prepublishOnly: \${fs.existsSync("prepublishOnly.txt")}
+publish: \${fs.existsSync("publish.txt")}
+postpublish: \${fs.existsSync("postpublish.txt")}
+prepack: \${fs.existsSync("prepack.txt")}
+prepare: \${fs.existsSync("prepare.txt")}
+postpack: \${fs.existsSync("postpack.txt")}\`)`;
+    const json = {
+      name: "publish-pkg-4",
+      version: "4.4.4",
+      scripts: {
+        // should happen in this order
+        "prepublishOnly": `${bunExe()} script.js prepublishOnly`,
+        "prepack": `${bunExe()} script.js prepack`,
+        "prepare": `${bunExe()} script.js prepare`,
+        "postpack": `${bunExe()} script.js postpack`,
+        "publish": `${bunExe()} script.js publish`,
+        "postpublish": `${bunExe()} script.js postpublish`,
+      },
+      dependencies: {
+        "publish-pkg-4": "4.4.4",
+      },
+    };
+
+    for (const arg of ["", "--dry-run"]) {
+      test(`should run in order${arg ? " (--dry-run)" : ""}`, async () => {
+        const bunfig = await authBunfig("lifecycle" + (arg ? "dry" : ""));
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "publish-pkg-4"), { recursive: true, force: true }),
+          write(join(packageDir, "package.json"), JSON.stringify(json)),
+          write(join(packageDir, "script.js"), script),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+        ]);
+
+        const { out, err, exitCode } = await publish(env, packageDir, arg);
+        expect(exitCode).toBe(0);
+
+        const results = await Promise.all([
+          file(join(packageDir, "prepublishOnly.txt")).text(),
+          file(join(packageDir, "prepack.txt")).text(),
+          file(join(packageDir, "prepare.txt")).text(),
+          file(join(packageDir, "postpack.txt")).text(),
+          file(join(packageDir, "publish.txt")).text(),
+          file(join(packageDir, "postpublish.txt")).text(),
+        ]);
+
+        expect(results).toEqual([
+          "\nprepublishOnly: false\npublish: false\npostpublish: false\nprepack: false\nprepare: false\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: false\nprepare: false\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: false\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: true\npostpack: false",
+          "\nprepublishOnly: true\npublish: false\npostpublish: false\nprepack: true\nprepare: true\npostpack: true",
+          "\nprepublishOnly: true\npublish: true\npostpublish: false\nprepack: true\nprepare: true\npostpack: true",
+        ]);
+      });
+    }
+
+    test("--ignore-scripts", async () => {
+      const bunfig = await authBunfig("ignorescripts");
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "publish-pkg-5"), { recursive: true, force: true }),
+        write(join(packageDir, "package.json"), JSON.stringify(json)),
+        write(join(packageDir, "script.js"), script),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+      ]);
+
+      const { out, err, exitCode } = await publish(env, packageDir, "--ignore-scripts");
+      expect(exitCode).toBe(0);
+
+      const results = await Promise.all([
+        exists(join(packageDir, "prepublishOnly.txt")),
+        exists(join(packageDir, "prepack.txt")),
+        exists(join(packageDir, "prepare.txt")),
+        exists(join(packageDir, "postpack.txt")),
+        exists(join(packageDir, "publish.txt")),
+        exists(join(packageDir, "postpublish.txt")),
+      ]);
+
+      expect(results).toEqual([false, false, false, false, false, false]);
+    });
+  });
+
+  test("attempting to publish a private package should fail", async () => {
+    const bunfig = await authBunfig("privatepackage");
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-6"), { recursive: true, force: true }),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "publish-pkg-6",
+          version: "6.6.6",
+          private: true,
+          dependencies: {
+            "publish-pkg-6": "6.6.6",
+          },
+        }),
+      ),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+
+    // should fail
+    let { out, err, exitCode } = await publish(env, packageDir);
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error: attempted to publish a private package");
+    expect(await exists(join(import.meta.dir, "packages", "publish-pkg-6-6.6.6.tgz"))).toBeFalse();
+
+    // try tarball
+    await pack(packageDir, env);
+    ({ out, err, exitCode } = await publish(env, packageDir, "./publish-pkg-6-6.6.6.tgz"));
+    expect(exitCode).toBe(1);
+    expect(err).toContain("error: attempted to publish a private package");
+    expect(await exists(join(packageDir, "publish-pkg-6-6.6.6.tgz"))).toBeTrue();
+  });
+
+  describe("access", async () => {
+    test("--access", async () => {
+      const bunfig = await authBunfig("accessflag");
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "publish-pkg-7"), { recursive: true, force: true }),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "publish-pkg-7",
+            version: "7.7.7",
+          }),
+        ),
+      ]);
+
+      // should fail
+      let { out, err, exitCode } = await publish(env, packageDir, "--access", "restricted");
+      expect(exitCode).toBe(1);
+      expect(err).toContain("error: unable to restrict access to unscoped package");
+
+      ({ out, err, exitCode } = await publish(env, packageDir, "--access", "public"));
+      expect(exitCode).toBe(0);
+
+      expect(await exists(join(import.meta.dir, "packages", "publish-pkg-7"))).toBeTrue();
+    });
+
+    for (const access of ["restricted", "public"]) {
+      test(`access ${access}`, async () => {
+        const bunfig = await authBunfig("access" + access);
+
+        const pkgJson = {
+          name: "@secret/publish-pkg-8",
+          version: "8.8.8",
+          dependencies: {
+            "@secret/publish-pkg-8": "8.8.8",
+          },
+          publishConfig: {
+            access,
+          },
+        };
+
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "@secret", "publish-pkg-8"), { recursive: true, force: true }),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+          write(join(packageDir, "package.json"), JSON.stringify(pkgJson)),
+        ]);
+
+        let { out, err, exitCode } = await publish(env, packageDir);
+        expect(exitCode).toBe(0);
+
+        await runBunInstall(env, packageDir);
+
+        expect(await file(join(packageDir, "node_modules", "@secret", "publish-pkg-8", "package.json")).json()).toEqual(
+          pkgJson,
+        );
+      });
+    }
+  });
+
+  describe("tag", async () => {
+    test("can publish with a tag", async () => {
+      const bunfig = await authBunfig("simpletag");
+      const pkgJson = {
+        name: "publish-pkg-9",
+        version: "9.9.9",
+        dependencies: {
+          "publish-pkg-9": "simpletag",
+        },
+      };
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "publish-pkg-9"), { recursive: true, force: true }),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+        write(join(packageDir, "package.json"), JSON.stringify(pkgJson)),
+      ]);
+
+      let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
+      expect(exitCode).toBe(0);
+
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "publish-pkg-9", "package.json")).json()).toEqual(pkgJson);
+    });
+  });
 });
 
 describe("package.json indentation", async () => {

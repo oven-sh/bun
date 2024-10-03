@@ -1548,7 +1548,10 @@ class ServerHttp2Stream extends Http2Stream {
       const fd = fs.openSync(path, "r");
       if (typeof statCheck === "function") {
         const stat = fs.fstatSync(fd);
-        statCheck(stat, headers);
+        statCheck(stat, headers, {
+          offset: offset || 0,
+          length: length !== undefined ? length : -1,
+        });
       }
 
       this.respond(headers, options);
@@ -1576,7 +1579,10 @@ class ServerHttp2Stream extends Http2Stream {
     const end = length || 0 + offset;
     if (typeof statCheck === "function") {
       const stat = fs.fstatSync(fd);
-      statCheck(stat, headers);
+      statCheck(stat, headers, {
+        offset: offset || 0,
+        length: length !== undefined ? length : -1,
+      });
     }
 
     this.respond(headers, options);
@@ -1766,7 +1772,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self) return;
       self.#connections++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
-      self.#parser.setStreamContext(stream_id, stream);
+      self.#parser?.setStreamContext(stream_id, stream);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Session, error: any, old_state: number) {
       if (!self) return;
@@ -2190,7 +2196,7 @@ class ClientHttp2Session extends Http2Session {
       if (stream_id % 2 === 0) {
         // pushStream
         const stream = new ClientHttp2Session(stream_id, self, null);
-        self.#parser.setStreamContext(stream_id, stream);
+        self.#parser?.setStreamContext(stream_id, stream);
       }
     },
     aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {

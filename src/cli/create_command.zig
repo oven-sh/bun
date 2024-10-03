@@ -1996,7 +1996,7 @@ pub const Example = struct {
 
         var is_expected_content_type = false;
         var content_type: string = "";
-        for (response.headers) |header| {
+        for (response.headers.list) |header| {
             if (strings.eqlCaseInsensitiveASCII(header.name, "content-type", true)) {
                 content_type = header.value;
 

@@ -1330,7 +1330,7 @@ pub const FetchHeaders = opaque {
     pub fn createFromPicoHeaders(
         pico_headers: anytype,
     ) *FetchHeaders {
-        const out = PicoHeaders{ .ptr = pico_headers.ptr, .len = pico_headers.len };
+        const out = PicoHeaders{ .ptr = pico_headers.list.ptr, .len = pico_headers.list.len };
         const result = shim.cppFn("createFromPicoHeaders_", .{
             &out,
         });

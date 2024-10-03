@@ -75,8 +75,8 @@ enum Bound {
 
 namespace ERR {
 
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance = false);
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value, bool instance = false);
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value);
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, ASCIILiteral val_expected_type, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral arg_name, size_t lower, size_t upper, JSC::JSValue actual);
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name, size_t lower, size_t upper, JSC::JSValue actual);
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, size_t bound_num, Bound bound, JSC::JSValue actual);

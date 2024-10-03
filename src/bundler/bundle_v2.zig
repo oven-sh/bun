@@ -5218,7 +5218,7 @@ pub const LinkerContext = struct {
                         Index.part(1),
                         "__require",
                         1,
-                    ) catch unreachable;
+                    ) catch {};
                 }
             },
             else => {

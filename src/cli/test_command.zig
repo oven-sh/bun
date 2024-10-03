@@ -175,15 +175,7 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        const debug_jest = blk: {
-            if (bun.getenvZ("BUN_DEBUG_jest")) |env| {
-                if (strings.eqlComptime(env, "1")) {
-                    break :blk true;
-                }
-            }
-            break :blk false;
-        };
-        if (bun.Environment.isRelease or !debug_jest) {
+        if (bun.Environment.isRelease or !Output.Scoped(.jest, false).isVisible()) {
             writeTestStatusLine(.pass, &writer);
             printTestLine(label, elapsed_ns, parent, false, writer);
         }

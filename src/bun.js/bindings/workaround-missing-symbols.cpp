@@ -143,13 +143,24 @@ int __wrap_fcntl(int fd, int cmd, ...)
     return fcntl(fd, cmd, arg);
 }
 
-int __wrap_fcntl64(int fd, int cmd, ...)
+typedef int (*fcntl64_func)(int fd, int cmd, ...);
+static fcntl64_func real_fcntl64 = NULL;
+
+static void init_real_fcntl64()
 {
-    va_list ap;
-    void* arg;
+    if (!real_fcntl64) {
+        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+    }
+}
 
-    va_start(ap, cmd);
+enum arg_type {
+    NO_ARG,
+    INT_ARG,
+    PTR_ARG
+};
 
+static enum arg_type get_arg_type(int cmd)
+{
     switch (cmd) {
     // Commands that take no argument
     case F_GETFD:
@@ -161,8 +172,7 @@ int __wrap_fcntl64(int fd, int cmd, ...)
 #ifdef F_GET_SEALS
     case F_GET_SEALS:
 #endif
-        va_end(ap);
-        return fcntl(fd, cmd);
+        return NO_ARG;
 
     // Commands that take an integer argument
     case F_DUPFD:
@@ -177,34 +187,45 @@ int __wrap_fcntl64(int fd, int cmd, ...)
 #ifdef F_ADD_SEALS
     case F_ADD_SEALS:
 #endif
-        arg = va_arg(ap, int*);
-        va_end(ap);
-        return fcntl(fd, cmd, *(int*)arg);
+        return INT_ARG;
 
-    // Commands that take a struct flock *
+    // Commands that take a pointer argument
     case F_GETLK:
     case F_SETLK:
     case F_SETLKW:
-        arg = va_arg(ap, struct flock**);
-        va_end(ap);
-        return fcntl(fd, cmd, *(struct flock**)arg);
-
-    // Commands that take a struct f_owner_ex *
     case F_GETOWN_EX:
     case F_SETOWN_EX:
-        arg = va_arg(ap, struct f_owner_ex**);
-        va_end(ap);
-        return fcntl(fd, cmd, *(struct f_owner_ex**)arg);
+        return PTR_ARG;
 
-#ifdef F_OFD_GETLK
-    // Commands that take a struct flock *
-    case F_OFD_GETLK:
-    case F_OFD_SETLK:
-    case F_OFD_SETLKW:
-        arg = va_arg(ap, struct flock**);
+    default:
+        return PTR_ARG; // Default to pointer for unknown commands
+    }
+}
+
+extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
+{
+    va_list ap;
+    enum arg_type type = get_arg_type(cmd);
+
+    init_real_fcntl64();
+
+    switch (type) {
+    case NO_ARG:
+        return real_fcntl64(fd, cmd);
+
+    case INT_ARG: {
+        va_start(ap, cmd);
+        int arg = va_arg(ap, int);
         va_end(ap);
-        return fcntl(fd, cmd, *(struct flock**)arg);
-#endif
+        return real_fcntl64(fd, cmd, arg);
+    }
+
+    case PTR_ARG: {
+        va_start(ap, cmd);
+        void* arg = va_arg(ap, void*);
+        va_end(ap);
+        return real_fcntl64(fd, cmd, arg);
+    }
 
     default:
         va_end(ap);

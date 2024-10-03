@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                bun.fmt.formatJSONStringUTF8(specifier),
+                bun.fmt.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -479,6 +479,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .allow_bytecode_cache = true,
             };
 
             defer {
@@ -573,8 +574,9 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (parse_result.already_bundled) {
+            if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
+                const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -582,6 +584,9 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
+                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                    .bytecode_cache_size = bytecode_slice.len,
+                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -1615,6 +1620,7 @@ pub const ModuleLoader = struct {
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
+                    .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1760,7 +1766,8 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (parse_result.already_bundled) {
+                if (parse_result.already_bundled != .none) {
+                    const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1768,6 +1775,9 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
 
@@ -2568,6 +2578,9 @@ pub const ModuleLoader = struct {
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
                     .source_code_needs_deref = false,
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_size = file.bytecode.len,
+                    .is_commonjs_module = file.module_format == .cjs,
                 };
             }
         }

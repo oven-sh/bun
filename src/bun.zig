@@ -96,6 +96,8 @@ pub const JSError = error{
     JSError,
 };
 
+pub const detectCI = @import("./ci_info.zig").detectCI;
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -298,6 +300,8 @@ pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.slice(iovec);
     return iovec.base[0..iovec.len];
 }
+
+pub const libarchive = @import("./libarchive/libarchive.zig");
 
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
@@ -2231,9 +2235,12 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.pos
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    if (comptime !Environment.isWindows) {
-        argv = try std.process.argsAlloc(allocator);
-    } else {
+    if (comptime Environment.isPosix) {
+        argv = try allocator.alloc([:0]const u8, std.os.argv.len);
+        for (0..argv.len) |i| {
+            argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
+        }
+    } else if (comptime Environment.isWindows) {
         // Zig's implementation of `std.process.argsAlloc()`on Windows platforms
         // is not reliable, specifically the way it splits the command line string.
         //
@@ -2283,6 +2290,8 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         }
 
         argv = out_argv;
+    } else {
+        argv = try std.process.argsAlloc(allocator);
     }
 }
 
@@ -3820,3 +3829,5 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
         }
     };
 }
+
+pub const bytecode_extension = ".jsc";

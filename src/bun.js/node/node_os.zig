@@ -792,11 +792,11 @@ pub const OS = struct {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows)
-            return JSC.ZigString.static("Windows_NT").toJS(globalThis)
+            return bun.String.static("Windows_NT").toJS(globalThis)
         else if (comptime Environment.isMac)
-            return JSC.ZigString.static("Darwin").toJS(globalThis)
+            return bun.String.static("Darwin").toJS(globalThis)
         else if (comptime Environment.isLinux)
-            return JSC.ZigString.static("Linux").toJS(globalThis);
+            return bun.String.static("Linux").toJS(globalThis);
 
         return JSC.ZigString.init(Global.os_name).withEncoding().toJS(globalThis);
     }

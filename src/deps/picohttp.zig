@@ -214,7 +214,7 @@ const StatusCodeFormatter = struct {
 
 pub const Response = struct {
     minor_version: usize = 0,
-    status_code: usize = 0,
+    status_code: u32 = 0,
     status: []const u8 = "",
     headers: []Header = &.{},
     bytes_read: c_int = 0,
@@ -295,7 +295,7 @@ pub const Response = struct {
             },
             else => Response{
                 .minor_version = @as(usize, @intCast(minor_version)),
-                .status_code = @as(usize, @intCast(status_code)),
+                .status_code = @as(u32, @intCast(status_code)),
                 .status = status,
                 .headers = src[0..@min(num_headers, src.len)],
                 .bytes_read = rc,

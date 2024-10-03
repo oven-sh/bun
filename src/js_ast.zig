@@ -28,6 +28,7 @@ const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
+const OOM = bun.OOM;
 
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
@@ -1908,7 +1909,6 @@ pub const E = struct {
         pub const Rope = struct {
             head: Expr,
             next: ?*Rope = null,
-            const OOM = error{OutOfMemory};
             pub fn append(this: *Rope, expr: Expr, allocator: std.mem.Allocator) OOM!*Rope {
                 if (this.next) |next| {
                     return try next.append(expr, allocator);
@@ -2251,6 +2251,7 @@ pub const E = struct {
     pub const String = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
+        // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
         data: []const u8 = "",
         prefer_template: bool = false,
 
@@ -2344,6 +2345,11 @@ pub const E = struct {
                 init(utf8)
             else
                 init(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false) catch bun.outOfMemory());
+        }
+
+        pub fn slice8(this: *const String) []const u8 {
+            bun.assert(!this.is_utf16);
+            return this.data;
         }
 
         pub fn slice16(this: *const String) []const u16 {
@@ -2491,7 +2497,7 @@ pub const E = struct {
                 strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
         }
 
-        pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {
+        pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
             if (s.isUTF8()) {
                 return s.data;
             } else {
@@ -2499,7 +2505,7 @@ pub const E = struct {
             }
         }
 
-        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) !bun.stringZ {
+        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.stringZ {
             if (s.isUTF8()) {
                 return allocator.dupeZ(u8, s.data);
             } else {
@@ -2507,9 +2513,9 @@ pub const E = struct {
             }
         }
 
-        pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) !bun.string {
+        pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
             if (s.isUTF8()) {
-                return try allocator.dupe(u8, s.data);
+                return allocator.dupe(u8, s.data);
             } else {
                 return strings.toUTF8Alloc(allocator, s.slice16());
             }
@@ -3343,7 +3349,7 @@ pub const Expr = struct {
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
-            var out_expr = JSONParser.ParseJSONForMacro(&source, log, allocator) catch {
+            var out_expr = JSONParser.parseForMacro(&source, log, allocator) catch {
                 return error.MacroFailed;
             };
             out_expr.loc = loc;
@@ -3418,8 +3424,52 @@ pub const Expr = struct {
         return this.data.toJS(allocator, globalObject, opts);
     }
 
+    pub inline fn isArray(this: *const Expr) bool {
+        return this.data == .e_array;
+    }
+
+    pub inline fn isObject(this: *const Expr) bool {
+        return this.data == .e_object;
+    }
+
     pub fn get(expr: *const Expr, name: string) ?Expr {
         return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
+    pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
+        if (asProperty(expr, name)) |q| {
+            if (q.expr.asString(allocator)) |str| {
+                return .{
+                    str,
+                    q.expr.loc,
+                };
+            }
+        }
+        return null;
+    }
+
+    pub fn getNumber(expr: *const Expr, name: string) ?struct { f64, logger.Loc } {
+        if (asProperty(expr, name)) |q| {
+            if (q.expr.asNumber()) |num| {
+                return .{
+                    num,
+                    q.expr.loc,
+                };
+            }
+        }
+        return null;
+    }
+
+    pub fn getStringCloned(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?string {
+        return if (asProperty(expr, name)) |q| q.expr.asStringCloned(allocator) else null;
+    }
+
+    pub fn getStringClonedZ(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?stringZ {
+        return if (asProperty(expr, name)) |q| q.expr.asStringZ(allocator) else null;
+    }
+
+    pub fn getArray(expr: *const Expr, name: string) ?ArrayIterator {
+        return if (asProperty(expr, name)) |q| q.expr.asArray() else null;
     }
 
     pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuery {
@@ -3516,11 +3566,11 @@ pub const Expr = struct {
             else => return null,
         }
     }
-    pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) ?u64 {
+    pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) OOM!?u64 {
         switch (expr.data) {
             .e_string => |str| {
                 if (str.isUTF8()) return hash_fn(str.data);
-                const utf8_str = str.string(allocator) catch return null;
+                const utf8_str = try str.string(allocator);
                 defer allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
@@ -3529,18 +3579,18 @@ pub const Expr = struct {
         }
     }
 
-    pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+    pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) OOM!?string {
         switch (expr.data) {
-            .e_string => |str| return str.stringCloned(allocator) catch bun.outOfMemory(),
-            .e_utf8_string => |str| return allocator.dupe(u8, str.data) catch bun.outOfMemory(),
+            .e_string => |str| return try str.stringCloned(allocator),
+            .e_utf8_string => |str| return try allocator.dupe(u8, str.data),
             else => return null,
         }
     }
 
-    pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) ?stringZ {
+    pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?stringZ {
         switch (expr.data) {
-            .e_string => |str| return str.stringZ(allocator) catch bun.outOfMemory(),
-            .e_utf8_string => |str| return allocator.dupeZ(u8, str.data) catch bun.outOfMemory(),
+            .e_string => |str| return try str.stringZ(allocator),
+            .e_utf8_string => |str| return try allocator.dupeZ(u8, str.data),
             else => return null,
         }
     }
@@ -3551,6 +3601,12 @@ pub const Expr = struct {
         if (std.meta.activeTag(expr.data) != .e_boolean) return null;
 
         return expr.data.e_boolean.value;
+    }
+
+    pub fn asNumber(expr: *const Expr) ?f64 {
+        if (expr.data != .e_number) return null;
+
+        return expr.data.e_number.value;
     }
 
     pub const EFlags = enum { none, ts_decorator };
@@ -5895,9 +5951,10 @@ pub const Expr = struct {
                 .e_undefined => std.math.nan(f64),
                 .e_string => |str| {
                     if (str.next != null) return null;
+                    if (!str.isUTF8()) return null;
 
                     // +'1' => 1
-                    return stringToEquivalentNumberValue(str.data);
+                    return stringToEquivalentNumberValue(str.slice8());
                 },
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
@@ -5905,9 +5962,10 @@ pub const Expr = struct {
                     .e_number => |num| num.value,
                     .e_string => |str| {
                         if (str.next != null) return null;
+                        if (!str.isUTF8()) return null;
 
                         // +'1' => 1
-                        return stringToEquivalentNumberValue(str.data);
+                        return stringToEquivalentNumberValue(str.slice8());
                     },
                     else => null,
                 },
@@ -6909,6 +6967,12 @@ pub const Ast = struct {
     }
 };
 
+pub const TlaCheck = struct {
+    depth: u32 = 0,
+    parent: Index.Int = Index.invalid.get(),
+    import_record_index: Index.Int = Index.invalid.get(),
+};
+
 /// Like Ast but slimmer and for bundling only.
 ///
 /// On Linux, the hottest function in the bundler is:
@@ -6935,6 +6999,8 @@ pub const BundledAst = struct {
     module_ref: Ref = Ref.None,
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
+    top_level_await_keyword: logger.Range,
+    tla_check: TlaCheck = .{},
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
@@ -6977,8 +7043,7 @@ pub const BundledAst = struct {
         force_cjs_to_esm: bool = false,
         has_lazy_export: bool = false,
         commonjs_module_exports_assigned_deoptimized: bool = false,
-
-        _: u1 = 0,
+        has_explicit_use_strict_directive: bool = false,
     };
 
     pub const empty = BundledAst.init(Ast.empty);
@@ -7002,6 +7067,7 @@ pub const BundledAst = struct {
             .module_ref = this.module_ref,
             .wrapper_ref = this.wrapper_ref,
             .require_ref = this.require_ref,
+            .top_level_await_keyword = this.top_level_await_keyword,
 
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
@@ -7028,6 +7094,7 @@ pub const BundledAst = struct {
             .force_cjs_to_esm = this.flags.force_cjs_to_esm,
             .has_lazy_export = this.flags.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
+            .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
         };
     }
 
@@ -7051,7 +7118,7 @@ pub const BundledAst = struct {
             .module_ref = ast.module_ref,
             .wrapper_ref = ast.wrapper_ref,
             .require_ref = ast.require_ref,
-
+            .top_level_await_keyword = ast.top_level_await_keyword,
             // These are used when bundling. They are filled in during the parser pass
             // since we already have to traverse the AST then anyway and the parser pass
             // is conveniently fully parallelized.
@@ -7080,6 +7147,7 @@ pub const BundledAst = struct {
                 .force_cjs_to_esm = ast.force_cjs_to_esm,
                 .has_lazy_export = ast.has_lazy_export,
                 .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
+                .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
             },
         };
     }
@@ -7496,9 +7564,16 @@ pub const Part = struct {
 };
 
 pub const Result = union(enum) {
-    already_bundled: void,
+    already_bundled: AlreadyBundled,
     cached: void,
     ast: Ast,
+
+    pub const AlreadyBundled = enum {
+        bun,
+        bun_cjs,
+        bytecode,
+        bytecode_cjs,
+    };
 };
 
 pub const StmtOrExpr = union(enum) {

@@ -599,6 +599,10 @@ pub const Format = enum {
         return this == .esm;
     }
 
+    pub inline fn isAlwaysStrictMode(this: Format) bool {
+        return this == .esm;
+    }
+
     pub const Map = bun.ComptimeStringMap(Format, .{
         .{ "esm", .esm },
         .{ "cjs", .cjs },
@@ -1484,6 +1488,7 @@ pub const BundleOptions = struct {
 
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
+    bytecode: bool = false,
 
     code_coverage: bool = false,
     debugger: bool = false,
@@ -1825,6 +1830,7 @@ pub const OutputFile = struct {
     hash: u64 = 0,
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
+    bytecode_index: u32 = std.math.maxInt(u32),
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
     dest_path: []const u8 = "",
 
@@ -1929,6 +1935,7 @@ pub const OutputFile = struct {
         input_loader: Loader,
         hash: ?u64 = null,
         source_map_index: ?u32 = null,
+        bytecode_index: ?u32 = null,
         output_path: string,
         size: ?usize = null,
         input_path: []const u8 = "",
@@ -1963,6 +1970,7 @@ pub const OutputFile = struct {
             .size_without_sourcemap = options.display_size,
             .hash = options.hash orelse 0,
             .output_kind = options.output_kind,
+            .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
             .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
             .is_executable = options.is_executable,
             .value = switch (options.data) {

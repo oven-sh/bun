@@ -715,6 +715,23 @@ static JSValue fetchESMSourceCode(
             return reject(exception);
         }
 
+        // This can happen if it's a `bun build --compile`'d CommonJS file
+        if (res->result.value.isCommonJSModule) {
+            auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
+
+            if (created.has_value()) {
+                return rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value())));
+            }
+
+            if constexpr (allowPromise) {
+                auto* exception = scope.exception();
+                scope.clearException();
+                return rejectedInternalPromise(globalObject, exception);
+            } else {
+                return {};
+            }
+        }
+
         auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
 
         auto tag = res->result.value.tag;

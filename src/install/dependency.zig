@@ -284,6 +284,25 @@ pub fn unscopedPackageName(name: []const u8) []const u8 {
     return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
 }
 
+pub fn isScopedPackageName(name: string) error{InvalidPackageName}!bool {
+    if (name.len == 0) return error.InvalidPackageName;
+
+    if (name[0] != '@') return false;
+
+    if (strings.indexOfChar(name, '/')) |slash| {
+        if (slash != 1 and slash != name.len - 1) {
+            return true;
+        }
+    }
+
+    return error.InvalidPackageName;
+}
+
+/// assumes version is valid
+pub fn withoutBuildTag(version: string) string {
+    if (strings.indexOfChar(version, '+')) |plus| return version[0..plus] else return version;
+}
+
 pub const Version = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},

@@ -492,7 +492,7 @@ pub export fn Bun__Process__send(
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        ex.put(globalObject, ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         if (callback.isFunction()) {
             Bun__Process__queueNextTick1(zigGlobal, callback, ex);
         } else {
@@ -624,8 +624,8 @@ pub const WebWorker = @import("./web_worker.zig").WebWorker;
 
 pub const ImportWatcher = union(enum) {
     none: void,
-    hot: *HotReloader.Watcher,
-    watch: *WatchReloader.Watcher,
+    hot: *Watcher,
+    watch: *Watcher,
 
     pub fn start(this: ImportWatcher) !void {
         switch (this) {
@@ -700,6 +700,77 @@ const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
 pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
 const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
 
+const AutoKiller = struct {
+    const log = Output.scoped(.AutoKiller, true);
+    processes: std.AutoArrayHashMapUnmanaged(*bun.spawn.Process, void) = .{},
+    enabled: bool = false,
+    ever_enabled: bool = false,
+
+    pub fn enable(this: *AutoKiller) void {
+        this.enabled = true;
+        this.ever_enabled = true;
+    }
+
+    pub fn disable(this: *AutoKiller) void {
+        this.enabled = false;
+    }
+
+    pub const Result = struct {
+        processes: u32 = 0,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+            switch (self.processes) {
+                0 => {},
+                1 => {
+                    try writer.writeAll("killed 1 dangling process");
+                },
+                else => {
+                    try std.fmt.format(writer, "killed {d} dangling processes", .{self.processes});
+                },
+            }
+        }
+    };
+
+    pub fn kill(this: *AutoKiller) Result {
+        return .{
+            .processes = this.killProcesses(),
+        };
+    }
+
+    fn killProcesses(this: *AutoKiller) u32 {
+        var count: u32 = 0;
+        while (this.processes.popOrNull()) |process| {
+            if (!process.key.hasExited()) {
+                log("process.kill {d}", .{process.key.pid});
+                count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.default) == .result));
+            }
+        }
+        return count;
+    }
+
+    pub fn clear(this: *AutoKiller) void {
+        if (this.processes.capacity() > 256) {
+            this.processes.clearAndFree(bun.default_allocator);
+        }
+
+        this.processes.clearRetainingCapacity();
+    }
+
+    pub fn onSubprocessSpawn(this: *AutoKiller, process: *bun.spawn.Process) void {
+        if (this.enabled)
+            this.processes.put(bun.default_allocator, process, {}) catch {};
+    }
+
+    pub fn onSubprocessExit(this: *AutoKiller, process: *bun.spawn.Process) void {
+        if (this.ever_enabled)
+            _ = this.processes.swapRemove(process);
+    }
+
+    pub fn deinit(this: *AutoKiller) void {
+        this.processes.deinit(bun.default_allocator);
+    }
+};
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -765,6 +836,9 @@ pub const VirtualMachine = struct {
     macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
     macro_mode: bool = false,
     no_macros: bool = false,
+    auto_killer: AutoKiller = .{
+        .enabled = false,
+    },
 
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,
@@ -877,6 +951,14 @@ pub const VirtualMachine = struct {
 
     pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
         return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
+        this.auto_killer.onSubprocessSpawn(process);
+    }
+
+    pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
+        this.auto_killer.onSubprocessExit(process);
     }
 
     pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
@@ -2561,6 +2643,8 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        this.auto_killer.deinit();
+
         if (source_code_printer) |print| {
             print.getMutableBuffer().deinit();
             print.ctx.written = &.{};
@@ -2666,7 +2750,7 @@ pub const VirtualMachine = struct {
                         "{s} resolving preload {}",
                         .{
                             @errorName(e),
-                            js_printer.formatJSONString(preload),
+                            bun.fmt.formatJSONString(preload),
                         },
                     ) catch unreachable;
                     return e;
@@ -2678,7 +2762,7 @@ pub const VirtualMachine = struct {
                         this.allocator,
                         "preload not found {}",
                         .{
-                            js_printer.formatJSONString(preload),
+                            bun.fmt.formatJSONString(preload),
                         },
                     ) catch unreachable;
                     return error.ModuleNotFound;
@@ -2752,7 +2836,7 @@ pub const VirtualMachine = struct {
             JSC.JSValue.fromCell(promise).ensureStillAlive();
             return promise;
         } else {
-            const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main)) orelse return error.JSError;
+            const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
 
@@ -4025,14 +4109,13 @@ pub const VirtualMachine = struct {
     }
 };
 
+pub const Watcher = GenericWatcher.NewWatcher;
 pub const HotReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, false);
 pub const WatchReloader = NewHotReloader(VirtualMachine, JSC.EventLoop, true);
-pub const Watcher = HotReloader.Watcher;
 extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
-        pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
         ctx: *Ctx,
@@ -4049,7 +4132,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             };
 
             clear_screen = clear_screen_flag;
-            const watcher = @This().Watcher.init(reloader, fs, bun.default_allocator) catch |err| {
+            const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
             };
@@ -4082,19 +4165,15 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub var clear_screen = false;
 
         pub const HotReloadTask = struct {
-            reloader: *Reloader,
             count: u8 = 0,
             hashes: [8]u32 = [_]u32{0} ** 8,
             concurrent_task: JSC.ConcurrentTask = undefined,
+            reloader: *Reloader,
 
             pub fn append(this: *HotReloadTask, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
-                    const reloader = this.reloader;
-                    this.* = .{
-                        .reloader = reloader,
-                        .count = 0,
-                    };
+                    this.count = 0;
                 }
 
                 this.hashes[this.count] = id;
@@ -4134,16 +4213,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 _ = this.reloader.pending_count.fetchAdd(1, .monotonic);
 
                 BunDebugger__willHotReload();
-                var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
-
-                that.* = this.*;
+                const that = bun.new(HotReloadTask, .{
+                    .reloader = this.reloader,
+                    .count = this.count,
+                    .hashes = this.hashes,
+                    .concurrent_task = undefined,
+                });
+                that.concurrent_task = .{ .task = Task.init(that), .auto_delete = false };
+                that.reloader.enqueueTaskConcurrent(&that.concurrent_task);
                 this.count = 0;
-                that.concurrent_task.task = Task.init(that);
-                this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
             }
 
             pub fn deinit(this: *HotReloadTask) void {
-                bun.default_allocator.destroy(this);
+                bun.destroy(this);
             }
         };
 
@@ -4164,7 +4246,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
                 this.bun_watcher = if (reload_immediately)
-                    .{ .watch = @This().Watcher.init(
+                    .{ .watch = Watcher.init(
+                        Reloader,
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
@@ -4173,7 +4256,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
                     } }
                 else
-                    .{ .hot = @This().Watcher.init(
+                    .{ .hot = Watcher.init(
+                        Reloader,
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
@@ -4183,12 +4267,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     } };
 
                 if (reload_immediately) {
-                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.watch);
                 } else {
-                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.hot);
+                    this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.hot);
                 }
             } else {
-                this.bun_watcher = @This().Watcher.init(
+                this.bun_watcher = Watcher.init(
+                    Reloader,
                     reloader,
                     this.bundler.fs,
                     bun.default_allocator,
@@ -4196,21 +4281,12 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
                 };
-                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+                this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
             clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
-        }
-
-        pub fn onMaybeWatchDirectory(watch: *@This().Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
-            // We don't want to watch:
-            // - Directories outside the root directory
-            // - Directories inside node_modules
-            if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                _ = watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false);
-            }
         }
 
         fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
@@ -4231,7 +4307,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
 
-        pub fn getContext(this: *@This()) *@This().Watcher {
+        pub fn getContext(this: *@This()) *Watcher {
             if (comptime @TypeOf(this.ctx.bun_watcher) == ImportWatcher) {
                 if (reload_immediately) {
                     return this.ctx.bun_watcher.watch;
@@ -4245,7 +4321,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
 
-        pub fn onFileUpdate(
+        pub noinline fn onFileUpdate(
             this: *@This(),
             events: []GenericWatcher.WatchEvent,
             changed_files: []?[:0]u8,
@@ -4262,16 +4338,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer ctx.flushEvictions();
             defer Output.flush();
 
-            const bundler = if (@TypeOf(this.ctx.bundler) == *bun.Bundler)
-                this.ctx.bundler
-            else
-                &this.ctx.bundler;
-
-            var fs: *Fs.FileSystem = bundler.fs;
-            var rfs: *Fs.FileSystem.RealFS = &fs.fs;
-            var resolver = &bundler.resolver;
+            const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
+            const rfs: *Fs.FileSystem.RealFS = &fs.fs;
             var _on_file_update_path_buf: bun.PathBuffer = undefined;
-
             var current_task: HotReloadTask = .{
                 .reloader = this,
             };
@@ -4314,7 +4383,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                            _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -4364,7 +4433,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                        _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
@@ -4376,7 +4445,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     bun.asByteSlice(changed_name_.?);
                                 if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                                const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                                const loader = (this.ctx.getLoaders().get(Fs.PathName.init(changed_name).ext) orelse .file);
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;

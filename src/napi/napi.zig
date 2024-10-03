@@ -65,23 +65,33 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const NapiHandleScope = opaque {
-    pub extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
-    pub extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
+    pub extern fn NapiHandleScope__open(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
+    pub extern fn NapiHandleScope__close(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
     extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
     extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 
-    pub fn push(env: napi_env, escapable: bool) ?*NapiHandleScope {
-        return NapiHandleScope__push(env, escapable);
+    /// Create a new handle scope in the given environment, or return null if creating one now is
+    /// unsafe (i.e. inside a finalizer)
+    pub fn open(env: napi_env, escapable: bool) ?*NapiHandleScope {
+        return NapiHandleScope__open(env, escapable);
     }
 
-    pub fn pop(self: ?*NapiHandleScope, env: napi_env) void {
-        NapiHandleScope__pop(env, self);
+    /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
+    /// Asserts that self is the current handle scope in env.
+    pub fn close(self: ?*NapiHandleScope, env: napi_env) void {
+        NapiHandleScope__close(env, self);
     }
 
+    /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
+    /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
+    /// native module doesn't keep it visible on the stack.
     pub fn append(env: napi_env, value: JSC.JSValue) void {
         NapiHandleScope__append(env, @intFromEnum(value));
     }
 
+    /// Move a value from the current handle scope (which must be escapable) to the reserved escape
+    /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
+    /// Returns an error if escape() has already been called on this handle scope.
     pub fn escape(self: *NapiHandleScope, value: JSC.JSValue) error{EscapeCalledTwice}!void {
         if (!NapiHandleScope__escape(self, @intFromEnum(value))) {
             return error.EscapeCalledTwice;
@@ -749,14 +759,14 @@ pub export fn napi_open_handle_scope(env: napi_env, result_: ?*napi_handle_scope
     const result = result_ orelse {
         return invalidArg();
     };
-    result.* = NapiHandleScope.push(env, false);
+    result.* = NapiHandleScope.open(env, false);
     return .ok;
 }
 
 pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_scope) napi_status {
     log("napi_close_handle_scope", .{});
     if (handle_scope) |scope| {
-        scope.pop(env);
+        scope.close(env);
     }
 
     return .ok;
@@ -830,13 +840,13 @@ pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_es
     const result = result_ orelse {
         return invalidArg();
     };
-    result.* = NapiHandleScope.push(env, true);
+    result.* = NapiHandleScope.open(env, true);
     return .ok;
 }
 pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status {
     log("napi_close_escapable_handle_scope", .{});
     if (scope) |s| {
-        s.pop(env);
+        s.close(env);
     }
     return .ok;
 }
@@ -1203,8 +1213,8 @@ pub const napi_async_work = struct {
     }
 
     pub fn runFromJS(this: *napi_async_work) void {
-        const handle_scope = NapiHandleScope.push(this.global, false);
-        defer if (handle_scope) |scope| scope.pop(this.global);
+        const handle_scope = NapiHandleScope.open(this.global, false);
+        defer if (handle_scope) |scope| scope.close(this.global);
         this.complete.?(
             this.global,
             if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
@@ -1583,8 +1593,8 @@ pub const ThreadSafeFunction = struct {
                     log("call() {}", .{str});
                 }
 
-                const handle_scope = NapiHandleScope.push(globalObject, false);
-                defer if (handle_scope) |scope| scope.pop(globalObject);
+                const handle_scope = NapiHandleScope.open(globalObject, false);
+                defer if (handle_scope) |scope| scope.close(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, cb.js), this.ctx, task);
             },
         }

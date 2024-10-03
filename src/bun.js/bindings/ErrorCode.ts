@@ -47,6 +47,7 @@ export default [
   ["ERR_INVALID_STATE", Error, "Error"],
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError, "RangeError"],
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
+  ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

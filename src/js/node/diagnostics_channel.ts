@@ -1,5 +1,9 @@
 // Hardcoded module "node:diagnostics_channel"
 // Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
+
+const { validateFunction } = require("internal/validators");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
 
@@ -208,7 +212,7 @@ function channel(name) {
   if (channel) return channel;
 
   if (typeof name !== "string" && typeof name !== "symbol") {
-    throw new ERR_INVALID_ARG_TYPE("channel", ["string", "symbol"], name);
+    throw ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
   }
 
   return new Channel(name);
@@ -233,7 +237,7 @@ const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
 function assertChannel(value, name) {
   if (!(value instanceof Channel)) {
-    throw new ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
+    throw ERR_INVALID_ARG_TYPE(name, ["Channel"], value);
   }
 }
 
@@ -260,7 +264,7 @@ class TracingChannel {
       this.asyncEnd = asyncEnd;
       this.error = error;
     } else {
-      throw new ERR_INVALID_ARG_TYPE("nameOrChannels", ["string", "object", "Channel"], nameOrChannels);
+      throw ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
     }
   }
 
@@ -366,9 +370,7 @@ class TracingChannel {
     }
 
     const callback = ArrayPrototypeAt.$call(args, position);
-    if (typeof callback !== "function") {
-      throw new ERR_INVALID_ARG_TYPE("callback", ["function"], callback);
-    }
+    validateFunction(callback, "callback");
     ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
     return start.runStores(context, () => {
@@ -387,21 +389,6 @@ class TracingChannel {
 
 function tracingChannel(nameOrChannels) {
   return new TracingChannel(nameOrChannels);
-}
-
-class ERR_INVALID_ARG_TYPE extends TypeError {
-  constructor(name, expected, actual) {
-    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
-
-function validateFunction(callable, field) {
-  if (typeof callable !== "function") {
-    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
 }
 
 export default {

@@ -2251,6 +2251,7 @@ pub const E = struct {
     pub const String = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
+        // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
         data: []const u8 = "",
         prefer_template: bool = false,
 
@@ -2344,6 +2345,11 @@ pub const E = struct {
                 init(utf8)
             else
                 init(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false) catch bun.outOfMemory());
+        }
+
+        pub fn slice8(this: *const String) []const u8 {
+            bun.assert(!this.is_utf16);
+            return this.data;
         }
 
         pub fn slice16(this: *const String) []const u16 {
@@ -5945,9 +5951,10 @@ pub const Expr = struct {
                 .e_undefined => std.math.nan(f64),
                 .e_string => |str| {
                     if (str.next != null) return null;
+                    if (!str.isUTF8()) return null;
 
                     // +'1' => 1
-                    return stringToEquivalentNumberValue(str.data);
+                    return stringToEquivalentNumberValue(str.slice8());
                 },
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
@@ -5955,9 +5962,10 @@ pub const Expr = struct {
                     .e_number => |num| num.value,
                     .e_string => |str| {
                         if (str.next != null) return null;
+                        if (!str.isUTF8()) return null;
 
                         // +'1' => 1
-                        return stringToEquivalentNumberValue(str.data);
+                        return stringToEquivalentNumberValue(str.slice8());
                     },
                     else => null,
                 },

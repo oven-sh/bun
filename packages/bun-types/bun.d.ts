@@ -5261,6 +5261,12 @@ declare module "bun" {
   const version: string;
 
   /**
+   * The current version of Bun with the shortened commit sha of the build
+   * @example "v1.1.30 (d09df1af)"
+   */
+  const version_with_sha: string;
+
+  /**
    * The git sha at the time the currently-running version of Bun was compiled
    * @example
    * "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"

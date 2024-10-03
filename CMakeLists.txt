@@ -43,10 +43,11 @@ include(BuildBun)
 
 # --- Analysis ---
 
-include(RunClangFormat)
-include(RunClangTidy)
-include(RunZigFormat)
+optionx(ENABLE_ANALYSIS BOOL "If analysis targets should be enabled" DEFAULT OFF)
 
-if (ENABLE_PRETTIER)
+if(ENABLE_ANALYSIS)
+  include(RunClangFormat)
+  include(RunClangTidy)
+  include(RunZigFormat)
   include(RunPrettier)
 endif()

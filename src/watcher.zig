@@ -931,7 +931,7 @@ pub const NewWatcher = if (true)
                     if (all_events.len == 0) continue :restart;
                     all_events = all_events[0 .. last_event_index + 1];
 
-                    Output.println("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
+                    log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
                     this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
                 }

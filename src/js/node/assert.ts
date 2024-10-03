@@ -655,7 +655,7 @@ var require_assertion_error = __commonJS({
       function AssertionError2(options) {
         var _this;
         if ((_classCallCheck(this, AssertionError2), _typeof(options) !== "object" || options === null))
-          throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+          throw new ERR_INVALID_ARG_TYPE("options", "object", options);
         var message = options.message,
           operator = options.operator,
           stackStartFn = options.stackStartFn,
@@ -1083,7 +1083,7 @@ var require_assert = __commonJS({
           : expected.$call({}, actual) === !0;
     }
     function getActual(fn) {
-      if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "Function", fn);
+      if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "function", fn);
       try {
         fn();
       } catch (e) {

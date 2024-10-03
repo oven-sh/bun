@@ -3065,7 +3065,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = Buffer.fromJS(ctx.ptr(), arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer: Buffer = Buffer.fromJS(ctx.ptr(), buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "buffer is required",
@@ -3142,6 +3143,12 @@ pub const Arguments = struct {
                         }
                     }
                 }
+            }
+
+            if (args.length > 0 and buffer.slice().len == 0) {
+                var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
+                return null;
             }
 
             return args;

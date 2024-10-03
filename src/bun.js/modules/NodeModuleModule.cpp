@@ -15,6 +15,7 @@
 
 #include "NodeModuleModule.h"
 
+#include "ErrorCode.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 namespace Bun {
@@ -217,19 +218,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
 
   return JSValue::encode(jsString(globalObject, prefix, code, suffix));
 }
-
+extern "C" void Bun__Node__Path_joinWTF(BunString *lhs, const char *rhs,
+                                        size_t len, BunString *result);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
   JSC::VM &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
   if (callFrame->argumentCount() < 1) {
-    throwTypeError(globalObject, scope,
-                   "createRequire() requires at least one argument"_s);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode({}));
+    return Bun::throwError(globalObject, scope,
+                           Bun::ErrorCode::ERR_MISSING_ARGS,
+                           "createRequire() requires at least one argument"_s);
   }
 
   auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+  RETURN_IF_EXCEPTION(scope, {});
 
   if (val.startsWith("file://"_s)) {
     WTF::URL url(val);
@@ -245,6 +248,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
       RELEASE_AND_RETURN(scope, JSValue::encode({}));
     }
     val = url.fileSystemPath();
+  }
+
+  bool trailingSlash = val.endsWith('/');
+#if OS(WINDOWS)
+  if (val.endsWith('\\')) {
+    trailingSlash = true;
+  }
+#endif
+
+  // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
+  if (trailingSlash) {
+    BunString lhs = Bun::toString(val);
+    BunString result;
+    Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1, &result);
+    val = result.toWTFString();
+    if (!val.isNull()) {
+      ASSERT(val.impl()->refCount() == 2);
+      val.impl()->deref();
+    }
   }
 
   RETURN_IF_EXCEPTION(scope, {});

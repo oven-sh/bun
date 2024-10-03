@@ -1104,6 +1104,21 @@ pub inline fn joinPosixT(comptime T: type, paths: []const []const T, buf: []T, b
     return normalizePosixT(T, joined, buf);
 }
 
+export fn Bun__Node__Path_joinWTF(lhs: *bun.String, rhs_ptr: [*]const u8, rhs_len: usize, result: *bun.String) void {
+    const rhs = rhs_ptr[0..rhs_len];
+    var buf: [PATH_SIZE(u8)]u8 = undefined;
+    var buf2: [PATH_SIZE(u8)]u8 = undefined;
+    var slice = lhs.toUTF8(bun.default_allocator);
+    defer slice.deinit();
+    if (Environment.isWindows) {
+        const win = joinWindowsT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
+        result.* = bun.String.createUTF8(win);
+    } else {
+        const posix = joinPosixT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
+        result.* = bun.String.createUTF8(posix);
+    }
+}
+
 /// Based on Node v21.6.1 path.win32.join:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L425
 pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) []const T {

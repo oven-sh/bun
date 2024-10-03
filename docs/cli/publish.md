@@ -1,6 +1,6 @@
 ## `bun publish`
 
-To publish a package to the npm registry, use `bun publish`. `bun publish` will automatically pack your package into a tarball and send it off to to the configured npm registry from your config files.
+To publish a package to the npm registry, use `bun publish`. `bun publish` will automatically pack your package into a tarball and send it off to the configured npm registry from your config files.
 
 ```sh
 $ bun publish

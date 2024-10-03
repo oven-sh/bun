@@ -883,26 +883,33 @@ else()
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
-    -Wl,--wrap=stat64
-    -Wl,--wrap=pow
+    -Wl,--wrap=cosf
     -Wl,--wrap=exp
     -Wl,--wrap=expf
-    -Wl,--wrap=log
-    -Wl,--wrap=log2
-    -Wl,--wrap=lstat
-    -Wl,--wrap=stat64
-    -Wl,--wrap=stat
+    -Wl,--wrap=fcntl
+    -Wl,--wrap=fcntl64
+    -Wl,--wrap=fmod
+    -Wl,--wrap=fmodf
     -Wl,--wrap=fstat
-    -Wl,--wrap=fstatat
-    -Wl,--wrap=lstat64
     -Wl,--wrap=fstat64
+    -Wl,--wrap=fstatat
     -Wl,--wrap=fstatat64
+    -Wl,--wrap=log
+    -Wl,--wrap=log10f
+    -Wl,--wrap=log2
+    -Wl,--wrap=log2f
+    -Wl,--wrap=logf
+    -Wl,--wrap=lstat
+    -Wl,--wrap=lstat64
     -Wl,--wrap=mknod
     -Wl,--wrap=mknodat
+    -Wl,--wrap=pow
+    -Wl,--wrap=sincosf
+    -Wl,--wrap=sinf
+    -Wl,--wrap=stat
+    -Wl,--wrap=stat64
     -Wl,--wrap=statx
-    -Wl,--wrap=fmod
+    -Wl,--wrap=tanf
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro

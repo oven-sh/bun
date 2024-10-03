@@ -2083,14 +2083,14 @@ pub const H2FrameParser = struct {
     }
 
     pub fn readBytes(this: *H2FrameParser, bytes: []const u8) usize {
-        log("read", .{});
+        log("read {s}", .{bytes});
         if (this.isServer and this.prefaceReceivedLen < 24) {
             // Handle Server Preface
             const preface_missing: usize = 24 - this.prefaceReceivedLen;
             const preface_available = @min(preface_missing, bytes.len);
             if (!strings.eql(bytes[0..preface_available], "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"[this.prefaceReceivedLen .. preface_available + this.prefaceReceivedLen])) {
                 // invalid preface
-                this.dispatchWithExtra(.onError, JSC.JSValue.jsNumber(@intFromEnum(ErrorCode.PROTOCOL_ERROR)), JSC.JSValue.jsNumber(this.lastStreamID));
+                this.sendGoAway(0, ErrorCode.PROTOCOL_ERROR, "Invalid preface", this.lastStreamID, true);
                 return bytes.len;
             }
             this.prefaceReceivedLen += @intCast(preface_available);

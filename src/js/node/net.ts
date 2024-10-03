@@ -1034,7 +1034,7 @@ class Server extends EventEmitter {
       const options = this[bunSocketServerOptions];
       let contexts: Map<string, any> | null = null;
       if (typeof bunTLS === "function") {
-        [tls, TLSSocketClass] = bunTLS.$call(this, port, isIP(hostname) ? "" : hostname, false);
+        [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
         contexts = tls.contexts;

@@ -1783,7 +1783,6 @@ class ServerHttp2Session extends Http2Session {
   #queue: Array<Buffer> = [];
   #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
-  [bunHTTP2WantTrailers]: any;
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
@@ -2181,6 +2180,7 @@ class ServerHttp2Session extends Http2Session {
 
   destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
+
     this.#closed = true;
     this.#connected = false;
     if (socket) {

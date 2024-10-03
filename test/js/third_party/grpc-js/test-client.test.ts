@@ -64,7 +64,7 @@ describe("Client without a server", () => {
     client.close();
   });
   // This test is flaky because error.stack sometimes undefined aka TypeError: undefined is not an object (evaluating 'error.stack.split')
-  it.skip("should fail multiple calls to the nonexistent server", function (done) {
+  it("should fail multiple calls to the nonexistent server", function (done) {
     // Regression test for https://github.com/grpc/grpc-node/issues/1411
     client.makeUnaryRequest(
       "/service/method",

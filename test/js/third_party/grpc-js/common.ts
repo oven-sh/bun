@@ -1,18 +1,19 @@
 import * as grpc from "@grpc/grpc-js";
 import * as loader from "@grpc/proto-loader";
-import { which } from "bun";
+import { bunExe } from "harness";
 import { readFileSync } from "fs";
 import path from "node:path";
 import { AddressInfo } from "ws";
 
-const nodeExecutable = which("node");
+const nodeExecutable = bunExe();
 async function nodeEchoServer(env: any) {
   env = env || {};
   if (!nodeExecutable) throw new Error("node executable not found");
   const subprocess = Bun.spawn([nodeExecutable, path.join(import.meta.dir, "node-server.fixture.js")], {
     stdout: "pipe",
+    stderr: "inherit",
     stdin: "pipe",
-    env: env,
+    env: { ...env, BUN_DEBUG_QUIET_LOGS: "1" },
   });
   const reader = subprocess.stdout.getReader();
   const data = await reader.read();

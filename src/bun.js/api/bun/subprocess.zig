@@ -1437,16 +1437,19 @@ pub const Subprocess = struct {
         }
     };
 
-    pub fn onProcessExit(this: *Subprocess, _: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
+    pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
         log("onProcessExit()", .{});
         const this_jsvalue = this.this_jsvalue;
         const globalThis = this.globalThis;
+        const jsc_vm = globalThis.bunVM();
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
         this.clearAbortSignal();
         defer this.deref();
         defer this.disconnectIPC(true);
+
+        jsc_vm.onProcessExit(process);
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;
@@ -1480,7 +1483,7 @@ pub const Subprocess = struct {
         var did_update_has_pending_activity = false;
         defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
 
-        const loop = globalThis.bunVM().eventLoop();
+        const loop = jsc_vm.eventLoop();
 
         if (!is_sync) {
             if (this.exit_promise.trySwap()) |promise| {
@@ -2322,6 +2325,9 @@ pub const Subprocess = struct {
                 subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
                 abort_signal = null;
             }
+            if (!subprocess.process.hasExited()) {
+                jsc_vm.onProcessSpawn(subprocess.process);
+            }
             return out;
         }
 
@@ -2341,6 +2347,10 @@ pub const Subprocess = struct {
                     subprocess.process.wait(true);
                 },
             }
+        }
+
+        if (!subprocess.process.hasExited()) {
+            jsc_vm.onProcessSpawn(subprocess.process);
         }
 
         while (subprocess.hasPendingActivityNonThreadsafe()) {
@@ -2366,8 +2376,13 @@ pub const Subprocess = struct {
         const exitCode = subprocess.getExitCode(globalThis);
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
-        const resource_usage = subprocess.createResourceUsageObject(globalThis);
+        const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
         subprocess.finalize();
+
+        if (globalThis.hasException()) {
+            // e.g. a termination exception.
+            return .zero;
+        }
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
         sync_value.put(globalThis, JSC.ZigString.static("exitCode"), exitCode);

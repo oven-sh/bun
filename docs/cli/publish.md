@@ -38,8 +38,6 @@ $ bun publish ./package.tgz
 **Note** - `bun publish` will not run lifecycle scripts (`prepublishOnly/prepack/prepare/postpack/publish/postpublish`) if a tarball path is provided. Scripts will only be run if the package is packed by `bun publish`.
 {% /callout %}
 
-## Flags
-
 ### `--access`
 
 The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Unscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.

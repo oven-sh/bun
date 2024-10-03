@@ -77,6 +77,8 @@ const {
   ObjectKeys,
   ObjectPrototypeHasOwnProperty,
   SafeSet,
+  DatePrototypeToUTCString,
+  DatePrototypeGetMilliseconds,
 } = require("internal/primordials");
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
@@ -127,6 +129,22 @@ const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
  */
 function checkIsHttpToken(val) {
   return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
+}
+let utcCache;
+
+function utcDate() {
+  if (!utcCache) cache();
+  return utcCache;
+}
+
+function cache() {
+  const d = new Date();
+  utcCache = DatePrototypeToUTCString(d);
+  setTimeout(resetCache, 1000 - DatePrototypeGetMilliseconds(d)).unref();
+}
+
+function resetCache() {
+  utcCache = undefined;
 }
 
 function getAuthority(headers) {
@@ -1287,6 +1305,7 @@ class Http2Stream extends Duplex {
   [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
   [bunHTTP2StreamResponded]: boolean = false;
   [bunHTTP2Headers]: any;
+  [kInfoHeaders]: any;
   #sentTrailers: any;
   constructor(streamId, session, headers) {
     super();
@@ -1615,8 +1634,13 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
+    if (!this[kInfoHeaders]) {
+      this[kInfoHeaders] = [headers];
+    } else {
+      ArrayPrototypePush(this[kInfoHeaders], headers);
+    }
+
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
-    this[kInfoHeaders] = headers;
   }
   respond(headers: any, options?: any) {
     if (this.destroyed || this.closed) {
@@ -1655,10 +1679,15 @@ class ServerHttp2Stream extends Http2Stream {
     const session = this[bunHTTP2Session];
     assertSession(session);
     this.headersSent = true;
-
+    this[bunHTTP2Headers] = headers;
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
+      if (options.sendDate == null || options.sendDate) {
+        if (headers["date"] === null || headers["date"] === undefined) {
+          headers["date"] = utcDate();
+        }
+      }
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
     }
     return;
@@ -1793,7 +1822,6 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
-      stream[bunHTTP2Headers] = headers;
 
       let cookie = headers["cookie"];
       if ($isArray(cookie)) {
@@ -2212,7 +2240,6 @@ class ClientHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
-      stream[bunHTTP2Headers] = headers;
 
       let status: string | number = headers[":status"] as string;
       if (status) {
@@ -2683,6 +2710,11 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options === "undefined") {
       this.#parser.request(stream_id, req, headers, sensitiveNames);
     } else {
+      if (options.sendDate == null || options.sendDate) {
+        if (headers["date"] === null || headers["date"] === undefined) {
+          headers["date"] = utcDate();
+        }
+      }
       this.#parser.request(stream_id, req, headers, sensitiveNames, options);
     }
     req.emit("ready");

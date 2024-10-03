@@ -172,6 +172,8 @@ export default {
       }
     },
   ),
+  DatePrototypeGetMilliseconds: uncurryThis(Date.prototype.getMilliseconds),
+  DatePrototypeToUTCString: uncurryThis(Date.prototype.toUTCString),
   SetPrototypeGetSize: getGetter(Set, "size"),
   SetPrototypeEntries: uncurryThis(Set.prototype.entries),
   SetPrototypeValues: uncurryThis(Set.prototype.values),

@@ -98,6 +98,14 @@ Enter OTP: 123456
 ...
 ```
 
+### `--otp`
+
+Provide a one-time password directly to the CLI. If the password is valid, this will skip the extra prompt for a one-time password before publishing. Example usage:
+
+```sh
+$ bun publish --otp 123456
+```
+
 ### `--gzip-level`
 
 Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).

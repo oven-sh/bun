@@ -118,15 +118,17 @@ pub const PublishCommand = struct {
                     unpacked_size += @intCast(@max(0, size));
                     total_files += @intFromBool(next.kind == .file);
 
-                    Output.pretty("<b><cyan>packed<r> {} {}\n", .{
-                        bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
-                        bun.fmt.fmtOSPath(pathname, .{}),
-                    });
-
                     // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
                     if (strings.indexOfAnyT(bun.OSPathChar, pathname, "/\\")) |slash| {
                         const stripped = pathname[slash + 1 ..];
                         if (stripped.len == 0) continue;
+
+                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                            bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
+                            bun.fmt.fmtOSPath(stripped, .{}),
+                        });
+
+                        if (next.kind != .file) continue;
 
                         if (strings.indexOfAnyT(bun.OSPathChar, stripped, "/\\") == null) {
 
@@ -143,6 +145,11 @@ pub const PublishCommand = struct {
                                 };
                             }
                         }
+                    } else {
+                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                            bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
+                            bun.fmt.fmtOSPath(pathname, .{}),
+                        });
                     }
                 }
 

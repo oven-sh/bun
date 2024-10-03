@@ -9694,8 +9694,10 @@ pub const PackageManager = struct {
             }
 
             if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
-                if (args.option("--destination")) |dest| {
-                    cli.pack_destination = dest;
+                if (comptime subcommand != .publish) {
+                    if (args.option("--destination")) |dest| {
+                        cli.pack_destination = dest;
+                    }
                 }
 
                 if (args.option("--gzip-level")) |level| {

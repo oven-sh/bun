@@ -57,6 +57,9 @@ const results = await Promise.allSettled(
     const generated_entrypoint = join(kit_dir, `.runtime-${side}.generated.ts`);
 
     writeFileSync(generated_entrypoint, combined_source);
+    using _ = { [Symbol.dispose] : () => {
+      rmSync(generated_entrypoint);
+    }};
 
     result = await Bun.build({
       entrypoints: [generated_entrypoint],
@@ -66,7 +69,6 @@ const results = await Promise.allSettled(
         identifiers: !debug,
       },
     });
-    rmSync(generated_entrypoint);
     if (!result.success) throw new AggregateError(result.logs);
     assert(result.outputs.length === 1, "must bundle to a single file");
     // @ts-ignore

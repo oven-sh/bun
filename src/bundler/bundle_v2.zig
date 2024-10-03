@@ -10408,18 +10408,43 @@ pub const LinkerContext = struct {
             // broken module. It is DevServer's job to create and send HMR patches.
             if (c.kit_dev_server) |dev_server| {
                 const input_file_sources = c.parse_graph.input_files.items(.source);
+                const import_records = c.parse_graph.ast.items(.import_records);
                 const targets = c.parse_graph.ast.items(.target);
-                for (chunks) |chunk| {
-                    for (
-                        chunk.content.javascript.parts_in_chunk_in_order,
-                        chunk.compile_results_for_chunk,
-                    ) |part_range, compile_result| {
-                        try dev_server.receiveChunk(
-                            input_file_sources[part_range.source_index.get()].path.text,
-                            targets[part_range.source_index.get()].kitRenderer(),
-                            compile_result,
-                        );
-                    }
+
+                const resolved_index_cache = try c.allocator.alloc(u32, input_file_sources.len * 2);
+                const server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator, input_file_sources.len);
+
+                var ctx: bun.bake.DevServer.ReceiveContext = .{
+                    .import_records = import_records,
+                    .sources = input_file_sources,
+                    .resolved_index_cache = resolved_index_cache,
+                    .server_seen_bit_set = server_seen_bit_set,
+                };
+
+                bun.assert(chunks.len == 1);
+                const chunk = chunks[0];
+
+                // Pass 1, update the graph with all rebundle files
+                for (
+                    chunk.content.javascript.parts_in_chunk_in_order,
+                    chunk.compile_results_for_chunk,
+                ) |part_range, compile_result| {
+                    try dev_server.receiveChunk(
+                        &ctx,
+                        part_range.source_index,
+                        targets[part_range.source_index.get()].kitRenderer(),
+                        compile_result,
+                    );
+                }
+
+                // Pass 2, resolve all imports
+                for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+                    try dev_server.processChunkDependencies(
+                        &ctx,
+                        part_range.source_index,
+                        targets[part_range.source_index.get()].kitRenderer(),
+                        c.allocator,
+                    );
                 }
 
                 return std.ArrayList(options.OutputFile).init(bun.default_allocator);

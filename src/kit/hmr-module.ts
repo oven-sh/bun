@@ -8,6 +8,7 @@ export type ExportsCallbackFunction = (new_exports: any) => void;
 
 export const enum State {
   Loading,
+  Boundary,
   Error,
 }
 
@@ -23,6 +24,7 @@ export const enum LoadModuleType {
  * it will not be considered a breaking change.
  */
 export class HotModule<E = any> {
+  id: Id;
   exports: E = {} as E;
 
   _state = State.Loading;
@@ -30,23 +32,31 @@ export class HotModule<E = any> {
   __esModule = false;
   _import_meta: ImportMeta | undefined = undefined;
   _cached_failure: any = undefined;
+  // modules that import THIS module
+  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map;
 
-  constructor(public id: Id) {}
+  constructor(id: Id) { this.id = id; }
 
-  require(id: Id, onReload: null | ExportsCallbackFunction) {
-    return loadModule(id, LoadModuleType.UserDynamic).exports;
+  require(id: Id, onReload?: ExportsCallbackFunction) {
+    const mod = loadModule(id, LoadModuleType.UserDynamic);
+    mod._deps.set(this, onReload);
+    return mod.exports;
   }
 
-  importSync(id: Id, onReload: null | ExportsCallbackFunction) {
-    const module = loadModule(id, LoadModuleType.AssertPresent);
-    const { exports, __esModule } = module;
-    return __esModule ? exports : (module._ext_exports ??= { ...exports, default: exports });
+  importSync(id: Id, onReload?: ExportsCallbackFunction) {
+    const mod = loadModule(id, LoadModuleType.AssertPresent);
+    // insert into the map if not present
+    mod._deps.set(this, onReload);
+    const { exports, __esModule } = mod;
+    return __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
   }
 
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
-    const module = loadModule(specifier, LoadModuleType.UserDynamic);
-    const { exports, __esModule } = module;
-    return __esModule ? exports : (module._ext_exports ??= { ...exports, default: exports });
+    const mod = loadModule(specifier, LoadModuleType.UserDynamic);
+    // insert into the map if not present
+    mod._deps.set(this, mod._deps.get(this));
+    const { exports, __esModule } = mod;
+    return __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
   }
 
   importMeta() {
@@ -108,7 +118,10 @@ export function replaceModule(key: Id, load: ModuleLoadFunction) {
   if (module) {
     module.exports = {};
     load(module);
-    // TODO: repair live bindings
+    const { exports } = module;
+    for (const updater of module._deps.values()) {
+      updater?.(exports);
+    }
   }
 }
 

@@ -20,9 +20,16 @@ pub const Options = struct {
     // TODO: make it required to inherit a js VM
 };
 
-/// Used for all server-wide allocations. In debug, this shows up in a separate named heap.
-/// Thread-safe.
+// The fields `client_graph`, `server_graph`, and `directory_watchers` all
+// use `@fieldParentPointer` to access DevServer's state. This pattern has
+// made it easier to group related fields together, but one must remember
+// those structures still depend on the DevServer pointer.
+
+/// Used for all server-wide allocations. In debug, this shows up in
+/// a separate named heap. Thread-safe.
 allocator: Allocator,
+/// Project root directory. For the HMR runtime, its
+/// module IDs are strings relative to this.
 cwd: []const u8,
 
 // UWS App
@@ -38,7 +45,7 @@ listener: ?*App.ListenSocket,
 server_global: *DevGlobalObject,
 vm: *VirtualMachine,
 /// This is a handle to the server_fetch_function, which is shared
-/// across all loaded modules. Its type is `(Request, Id) => Response`
+/// across all loaded modules. Its type is `(Request, Id, Meta) => Response`
 server_fetch_function_callback: JSC.Strong,
 server_register_update_callback: JSC.Strong,
 
@@ -79,8 +86,8 @@ pub const Route = struct {
     entry_point: []const u8,
 
     bundle: BundleState = .stale,
-    client_files: std.AutoArrayHashMapUnmanaged(IncrementalGraph(.client).Index, void) = .{},
-    server_files: std.AutoArrayHashMapUnmanaged(IncrementalGraph(.server).Index, void) = .{},
+    client_files: std.AutoArrayHashMapUnmanaged(IncrementalGraph(.client).FileIndex, void) = .{},
+    server_files: std.AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, void) = .{},
     module_name_string: ?bun.String = null,
 
     /// Assigned in DevServer.init
@@ -166,8 +173,8 @@ pub fn init(options: Options) !*DevServer {
         .watch_state = .{ .raw = 0 },
         .watch_current = 0,
 
-        .client_graph = undefined,
-        .server_graph = undefined,
+        .client_graph = IncrementalGraph(.client).empty,
+        .server_graph = IncrementalGraph(.server).empty,
 
         .server_bundler = undefined,
         .client_bundler = undefined,
@@ -181,8 +188,9 @@ pub fn init(options: Options) !*DevServer {
     });
     errdefer allocator.destroy(dev);
 
-    dev.server_graph = IncrementalGraph(.server).initEmpty(dev);
-    dev.client_graph = IncrementalGraph(.client).initEmpty(dev);
+    assert(dev.server_graph.owner() == dev);
+    assert(dev.client_graph.owner() == dev);
+    assert(dev.directory_watchers.owner() == dev);
 
     const fs = try bun.fs.FileSystem.init(options.cwd);
 
@@ -375,8 +383,6 @@ fn onServerRequestInit(route: *Route, req: *Request, resp: *Response) void {
     }
 }
 
-const ExtraBundleData = struct {};
-
 fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
     if (route.bundle == .stale) {
         var fail: Failure = undefined;
@@ -495,20 +501,23 @@ fn theRealBundlingFunction(
 
         if (e == error.OutOfMemory) break :brk;
 
-        dev.client_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
-        dev.server_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
-
         // Since a bundle failed, track all files as stale. This allows
         // hot-reloading to remember the targets to rebuild for.
         for (bv2.graph.input_files.items(.source), bv2.graph.ast.items(.target)) |file, target| {
             const abs_path = file.path.text;
             if (!std.fs.path.isAbsolute(abs_path)) continue;
 
-            _ = (switch (target.kitRenderer()) {
-                .server => dev.server_graph.insertStale(abs_path, false),
-                .ssr => dev.server_graph.insertStale(abs_path, true),
-                .client => dev.client_graph.insertStale(abs_path, false),
-            }) catch bun.outOfMemory();
+            switch (target.kitRenderer()) {
+                .server => {
+                    _ = dev.server_graph.insertStale(abs_path, false) catch bun.outOfMemory();
+                },
+                .ssr => {
+                    _ = dev.server_graph.insertStale(abs_path, true) catch bun.outOfMemory();
+                },
+                .client => {
+                    _ = dev.client_graph.insertStale(abs_path, false) catch bun.outOfMemory();
+                },
+            }
         }
 
         dev.client_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
@@ -616,16 +625,67 @@ fn theRealBundlingFunction(
     return .{ .client_bundle = client_bundle };
 }
 
+pub const ReceiveContext = struct {
+    /// bundle_v2.Graph.input_files.items(.source)
+    sources: []bun.logger.Source,
+    /// bundle_v2.Graph.ast.items(.import_records)
+    import_records: []bun.ImportRecord.List,
+    /// Used to reduce calls to the IncrementalGraph hash table.
+    ///
+    /// Caller initializes a slice with `sources.len * 2` items
+    /// all initialized to `std.math.maxInt(u32)`
+    ///
+    /// The first half of this slice is for the client graph,
+    /// second half is for server. Interact with this via
+    /// `getCachedIndex`
+    resolved_index_cache: []u32,
+    /// Used to tell if the server should replace or append import records.
+    ///
+    /// Caller initializes with `sources.len` items to `false`
+    server_seen_bit_set: bun.bit_set.DynamicBitSetUnmanaged,
+
+    pub fn getCachedIndex(
+        rc: *const ReceiveContext,
+        comptime side: bake.Side,
+        i: bun.JSAst.Index,
+    ) *IncrementalGraph(side).FileIndex {
+        const start = switch (side) {
+            .client => 0,
+            .server => rc.sources.len,
+        };
+
+        const subslice = rc.resolved_index_cache[start..][0..rc.sources.len];
+
+        comptime assert(@alignOf(IncrementalGraph(side).FileIndex.Optional) == @alignOf(u32));
+        comptime assert(@sizeOf(IncrementalGraph(side).FileIndex.Optional) == @sizeOf(u32));
+        return @ptrCast(&subslice[i.get()]);
+    }
+};
+
 pub fn receiveChunk(
     dev: *DevServer,
-    abs_path: []const u8,
+    ctx: *ReceiveContext,
+    index: bun.JSAst.Index,
     side: bake.Renderer,
     chunk: bun.bundle_v2.CompileResult,
 ) !void {
     return switch (side) {
-        .server => dev.server_graph.addChunk(abs_path, chunk, false),
-        .ssr => dev.server_graph.addChunk(abs_path, chunk, true),
-        .client => dev.client_graph.addChunk(abs_path, chunk, false),
+        .server => dev.server_graph.receiveChunk(ctx, index, chunk, false),
+        .ssr => dev.server_graph.receiveChunk(ctx, index, chunk, true),
+        .client => dev.client_graph.receiveChunk(ctx, index, chunk, false),
+    };
+}
+
+pub fn processChunkDependencies(
+    dev: *DevServer,
+    ctx: *const ReceiveContext,
+    index: bun.JSAst.Index,
+    side: bake.Renderer,
+    temp_alloc: Allocator,
+) !void {
+    return switch (side) {
+        .server, .ssr => dev.server_graph.processChunkDependencies(ctx, index, temp_alloc),
+        .client => dev.client_graph.processChunkDependencies(ctx, index, temp_alloc),
     };
 }
 
@@ -781,7 +841,7 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// the changed files, excluding non-stale files via `isFileStale`.
 ///
 /// Upon bundle completion, both `client_graph` and `server_graph` have their
-/// `addChunk` methods called with all new chunks, counting the total length
+/// `receiveChunk` methods called with all new chunks, counting the total length
 /// needed. A call to `takeBundle` joins all of the chunks, resulting in the
 /// code to send to client or evaluate on the server.
 ///
@@ -797,39 +857,43 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// be re-materialized (required when pressing Cmd+R after any client update)
 pub fn IncrementalGraph(side: bake.Side) type {
     return struct {
-        // TODO: this can be retrieved via @fieldParentPtr
-        owner: *DevServer,
-
         /// Key contents are owned by `default_allocator`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
-        /// Track bools for files which are *stale*, meaning
+        /// Track bools for files which are "stale", meaning
         /// they should be re-bundled before being used.
         stale_files: bun.bit_set.DynamicBitSetUnmanaged,
+        /// Indexed by FileIndex, contains the start of it's dependency list.
+        first_dep: std.ArrayListUnmanaged(DepIndex.Optional),
+
+        /// Each dependency entry is stored in a long list,
+        /// which are joined to each other in a linked list.
+        deps: std.ArrayListUnmanaged(Dep),
+        /// Dependencies are added and removed very frequently.
+        /// This free list is used to re-use freed indexes, so
+        /// that garbage collection can be invoked less often.
+        deps_free_list: std.ArrayListUnmanaged(DepIndex),
 
         /// Byte length of every file queued for concatenation
         current_chunk_len: usize = 0,
+        /// All part contents
         current_chunk_parts: std.ArrayListUnmanaged(switch (side) {
-            .client => Index,
+            .client => FileIndex,
             // These slices do not outlive the bundler, and must
             // be joined before its arena is deinitialized.
             .server => []const u8,
         }),
 
-        pub fn initEmpty(owner: *DevServer) @This() {
-            return .{
-                .owner = owner,
+        const empty: @This() = .{
+            .bundled_files = .{},
+            .stale_files = .{},
+            .first_dep = .{},
 
-                .bundled_files = .{},
-                .stale_files = .{},
-                // .dependencies = .{},
+            .deps = .{},
+            .deps_free_list = .{},
 
-                .current_chunk_len = 0,
-                .current_chunk_parts = .{},
-            };
-        }
-
-        /// An index into `bundled_files` or `stale_files`
-        pub const Index = enum(u32) { _ };
+            .current_chunk_len = 0,
+            .current_chunk_parts = .{},
+        };
 
         pub const File = switch (side) {
             // The server's incremental graph does not store previously bundled
@@ -837,32 +901,55 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // it stores which module graphs it is a part of. This makes sure
             // that recompilation knows what bundler options to use.
             .server => packed struct(u8) {
+                /// Is this file built for the Server graph.
                 is_rsc: bool,
+                /// Is this file built for the SSR graph.
                 is_ssr: bool,
-                // is_route: bool,
+                /// If this file is a route root, the route can
+                /// be looked up in the route list.
+                is_route: bool,
+                /// Changing code in a client component should rebuild code for
+                /// SSR, but it should not count as changing the server code
+                /// since a connected client can hot-update these files.
+                is_client_to_server_component_boundary: bool,
 
-                unused: enum(u6) { unused = 0 } = .unused,
+                unused: enum(u4) { unused = 0 } = .unused,
             },
             .client => struct {
-                /// allocated by default_allocator
+                /// Allocated by default_allocator
                 code: []const u8,
             },
         };
 
-        /// Never takes ownership of `abs_path`
+        pub const Dep = struct {
+            next: DepIndex.Optional,
+            file: FileIndex,
+        };
+
+        /// An index into `bundled_files`, `stale_files`, or `first_dep`
+        pub const FileIndex = bun.GenericIndex(u32, File);
+
+        /// An index into `deps`
+        const DepIndex = bun.GenericIndex(u32, Dep);
+
+        /// Tracks a bundled code chunk for cross-bundle chunks,
+        /// ensuring it has an entry in `bundled_files`.
         ///
         /// For client, takes ownership of the code slice (must be default allocated)
         ///
         /// For server, the code is temporarily kept in the
         /// `current_chunk_parts` array, where it must live until
         /// takeChunk is called. Then it can be freed.
-        pub fn addChunk(
+        pub fn receiveChunk(
             g: *@This(),
-            abs_path: []const u8,
+            ctx: *const ReceiveContext,
+            index: bun.JSAst.Index,
             chunk: bun.bundle_v2.CompileResult,
             is_ssr_graph: bool,
         ) !void {
-            g.owner.graph_safety_lock.assertLocked();
+            g.owner().graph_safety_lock.assertLocked();
+
+            const abs_path = ctx.sources[index.get()].path.text;
 
             const code = chunk.code();
             if (Environment.allow_assert) {
@@ -880,8 +967,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             g.current_chunk_len += code.len;
 
-            if (g.owner.dump_dir) |dump_dir| {
-                const cwd = g.owner.cwd;
+            if (g.owner().dump_dir) |dump_dir| {
+                const cwd = g.owner().cwd;
                 var a: bun.PathBuffer = undefined;
                 var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
                 const rel_path = bun.path.relativeBufZ(&a, cwd, abs_path);
@@ -897,11 +984,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
             }
 
-            const gop = try g.bundled_files.getOrPut(g.owner.allocator, abs_path);
+            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
 
             if (!gop.found_existing) {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                try g.first_dep.append(g.owner().allocator, .none);
             }
+
+            ctx.getCachedIndex(side, index).* = @enumFromInt(gop.index);
 
             switch (side) {
                 .client => {
@@ -911,35 +1001,110 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     gop.value_ptr.* = .{
                         .code = code,
                     };
-                    try g.current_chunk_parts.append(g.owner.allocator, @enumFromInt(gop.index));
+                    try g.current_chunk_parts.append(g.owner().allocator, @enumFromInt(gop.index));
                 },
                 .server => {
                     if (!gop.found_existing) {
                         gop.value_ptr.* = .{
                             .is_rsc = !is_ssr_graph,
                             .is_ssr = is_ssr_graph,
+                            .is_route = false, // set after the entire bundler task (TODO: ???)
+                            .is_client_to_server_component_boundary = false, // TODO
+
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
                     } else {
                         gop.value_ptr.is_rsc = true;
                     }
-                    try g.current_chunk_parts.append(g.owner.allocator, chunk.code());
+                    try g.current_chunk_parts.append(g.owner().allocator, chunk.code());
                 },
+            }
+        }
+
+        const TempLookup = struct {
+            seen: bool,
+            dep_index: DepIndex,
+        };
+
+        /// Second pass of IncrementalGraph indexing
+        /// - Updates dependency information for each file
+        /// - Resolves what the HMR roots are
+        pub fn processChunkDependencies(
+            g: *@This(),
+            ctx: *const ReceiveContext,
+            index: bun.JSAst.Index,
+            temp_alloc: Allocator,
+        ) bun.OOM!void {
+            const file_index: FileIndex = ctx.getCachedIndex(side, index).*;
+
+            // TODO: put this on receive context so we can REUSE memory
+            var quick_lookup: std.AutoArrayHashMapUnmanaged(FileIndex, TempLookup) = .{};
+            defer quick_lookup.clearRetainingCapacity();
+            {
+                var it: ?DepIndex = g.first_dep.items[@intFromEnum(file_index)].unwrap();
+                while (it) |dep_index| {
+                    const dep = g.deps.items[@intFromEnum(dep_index)];
+                    it = dep.next.unwrap();
+                    try quick_lookup.putNoClobber(temp_alloc, dep.file, .{
+                        .seen = false,
+                        .dep_index = dep_index,
+                    });
+                }
+            }
+
+            var new_dependencies: DepIndex.Optional = .none;
+
+            for (ctx.import_records[index.get()].slice()) |import_record| {
+                if (import_record.source_index.isValid() and !import_record.source_index.isRuntime()) {
+                    const graph_file_index = ctx.getCachedIndex(side, import_record.source_index).*;
+
+                    // Reuse `Dep` objects via the lookup map. This is also how
+                    // we swiftly detect dependency removals
+                    if (quick_lookup.getPtr(graph_file_index)) |lookup| {
+                        // if already has been seen, we can pretend this entry
+                        // doesn't exist. this eliminates duplicate dependencies
+                        // in IncrementalGraph's dependency list
+                        if (lookup.seen) continue;
+                        lookup.seen = true;
+
+                        const dep = &g.deps.items[@intFromEnum(lookup.dep_index)];
+                        dep.next = new_dependencies;
+                        new_dependencies = lookup.dep_index.toOptional();
+                    } else {
+                        // a new `Dep` is needed
+                        const new_dep = try g.newDep(.{
+                            .next = new_dependencies,
+                            .file = graph_file_index,
+                        });
+                        new_dependencies = new_dep.toOptional();
+                    }
+
+                    // Follow `graph_file_index` to it's HMR root.
+                    // TODO:
+                }
+            }
+
+            // '.seen = false' means a dependency was removed and should be freed
+            for (quick_lookup.values()) |val| {
+                if (!val.seen) {
+                    try g.freeDep(val.dep_index);
+                }
             }
         }
 
         /// Never takes ownership of `abs_path`
         /// Marks a chunk but without any content. Used to track dependencies to files that don't exist.
-        pub fn insertStale(g: *@This(), abs_path: []const u8, is_ssr_graph: bool) bun.OOM!Index {
-            g.owner.graph_safety_lock.assertLocked();
+        pub fn insertStale(g: *@This(), abs_path: []const u8, is_ssr_graph: bool) bun.OOM!FileIndex {
+            g.owner().graph_safety_lock.assertLocked();
 
             debug.log("Insert stale: {s}", .{abs_path});
-            const gop = try g.bundled_files.getOrPut(g.owner.allocator, abs_path);
+            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
 
             if (!gop.found_existing) {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
-            } else {
+                try g.first_dep.append(g.owner().allocator, .none);
+            } else if (g.stale_files.bit_length > gop.index) {
                 g.stale_files.set(gop.index);
             }
 
@@ -952,6 +1117,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         gop.value_ptr.* = .{
                             .is_rsc = !is_ssr_graph,
                             .is_ssr = is_ssr_graph,
+                            .is_route = false, // set after the entire bundler task (TODO: ???)
+                            .is_client_to_server_component_boundary = false, // TODO
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -965,11 +1132,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         pub fn ensureStaleBitCapacity(g: *@This(), val: bool) !void {
-            try g.stale_files.resize(g.owner.allocator, @max(g.bundled_files.count(), g.stale_files.bit_length), val);
+            try g.stale_files.resize(g.owner().allocator, @max(g.bundled_files.count(), g.stale_files.bit_length), val);
         }
 
         pub fn invalidate(g: *@This(), paths: []const []const u8, out_paths: *FileLists, file_list_alloc: Allocator) !void {
-            g.owner.graph_safety_lock.assertLocked();
+            g.owner().graph_safety_lock.assertLocked();
             const values = g.bundled_files.values();
             for (paths) |path| {
                 const index = g.bundled_files.getIndex(path) orelse {
@@ -998,7 +1165,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         pub fn takeBundle(g: *@This(), kind: ChunkKind) ![]const u8 {
-            g.owner.graph_safety_lock.assertLocked();
+            g.owner().graph_safety_lock.assertLocked();
             if (g.current_chunk_len == 0) return "";
 
             const runtime = switch (kind) {
@@ -1010,21 +1177,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // to inform the HMR runtime some crucial entry-point info. The
             // exact upper bound of this can be calculated, but is not to
             // avoid worrying about windows paths.
-            var end_sfa = std.heap.stackFallback(65536, g.owner.allocator);
+            var end_sfa = std.heap.stackFallback(65536, g.owner().allocator);
             var end_list = std.ArrayList(u8).initCapacity(end_sfa.get(), 65536) catch unreachable;
             defer end_list.deinit();
             const end = end: {
                 const w = end_list.writer();
                 switch (kind) {
                     .initial_response => {
-                        const fw = g.owner.framework;
+                        const fw = g.owner().framework;
                         try w.writeAll("}, {\n  main: ");
                         const entry = switch (side) {
                             .server => fw.entry_server,
                             .client => fw.entry_client,
                         } orelse bun.todoPanic(@src(), "non-framework provided entry-point", .{});
                         try bun.js_printer.writeJSONString(
-                            bun.path.relative(g.owner.cwd, entry),
+                            bun.path.relative(g.owner().cwd, entry),
                             @TypeOf(w),
                             w,
                             .utf8,
@@ -1034,7 +1201,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 if (fw.react_fast_refresh) |rfr| {
                                     try w.writeAll(",\n  refresh: ");
                                     try bun.js_printer.writeJSONString(
-                                        bun.path.relative(g.owner.cwd, rfr.import_source),
+                                        bun.path.relative(g.owner().cwd, rfr.import_source),
                                         @TypeOf(w),
                                         w,
                                         .utf8,
@@ -1062,7 +1229,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // This function performs one allocation, right here
             var chunk = try std.ArrayListUnmanaged(u8).initCapacity(
-                g.owner.allocator,
+                g.owner().allocator,
                 g.current_chunk_len + runtime.len + end.len,
             );
 
@@ -1078,7 +1245,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             chunk.appendSliceAssumeCapacity(end);
             // bun.assert_eql(chunk.capacity, chunk.items.len);
 
-            if (g.owner.dump_dir) |dump_dir| {
+            if (g.owner().dump_dir) |dump_dir| {
                 const rel_path_escaped = "latest_chunk.js";
                 dumpBundle(dump_dir, switch (side) {
                     .client => .client,
@@ -1090,6 +1257,35 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
 
             return chunk.items;
+        }
+
+        fn newDep(g: *@This(), dep: Dep) !DepIndex {
+            if (g.deps_free_list.popOrNull()) |index| {
+                g.deps.items[@intFromEnum(index)] = dep;
+                return index;
+            }
+
+            const index: DepIndex = @enumFromInt(g.deps.items.len);
+            try g.deps.append(g.owner().allocator, dep);
+            return index;
+        }
+
+        /// Does nothing besides release the `Dep` at `dep_index` for reallocation by `newDep`
+        /// Caller must detach the dependency from the linked list it is in.
+        fn freeDep(g: *@This(), dep_index: DepIndex) !void {
+            if (Environment.isDebug) {
+                g.deps.items[@intFromEnum(dep_index)] = undefined;
+            }
+
+            if (@intFromEnum(dep_index) == (g.deps.items.len - 1)) {
+                g.deps.items.len -= 1;
+            } else {
+                try g.deps_free_list.append(g.owner().allocator, dep_index);
+            }
+        }
+
+        pub fn owner(g: *@This()) *DevServer {
+            return @alignCast(@fieldParentPtr(@tagName(side) ++ "_graph", g));
         }
     };
 }
@@ -1335,22 +1531,7 @@ const DirectoryWatchStore = struct {
         /// creating an unrelated file should not re-emit another error. Default-allocator
         specifier: []const u8,
 
-        const Index = enum(u32) {
-            _,
-
-            pub fn toOptional(oi: Index) Optional {
-                return @enumFromInt(@intFromEnum(oi));
-            }
-
-            pub const Optional = enum(u32) {
-                none = std.math.maxInt(u32),
-                _,
-
-                pub fn unwrap(oi: Optional) ?Index {
-                    return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
-                }
-            };
-        };
+        const Index = bun.GenericIndex(u32, Dep);
     };
 };
 

@@ -3,7 +3,7 @@
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
 
-// TODO: rename bun.kit to bun.bake
+// TODO: rename all references from Kit to Bake
 
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.

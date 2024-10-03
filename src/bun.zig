@@ -3754,8 +3754,8 @@ pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
 /// Deprecated: use `bun.bake`
-pub const kit = @import("kit/kit.zig");
-pub const bake = bun.kit;
+pub const kit = bake;
+pub const bake = @import("kit/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
@@ -3852,3 +3852,43 @@ else
     };
 
 pub const bytecode_extension = ".jsc";
+
+/// An typed index into an array or other structure.
+/// maxInt is reserved for an empty state.
+///
+/// `const Index = bun.GenericIndex(u32, opaque{})
+///
+/// The empty opaque prevents Zig from memoizing the
+/// call, which would otherwise make all indexes
+/// equal to each other.
+pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    return enum(backing_int) {
+        _,
+        const Index = @This();
+        comptime {
+            _ = uid;
+        }
+
+        pub fn toOptional(oi: @This()) Optional {
+            return @enumFromInt(@intFromEnum(oi));
+        }
+
+        pub const Optional = enum(backing_int) {
+            none = std.math.maxInt(backing_int),
+            _,
+
+            pub fn init(maybe: ?Index) ?Index {
+                return if (maybe) |i| @enumFromInt(@intFromEnum(i)) else .none;
+            }
+
+            pub fn unwrap(oi: Optional) ?Index {
+                return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+            }
+        };
+    };
+}
+
+comptime {
+    // Must be nominal
+    assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}

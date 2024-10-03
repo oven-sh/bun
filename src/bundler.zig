@@ -401,7 +401,7 @@ pub const Bundler = struct {
     }
 
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
@@ -1452,9 +1452,9 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.ParseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.ParseJSON(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

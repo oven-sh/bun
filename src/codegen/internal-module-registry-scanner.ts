@@ -29,25 +29,26 @@ export function createInternalModuleRegistry(basedir: string) {
   moduleList.push("internal-for-testing.ts");
   internalRegistry.set("bun:internal-for-testing", moduleList.length - 1);
 
-  // Native Module registry
-  const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
-  const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);
-  if (!nativeModuleDefine) {
-    throw new Error(
-      "Could not find BUN_FOREACH_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
-    );
-  }
   let nextNativeModuleId = 0;
   const nativeModuleIds: Record<string, number> = {};
   const nativeModuleEnums: Record<string, string> = {};
   const nativeModuleEnumToId: Record<string, number> = {};
-  for (const [_, idString, enumValue] of nativeModuleDefine[0].matchAll(/macro\((.*?),(.*?)\)/g)) {
+
+  // Native Module registry
+  const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
+  for (const [_, idString, enumValue] of nativeModuleH.matchAll(/macro\((.*?),(.*?)\)/g)) {
     const processedIdString = JSON.parse(idString.trim().replace(/_s$/, ""));
     const processedEnumValue = enumValue.trim();
     const processedNumericId = nextNativeModuleId++;
     nativeModuleIds[processedIdString] = processedNumericId;
     nativeModuleEnums[processedIdString] = processedEnumValue;
     nativeModuleEnumToId[processedEnumValue] = processedNumericId;
+  }
+
+  if (nextNativeModuleId === 0) {
+    throw new Error(
+      "Could not find BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
+    );
   }
 
   function codegenRequireId(id: string) {

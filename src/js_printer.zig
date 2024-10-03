@@ -336,31 +336,6 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
     bytes.appendChar('"') catch unreachable;
 }
 
-const JSONFormatter = struct {
-    input: []const u8,
-
-    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
-    }
-};
-
-const JSONFormatterUTF8 = struct {
-    input: []const u8,
-
-    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
-    }
-};
-
-/// Expects latin1
-pub fn formatJSONString(text: []const u8) JSONFormatter {
-    return .{ .input = text };
-}
-
-pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
-    return .{ .input = text };
-}
-
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
     var text = input;

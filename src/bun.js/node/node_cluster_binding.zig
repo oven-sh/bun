@@ -66,7 +66,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     if (!good) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
-        ex.put(globalThis, ZigString.static("syscall"), ZigString.static("write").toJS(globalThis));
+        ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
         Bun__Process__queueNextTick1(globalThis, fnvalue, ex);
         return .false;
@@ -264,7 +264,7 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
     const arguments = callframe.arguments(1).ptr;
 
     if (arguments.len == 0) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(ZigString.static("enabled").toJS(globalObject)));
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(bun.String.static("enabled").toJS(globalObject)));
     }
     if (!arguments[0].isBoolean()) {
         return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(

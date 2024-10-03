@@ -18,7 +18,7 @@ const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 
 const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
@@ -1236,7 +1236,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             initializeStore();
 
-            var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
+            var package_json_checker = JSON.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
             _ = package_json_checker.parseExpr() catch return false;
             if (log.errors > 0 or !package_json_checker.has_found_name) return false;
             // workspaces aren't required to have a version
@@ -2828,7 +2828,7 @@ pub const PackageManager = struct {
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json = json_parser.ParsePackageJSONUTF8WithOpts(
+            const json = JSON.parsePackageJSONUTF8WithOpts(
                 &source,
                 log,
                 allocator,
@@ -2882,7 +2882,7 @@ pub const PackageManager = struct {
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json_result = json_parser.ParsePackageJSONUTF8WithOpts(
+            const json_result = JSON.parsePackageJSONUTF8WithOpts(
                 &source,
                 log,
                 allocator,
@@ -6087,7 +6087,7 @@ pub const PackageManager = struct {
                     json.buf,
                 );
                 initializeStore();
-                const json_root = json_parser.ParsePackageJSONUTF8(
+                const json_root = JSON.parsePackageJSONUTF8(
                     &package_json_source,
                     manager.log,
                     manager.allocator,
@@ -6941,6 +6941,37 @@ pub const PackageManager = struct {
 
         max_concurrent_lifecycle_scripts: usize,
 
+        publish_config: PublishConfig = .{},
+
+        pub const PublishConfig = struct {
+            access: ?Access = null,
+            tag: string = "",
+            otp: string = "",
+            auth_type: ?AuthType = null,
+        };
+
+        pub const Access = enum {
+            public,
+            restricted,
+
+            const map = bun.ComptimeEnumMap(Access);
+
+            pub fn fromStr(str: string) ?Access {
+                return map.get(str);
+            }
+        };
+
+        pub const AuthType = enum {
+            legacy,
+            web,
+
+            const map = bun.ComptimeEnumMap(AuthType);
+
+            pub fn fromStr(str: string) ?AuthType {
+                return map.get(str);
+            }
+        };
+
         pub fn shouldPrintCommandName(this: *const Options) bool {
             return this.log_level != .silent and this.do.summary;
         }
@@ -7046,7 +7077,7 @@ pub const PackageManager = struct {
             allocator: std.mem.Allocator,
             log: *logger.Log,
             env: *DotEnv.Loader,
-            cli_: ?CommandLineArguments,
+            maybe_cli: ?CommandLineArguments,
             bun_install_: ?*Api.BunInstall,
             subcommand: Subcommand,
         ) !void {
@@ -7200,20 +7231,6 @@ pub const PackageManager = struct {
                 }
             }
 
-            if (cli_) |cli| {
-                if (cli.registry.len > 0) {
-                    this.scope.url = URL.parse(cli.registry);
-                }
-
-                if (cli.exact) {
-                    this.enable.exact_versions = true;
-                }
-
-                if (cli.token.len > 0) {
-                    this.scope.token = cli.token;
-                }
-            }
-
             if (env.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
                 this.do.save_yarn_lock = true;
             }
@@ -7246,7 +7263,19 @@ pub const PackageManager = struct {
                 this.enable.manifest_cache_control = false;
             }
 
-            if (cli_) |cli| {
+            if (maybe_cli) |cli| {
+                if (cli.registry.len > 0) {
+                    this.scope.url = URL.parse(cli.registry);
+                }
+
+                if (cli.exact) {
+                    this.enable.exact_versions = true;
+                }
+
+                if (cli.token.len > 0) {
+                    this.scope.token = cli.token;
+                }
+
                 if (cli.no_save) {
                     this.do.save_lockfile = false;
                     this.do.write_package_json = false;
@@ -7349,6 +7378,19 @@ pub const PackageManager = struct {
                             },
                         };
                     },
+                }
+
+                if (cli.publish_config.access) |cli_access| {
+                    this.publish_config.access = cli_access;
+                }
+                if (cli.publish_config.tag.len > 0) {
+                    this.publish_config.tag = cli.publish_config.tag;
+                }
+                if (cli.publish_config.otp.len > 0) {
+                    this.publish_config.otp = cli.publish_config.otp;
+                }
+                if (cli.publish_config.auth_type) |auth_type| {
+                    this.publish_config.auth_type = auth_type;
                 }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
@@ -7664,7 +7706,7 @@ pub const PackageManager = struct {
                                 const value = dep.value orelse continue;
                                 if (value.data != .e_string) continue;
 
-                                const version_literal = value.asStringCloned(allocator) orelse bun.outOfMemory();
+                                const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
                                 var tag = Dependency.Version.Tag.infer(version_literal);
 
                                 // only updating dependencies with npm versions, and dist-tags if `--latest`.
@@ -7681,7 +7723,7 @@ pub const PackageManager = struct {
                                     }
                                 }
 
-                                const key_str = key.asStringCloned(allocator) orelse unreachable;
+                                const key_str = try key.asStringCloned(allocator) orelse unreachable;
                                 const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
 
                                 // If a dependency is present in more than one dependency group, only one of it's versions
@@ -7865,7 +7907,7 @@ pub const PackageManager = struct {
                                             replacing += 1;
                                         } else {
                                             if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
-                                                const version_literal = value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
+                                                const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
                                                 var tag = Dependency.Version.Tag.infer(version_literal);
 
                                                 if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
@@ -8250,6 +8292,18 @@ pub const PackageManager = struct {
         @"patch-commit",
         outdated,
         pack,
+        publish,
+
+        // bin,
+        // hash,
+        // @"hash-print",
+        // @"hash-string",
+        // cache,
+        // @"default-trusted",
+        // untrusted,
+        // trust,
+        // ls,
+        // migrate,
 
         pub fn canGloballyInstallPackages(this: Subcommand) bool {
             return switch (this) {
@@ -8263,6 +8317,14 @@ pub const PackageManager = struct {
                 .outdated => true,
                 // .pack => true,
                 else => false,
+            };
+        }
+
+        // TODO: make all subcommands find root and chdir
+        pub fn shouldChdirToRoot(this: Subcommand) bool {
+            return switch (this) {
+                .link => false,
+                else => true,
             };
         }
     };
@@ -8389,7 +8451,7 @@ pub const PackageManager = struct {
 
             // Check if this is a workspace; if so, use root package
             var found = false;
-            if (subcommand != .link) {
+            if (subcommand.shouldChdirToRoot()) {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
@@ -8412,7 +8474,7 @@ pub const PackageManager = struct {
                         const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
-                        const json = try json_parser.ParsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -8838,7 +8900,7 @@ pub const PackageManager = struct {
         defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            Output.prettyln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 
@@ -9021,7 +9083,7 @@ pub const PackageManager = struct {
         defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            Output.prettyln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 
@@ -9139,7 +9201,7 @@ pub const PackageManager = struct {
     else
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
-    const install_params_ = [_]ParamType{
+    const shared_params = [_]ParamType{
         clap.parseParam("-c, --config <STR>?                   Specify path to config file (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                            Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
@@ -9165,7 +9227,7 @@ pub const PackageManager = struct {
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
-    pub const install_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -9173,12 +9235,12 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
-    pub const update_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     });
 
-    pub const pm_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
@@ -9186,7 +9248,7 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
 
-    pub const add_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
@@ -9194,40 +9256,49 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
     });
 
-    pub const remove_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const remove_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
     });
 
-    pub const link_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const link_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
     });
 
-    pub const unlink_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    pub const unlink_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     });
 
-    const patch_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const patch_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
         clap.parseParam("--commit                         Install a package containing modifications in `dir`") catch unreachable,
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)") catch unreachable,
     });
 
-    const patch_commit_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"dir\" containing changes to a package") catch unreachable,
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
     });
 
-    const outdated_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const outdated_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--json                                 Output outdated information in JSON format") catch unreachable,
         clap.parseParam("--filter <STR>...                            Display outdated dependencies for each matching workspace") catch unreachable,
         clap.parseParam("<POS> ...                              Package patterns to filter by") catch unreachable,
     });
 
-    const pack_params: []const ParamType = &(install_params_ ++ [_]ParamType{
+    const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                              ") catch unreachable,
+    });
+
+    const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
+        clap.parseParam("<POS> ...                              Package tarball to publish") catch unreachable,
+        clap.parseParam("--access <STR>                         Set access level for scoped packages") catch unreachable,
+        clap.parseParam("--tag <STR>                            Tag the release. Default is \"latest\"") catch unreachable,
+        clap.parseParam("--otp <STR>                            Provide a one-time password for authentication") catch unreachable,
+        clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
+        clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
     });
 
     pub const CommandLineArguments = struct {
@@ -9275,6 +9346,8 @@ pub const PackageManager = struct {
         patch: PatchOpts = .{ .nothing = .{} },
 
         registry: string = "",
+
+        publish_config: Options.PublishConfig = .{},
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9537,6 +9610,31 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                .publish => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r>
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Display files that would be published, without publishing to the registry.<r>
+                        \\  <b><green>bun publish --dry-run<r>  
+                        \\
+                        \\  <d>Publish the current package with public access.<r>
+                        \\  <b><green>bun publish --access public<r>
+                        \\
+                        \\  <d>Publish a pre-existing package tarball with tag 'next'.<r>
+                        \\  <b><green>bun publish ./path/to/tarball.tgz --tag next<r>
+                        \\
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    clap.simpleHelp(PackageManager.publish_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -9555,6 +9653,7 @@ pub const PackageManager = struct {
                 .@"patch-commit" => patch_commit_params,
                 .outdated => outdated_params,
                 .pack => pack_params,
+                .publish => publish_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9601,13 +9700,39 @@ pub const PackageManager = struct {
                 // cli.json_output = args.flag("--json");
             }
 
-            if (comptime subcommand == .pack or subcommand == .pm) {
-                if (args.option("--destination")) |dest| {
-                    cli.pack_destination = dest;
+            if (comptime subcommand == .pack or subcommand == .pm or subcommand == .publish) {
+                if (comptime subcommand != .publish) {
+                    if (args.option("--destination")) |dest| {
+                        cli.pack_destination = dest;
+                    }
                 }
 
                 if (args.option("--gzip-level")) |level| {
                     cli.pack_gzip_level = level;
+                }
+            }
+
+            if (comptime subcommand == .publish) {
+                if (args.option("--tag")) |tag| {
+                    cli.publish_config.tag = tag;
+                }
+
+                if (args.option("--access")) |access| {
+                    cli.publish_config.access = Options.Access.fromStr(access) orelse {
+                        Output.errGeneric("invalid `access` value: '{s}'", .{access});
+                        Global.crash();
+                    };
+                }
+
+                if (args.option("--otp")) |otp| {
+                    cli.publish_config.otp = otp;
+                }
+
+                if (args.option("--auth-type")) |auth_type| {
+                    cli.publish_config.auth_type = Options.AuthType.fromStr(auth_type) orelse {
+                        Output.errGeneric("invalid `auth-type` value: '{s}'", .{auth_type});
+                        Global.crash();
+                    };
                 }
             }
 
@@ -9985,7 +10110,7 @@ pub const PackageManager = struct {
         defer ctx.allocator.free(original_cwd);
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
+            Output.prettyln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
             Output.flush();
         }
 
@@ -10463,7 +10588,7 @@ pub const PackageManager = struct {
 
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
-            var new_package_json = json_parser.ParsePackageJSONUTF8(&source, manager.log, manager.allocator) catch |err| {
+            var new_package_json = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -10829,7 +10954,7 @@ pub const PackageManager = struct {
                 defer manager.allocator.free(package_json_source.contents);
 
                 initializeStore();
-                const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
                     switch (Output.enable_ansi_colors) {
                         inline else => |enable_ansi_colors| {
                             manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -11246,7 +11371,7 @@ pub const PackageManager = struct {
                 defer manager.allocator.free(package_json_source.contents);
 
                 initializeStore();
-                const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
+                const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
                     switch (Output.enable_ansi_colors) {
                         inline else => |enable_ansi_colors| {
                             manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -11724,7 +11849,7 @@ pub const PackageManager = struct {
         // switch to `bun add <package>`
         if (manager.options.positionals.len > 1) {
             if (manager.options.shouldPrintCommandName()) {
-                Output.prettyErrorln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+                Output.prettyln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
                 Output.flush();
             }
             manager.subcommand = .add;
@@ -11734,7 +11859,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            Output.prettyln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 

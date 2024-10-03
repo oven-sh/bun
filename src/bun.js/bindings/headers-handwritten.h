@@ -345,6 +345,7 @@ extern "C" bool Bun__fetchBuiltinModule(
 
 // Used in process.version
 extern "C" const char* Bun__version;
+extern "C" const char* Bun__version_with_sha;
 
 // Used in process.versions
 extern "C" const char* Bun__versions_boringssl;

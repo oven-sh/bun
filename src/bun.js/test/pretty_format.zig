@@ -861,7 +861,7 @@ pub const JestPrettyFormat = struct {
 
                             writer.print(
                                 comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                                .{JSPrinter.formatJSONString(key.slice())},
+                                .{bun.fmt.formatJSONString(key.slice())},
                             );
                         }
                     } else {

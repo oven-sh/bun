@@ -4,7 +4,7 @@ import { css } from "../macros" with { type: "macro" };
 var root!: HTMLElement;
 var mount;
 
-if (mode === "client") {
+if (side === "client") {
   mount = function mount() {
     const wrap = document.createElement("bun-hmr");
     wrap.setAttribute(
@@ -26,5 +26,8 @@ if (mode === "client") {
 export function showErrorOverlay(e) {
   mount();
   console.error(e);
-  root.innerHTML = `<div class='error'><h1>oh no, a client side error happened:</h1><pre><code>${e?.message ? `${e?.name ?? e?.constructor?.name ?? "Error"}: ${e.message}\n` : JSON.stringify(e)}${e?.message ? e?.stack : ""}</code></pre></div>`;
+  root.innerHTML = `<div class='error'><h1>Client-side Runtime Error</h1><pre><code>${e?.message ? `${e?.name ?? e?.constructor?.name ?? "Error"}: ${e.message}\n` : JSON.stringify(e)}${e?.message ? e?.stack : ""}</code></pre><button class='dismiss'>x</button></div>`;
+  root.querySelector(".dismiss")!.addEventListener("click", () => {
+    root.innerHTML = "";
+  });
 }

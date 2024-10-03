@@ -44,6 +44,7 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
+const OOM = bun.OOM;
 
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
@@ -72,10 +73,23 @@ pub const Cli = struct {
 
 pub const debug_flags = if (Environment.isDebug) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
+    var print_breakpoints: []const []const u8 = &.{};
 
     pub fn hasResolveBreakpoint(str: []const u8) bool {
         for (resolve_breakpoints) |bp| {
             if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn hasPrintBreakpoint(path: fs.Path) bool {
+        for (print_breakpoints) |bp| {
+            if (strings.contains(path.pretty, bp)) {
+                return true;
+            }
+            if (strings.contains(path.text, bp)) {
                 return true;
             }
         }
@@ -116,6 +130,9 @@ pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
+pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
+pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
+pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -173,6 +190,7 @@ pub const Arguments = struct {
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+        clap.parseParam("--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string") catch unreachable,
     };
 
     const transpiler_params_ = [_]ParamType{
@@ -327,14 +345,25 @@ pub const Arguments = struct {
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
         var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
 
                 if (getHomeConfigPath(&config_buf)) |path| {
-                    try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+                    loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                        if (ctx.log.hasAny()) {
+                            switch (Output.enable_ansi_colors) {
+                                inline else => |enable_ansi_colors| {
+                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                                },
+                            }
+                        }
+                        if (ctx.log.hasAny()) Output.printError("\n", .{});
+                        Output.err(err, "failed to load bunfig", .{});
+                        Global.crash();
+                    };
                 }
             }
         }
@@ -382,7 +411,18 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         }
 
-        try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
+        loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
+            if (ctx.log.hasAny()) {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+            }
+            if (ctx.log.hasAny()) Output.printError("\n", .{});
+            Output.err(err, "failed to load bunfig", .{});
+            Global.crash();
+        };
     }
 
     pub fn loadConfigWithCmdArgs(
@@ -390,7 +430,7 @@ pub const Arguments = struct {
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
         ctx: Command.Context,
-    ) !void {
+    ) OOM!void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
@@ -561,7 +601,6 @@ pub const Arguments = struct {
         else
             null;
 
-        opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
@@ -1014,8 +1053,8 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0) {
-                Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
+                Output.prettyln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                Output.pretty("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
                 Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
@@ -1057,6 +1096,7 @@ pub const Arguments = struct {
 
         if (Environment.isDebug) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
+            debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }
 
         return opts;
@@ -1068,7 +1108,6 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
-const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
@@ -1144,9 +1183,9 @@ pub const HelpCommand = struct {
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
-        \\  <b><blue>pack<r>                           Archive the current workspace package
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>publish<r>                        Publish a package to the npm registry
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
@@ -1214,9 +1253,9 @@ pub const HelpCommand = struct {
         printWithReason(reason, false);
 
         if (reason == .invalid_command) {
-            std.process.exit(1);
+            Global.exit(1);
         }
-        std.process.exit(0);
+        Global.exit(0);
     }
 };
 
@@ -1393,7 +1432,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]const u8 = undefined,
+        buf: [][:0]const u8,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1456,7 +1495,7 @@ pub const Command = struct {
         }
 
         const first_arg_name = next_arg;
-        const RootCommandMatcher = strings.ExactSizeMatcher(16);
+        const RootCommandMatcher = strings.ExactSizeMatcher(12);
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
             RootCommandMatcher.case("init") => .InitCommand,
@@ -1505,6 +1544,7 @@ pub const Command = struct {
             RootCommandMatcher.case("exec") => .ExecCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
+            RootCommandMatcher.case("publish") => .PublishCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1518,7 +1558,6 @@ pub const Command = struct {
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .ReservedCommand,
-            RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
@@ -1648,6 +1687,13 @@ pub const Command = struct {
                 try OutdatedCommand.exec(ctx);
                 return;
             },
+            .PublishCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PublishCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PublishCommand);
+
+                try PublishCommand.exec(ctx);
+                return;
+            },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BunxCommand);
@@ -1689,6 +1735,20 @@ pub const Command = struct {
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PackageManagerCommand);
+
+                // const maybe_subcommand, const maybe_arg = PackageManagerCommand.which(command_index);
+                // if (maybe_subcommand) |subcommand| {
+                //     return switch (subcommand) {
+                //         inline else => |tag| try PackageManagerCommand.exec(ctx, tag),
+                //     };
+                // }
+
+                // PackageManagerCommand.printHelp();
+
+                // if (maybe_arg) |arg| {
+                //     Output.errGeneric("\"{s}\" unknown command", .{arg});
+                //     Global.crash();
+                // }
 
                 try PackageManagerCommand.exec(ctx);
                 return;
@@ -1740,7 +1800,7 @@ pub const Command = struct {
                     const index = AddCompletions.index;
 
                     outer: {
-                        if (filter.len > 1) {
+                        if (filter.len > 1 and filter[1].len > 0) {
                             const first_letter: FirstLetter = switch (filter[1][0]) {
                                 'a' => FirstLetter.a,
                                 'b' => FirstLetter.b,
@@ -2216,6 +2276,7 @@ pub const Command = struct {
         PatchCommand,
         PatchCommitCommand,
         OutdatedCommand,
+        PublishCommand,
 
         /// Used by crash reports.
         ///
@@ -2248,6 +2309,7 @@ pub const Command = struct {
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
+                .PublishCommand => 'k',
             };
         }
 
@@ -2471,9 +2533,10 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand => {
+                .OutdatedCommand, .PublishCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
+                        .PublishCommand => .publish,
                     });
                 },
                 else => {
@@ -2493,6 +2556,7 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
+                .PublishCommand,
                 => true,
                 else => false,
             };
@@ -2511,6 +2575,7 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
+                .PublishCommand,
                 => true,
                 else => false,
             };
@@ -2531,6 +2596,7 @@ pub const Command = struct {
             .RunCommand = true,
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
+            .PublishCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2545,6 +2611,7 @@ pub const Command = struct {
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .OutdatedCommand = true,
+            .PublishCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2560,6 +2627,7 @@ pub const Command = struct {
             .UnlinkCommand = false,
             .BunxCommand = false,
             .OutdatedCommand = false,
+            .PublishCommand = false,
         });
     };
 };

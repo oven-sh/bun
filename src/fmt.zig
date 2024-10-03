@@ -7,6 +7,7 @@ const js_lexer = bun.js_lexer;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
+const sha = bun.sha;
 
 pub usingnamespace std.fmt;
 
@@ -104,6 +105,112 @@ pub fn Table(
             }
         }
     };
+}
+
+pub const RedactedNpmUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (i < this.url.len) {
+            if (strings.startsWithUUID(this.url[i..])) {
+                try writer.writeAll("***");
+                i += 36;
+                continue;
+            }
+
+            const npm_secret_len = strings.startsWithNpmSecret(this.url[i..]);
+            if (npm_secret_len > 0) {
+                try writer.writeAll("***");
+                i += npm_secret_len;
+                continue;
+            }
+
+            // TODO: redact password from `https://username:password@registry.com/`
+
+            try writer.writeByte(this.url[i]);
+            i += 1;
+        }
+    }
+};
+
+pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
+    return .{
+        .url = str,
+    };
+}
+
+// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-package-arg/lib/npa.js#L163
+pub const DependencyUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = this.url;
+        while (strings.indexOfChar(remain, '/')) |slash| {
+            try writer.writeAll(remain[0..slash]);
+            try writer.writeAll("%2f");
+            remain = remain[slash + 1 ..];
+        }
+        try writer.writeAll(remain);
+    }
+};
+
+pub fn dependencyUrl(url: string) DependencyUrlFormatter {
+    return .{
+        .url = url,
+    };
+}
+
+const IntegrityFormatStyle = enum {
+    short,
+    full,
+};
+
+pub fn IntegrityFormatter(comptime style: IntegrityFormatStyle) type {
+    return struct {
+        bytes: [sha.SHA512.digest]u8,
+
+        pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
+            const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
+
+            const encoded = buf[0..count];
+
+            if (comptime style == .short)
+                try writer.print("sha512-{s}[...]{s}", .{ encoded[0..13], encoded[encoded.len - 15 ..] })
+            else
+                try writer.print("sha512-{s}", .{encoded});
+        }
+    };
+}
+
+pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime style: IntegrityFormatStyle) IntegrityFormatter(style) {
+    return .{ .bytes = bytes };
+}
+
+const JSONFormatter = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
+    }
+};
+
+const JSONFormatterUTF8 = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+    }
+};
+
+/// Expects latin1
+pub fn formatJSONString(text: []const u8) JSONFormatter {
+    return .{ .input = text };
+}
+
+pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
+    return .{ .input = text };
 }
 
 const SharedTempBuffer = [32 * 1024]u8;

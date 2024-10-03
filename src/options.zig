@@ -1445,7 +1445,6 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     production: bool = false,
-    serve: bool = false,
 
     // only used by bundle_v2
     output_format: Format = .esm,
@@ -1507,9 +1506,11 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
 
-    /// Set when Kit is bundling. This changes the interface of the bundler
-    /// from emitting OutputFile to emitting the lower level []CompileResult
+    /// Set when kit.DevServer is bundling. This changes the interface of the
+    /// bundler from emitting OutputFile to only emitting []CompileResult
     kit: ?*bun.kit.DevServer = null,
+    /// Set when Kit is bundling. Affects module resolution.
+    framework: ?*bun.kit.Framework = null,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.

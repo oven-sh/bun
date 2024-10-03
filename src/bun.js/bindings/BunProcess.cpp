@@ -778,6 +778,12 @@ static void loadSignalNumberMap()
     });
 }
 
+bool isSignalName(WTF::String input)
+{
+    loadSignalNumberMap();
+    return signalNameToNumberMap->contains(input);
+}
+
 #if OS(WINDOWS)
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
 extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);

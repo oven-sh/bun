@@ -13,6 +13,9 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
+    "paths": {
+      "bun-framework-rsc/*": ["./bun-framework-rsc/*"]
+    }
   },
-  "include": ["./hmr-runtime-types.d.ts", "*.ts"]
+  "include": ["**/*.ts", "**/*.tsx"]
 }

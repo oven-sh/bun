@@ -1169,7 +1169,6 @@ pub const HelpCommand = struct {
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
-        \\  <b><blue>pack<r>                           Archive the current workspace package
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching

@@ -11,7 +11,7 @@ import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 
 for (const nodeExecutable of [bunExe(), nodeExe()]) {
-  describe(`${nodeExecutable}`, () => {
+  describe(`${path.basename(nodeExecutable)}`, () => {
     let nodeEchoServer_;
 
     let HTTPS_SERVER;

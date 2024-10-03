@@ -28,6 +28,21 @@ pub const Header = struct {
             }
             return null;
         }
+
+        pub fn getIfOtherIsAbsent(this: *const List, name: string, other: string) ?string {
+            var value: ?string = null;
+            for (this.list) |header| {
+                if (strings.eqlCaseInsensitiveASCII(header.name, other, true)) {
+                    return null;
+                }
+
+                if (value == null and strings.eqlCaseInsensitiveASCII(header.name, name, true)) {
+                    value = header.value;
+                }
+            }
+
+            return value;
+        }
     };
 
     pub fn isMultiline(self: Header) bool {

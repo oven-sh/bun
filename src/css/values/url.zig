@@ -140,7 +140,7 @@ pub const Url = struct {
             try dest.writeStr(buf.items);
         } else {
             try dest.writeStr("url(");
-            css.serializer.serializeString(import_record.path.pretty, dest) catch return dest.addFmtError();
+            css.serializer.serializeString(import_record.path.text, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
         }
     }

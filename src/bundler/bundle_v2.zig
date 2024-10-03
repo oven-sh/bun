@@ -3003,7 +3003,9 @@ pub const ParseTask = struct {
                 const root = Expr.init(E.UTF8String, E.UTF8String{
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+                ast.addUrlForCss(allocator, &source, "text/plain");
+                return ast;
             },
 
             .sqlite_embedded, .sqlite => {
@@ -3117,11 +3119,9 @@ pub const ParseTask = struct {
             },
             .css => {
                 if (comptime bun.FeatureFlags.css) {
-                    const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
-                    unique_key_for_additional_file.* = unique_key;
-                    const root = Expr.init(E.String, E.String{
-                        .data = unique_key,
-                    }, Logger.Loc{ .start = 0 });
+                    // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    // unique_key_for_additional_file.* = unique_key;
+                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     const css_ast =
@@ -3151,7 +3151,9 @@ pub const ParseTask = struct {
             .data = unique_key,
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
-        return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        ast.addUrlForCss(allocator, &source, null);
+        return ast;
     }
 
     fn run_(
@@ -5922,6 +5924,10 @@ pub const LinkerContext = struct {
             const exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             const module_refs: []Ref = this.graph.ast.items(.module_ref);
             const ast_flags_list = this.graph.ast.items(.flags);
+
+            const urls_for_css = this.graph.ast.items(.url_for_css);
+            const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
 
@@ -5935,6 +5941,25 @@ pub const LinkerContext = struct {
                 if (!(id < import_records_list.len)) continue;
 
                 const import_records: []ImportRecord = import_records_list[id].slice();
+
+                // Is it CSS?
+                if (css_asts[id]) |css| {
+                    _ = css; // autofix
+                    // Inline URLs for non-CSS files into the CSS file
+                    for (import_records, 0..) |*record, import_record_idx| {
+                        _ = import_record_idx; // autofix
+                        if (record.source_index.isValid()) {
+                            // Other file is not CSS
+                            if (css_asts[record.source_index.get()] == null) {
+                                record.path.text = urls_for_css[record.source_index.get()];
+                            }
+                        }
+                        // else if (record.copy_source_index.isValid()) {}
+                    }
+                    // TODO:
+                    // Validate cross-file "composes: ... from" named imports
+                    continue;
+                }
 
                 _ = this.validateTLA(id, tla_keywords, tla_checks, input_files, import_records, flags);
 

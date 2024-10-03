@@ -9617,7 +9617,14 @@ pub const PackageManager = struct {
 
                     const outro_text =
                         \\<b>Examples:<r>
-                        \\  <b><green>bun publish<r>
+                        \\  <d>Publish the package in the current working directory with public access.<r>
+                        \\  <b><green>bun publish --access public<r>
+                        \\
+                        \\  <d>Publish a pre-existing package tarball.<r>
+                        \\  <b><green>bun publish ./path/to/tarball.tgz<r>
+                        \\
+                        \\  <d>Publish with tag 'next'.<r>
+                        \\  <b><green>bun publish --tag next<r>
                         \\
                     ;
 

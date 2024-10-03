@@ -1205,12 +1205,17 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber()) brk: {
         if (!value.isUInt32AsAnyInt()) {
-            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
+            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be >= 0 && <= 4294967295. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
             return null;
         }
         break :brk @as(Mode, @truncate(value.to(Mode)));
     } else brk: {
         if (value.isUndefinedOrNull()) return null;
+
+        if (!value.isString()) {
+            _ = ctx.throwInvalidArgumentTypeValue("mode", "number", value);
+            return null;
+        }
 
         //        An easier method of constructing the mode is to use a sequence of
         //        three octal digits (e.g. 765). The left-most digit (7 in the example),
@@ -1226,13 +1231,14 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         }
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
-            JSC.throwInvalidArguments("Invalid mode string: must be an octal number", .{}, ctx, exception);
+            var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+            exception.* = ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS().asObjectRef();
             return null;
         };
     };
 
     if (mode_int < 0) {
-        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
+        exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be >= 0 && <= 4294967295. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
         return null;
     }
 

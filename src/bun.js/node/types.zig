@@ -1206,7 +1206,7 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber()) brk: {
         const m = validators.validateUint32(ctx, value, "mode", .{}, false) catch return null;
-        break :brk @as(Mode, @truncate(m));
+        break :brk @as(Mode, @as(u24, @truncate(m)));
     } else brk: {
         if (value.isUndefinedOrNull()) return null;
 

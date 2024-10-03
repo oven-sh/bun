@@ -1822,22 +1822,28 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
-
+      const rawheaders = { ...headers };
       let cookie = headers["cookie"];
       if ($isArray(cookie)) {
-        headers["cookie"] = (headers["cookie"] as string[]).join(";");
+        headers["cookie"] = (headers["cookie"] as string[]).join("; ");
       }
-      self.#server.emit("stream", stream, headers, flags);
+      for (let key in headers) {
+        const value = headers[key];
+        if ($isArray(value)) {
+          headers[key] = value.join(", ");
+        }
+      }
+      self.#server.emit("stream", stream, headers, flags, rawheaders);
       if (stream[bunHTTP2StreamResponded]) {
         try {
-          stream.emit("trailers", headers, flags);
+          stream.emit("trailers", headers, flags, rawheaders);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
         stream.emit("response", headers, flags);
-        self.emit("stream", stream, headers, flags);
+        self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
     localSettings(self: ServerHttp2Session, settings: Settings) {
@@ -2240,6 +2246,7 @@ class ClientHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
+      const rawheaders = { ...headers };
 
       let status: string | number = headers[":status"] as string;
       if (status) {
@@ -2255,18 +2262,18 @@ class ClientHttp2Session extends Http2Session {
 
       let cookie = headers["cookie"];
       if ($isArray(cookie)) {
-        headers["cookie"] = (headers["cookie"] as string[]).join(";");
+        headers["cookie"] = (headers["cookie"] as string[]).join("; ");
       }
       if (stream[bunHTTP2StreamResponded]) {
         try {
-          stream.emit("trailers", headers, flags);
+          stream.emit("trailers", headers, flags, rawheaders);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
-        stream.emit("response", headers, flags);
-        self.emit("stream", stream, headers, flags);
+        stream.emit("response", headers, flags, rawheaders);
+        self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {

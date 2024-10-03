@@ -31,10 +31,10 @@ export function createInternalModuleRegistry(basedir: string) {
 
   // Native Module registry
   const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
-  const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);
+  const nativeModuleDefine = nativeModuleH.match(/BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE\(macro\)\s*\\\n((.*\\\n)*\n)/);
   if (!nativeModuleDefine) {
     throw new Error(
-      "Could not find BUN_FOREACH_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
+      "Could not find BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
     );
   }
   let nextNativeModuleId = 0;

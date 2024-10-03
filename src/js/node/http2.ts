@@ -1553,9 +1553,26 @@ class ServerHttp2Stream extends Http2Stream {
           length: length !== undefined ? length : -1,
         });
       }
+      if (headers[":status"] === undefined) {
+        headers[":status"] = 200;
+      }
+      const statusCode = (headers[":status"] |= 0);
 
+      // Payload/DATA frames are not permitted in these cases
+      if (
+        statusCode === constants.HTTP_STATUS_NO_CONTENT ||
+        statusCode === constants.HTTP_STATUS_RESET_CONTENT ||
+        statusCode === constants.HTTP_STATUS_NOT_MODIFIED ||
+        this.headRequest
+      ) {
+        const error = new Error(
+          `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
+        );
+        error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
+        throw error;
+      }
       this.respond(headers, options);
-      fs.createReadStream(null, { fd: fd, autoClose: true, start: offset, end, emitClose: true }).pipe(this);
+      fs.createReadStream(null, { fd: fd, autoClose: true, start: offset, end, emitClose: false }).pipe(this);
     } catch (err) {
       if (typeof onError === "function") {
         onError(err);
@@ -1583,6 +1600,25 @@ class ServerHttp2Stream extends Http2Stream {
         offset: offset,
         length: length !== undefined ? length : -1,
       });
+    }
+
+    if (headers[":status"] === undefined) {
+      headers[":status"] = 200;
+    }
+    const statusCode = (headers[":status"] |= 0);
+
+    // Payload/DATA frames are not permitted in these cases
+    if (
+      statusCode === constants.HTTP_STATUS_NO_CONTENT ||
+      statusCode === constants.HTTP_STATUS_RESET_CONTENT ||
+      statusCode === constants.HTTP_STATUS_NOT_MODIFIED ||
+      this.headRequest
+    ) {
+      const error = new Error(
+        `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
+      );
+      error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
+      throw error;
     }
 
     this.respond(headers, options);

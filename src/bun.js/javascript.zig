@@ -958,7 +958,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
-        this.auto_killer.onProcessExit(process);
+        this.auto_killer.onSubprocessExit(process);
     }
 
     pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {

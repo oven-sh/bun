@@ -13,9 +13,11 @@
 
 namespace Kit {
 
+extern "C" LoadServerCodeResult KitLoadInitialServerCode(DevGlobalObject* global, BunString source) {
+  JSC::VM&vm=global->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
 
-extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunString source) {
-  String string = "kit://server"_s;
+  String string = "kit://server.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(KitSourceProvider::create(
     source.toWTFString(),
@@ -25,13 +27,35 @@ extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunSt
     JSC::SourceProviderSourceType::Module
   ));
 
-  JSC::JSString* key = JSC::jsString(global->vm(), string);
+  JSC::JSString* key = JSC::jsString(vm, string);
   global->moduleLoader()->provideFetch(global, key, sourceCode);
+  RETURN_IF_EXCEPTION(scope, {});
+ 
+  JSC::JSInternalPromise* internalPromise = global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined());
+  RETURN_IF_EXCEPTION(scope, {});
+
+  return { internalPromise, key };
+}
+
+extern "C" JSC::EncodedJSValue KitLoadServerHmrPatch(DevGlobalObject* global, BunString source) {
+  JSC::VM&vm=global->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  String string = "kit://server.patch.js"_s;
+  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
+  JSC::SourceCode sourceCode = JSC::SourceCode(KitSourceProvider::create(
+    source.toWTFString(),
+    origin,
+    WTFMove(string),
+    WTF::TextPosition(),
+    JSC::SourceProviderSourceType::Program
+  ));
   
-  return {
-     global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined()),
-     key
-  };
+  JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+
+  RELEASE_ASSERT(result);
+  return JSC::JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(

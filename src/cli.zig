@@ -73,10 +73,23 @@ pub const Cli = struct {
 
 pub const debug_flags = if (Environment.isDebug) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
+    var print_breakpoints: []const []const u8 = &.{};
 
     pub fn hasResolveBreakpoint(str: []const u8) bool {
         for (resolve_breakpoints) |bp| {
             if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn hasPrintBreakpoint(path: fs.Path) bool {
+        for (print_breakpoints) |bp| {
+            if (strings.contains(path.pretty, bp)) {
+                return true;
+            }
+            if (strings.contains(path.text, bp)) {
                 return true;
             }
         }
@@ -177,6 +190,7 @@ pub const Arguments = struct {
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+        clap.parseParam("--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string") catch unreachable,
     };
 
     const transpiler_params_ = [_]ParamType{
@@ -587,7 +601,6 @@ pub const Arguments = struct {
         else
             null;
 
-        opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
@@ -1083,6 +1096,7 @@ pub const Arguments = struct {
 
         if (Environment.isDebug) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
+            debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }
 
         return opts;

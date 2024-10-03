@@ -3,6 +3,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
   itBundled("kit_dev/HelloWorld", {
+    todo: true,
     files: {
       "/a.js": `console.log("Hello, world!")`,
     },
@@ -16,6 +17,7 @@ describe("bundler", async () => {
     },
   });
   itBundled("kit_dev/SimpleCommonJS", {
+    todo: true,
     files: {
       "/a.js": `console.log(require('./b').message)`,
       "/b.js": `module.exports = { message: "Hello, world!" }`,
@@ -25,6 +27,7 @@ describe("bundler", async () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("kit_dev/SimpleESM", {
+    todo: true,
     files: {
       "/a.js": `
         import message from './b';

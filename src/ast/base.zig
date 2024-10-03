@@ -31,7 +31,6 @@ pub const RefCtx = struct {
 
 /// In some parts of Bun, we have many different IDs pointing to different things.
 /// It's easy for them to get mixed up, so we use this type to make sure we don't.
-///
 pub const Index = packed struct(u32) {
     value: Int,
 

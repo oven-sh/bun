@@ -3664,7 +3664,6 @@ pub const Parser = struct {
         }
 
         if (parts.items.len < 4 and parts.items.len > 0 and p.options.features.unwrap_commonjs_to_esm) {
-
             // Specially handle modules shaped like this:
             //
             //   CommonJS:

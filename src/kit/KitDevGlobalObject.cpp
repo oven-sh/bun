@@ -2,16 +2,22 @@
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
+#include "ProcessIdentifier.h"
 #include "headers-handwritten.h"
 
 namespace Kit {
+
+extern "C" void KitInitProcessIdentifier() {
+  // assert is on main thread
+  WebCore::Process::identifier();
+}
 
 JSC::JSInternalPromise *
 moduleLoaderImportModule(JSC::JSGlobalObject *jsGlobalObject,
                          JSC::JSModuleLoader *, JSC::JSString *moduleNameValue,
                          JSC::JSValue parameters,
                          const JSC::SourceOrigin &sourceOrigin) {
-  // TODO: forward this to the runtime
+  // TODO: forward this to the runtime?
   JSC::VM &vm = jsGlobalObject->vm();
   auto err = JSC::createTypeError(
       jsGlobalObject,
@@ -90,16 +96,17 @@ extern "C" DevGlobalObject *KitCreateDevGlobal(DevServer *owner,
   global->setConsole(console);
   global->setStackTraceLimit(10); // Node.js defaults to 10
 
+  // TODO: it segfaults! process.nextTick is scoped out for now i guess!
   // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-  vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
-    if (auto nextTickQueue = global->m_nextTickQueue.get()) {
-      global->resetOnEachMicrotaskTick();
-      Bun::JSNextTickQueue *queue =
-          jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
-      queue->drain(vm, global);
-      return;
-    }
-  });
+  // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
+  //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
+  //     global->resetOnEachMicrotaskTick();
+  //     // Bun::JSNextTickQueue *queue =
+  //     //     jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
+  //     // queue->drain(vm, global);
+  //     return;
+  //   }
+  // });
 
   return global;
 }

@@ -9,3 +9,8 @@ export function css(file: string, is_development: boolean): string {
   }
   return contents;
 }
+
+export function int(char: string): number {
+  if (char.length !== 1) throw new Error("Must be one char long");
+  return char.charCodeAt(0);
+}

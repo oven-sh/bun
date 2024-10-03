@@ -3480,7 +3480,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
+pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
             @compileLog(a);
@@ -3488,7 +3488,10 @@ pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
             @compileError("A != B");
         }
     }
-    return assert(a == b);
+    if (!Environment.allow_assert) return;
+    if (a != b) {
+        Output.panic("Assertion failure: {} != {}", .{ a, b });
+    }
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
@@ -3759,7 +3762,9 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
-pub const kit = @import("kit/kit.zig");
+/// Deprecated: use `bun.bake`
+pub const kit = bake;
+pub const bake = @import("kit/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
@@ -3830,4 +3835,69 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
     };
 }
 
+pub const DebugThreadLock = if (Environment.allow_assert)
+    struct {
+        owning_thread: ?std.Thread.Id = null,
+
+        pub fn lock(impl: *@This()) void {
+            bun.assert(impl.owning_thread == null);
+            impl.owning_thread = std.Thread.getCurrentId();
+        }
+
+        pub fn unlock(impl: *@This()) void {
+            impl.assertLocked();
+            impl.owning_thread = null;
+        }
+
+        pub fn assertLocked(impl: *const @This()) void {
+            assert(std.Thread.getCurrentId() == impl.owning_thread);
+        }
+    }
+else
+    struct {
+        pub fn lock(_: *@This()) void {}
+        pub fn unlock(_: *@This()) void {}
+        pub fn assertLocked(_: *const @This()) void {}
+    };
+
 pub const bytecode_extension = ".jsc";
+
+/// An typed index into an array or other structure.
+/// maxInt is reserved for an empty state.
+///
+/// `const Index = bun.GenericIndex(u32, opaque{})
+///
+/// The empty opaque prevents Zig from memoizing the
+/// call, which would otherwise make all indexes
+/// equal to each other.
+pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    return enum(backing_int) {
+        _,
+        const Index = @This();
+        comptime {
+            _ = uid;
+        }
+
+        pub fn toOptional(oi: @This()) Optional {
+            return @enumFromInt(@intFromEnum(oi));
+        }
+
+        pub const Optional = enum(backing_int) {
+            none = std.math.maxInt(backing_int),
+            _,
+
+            pub fn init(maybe: ?Index) ?Index {
+                return if (maybe) |i| @enumFromInt(@intFromEnum(i)) else .none;
+            }
+
+            pub fn unwrap(oi: Optional) ?Index {
+                return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+            }
+        };
+    };
+}
+
+comptime {
+    // Must be nominal
+    assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}

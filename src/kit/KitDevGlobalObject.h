@@ -37,6 +37,7 @@ public:
 };
 
 // Zig API
+extern "C" void KitInitProcessIdentifier();
 extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner, void* console);
 
 }; // namespace Kit

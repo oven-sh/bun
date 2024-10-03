@@ -4124,7 +4124,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
-        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *@This().Watcher {
+        pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *Watcher {
             const reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = ctx,
@@ -4166,17 +4166,33 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub const HotReloadTask = struct {
             count: u8 = 0,
-            hashes: [8]u32 = [_]u32{0} ** 8,
-            concurrent_task: JSC.ConcurrentTask = undefined,
+            hashes: [8]u32,
+            paths: if (Ctx == bun.kit.DevServer) [8][]const u8 else void,
+            /// Left uninitialized until .enqueue
+            concurrent_task: JSC.ConcurrentTask,
             reloader: *Reloader,
 
-            pub fn append(this: *HotReloadTask, id: u32) void {
+            pub fn initEmpty(reloader: *Reloader) HotReloadTask {
+                return .{
+                    .reloader = reloader,
+
+                    .hashes = [_]u32{0} ** 8,
+                    .paths = if (Ctx == bun.kit.DevServer) [_][]const u8{&.{}} ** 8,
+                    .count = 0,
+                    .concurrent_task = undefined,
+                };
+            }
+
+            pub fn append(this: *HotReloadTask, path: []const u8, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;
                 }
 
                 this.hashes[this.count] = id;
+                // TODO(@paperdave/bake): this allocation is terrible and must be removed
+                if (Ctx == bun.kit.DevServer)
+                    this.paths[this.count] = default_allocator.dupe(u8, path) catch bun.outOfMemory();
                 this.count += 1;
             }
 
@@ -4216,6 +4232,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 const that = bun.new(HotReloadTask, .{
                     .reloader = this.reloader,
                     .count = this.count,
+                    .paths = this.paths,
                     .hashes = this.hashes,
                     .concurrent_task = undefined,
                 });
@@ -4341,9 +4358,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
             const rfs: *Fs.FileSystem.RealFS = &fs.fs;
             var _on_file_update_path_buf: bun.PathBuffer = undefined;
-            var current_task: HotReloadTask = .{
-                .reloader = this,
-            };
+            var current_task = HotReloadTask.initEmpty(this);
             defer current_task.enqueue();
 
             for (events) |event| {
@@ -4355,10 +4370,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // so it's consistent with the rest
                 // if we use .extname we might run into an issue with whether or not the "." is included.
                 // const path = Fs.PathName.init(file_path);
-                const id = hashes[event.index];
+                const current_hash = hashes[event.index];
 
-                if (this.verbose)
-                    debug("onFileUpdate {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+                // if (this.verbose)
+                //     std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
 
                 switch (kind) {
                     .file => {
@@ -4375,8 +4390,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
-                            current_task.append(id);
+                            current_task.append(file_path, current_hash);
                         }
+
+                        // TODO: delete events?
                     },
                     .directory => {
                         if (comptime Environment.isWindows) {
@@ -4403,7 +4420,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 // if a file descriptor is stale, we need to close it
                                 if (event.op.delete and entries_option != null) {
                                     for (parents, 0..) |parent_hash, entry_id| {
-                                        if (parent_hash == id) {
+                                        if (parent_hash == current_hash) {
                                             const affected_path = file_paths[entry_id];
                                             const was_deleted = check: {
                                                 std.posix.access(affected_path, std.posix.F_OK) catch break :check true;
@@ -4461,7 +4478,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
-                                                            current_task.append(@as(u32, @truncate(entry_id)));
+                                                            current_task.append(file_paths[entry_id], hashes[entry_id]);
                                                             ctx.removeAtIndex(
                                                                 @as(u16, @truncate(entry_id)),
                                                                 0,

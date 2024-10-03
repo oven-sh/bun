@@ -31,7 +31,6 @@ pub const DefaultBunDefines = struct {
 pub fn configureTransformOptionsForBunVM(allocator: std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
     var args = _args;
 
-    // args.serve = false;
     args.write = false;
     args.resolve = Api.ResolveMode.lazy;
     return try configureTransformOptionsForBun(allocator, args);

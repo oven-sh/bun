@@ -1867,11 +1867,11 @@ pub const Path = struct {
         };
     }
 
-    pub inline fn initWithNamespaceComptime(comptime namespace: string, comptime package: string) Path {
+    pub inline fn initForKitBuiltIn(comptime namespace: string, comptime package: string) Path {
         return comptime Path{
             .pretty = namespace ++ ":" ++ package,
             .is_symlink = true,
-            .text = package,
+            .text = "_bun/" ++ package,
             .namespace = namespace,
             .name = PathName.init(package),
         };

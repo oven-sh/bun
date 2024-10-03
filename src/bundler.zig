@@ -401,7 +401,7 @@ pub const Bundler = struct {
     }
 
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and

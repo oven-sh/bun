@@ -963,15 +963,16 @@ pub const H2FrameParser = struct {
                         if (frame.end_stream) {
                             if (this.waitForTrailers) {
                                 client.dispatch(.onWantTrailers, this.getIdentifier());
-                            }
-                            if (this.state == .HALF_CLOSED_REMOTE) {
-                                this.state = .CLOSED;
                             } else {
-                                this.state = .HALF_CLOSED_LOCAL;
-                            }
-                            this.cleanQueue();
-                            if (this.state == .CLOSED) {
-                                client.dispatchWithExtra(.onStreamEnd, this.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(this.state)));
+                                if (this.state == .HALF_CLOSED_REMOTE) {
+                                    this.state = .CLOSED;
+                                } else {
+                                    this.state = .HALF_CLOSED_LOCAL;
+                                }
+                                this.cleanQueue();
+                                if (this.state == .CLOSED) {
+                                    client.dispatchWithExtra(.onStreamEnd, this.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(this.state)));
+                                }
                             }
                         }
                     }
@@ -2718,14 +2719,15 @@ pub const H2FrameParser = struct {
             if (close) {
                 if (stream.waitForTrailers) {
                     this.dispatch(.onWantTrailers, stream.getIdentifier());
-                }
-                if (stream.state == .HALF_CLOSED_REMOTE) {
-                    stream.state = .CLOSED;
                 } else {
-                    stream.state = .HALF_CLOSED_LOCAL;
-                }
-                if (stream.state == .CLOSED) {
-                    this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+                    if (stream.state == .HALF_CLOSED_REMOTE) {
+                        stream.state = .CLOSED;
+                    } else {
+                        stream.state = .HALF_CLOSED_LOCAL;
+                    }
+                    if (stream.state == .CLOSED) {
+                        this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+                    }
                 }
             }
         };
@@ -2924,7 +2926,14 @@ pub const H2FrameParser = struct {
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
         _ = frame.write(@TypeOf(writer), writer);
         _ = writer.write(buffer[0..encoded_size]) catch 0;
-
+        if (stream.state == .HALF_CLOSED_REMOTE) {
+            stream.state = .CLOSED;
+        } else {
+            stream.state = .HALF_CLOSED_LOCAL;
+        }
+        if (stream.state == .CLOSED) {
+            this.dispatchWithExtra(.onStreamEnd, stream.getIdentifier(), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+        }
         return .undefined;
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {

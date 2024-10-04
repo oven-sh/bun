@@ -212,6 +212,8 @@ const Socket = (function (InternalSocket) {
       const self = socket.data;
       if (!self || self.#closed) return;
       self.#closed = true;
+      //socket cannot be used after close
+      self[bunSocketInternal] = null;
       const finalCallback = self.#final_callback;
       if (finalCallback) {
         self.#final_callback = null;
@@ -448,6 +450,7 @@ const Socket = (function (InternalSocket) {
 
     #closeRawConnection() {
       const connection = this.#upgraded;
+      connection[bunSocketInternal] = null;
       connection.unref();
       connection.destroy();
     }
@@ -704,6 +707,7 @@ const Socket = (function (InternalSocket) {
         this.#final_callback = callback;
       } else {
         // emit FIN not allowing half open
+        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }

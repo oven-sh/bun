@@ -44,4 +44,10 @@ nativeTests.test_get_exception = (_, value) => {
   }
 };
 
+nativeTests.test_external = () => {
+  let external = nativeTests.wrap_number_in_external(4.5);
+  console.log("from JS, external looks like", typeof external);
+  console.log(nativeTests.get_number_from_external(external));
+};
+
 module.exports = nativeTests;

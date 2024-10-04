@@ -275,6 +275,12 @@ describe("napi", () => {
       checkSameOutput("eval_wrapper", ["shouldNotExist"]);
     });
   });
+
+  describe("napi_external", () => {
+    it("can wrap a value and run a finalizer", () => {
+      checkSameOutput("test_external", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

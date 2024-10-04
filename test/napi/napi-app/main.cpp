@@ -655,6 +655,60 @@ napi_value eval_wrapper(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+class WrappedNumber {
+  double m_number;
+
+public:
+  WrappedNumber(double number) : m_number(number) {}
+
+  double get() const { return m_number; }
+
+  static void finalize(napi_env env, void *data, void *hint) {
+    // check we can allocate
+    napi_value str;
+    assert(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &str) ==
+           napi_ok);
+    char buf[6];
+    size_t bytes;
+    assert(napi_get_value_string_utf8(env, str, buf, 6, &bytes) == napi_ok);
+    printf("string created in external finalizer = %s\n", buf);
+
+    auto *wrapped = reinterpret_cast<WrappedNumber *>(data);
+    delete wrapped;
+  }
+};
+
+// wrap_number_in_external(5.0)
+napi_value wrap_number_in_external(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value num = info[0];
+  double c_num;
+  if (napi_get_value_double(env, num, &c_num) != napi_ok) {
+    napi_value undefined;
+    assert(napi_get_undefined(env, &undefined) == napi_ok);
+    return undefined;
+  }
+
+  auto *wrapped = new WrappedNumber(c_num);
+  napi_value external;
+  assert(napi_create_external(env, reinterpret_cast<void *>(wrapped),
+                              WrappedNumber::finalize, nullptr,
+                              &external) == napi_ok);
+  return external;
+}
+
+napi_value get_number_from_external(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value external = info[0];
+  void *wrapped;
+  assert(napi_get_value_external(env, external, &wrapped) == napi_ok);
+  napi_value num;
+  assert(napi_create_double(env,
+                            reinterpret_cast<WrappedNumber *>(wrapped)->get(),
+                            &num) == napi_ok);
+  return num;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -708,6 +762,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("call_and_get_exception",
               Napi::Function::New(env, call_and_get_exception));
   exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
+  exports.Set("wrap_number_in_external",
+              Napi::Function::New(env, wrap_number_in_external));
+  exports.Set("get_number_from_external",
+              Napi::Function::New(env, get_number_from_external));
 
   return exports;
 }

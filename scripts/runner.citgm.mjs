@@ -39,6 +39,9 @@ const clone_url = await (async () => {
       result = result.replace("ssh://git@", "https://");
       return result;
     }
+    case 1: {
+      return the_shard[1];
+    }
     default: {
       console.log("invalid shard kind:", the_shard[0]);
       process.exit(1);

@@ -294,7 +294,7 @@ const Socket = (function (InternalSocket) {
           this.pauseOnConnect = pauseOnConnect;
           if (isTLS) {
             // add secureConnection event handler
-            self.once("secureConnection", connectionListener);
+            self.once("secureConnection", () => connectionListener.$call(self, _socket));
           } else {
             connectionListener.$call(self, _socket);
           }

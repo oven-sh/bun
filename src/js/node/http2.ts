@@ -1466,9 +1466,6 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
-    if (this.readable) {
-      this.push(null);
-    }
     if (!this[bunHTTP2Closed]) {
       this[bunHTTP2Closed] = true;
 
@@ -1516,9 +1513,9 @@ class Http2Stream extends Duplex {
         native.writeStream(this.#id, chunk, this[bunHTTP2StreamEnded], callback);
         return;
       }
-      if (typeof callback == "function") {
-        callback();
-      }
+    }
+    if (typeof callback == "function") {
+      callback();
     }
   }
 }
@@ -1768,6 +1765,8 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     }
     stream[bunHTTP2Closed] = true;
     stream[bunHTTP2Session] = null;
+    stream.resume(); // we have a error we consume and close
+    stream.push(null);
 
     if (destroy) stream.destroy(error_instance, stream.rstCode);
     else {
@@ -1839,8 +1838,12 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       if (stream.rstCode === undefined) {
         stream.rstCode = 0;
-      }
-      if (stream.readable) {
+        // If the user hasn't tried to consume the stream (and this is a server
+        // session) then just dump the incoming data so that the stream can
+        // be destroyed.
+        if (stream.readableFlowing === null) {
+          stream.resume();
+        }
         stream.push(null);
       }
       // 7 = closed, in this case we already send everything and received everything
@@ -1855,9 +1858,8 @@ class ServerHttp2Session extends Http2Session {
       }
     },
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
-      if (!self || typeof stream !== "object") return;
+      if (!self || typeof stream !== "object" || !data) return;
       const queue = stream[bunHTTP2StreamReadQueue];
-
       if (queue.isEmpty()) {
         if (stream.push(data)) return;
       }
@@ -2174,7 +2176,6 @@ class ServerHttp2Session extends Http2Session {
   // If specified, the callback function is registered as a handler for the 'close' event.
   close(callback: Function) {
     this.#closed = true;
-
     if (typeof callback === "function") {
       this.once("close", callback);
     }
@@ -2190,6 +2191,7 @@ class ServerHttp2Session extends Http2Session {
     this.#connected = false;
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      socket.resume();
       socket.end();
     } else {
       this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
@@ -2267,9 +2269,10 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       if (stream.rstCode === undefined) {
         stream.rstCode = 0;
-      }
-      if (stream.readable) {
         stream.push(null);
+        // Push a null so the stream can end whenever the client consumes
+        // it completely.
+        stream.read(0);
       }
 
       // 7 = closed, in this case we already send everything and received everything
@@ -2284,9 +2287,8 @@ class ClientHttp2Session extends Http2Session {
       }
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
-      if (!self || typeof stream !== "object") return;
+      if (!self || typeof stream !== "object" || !data) return;
       const queue = stream[bunHTTP2StreamReadQueue];
-
       if (queue.isEmpty()) {
         if (stream.push(data)) return;
       }

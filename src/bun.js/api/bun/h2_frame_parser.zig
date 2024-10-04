@@ -1112,6 +1112,7 @@ pub const H2FrameParser = struct {
                 for (dataFrameQueue.slice()) |item| {
                     var frame = item;
                     client.queuedDataSize -= item.buffer.len;
+                    if (frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value);
                     frame.deinit(client.allocator);
                 }
             }

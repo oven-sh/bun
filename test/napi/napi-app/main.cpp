@@ -461,6 +461,15 @@ struct ThreadsafeFunctionData {
     ThreadsafeFunctionData *data =
         reinterpret_cast<ThreadsafeFunctionData *>(finalize_data);
     delete data;
+
+    // try allocating
+    napi_value str;
+    assert(napi_create_string_utf8(env, "hello", NAPI_AUTO_LENGTH, &str) ==
+           napi_ok);
+    char buf[6];
+    size_t bytes;
+    assert(napi_get_value_string_utf8(env, str, buf, 6, &bytes) == napi_ok);
+    printf("string created in tsfn finalizer = %s\n", buf);
   }
 
   static void tsfn_callback(napi_env env, napi_value js_callback, void *context,

@@ -64,6 +64,7 @@ const clone_dir = tmpdirSync();
     console.log("-", "command exited with non-zero status:", result.signal);
     process.exit(1);
   }
+  console.log("---");
 }
 
 {
@@ -81,6 +82,7 @@ const clone_dir = tmpdirSync();
     console.log("-", "command exited with non-zero status:", result.status);
     process.exit(1);
   }
+  console.log("---");
 }
 
 {
@@ -98,4 +100,5 @@ const clone_dir = tmpdirSync();
     console.log("-", "command exited with non-zero status:", result.status);
     process.exit(1);
   }
+  console.log("---");
 }

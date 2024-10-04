@@ -12,11 +12,16 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
-function performRouteReload() {
+async function performRouteReload() {
+  console.info("[Bun] Server-side code changed, reloading!");
   if (onServerSideReload) {
     try {
-      onServerSideReload();
+      await onServerSideReload();
+      return;
     } catch (err) {
+      console.error("Failed to perform Server-side reload.");
+      console.error(err);
+      console.error("The page will hard-reload now.");
       if (IS_BUN_DEVELOPMENT) {
         return showErrorOverlay(err);
       }

@@ -330,17 +330,17 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 pub const BakeEntryPoint = struct {
     path: []const u8,
     graph: bake.Renderer,
-    is_route_root: bool = false,
+    route_index: bake.DevServer.Route.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Renderer) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
     }
 
-    pub fn route(path: []const u8) BakeEntryPoint {
+    pub fn route(path: []const u8, index: bake.DevServer.Route.Index) BakeEntryPoint {
         return .{
             .path = path,
             .graph = .server,
-            .is_route_root = true,
+            .route_index = index.toOptional(),
         };
     }
 };
@@ -963,8 +963,8 @@ pub const BundleV2 = struct {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
 
-                if (entry_point.is_route_root) {
-                    _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true);
+                if (entry_point.route_index.unwrap()) |route_index| {
+                    _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
                 }
             }
         }

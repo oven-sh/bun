@@ -3918,3 +3918,13 @@ comptime {
     // Must be nominal
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
 }
+
+/// Reverse of the slice index operator.
+/// Given `&slice[index] == item`, returns the `index` needed.
+/// The item must be in the slice.
+pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    const index = @divExact(offset, @sizeOf(T));
+    bun.assert(index < slice.len);
+    return index;
+}

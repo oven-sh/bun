@@ -66,6 +66,7 @@ watch_current: u1 = 0,
 generation: usize = 0,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
+route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Route.Index),
 incremental_result: IncrementalResult,
 graph_safety_lock: bun.DebugThreadLock,
 framework: bake.Framework,
@@ -91,8 +92,6 @@ pub const Route = struct {
     entry_point: []const u8,
 
     bundle: BundleState = .stale,
-    client_files: std.AutoArrayHashMapUnmanaged(IncrementalGraph(.client).FileIndex, void) = .{},
-    server_files: std.AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, void) = .{},
     module_name_string: ?bun.String = null,
 
     /// Assigned in DevServer.init
@@ -179,6 +178,7 @@ pub fn init(options: Options) !*DevServer {
         .client_graph = IncrementalGraph(.client).empty,
         .server_graph = IncrementalGraph(.server).empty,
         .incremental_result = IncrementalResult.empty,
+        .route_lookup = .{},
 
         .server_bundler = undefined,
         .client_bundler = undefined,
@@ -429,7 +429,10 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
             BakeEntryPoint.init(dev.framework.entry_server.?, .server),
             BakeEntryPoint.init(dev.framework.entry_client.?, .client),
             // The route!
-            BakeEntryPoint.route(route.entry_point),
+            BakeEntryPoint.route(
+                route.entry_point,
+                Route.Index.init(@intCast(bun.indexOfPointerInSlice(Route, dev.routes, route))),
+            ),
         },
         route,
         .initial_response,
@@ -926,8 +929,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Key contents are owned by `default_allocator`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
-        /// Track bools for files which are "stale", meaning
-        /// they should be re-bundled before being used.
+        /// Track bools for files which are "stale", meaning they should be
+        /// re-bundled before being used. Resizing this is usually deferred
+        /// until after a bundle, since resizing the bit-set requires an
+        /// exact size, instead of the log approach that dynamic arrays use.
         stale_files: DynamicBitSetUnmanaged,
 
         /// Start of the 'dependencies' linked list. These are the other files
@@ -1158,7 +1163,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             });
 
             // TODO: put this on receive context so we can REUSE memory
-            var quick_lookup: std.AutoArrayHashMapUnmanaged(FileIndex, TempLookup) = .{};
+            var quick_lookup: AutoArrayHashMapUnmanaged(FileIndex, TempLookup) = .{};
             defer quick_lookup.deinit(temp_alloc);
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
@@ -1173,11 +1178,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            // TODO: this code is incorrect
-            // var new_imports: EdgeIndex.Optional = if (side == .server and ctx.server_seen_bit_set.isSet(file_index.get()))
-            //     g.first_import.items[file_index.get()]
-            // else
-            //     .none;
+            if (side == .server) {
+                //
+            }
+            // TODO: handle when side=.server
 
             var new_imports: EdgeIndex.Optional = .none;
             defer g.first_import.items[file_index.get()] = new_imports;
@@ -1286,8 +1290,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
             switch (side) {
                 .server => {
                     if (file.is_route) {
+                        const route_index = g.owner().route_lookup.get(file_index) orelse
+                            Output.panic("Route not in lookup index: {d} {}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
+
                         igLog("\\<- mark the route my friend", .{});
-                        // g.owner().incremental_result.routes_affected.append(g.owner().allocator, )
+                        try g.owner().incremental_result.routes_affected.append(g.owner().allocator, route_index);
                     }
                 },
                 .client => {
@@ -1315,14 +1322,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// Never takes ownership of `abs_path`
         /// Marks a chunk but without any content. Used to track dependencies to files that don't exist.
         pub fn insertStale(g: *@This(), abs_path: []const u8, is_ssr_graph: bool) bun.OOM!FileIndex {
-            return g.insertStaleExtra(abs_path, is_ssr_graph, false);
+            return g.insertStaleExtra(abs_path, is_ssr_graph, false, {});
         }
 
-        pub fn insertStaleExtra(g: *@This(), abs_path: []const u8, is_ssr_graph: bool, is_route: bool) bun.OOM!FileIndex {
+        pub fn insertStaleExtra(
+            g: *@This(),
+            abs_path: []const u8,
+            is_ssr_graph: bool,
+            comptime is_route: bool,
+            route_index: if (is_route) Route.Index else void,
+        ) bun.OOM!FileIndex {
             g.owner().graph_safety_lock.assertLocked();
 
             debug.log("Insert stale: {s}", .{abs_path});
             const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
+            const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
@@ -1335,6 +1349,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 if (side == .server) {
                     if (is_route) gop.value_ptr.*.is_route = is_route;
                 }
+            }
+
+            if (is_route) {
+                try g.owner().route_lookup.put(g.owner().allocator, file_index, route_index);
             }
 
             switch (side) {
@@ -1358,7 +1376,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 },
             }
 
-            return FileIndex.init(@intCast(gop.index));
+            return file_index;
         }
 
         pub fn ensureStaleBitCapacity(g: *@This(), val: bool) !void {
@@ -2366,6 +2384,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mutex = std.Thread.Mutex;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 
 const bun = @import("root").bun;
 const Environment = bun.Environment;

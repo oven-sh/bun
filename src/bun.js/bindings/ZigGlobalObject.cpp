@@ -1108,10 +1108,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
-    if (napiInstanceDataFinalizer) {
-        napi_finalize finalizer = reinterpret_cast<napi_finalize>(napiInstanceDataFinalizer);
-        finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
-    }
+    napiFinalizer.call(napiInstanceData);
 
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();

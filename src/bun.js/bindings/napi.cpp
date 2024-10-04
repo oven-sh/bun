@@ -163,20 +163,10 @@ public:
     }
 };
 
-extern "C" void napi_enqueue_finalizer(napi_finalize finalize_cb, void* data, void* hint);
-
 static NapiRefWeakHandleOwner& weakValueHandleOwner()
 {
     static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
     return jscWeakValueHandleOwner;
-}
-
-void NapiFinalizer::call(void* data)
-{
-    if (this->finalize_cb) {
-        NAPI_PREMABLE
-        napi_enqueue_finalizer(this->finalize_cb, data, this->finalize_hint);
-    }
 }
 
 void NapiRef::ref()
@@ -943,7 +933,8 @@ node_api_create_external_string_latin1(napi_env env,
 #if NAPI_VERBOSE
             printf("[napi] string finalize_callback\n");
 #endif
-            finalize_callback(toNapi(defaultGlobalObject()), nullptr, hint);
+            NapiFinalizer finalizer { hint, finalize_callback };
+            finalizer.call(str);
         }
     });
     Zig::GlobalObject* globalObject = toJS(env);
@@ -979,10 +970,8 @@ node_api_create_external_string_utf16(napi_env env,
 #if NAPI_VERBOSE
         printf("[napi] string finalize_callback\n");
 #endif
-
-        if (finalize_callback) {
-            finalize_callback(toNapi(defaultGlobalObject()), nullptr, hint);
-        }
+        NapiFinalizer finalizer { hint, finalize_callback };
+        finalizer.call(str);
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
@@ -1479,7 +1468,8 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
         vm.heap.addFinalizer(object, [finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
-            napi_enqueue_finalizer(finalize_cb, native_object, finalize_hint);
+            NapiFinalizer finalizer { finalize_hint, finalize_cb };
+            finalizer.call(native_object);
         });
     }
 
@@ -2229,13 +2219,12 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([globalObject, finalize_hint, finalize_cb](void* p) {
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([finalize_hint, finalize_cb](void* p) {
 #if NAPI_VERBOSE
         printf("[napi] buffer finalize_callback\n");
 #endif
-        if (finalize_cb != nullptr) {
-            finalize_cb(toNapi(globalObject), p, finalize_hint);
-        }
+        NapiFinalizer finalizer { finalize_hint, finalize_cb };
+        finalizer.call(p);
     }));
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
@@ -2257,13 +2246,12 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([globalObject, finalize_hint, finalize_cb](void* p) {
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([finalize_hint, finalize_cb](void* p) {
 #if NAPI_VERBOSE
         printf("[napi] arraybuffer finalize_callback\n");
 #endif
-        if (finalize_cb != nullptr) {
-            finalize_cb(toNapi(globalObject), p, finalize_hint);
-        }
+        NapiFinalizer finalizer { finalize_hint, finalize_cb };
+        finalizer.call(p);
     }));
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTFMove(arrayBuffer));
@@ -2455,7 +2443,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     JSC::VM& vm = globalObject->vm();
 
     auto* structure = globalObject->NapiExternalStructure();
-    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, reinterpret_cast<void*>(finalize_cb));
+    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb);
     JSC::EnsureStillAliveScope ensureStillAlive(value);
     *result = toNapi(value, globalObject);
     return napi_ok;
@@ -2682,8 +2670,7 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     globalObject->napiInstanceData = data;
 
-    globalObject->napiInstanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
-    globalObject->napiInstanceDataFinalizerHint = finalize_hint;
+    globalObject->napiFinalizer = { finalize_hint, finalize_cb };
 
     return napi_ok;
 }

@@ -52,6 +52,7 @@ class GlobalInternals;
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunGlobalScope.h"
+#include "napi_finalizer.h"
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -473,8 +474,7 @@ public:
     // This is not a correct implementation
     // Addon modules can override each other's data
     void* napiInstanceData = nullptr;
-    void* napiInstanceDataFinalizer = nullptr;
-    void* napiInstanceDataFinalizerHint = nullptr;
+    NapiFinalizer napiFinalizer = {};
 
     Bun::JSMockModule mockModule;
 

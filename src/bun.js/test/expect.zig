@@ -2575,6 +2575,10 @@ pub const Expect = struct {
 
                 if (_received_message) |received_message| {
                     if (received_message.isSameValue(expected_message, globalThis)) return .undefined;
+
+                    if (Expect.isAsymmetricMatcher(expected_message)) {
+                        if (received_message.jestStrictDeepEquals(expected_message, globalThis)) return .undefined;
+                    }
                 }
 
                 // error: message from received error does not match expected error message.

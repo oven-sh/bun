@@ -250,13 +250,18 @@ const unsigned U32_MAX = std::numeric_limits<unsigned>().max();
 
 static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral name, JSValue arg, size_t upperBound)
 {
-    if (!arg.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "number"_s, arg);
+    if (!arg.isNumber()) {
+        auto num = arg.toNumber(lexicalGlobalObject);
+        if (std::isnan(num)) num = 0;
+        num = std::trunc(num);
+        arg = jsNumber(num);
+    }
     auto num = arg.asNumber();
-    if (num < 0 || std::isinf(num)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
-    double intpart;
-    if (std::modf(num, &intpart) != 0) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "integer"_s, arg);
-    if (intpart >= 0 && intpart <= U32_MAX) return intpart;
-    return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
+    if (num < 0) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
+    if (std::isinf(num)) return 0;
+    num = std::trunc(num);
+    if (num >= 0 && num <= U32_MAX) return num;
+    return 0;
 }
 
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
@@ -1020,8 +1025,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     auto buffer = callFrame->uncheckedArgument(0);
 
     if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "target"_s, "Buffer or Uint8Array"_s, buffer);
     }
 
     JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
@@ -1050,6 +1054,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     case 3:
         sourceStartValue = callFrame->uncheckedArgument(2);
         sourceStart = parseIndex(lexicalGlobalObject, throwScope, "sourceStart"_s, callFrame->uncheckedArgument(2), sourceEndInit);
+        if (sourceStart > sourceEndInit) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 2:

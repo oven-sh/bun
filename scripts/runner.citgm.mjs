@@ -20,6 +20,7 @@ const shards = [
   // 5
   [0, "pumpify"],
   [0, "thread-sleep"],
+  [0, "isarray"],
 ];
 
 const shard_number = parseInt(process.argv[2] ?? process.env["BUILDKITE_PARALLEL_JOB"] ?? "0", 10);

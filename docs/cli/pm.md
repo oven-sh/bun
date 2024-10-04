@@ -138,3 +138,5 @@ To print the default trusted dependencies list:
 ```bash
 $ bun pm default-trusted
 ```
+
+see the current list on GitHub [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt)

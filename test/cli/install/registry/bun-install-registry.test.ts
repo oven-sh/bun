@@ -21,6 +21,7 @@ import {
   toHaveBins,
   toMatchNodeModulesAt,
   writeShebangScript,
+  stderrForInstall,
 } from "harness";
 import { join, resolve, sep } from "path";
 import { readdirSorted } from "../dummy.registry";
@@ -549,10 +550,14 @@ describe("publish", async () => {
       otpFail?: boolean;
       npmNotice?: boolean;
       xLocalCache?: boolean;
+      expectedCI?: string;
     }) {
       return async function (req: Request) {
         const { token, setAuthHeader = true, otpFail = false, npmNotice = false, xLocalCache = false } = opts;
         if (req.url.includes("otp-pkg")) {
+          if (opts.expectedCI) {
+            expect(req.headers.get("user-agent")).toContain("ci/" + opts.expectedCI);
+          }
           if (req.headers.get("npm-otp") === token) {
             if (otpFail) {
               return new Response(
@@ -705,6 +710,47 @@ describe("publish", async () => {
         } else {
           expect(err).toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
         }
+      });
+    }
+
+    const fakeCIEnvs = [
+      { ci: "expo-application-services", envs: { EAS_BUILD: "hi" } },
+      { ci: "codemagic", envs: { CM_BUILD_ID: "hi" } },
+      { ci: "vercel", envs: { "NOW_BUILDER": "hi" } },
+    ];
+    for (const envInfo of fakeCIEnvs) {
+      test(`CI user agent name: ${envInfo.ci}`, async () => {
+        const token = await generateRegistryUser(`otp-${envInfo.ci}`, "otp");
+        using mockRegistry = Bun.serve({
+          port: 0,
+          fetch: mockRegistryFetch({ token, expectedCI: envInfo.ci }),
+        });
+
+        const bunfig = `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "otp-pkg-4"), { recursive: true, force: true }),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "otp-pkg-4",
+              version: "4.4.4",
+              dependencies: {
+                "otp-pkg-4": "4.4.4",
+              },
+            }),
+          ),
+        ]);
+
+        const { out, err, exitCode } = await publish(
+          { ...env, ...envInfo.envs, ...{ BUILDKITE: undefined, GITHUB_ACTIONS: undefined } },
+          packageDir,
+        );
+        expect(exitCode).toBe(0);
       });
     }
   });
@@ -7882,7 +7928,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = await Bun.readableStreamToText(stderr);
+          let err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -7915,7 +7961,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -7949,7 +7995,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          const err = await Bun.readableStreamToText(stderr);
+          const err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -7989,7 +8035,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = await Bun.readableStreamToText(stderr);
+          let err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -8076,7 +8122,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = await Bun.readableStreamToText(stderr);
+        let err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8111,7 +8157,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = await Bun.readableStreamToText(stderr);
+        err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8149,7 +8195,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = await Bun.readableStreamToText(stderr);
+        let err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8196,7 +8242,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = await Bun.readableStreamToText(stderr);
+        err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");

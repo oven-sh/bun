@@ -836,7 +836,7 @@ class Http2ServerResponse extends Stream {
     const stream = this[kStream];
     if (stream.headersSent || this[kState].closed) return false;
     stream.additionalHeaders({
-      [constants.HTTP2_HEADER_STATUS]: HTTP_STATUS_CONTINUE,
+      [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_CONTINUE,
     });
     return true;
   }
@@ -2313,6 +2313,11 @@ class ClientHttp2Session extends Http2Session {
       let set_cookies = headers["set-cookie"];
       if (typeof set_cookies === "string") {
         (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
+      }
+
+      if (headers[":status"] === constants.HTTP_STATUS_CONTINUE) {
+        stream.emit("continue");
+        return;
       }
 
       let cookie = headers["cookie"];

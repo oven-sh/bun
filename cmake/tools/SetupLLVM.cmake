@@ -1,4 +1,4 @@
-optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" ON)
+optionx(ENABLE_LLVM BOOL "If LLVM should be used for compilation" DEFAULT ON)
 
 if(NOT ENABLE_LLVM)
   return()

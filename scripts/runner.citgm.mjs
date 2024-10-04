@@ -9,6 +9,7 @@ function tmpdirSync(pattern = "bun.citgm.") {
   return fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), pattern));
 }
 
+// keep this in sync with .buildkite/ci.yml
 const shards = [
   [0, "binary-split"], //0
   [0, "blake2b-wasm"], //1

@@ -8,7 +8,7 @@
 // first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
 // in the promise reaction) and then just before we call .then, we restore it.
 //
-// This means context tracking is *kind-of* manual. If we recieve a callback in native code
+// This means context tracking is *kind-of* manual. If we receive a callback in native code
 // - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
@@ -136,7 +136,7 @@ class AsyncLocalStorage {
     return this.run(undefined, cb, ...args);
   }
 
-  // This function is literred with $asserts to ensure that everything that
+  // This function is litered with $asserts to ensure that everything that
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
@@ -312,6 +312,7 @@ function createWarning(message) {
       // the following do not actually need async_hooks to work properly
       "zx/build/core.js",
       "datadog-core/src/storage/async_resource.js",
+      "react-server-dom-webpack/",
     ];
     const e = new Error().stack!;
     if (known_supported_modules.some(m => e.includes(m))) return;

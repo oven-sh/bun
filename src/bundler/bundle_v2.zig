@@ -123,10 +123,11 @@ const MinifyRenamer = renamer.MinifyRenamer;
 const Scope = js_ast.Scope;
 const JSC = bun.JSC;
 const debugTreeShake = Output.scoped(.TreeShake, true);
+const debugPartRanges = Output.scoped(.PartRanges, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
-const kit = bun.kit;
+const bake = bun.bake;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -330,10 +331,10 @@ pub const BundleV2 = struct {
     /// When Server Component is enabled, this is used for the client bundles
     /// and `bundler` is used for the server bundles.
     client_bundler: *Bundler,
-    /// See kit.Framework.ServerComponents.separate_ssr_graph
+    /// See bake.Framework.ServerComponents.separate_ssr_graph
     ssr_bundler: *Bundler,
-    /// When Bun Kit is used, the resolved framework is passed here
-    framework: ?kit.Framework,
+    /// When Bun Bake is used, the resolved framework is passed here
+    framework: ?bake.Framework,
     graph: Graph,
     linker: LinkerContext,
     bun_watcher: ?*bun.JSC.Watcher,
@@ -351,7 +352,7 @@ pub const BundleV2 = struct {
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
     const KitOptions = struct {
-        framework: kit.Framework,
+        framework: bake.Framework,
         client_bundler: *Bundler,
         ssr_bundler: *Bundler,
     };
@@ -490,7 +491,6 @@ pub const BundleV2 = struct {
             const scbs = this.graph.server_component_boundaries.list.slice();
             for (scbs.items(.source_index)) |source_index| {
                 scb_bitset.set(source_index);
-                // insert the other one?
             }
             break :brk scb_bitset;
         } else null;
@@ -525,9 +525,21 @@ pub const BundleV2 = struct {
             },
         }
 
-        // if (comptime Environment.allow_assert) {
-        //     Output.prettyln("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
-        // }
+        const DebugLog = bun.Output.Scoped(.ReachableFiles, false);
+        if (DebugLog.isVisible()) {
+            DebugLog.log("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
+            const sources: []Logger.Source = this.graph.input_files.items(.source);
+            const targets: []options.Target = this.graph.ast.items(.target);
+            for (visitor.reachable.items) |idx| {
+                const source = sources[idx.get()];
+                DebugLog.log("reachable file: #{d} {} ({s}) target=.{s}", .{
+                    source.index.get(),
+                    bun.fmt.quote(source.path.pretty),
+                    source.path.text,
+                    @tagName(targets[idx.get()]),
+                });
+            }
+        }
 
         return visitor.reachable.toOwnedSlice();
     }
@@ -549,11 +561,32 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) void {
         const bundler = this.bundlerForTarget(target);
-        var resolve_result = bundler.resolver.resolve(
+        var had_busted_dir_cache: bool = false;
+        var resolve_result = while (true) break bundler.resolver.resolve(
             Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
             import_record.specifier,
             import_record.kind,
         ) catch |err| {
+            // Only perform directory busting when hot-reloading is enabled
+            if (err == error.ModuleNotFound) {
+                if (this.bundler.options.dev_server) |dev| {
+                    if (!had_busted_dir_cache) {
+                        // Only re-query if we previously had something cached.
+                        if (bundler.resolver.bustDirCacheFromSpecifier(import_record.source_file, import_record.specifier)) {
+                            had_busted_dir_cache = true;
+                            continue;
+                        }
+                    }
+
+                    // Tell Bake's Dev Server to wait for the file to be imported.
+                    dev.directory_watchers.trackResolutionFailure(
+                        import_record.source_file,
+                        import_record.specifier,
+                        target.bakeRenderer(),
+                    ) catch bun.outOfMemory();
+                }
+            }
+
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
             const log = &this.completion.?.log;
@@ -806,10 +839,10 @@ pub const BundleV2 = struct {
         this.bundler.log.msgs.allocator = this.graph.allocator;
         this.bundler.log.clone_line_text = true;
 
-        // We don't expose an option to disable this. Kit requires tree-shaking
-        // disabled since every export must is always exist in case a future
-        // module starts depending on it.
-        if (this.bundler.options.output_format == .internal_kit_dev) {
+        // We don't expose an option to disable this. Bake forbids tree-shaking
+        // since every export must is always exist in case a future module
+        // starts depending on it.
+        if (this.bundler.options.output_format == .internal_bake_dev) {
             this.bundler.options.tree_shaking = false;
             this.bundler.resolver.opts.tree_shaking = false;
         } else {
@@ -832,7 +865,7 @@ pub const BundleV2 = struct {
         this.linker.options.public_path = bundler.options.public_path;
         this.linker.options.target = bundler.options.target;
         this.linker.options.output_format = bundler.options.output_format;
-        this.linker.kit_dev_server = bundler.options.kit;
+        this.linker.dev_server = bundler.options.dev_server;
 
         this.graph.generate_bytecode_cache = bundler.options.bytecode;
 
@@ -853,7 +886,7 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8) !ThreadPoolLib.Batch {
+    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8, ssr_entry_points: []const []const u8) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
 
         {
@@ -880,8 +913,8 @@ pub const BundleV2 = struct {
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
-        // Kit has two source indexes which are computed at the end of the
-        // Scan+Parse phase, but reserved now so that resolution works.
+        // Bake reserves two source indexes at the start of the file list, but
+        // gets its content set after the scan+parse phase, but before linking.
         try this.reserveSourceIndexesForKit();
 
         {
@@ -903,6 +936,13 @@ pub const BundleV2 = struct {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
+
+            for (ssr_entry_points) |entry_point| {
+                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
+                if (try this.enqueueItem(null, &batch, resolved, true, .kit_server_components_ssr)) |source_index| {
+                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
+                } else {}
+            }
         }
 
         return batch;
@@ -920,24 +960,29 @@ pub const BundleV2 = struct {
                 child.parent = module_scope;
             }
 
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                this.graph.heap.gc(true);
+                bun.Mimalloc.mi_collect(true);
+            }
+
             module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
         }
     }
 
-    /// This generates the two asts for 'bun:kit/client' and 'bun:kit/server'. Both are generated
+    /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
     /// at the same time in one pass over the SBC list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
-        // If Kit is not being used, do nothing
+        // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:kit/client'", .{});
+        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:bake/client'", .{});
         if (!this.graph.kit_referenced_server_data) return;
 
         const alloc = this.graph.allocator;
 
-        var server = try AstBuilder.init(this.graph.allocator, &kit.server_virtual_source, this.bundler.options.hot_module_reloading);
-        var client = try AstBuilder.init(this.graph.allocator, &kit.client_virtual_source, this.bundler.options.hot_module_reloading);
+        var server = try AstBuilder.init(this.graph.allocator, &bake.server_virtual_source, this.bundler.options.hot_module_reloading);
+        var client = try AstBuilder.init(this.graph.allocator, &bake.client_virtual_source, this.bundler.options.hot_module_reloading);
 
         var server_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
         var client_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
@@ -949,7 +994,7 @@ pub const BundleV2 = struct {
         const id_string = server.newExpr(E.String{ .data = "id" });
         const name_string = server.newExpr(E.String{ .data = "name" });
         const chunks_string = server.newExpr(E.String{ .data = "chunks" });
-        const specifier_string = server.newExpr(E.String{ .data = "specifier_string" });
+        const specifier_string = server.newExpr(E.String{ .data = "specifier" });
         const empty_array = server.newExpr(E.Array{});
 
         for (
@@ -969,7 +1014,7 @@ pub const BundleV2 = struct {
                 // re-generate this file later with the properly decided
                 // manifest. However, I will probably reconsider how this
                 // manifest is being generated when I write the whole
-                // "production build" part of Kit.
+                // "production build" part of Bake.
 
                 const keys = named_exports_array[source_id].keys();
                 const client_manifest_items = try alloc.alloc(G.Property, keys.len);
@@ -1042,8 +1087,8 @@ pub const BundleV2 = struct {
             .is_export = true,
         });
 
-        this.graph.ast.set(Index.kit_server_data.get(), try server.toBundledAst());
-        this.graph.ast.set(Index.kit_client_data.get(), try client.toBundledAst());
+        this.graph.ast.set(Index.bake_server_data.get(), try server.toBundledAst(.bun));
+        this.graph.ast.set(Index.bake_client_data.get(), try client.toBundledAst(.browser));
     }
 
     pub fn enqueueParseTask(
@@ -1189,7 +1234,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}, &.{}));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1788,6 +1833,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
         entry_points: []const []const u8,
         client_entry_points: []const []const u8,
+        ssr_entry_points: []const []const u8,
     ) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
@@ -1800,7 +1846,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points, ssr_entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -1815,6 +1861,11 @@ pub const BundleV2 = struct {
         }
 
         try this.processServerComponentManifestFiles();
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.graph.heap.gc(true);
+            bun.Mimalloc.mi_collect(true);
+        }
 
         try this.cloneAST();
 
@@ -1937,8 +1988,8 @@ pub const BundleV2 = struct {
         try this.graph.ast.ensureUnusedCapacity(this.graph.allocator, 2);
         try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, 2);
 
-        const server_source = kit.server_virtual_source;
-        const client_source = kit.client_virtual_source;
+        const server_source = bake.server_virtual_source;
+        const client_source = bake.client_virtual_source;
 
         this.graph.input_files.appendAssumeCapacity(.{
             .source = server_source,
@@ -1951,8 +2002,8 @@ pub const BundleV2 = struct {
             .side_effects = .no_side_effects__pure_data,
         });
 
-        bun.assert(this.graph.input_files.items(.source)[Index.kit_server_data.get()].index.get() == Index.kit_server_data.get());
-        bun.assert(this.graph.input_files.items(.source)[Index.kit_client_data.get()].index.get() == Index.kit_client_data.get());
+        bun.assert(this.graph.input_files.items(.source)[Index.bake_server_data.get()].index.get() == Index.bake_server_data.get());
+        bun.assert(this.graph.input_files.items(.source)[Index.bake_client_data.get()].index.get() == Index.bake_client_data.get());
 
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
@@ -1986,7 +2037,7 @@ pub const BundleV2 = struct {
 
         var last_error: ?anyerror = null;
 
-        for (ast.import_records.slice(), 0..) |*import_record, i| {
+        outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
             if (
             // Don't resolve TypeScript types
             import_record.is_unused or
@@ -2003,7 +2054,7 @@ pub const BundleV2 = struct {
             if (this.framework) |fw| if (fw.server_components != null) {
                 switch (ast.target.isServerSide()) {
                     inline else => |is_server| {
-                        const src = if (is_server) kit.server_virtual_source else kit.client_virtual_source;
+                        const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
                             if (is_server) {
                                 this.graph.kit_referenced_server_data = true;
@@ -2072,8 +2123,8 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const bundler, const renderer: kit.Renderer, const target =
-                if (import_record.tag == .kit_resolve_to_ssr_graph)
+            const bundler, const renderer: bake.Renderer, const target =
+                if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
                 // TODO: consider moving this error into js_parser so it is caught more reliably
                 // Then we can assert(this.framework != null)
@@ -2082,7 +2133,7 @@ pub const BundleV2 = struct {
                         source,
                         import_record.range.loc,
                         this.graph.allocator,
-                        "The 'bun_kit_graph' import attribute cannot be used outside of a Bun Kit bundle",
+                        "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
                         .{},
                     ) catch @panic("unexpected log error");
                     continue;
@@ -2108,11 +2159,39 @@ pub const BundleV2 = struct {
                 };
             } else .{
                 this.bundlerForTarget(ast.target),
-                ast.target.kitRenderer(),
+                ast.target.bakeRenderer(),
                 ast.target,
             };
 
-            var resolve_result = bundler.resolver.resolve(source_dir, import_record.path.text, import_record.kind) catch |err| {
+            var had_busted_dir_cache = false;
+            var resolve_result = inner: while (true) break bundler.resolver.resolveWithFramework(
+                source_dir,
+                import_record.path.text,
+                import_record.kind,
+            ) catch |err| {
+                // Only perform directory busting when hot-reloading is enabled
+                if (err == error.ModuleNotFound) {
+                    if (this.bundler.options.dev_server) |dev| {
+                        if (!had_busted_dir_cache) {
+                            // Only re-query if we previously had something cached.
+                            if (bundler.resolver.bustDirCacheFromSpecifier(
+                                source.path.text,
+                                import_record.path.text,
+                            )) {
+                                had_busted_dir_cache = true;
+                                continue :inner;
+                            }
+                        }
+
+                        // Tell Bake's Dev Server to wait for the file to be imported.
+                        dev.directory_watchers.trackResolutionFailure(
+                            source.path.text,
+                            import_record.path.text,
+                            ast.target.bakeRenderer(), // use the source file target not the altered one
+                        ) catch bun.outOfMemory();
+                    }
+                }
+
                 // Disable failing packages from being printed.
                 // This may cause broken code to write.
                 // However, doing this means we tell them all the resolve errors
@@ -2167,7 +2246,7 @@ pub const BundleV2 = struct {
                         last_error = err;
                     },
                 }
-                continue;
+                continue :outer;
             };
             // if there were errors, lets go ahead and collect them all
             if (last_error != null) continue;
@@ -2187,12 +2266,14 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (this.bundler.options.kit) |dev_server| {
+            if (this.bundler.options.dev_server) |dev_server| {
+                // TODO(paperdave/kit): this relative can be done without a clone in most cases
                 if (!dev_server.isFileStale(path.text, renderer)) {
                     import_record.source_index = Index.invalid;
-                    // TODO(paperdave/kit): this relative can be done without a clone in most cases
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                    import_record.path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
+                    import_record.path.text = rel;
+                    import_record.path.pretty = rel;
+                    import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
                     continue;
                 }
             }
@@ -2521,7 +2602,7 @@ pub const BundleV2 = struct {
 /// Used to keep the bundle thread from spinning on Windows
 pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
 
-/// Originally, kit.DevServer required a separate bundling thread, but that was
+/// Originally, bake.DevServer required a separate bundling thread, but that was
 /// later removed. The bundling thread's scheduling logic is generalized over
 /// the completion structure.
 ///
@@ -2553,8 +2634,7 @@ pub fn BundleThread(CompletionStruct: type) type {
         }
 
         /// Lazily-initialized singleton. This is used for `Bun.build` since the
-        /// bundle thread may not be needed. Kit always uses the bundler, so it
-        /// just initializes `BundleThread`
+        /// bundle thread may not be needed.
         pub const singleton = struct {
             var once = std.once(loadOnceImpl);
             var instance: ?*Self = null;
@@ -2678,7 +2758,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             completion.result = .{
                 .value = .{
-                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}),
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}, &.{}),
                 },
             };
 
@@ -3070,20 +3150,11 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .napi => {
-                if (bundler.options.target == .node) {
+                if (bundler.options.target == .browser) {
                     log.addError(
                         null,
                         Logger.Loc.Empty,
-                        "TODO: implement .node loader for Node.js target",
-                    ) catch bun.outOfMemory();
-                    return error.ParserError;
-                }
-
-                if (bundler.options.target != .bun) {
-                    log.addError(
-                        null,
-                        Logger.Loc.Empty,
-                        "To load .node files, set target to \"bun\"",
+                        "Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                     ) catch bun.outOfMemory();
                     return error.ParserError;
                 }
@@ -3091,27 +3162,20 @@ pub const ParseTask = struct {
                 const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                 // This injects the following code:
                 //
-                // import.meta.require(unique_key)
+                // require(unique_key)
                 //
                 const import_path = Expr.init(E.String, E.String{
                     .data = unique_key,
                 }, Logger.Loc{ .start = 0 });
 
-                // TODO: e_require_string
-                const import_meta = Expr.init(E.ImportMeta, E.ImportMeta{}, Logger.Loc{ .start = 0 });
-                const require_property = Expr.init(E.Dot, E.Dot{
-                    .target = import_meta,
-                    .name_loc = Logger.Loc.Empty,
-                    .name = "require",
-                }, Logger.Loc{ .start = 0 });
                 const require_args = allocator.alloc(Expr, 1) catch unreachable;
                 require_args[0] = import_path;
-                const require_call = Expr.init(E.Call, E.Call{
-                    .target = require_property,
+
+                const root = Expr.init(E.Call, E.Call{
+                    .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
                     .args = BabyList(Expr).init(require_args),
                 }, Logger.Loc{ .start = 0 });
 
-                const root = require_call;
                 unique_key_for_additional_file.* = unique_key;
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
@@ -3147,10 +3211,24 @@ pub const ParseTask = struct {
             .fd => brk: {
                 const trace = tracer(@src(), "readFile");
                 defer trace.end();
-                if (strings.eqlComptime(file_path.namespace, "node"))
+
+                if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
+                    if (task.ctx.framework) |f| {
+                        if (f.built_in_modules.get(file_path.text)) |file| {
+                            switch (file) {
+                                .code => |code| break :brk .{ .contents = code },
+                                .import => |path| {
+                                    file_path = Fs.Path.init(path);
+                                    break :lookup_builtin;
+                                },
+                            }
+                        }
+                    }
+
                     break :brk CacheEntry{
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
                     };
+                }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
                     if (loader.shouldCopyForBundling())
@@ -3258,7 +3336,7 @@ pub const ParseTask = struct {
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.use_import_meta_require = target.isBun();
-        opts.features.top_level_await = output_format == .esm or output_format == .internal_kit_dev;
+        opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
@@ -3267,7 +3345,7 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
-        opts.features.hot_module_reloading = output_format == .internal_kit_dev and !source.index.isRuntime();
+        opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
         opts.features.react_fast_refresh = target == .browser and
             bundler.options.react_fast_refresh and
             loader.isJSX() and
@@ -3490,18 +3568,15 @@ pub const ServerComponentParseTask = struct {
     ) !ParseTask.Result.Success {
         var ab = try AstBuilder.init(allocator, &task.source, task.ctx.bundler.options.hot_module_reloading);
 
-        try switch (task.data) {
-            .client_reference_proxy => |data| task.generateClientReferenceProxy(data, &ab),
-        };
-
-        var ast = try ab.toBundledAst();
-        ast.target = switch (task.data) {
-            // Server-side
-            .client_reference_proxy => task.ctx.bundler.options.target,
-        };
+        switch (task.data) {
+            .client_reference_proxy => |data| try task.generateClientReferenceProxy(data, &ab),
+        }
 
         return .{
-            .ast = ast,
+            .ast = try ab.toBundledAst(switch (task.data) {
+                // Server-side
+                .client_reference_proxy => task.ctx.bundler.options.target,
+            }),
             .source = task.source,
             .log = log.*,
         };
@@ -3767,6 +3842,7 @@ pub const Graph = struct {
     pool: *ThreadPool,
     heap: ThreadlocalArena = .{},
     /// This allocator is thread-local to the Bundler thread
+    /// .allocator == .heap.allocator()
     allocator: std.mem.Allocator = undefined,
 
     /// Mapping user-specified entry points to their Source Index
@@ -3813,10 +3889,6 @@ pub const Graph = struct {
     /// files. This happens for all files with a "use <side>" directive.
     server_component_boundaries: ServerComponentBoundary.List = .{},
 
-    // TODO: this has no reason to be using logger.Range
-    shadow_entry_point_range: Logger.Range = Logger.Range.None,
-
-    // TODO: document what makes this estimate not perfect
     estimated_file_loader_count: usize = 0,
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
@@ -4161,7 +4233,6 @@ const LinkerGraph = struct {
         sources: []const Logger.Source,
         server_component_boundaries: ServerComponentBoundary.List,
         dynamic_import_entry_points: []const Index.Int,
-        shadow_entry_point_range: Logger.Range,
     ) !void {
         const scb = server_component_boundaries.slice();
         try this.files.setCapacity(this.allocator, sources.len);
@@ -4249,10 +4320,7 @@ const LinkerGraph = struct {
                     // Loop #2: For each import in the entire module graph
                     for (this.reachable_files) |source_id| {
                         const use_directive = this.useDirectiveBoundary(source_id.get());
-                        const source_i32 = @as(i32, @intCast(source_id.get()));
-
-                        // TODO(paperdave/kit): i am not sure if this logic is correct
-                        const is_shadow_entrypoint = shadow_entry_point_range.contains(source_i32);
+                        const is_shadow_entrypoint = false;
 
                         // If the reachable file has a "use client"; at the top
                         for (import_records_list[source_id.get()].slice()) |*import_record| {
@@ -4467,9 +4535,9 @@ pub const LinkerContext = struct {
     /// to know whether or not we can free it safely.
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-    /// Used by Kit to extract []CompileResult before it is joined
-    kit_dev_server: ?*bun.kit.DevServer = null,
-    framework: ?*const kit.Framework = null,
+    /// Used by Bake to extract []CompileResult before it is joined
+    dev_server: ?*bun.bake.DevServer = null,
+    framework: ?*const bake.Framework = null,
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -4582,9 +4650,6 @@ pub const LinkerContext = struct {
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
-                if (record.tag.isReactReference())
-                    return true;
-
                 if (record.source_index.isValid() and c.graph.meta.items(.flags)[record.source_index.get()].wrap == .none) {
                     return false;
                 }
@@ -4615,7 +4680,7 @@ pub const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys(), bundle.graph.shadow_entry_point_range);
+        try this.graph.load(entry_points, sources, server_component_boundaries, bundle.dynamic_import_entry_points.keys());
         bundle.dynamic_import_entry_points.deinit();
         this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
@@ -4632,7 +4697,7 @@ pub const LinkerContext = struct {
         if (this.options.output_format == .cjs or this.options.output_format == .iife) {
             const exports_kind = this.graph.ast.items(.exports_kind);
             const ast_flags_list = this.graph.ast.items(.flags);
-            const meta_flags_ist = this.graph.meta.items(.flags);
+            const meta_flags_list = this.graph.meta.items(.flags);
 
             for (entry_points) |entry_point| {
                 var ast_flags: js_ast.BundledAst.Flags = ast_flags_list[entry_point.get()];
@@ -4651,7 +4716,7 @@ pub const LinkerContext = struct {
                 if (ast_flags.uses_export_keyword) {
                     ast_flags.uses_exports_ref = true;
                     ast_flags_list[entry_point.get()] = ast_flags;
-                    meta_flags_ist[entry_point.get()].force_include_exports_for_entry_point = true;
+                    meta_flags_list[entry_point.get()].force_include_exports_for_entry_point = true;
                 }
             }
         }
@@ -4769,6 +4834,48 @@ pub const LinkerContext = struct {
     ) ![]Chunk {
         const trace = tracer(@src(), "computeChunks");
         defer trace.end();
+
+        // The dev server never compiles chunks, and requires every reachable
+        // file to be printed, So the logic is special-cased.
+        if (this.dev_server != null) {
+            var js_chunks = try std.ArrayListUnmanaged(Chunk).initCapacity(this.allocator, 1);
+            const entry_bits = &this.graph.files.items(.entry_bits)[0];
+
+            // Exclude runtime because it is already embedded
+            const reachable_files = if (this.graph.reachable_files[0].isRuntime())
+                this.graph.reachable_files[1..]
+            else
+                this.graph.reachable_files;
+
+            const part_ranges = try this.allocator.alloc(PartRange, reachable_files.len);
+
+            const parts = this.parse_graph.ast.items(.parts);
+            for (reachable_files, part_ranges) |source_index, *part_range| {
+                part_range.* = .{
+                    .source_index = source_index,
+                    .part_index_begin = 0,
+                    .part_index_end = parts[source_index.get()].len,
+                };
+            }
+
+            js_chunks.appendAssumeCapacity(.{
+                .entry_point = .{
+                    .entry_point_id = 0,
+                    .source_index = 0,
+                    .is_entry_point = true,
+                },
+                .entry_bits = entry_bits.*,
+                .content = .{
+                    .javascript = .{
+                        // TODO(@paperdave): this ptrCast should not be needed.
+                        .files_in_chunk_order = @ptrCast(this.graph.reachable_files),
+                        .parts_in_chunk_in_order = part_ranges,
+                    },
+                },
+                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+            });
+            return js_chunks.items;
+        }
 
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         const stack_all = stack_fallback.get();
@@ -4951,7 +5058,6 @@ pub const LinkerContext = struct {
                 .{
                     .source_index = source_index,
                     .distance = distances[source_index],
-
                     .tie_breaker = this.graph.stable_source_indices[source_index],
                 },
             );
@@ -5148,7 +5254,6 @@ pub const LinkerContext = struct {
             &.{ visitor.parts_prefix.items, visitor.part_ranges.items },
         );
         chunk.content.javascript.files_in_chunk_order = visitor.files.items;
-
         chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
     }
 
@@ -5221,6 +5326,21 @@ pub const LinkerContext = struct {
                     expr,
                 );
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
+
+                // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
+                if (expr.data == .e_call and expr.data.e_call.target.data == .e_require_call_target and
+                    // if it's commonjs, use require()
+                    this.options.output_format != .cjs and
+                    // if it's esm and bun, use import.meta.require(). the code for __require is not injected into the bundle.
+                    !this.options.target.isBun())
+                {
+                    this.graph.generateRuntimeSymbolImportAndUse(
+                        source_index,
+                        Index.part(1),
+                        "__require",
+                        1,
+                    ) catch {};
+                }
             },
             else => {
                 // Otherwise, generate ES6 export statements. These are added as additional
@@ -5696,7 +5816,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
+                    if (wrap != .cjs and export_kind != .cjs and output_format != .internal_bake_dev) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -5744,7 +5864,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
+                if (wrap != .cjs and export_kind != .cjs and output_format != .internal_bake_dev) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -5892,7 +6012,7 @@ pub const LinkerContext = struct {
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
-                    if (force_include_exports and output_format != .internal_kit_dev) {
+                    if (force_include_exports and output_format != .internal_bake_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             Index.part(entry_point_part_index),
@@ -5919,7 +6039,7 @@ pub const LinkerContext = struct {
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
-                            if (output_format == .internal_kit_dev) continue;
+                            if (output_format == .internal_bake_dev) continue;
 
                             // This is an external import. Check if it will be a "require()" call.
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
@@ -5941,7 +6061,6 @@ pub const LinkerContext = struct {
                                     // generating a CommonJS output file, since it won't exist otherwise.
                                     // Disabled for target bun because `import.meta.require` will be inlined.
                                     if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
-                                        record.calls_runtime_require = true;
                                         runtime_require_uses += 1;
                                     }
 
@@ -5991,7 +6110,7 @@ pub const LinkerContext = struct {
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
-                            if (kind != .require and other_export_kind == .cjs and output_format != .internal_kit_dev) {
+                            if (kind != .require and other_export_kind == .cjs and output_format != .internal_bake_dev) {
                                 record.wrap_with_to_esm = true;
                                 to_esm_uses += 1;
                             }
@@ -6087,7 +6206,7 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    if (output_format != .internal_kit_dev) {
+                    if (output_format != .internal_bake_dev) {
                         // If there's an ES6 import of a CommonJS module, then we're going to need the
                         // "__toESM" symbol from the runtime to wrap the result of "require()"
                         this.graph.generateRuntimeSymbolImportAndUse(
@@ -6370,7 +6489,7 @@ pub const LinkerContext = struct {
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
             c.graph.ast.items(.parts)[id].slice()[js_ast.namespace_export_part_index] = .{
-                .stmts = if (c.options.output_format != .internal_kit_dev) all_export_stmts else &.{},
+                .stmts = if (c.options.output_format != .internal_bake_dev) all_export_stmts else &.{},
                 .symbol_uses = ns_export_symbol_uses,
                 .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
                 .declared_symbols = declared_symbols,
@@ -6658,51 +6777,6 @@ pub const LinkerContext = struct {
                     entry_point_kinds,
                 );
             }
-
-            // When using server components with a separated SSR graph, these
-            // components are not required to be referenced; The framework may
-            // use a dynamic import to get a handle to it.
-            if (c.framework) |fw| if (fw.server_components) |sc| {
-                if (sc.separate_ssr_graph) {
-                    const slice = c.parse_graph.server_component_boundaries.list.slice();
-                    for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
-                        switch (use) {
-                            .client => {
-                                c.markFileLiveForTreeShaking(
-                                    ssr_source_index,
-                                    side_effects,
-                                    parts,
-                                    import_records,
-                                    entry_point_kinds,
-                                );
-                            },
-                            .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
-                            else => unreachable,
-                        }
-                    }
-                }
-
-                // TODO: this is a workaround for a missing tree-shaking
-                // annotated wrt these generated segments
-                if (c.parse_graph.kit_referenced_server_data) {
-                    c.markFileLiveForTreeShaking(
-                        Index.kit_server_data.get(),
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                    );
-                }
-                if (c.parse_graph.kit_referenced_client_data) {
-                    c.markFileLiveForTreeShaking(
-                        Index.kit_client_data.get(),
-                        side_effects,
-                        parts,
-                        import_records,
-                        entry_point_kinds,
-                    );
-                }
-            };
         }
 
         {
@@ -6734,27 +6808,6 @@ pub const LinkerContext = struct {
                     import_records,
                     file_entry_bits,
                 );
-
-                if (c.framework) |fw| if (fw.server_components) |sc| if (sc.separate_ssr_graph) {
-                    const slice = c.parse_graph.server_component_boundaries.list.slice();
-                    for (slice.items(.use_directive), slice.items(.ssr_source_index)) |use, ssr_source_index| {
-                        switch (use) {
-                            .client => {
-                                c.markFileReachableForCodeSplitting(
-                                    ssr_source_index,
-                                    i,
-                                    distances,
-                                    0,
-                                    parts,
-                                    import_records,
-                                    file_entry_bits,
-                                );
-                            },
-                            .server => bun.todoPanic(@src(), "rewire hot-bundling code", .{}),
-                            else => unreachable,
-                        }
-                    }
-                };
             }
         }
     }
@@ -7484,6 +7537,13 @@ pub const LinkerContext = struct {
             .part_range = &part_range.part_range,
         } };
 
+        if (Environment.isDebug) {
+            const path = ctx.c.parse_graph.input_files.items(.source)[part_range.part_range.source_index.get()].path;
+            if (bun.CLI.debug_flags.hasPrintBreakpoint(path)) {
+                @breakpoint();
+            }
+        }
+
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
     }
 
@@ -7491,10 +7551,10 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "generateCodeForFileInChunkJS");
         defer trace.end();
 
-        // Client bundles for Kit must be globally allocated,
+        // Client bundles for Bake must be globally allocated,
         // as it must outlive the bundle task.
-        const use_global_allocator = c.kit_dev_server != null and
-            c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer() == .client;
+        const use_global_allocator = c.dev_server != null and
+            c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeRenderer() == .client;
 
         var arena = &worker.temporary_arena;
         var buffer_writer = js_printer.BufferWriter.init(
@@ -7555,7 +7615,7 @@ pub const LinkerContext = struct {
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
-        const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+        const runtimeRequireRef = if (c.resolver.opts.target.isBun() or c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
             const print_options = js_printer.Options{
@@ -7695,7 +7755,7 @@ pub const LinkerContext = struct {
 
         // For Kit, hoist runtime.js outside of the IIFE
         const compile_results = chunk.compile_results_for_chunk;
-        if (c.options.output_format == .internal_kit_dev) {
+        if (c.options.output_format == .internal_bake_dev) {
             for (compile_results) |compile_result| {
                 const source_index = compile_result.sourceIndex();
                 if (source_index != Index.runtime.value) break;
@@ -7705,8 +7765,8 @@ pub const LinkerContext = struct {
         }
 
         switch (c.options.output_format) {
-            .internal_kit_dev => {
-                const start = bun.kit.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
+            .internal_bake_dev => {
+                const start = bun.bake.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
             },
@@ -7765,7 +7825,7 @@ pub const LinkerContext = struct {
                     CommentType.single;
 
                 if (!c.options.minify_whitespace and
-                    (output_format == .iife or output_format == .internal_kit_dev))
+                    (output_format == .iife or output_format == .internal_bake_dev))
                 {
                     j.pushStatic("  ");
                     line_offset.advance("  ");
@@ -7798,7 +7858,7 @@ pub const LinkerContext = struct {
             }
 
             if (is_runtime) {
-                if (c.options.output_format != .internal_kit_dev) {
+                if (c.options.output_format != .internal_bake_dev) {
                     line_offset.advance(compile_result.code());
                     j.push(compile_result.code(), bun.default_allocator);
                 }
@@ -7852,7 +7912,7 @@ pub const LinkerContext = struct {
 
                 j.pushStatic(with_newline);
             },
-            .internal_kit_dev => {
+            .internal_bake_dev => {
                 {
                     const str = "}, {\n  main: ";
                     j.pushStatic(str);
@@ -8585,7 +8645,7 @@ pub const LinkerContext = struct {
             // TODO: iife
             .iife => {},
 
-            .internal_kit_dev => {
+            .internal_bake_dev => {
                 // nothing needs to be done here, as the exports are already
                 // forwarded in the module closure.
             },
@@ -8937,12 +8997,6 @@ pub const LinkerContext = struct {
         wrap: WrapKind,
         ast: *const JSAst,
     ) !void {
-        // for Bun Kit, export wrapping is already done. Import wrapping is special cased.
-        if (c.options.output_format == .internal_kit_dev and source_index != Index.runtime.value) {
-            try c.convertStmtsForChunkKit(source_index, stmts, part_stmts, allocator, ast);
-            return;
-        }
-
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or c.graph.files.items(.entry_point_kind)[source_index] != .none;
 
@@ -9434,7 +9488,7 @@ pub const LinkerContext = struct {
     }
 
     /// The conversion logic is completely different for format .kit_internal_hmr
-    fn convertStmtsForChunkKit(
+    fn convertStmtsForChunkForKit(
         c: *LinkerContext,
         source_index: u32,
         stmts: *StmtList,
@@ -9565,6 +9619,65 @@ pub const LinkerContext = struct {
 
         // referencing everything by array makes the code a lot more annoying :(
         const ast: JSAst = c.graph.ast.get(part_range.source_index.get());
+
+        // For Bun Kit, part generation is entirely special cased.
+        // - export wrapping is already done.
+        // - import wrapping needs to know resolved paths
+        // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
+        if (c.options.output_format == .internal_bake_dev) {
+            bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
+
+            for (parts) |part| {
+                c.convertStmtsForChunkForKit(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
+                    return .{ .err = err };
+            }
+
+            stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch bun.outOfMemory();
+            stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+            stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
+
+            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
+                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
+                    .ref = ast.module_ref,
+                }, Logger.Loc.Empty) },
+            }) catch unreachable; // is within bounds
+
+            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
+                clousure_args.appendAssumeCapacity(
+                    .{
+                        .binding = Binding.alloc(temp_allocator, B.Identifier{
+                            .ref = ast.exports_ref,
+                        }, Logger.Loc.Empty),
+                        .default = Expr.allocate(temp_allocator, E.Dot, .{
+                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
+                            .name = "exports",
+                            .name_loc = Logger.Loc.Empty,
+                        }, Logger.Loc.Empty),
+                    },
+                );
+            }
+
+            var single_stmt = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
+                .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
+                .body = .{
+                    .stmts = stmts.all_stmts.items,
+                    .loc = Logger.Loc.Empty,
+                },
+            } }, Logger.Loc.Empty));
+
+            return c.printCodeForFileInChunkJS(
+                r,
+                allocator,
+                writer,
+                (&single_stmt)[0..1],
+                &ast,
+                flags,
+                toESMRef,
+                toCommonJSRef,
+                runtimeRequireRef,
+                part_range.source_index,
+            );
+        }
 
         var needs_wrapper = false;
 
@@ -9761,51 +9874,8 @@ pub const LinkerContext = struct {
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
 
-        // Turn each module into a function if this is Kit
-        var stmt_storage: Stmt = undefined;
-        if (output_format == .internal_kit_dev and !part_range.source_index.isRuntime()) {
-            if (stmts.all_stmts.items.len == 0) {
-                // TODO: these chunks should just not exist in the first place
-                // they seem to happen on the entry point? or JSX? not clear
-                // removing the chunk in the parser breaks the liveness analysis.
-                //
-                // The workaround is to end early on empty files, and filter out
-                // empty files later.
-                return .{ .result = .{ .code = "", .source_map = null } };
-            }
-
-            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
-                .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
-                    .ref = ast.module_ref,
-                }, Logger.Loc.Empty) },
-            }) catch unreachable; // is within bounds
-
-            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
-                    .{
-                        .binding = Binding.alloc(temp_allocator, B.Identifier{
-                            .ref = ast.exports_ref,
-                        }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
-                    },
-                );
-            }
-
-            stmt_storage = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
-                .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
-                .body = .{
-                    .stmts = stmts.all_stmts.items,
-                    .loc = Logger.Loc.Empty,
-                },
-            } }, Logger.Loc.Empty));
-            out_stmts = (&stmt_storage)[0..1];
-        }
         // Optionally wrap all statements in a closure
-        else if (needs_wrapper) {
+        if (needs_wrapper) {
             switch (flags.wrap) {
                 .cjs => {
                     // Only include the arguments that are actually used
@@ -10109,11 +10179,35 @@ pub const LinkerContext = struct {
             };
         }
 
+        return c.printCodeForFileInChunkJS(
+            r,
+            allocator,
+            writer,
+            out_stmts,
+            &ast,
+            flags,
+            toESMRef,
+            toCommonJSRef,
+            runtimeRequireRef,
+            part_range.source_index,
+        );
+    }
+
+    fn printCodeForFileInChunkJS(
+        c: *LinkerContext,
+        r: renamer.Renamer,
+        allocator: std.mem.Allocator,
+        writer: *js_printer.BufferWriter,
+        out_stmts: []Stmt,
+        ast: *const js_ast.BundledAst,
+        flags: JSMeta.Flags,
+        to_esm_ref: Ref,
+        to_commonjs_ref: Ref,
+        runtime_require_ref: ?Ref,
+        source_index: Index,
+    ) js_printer.PrintResult {
         const parts_to_print = &[_]js_ast.Part{
-            js_ast.Part{
-                // .tag = .stmts,
-                .stmts = out_stmts,
-            },
+            js_ast.Part{ .stmts = out_stmts },
         };
 
         const print_options = js_printer.Options{
@@ -10121,7 +10215,7 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref or output_format == .internal_kit_dev)
+            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_bake_dev)
                 ast.module_ref
             else
                 Ref.None,
@@ -10132,49 +10226,43 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .module_type = switch (output_format) {
-                else => |format| format,
-                .internal_kit_dev => if (part_range.source_index.isRuntime()) .esm else .internal_kit_dev,
-            },
+            .module_type = c.options.output_format,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
-            .to_esm_ref = toESMRef,
-            .to_commonjs_ref = toCommonJSRef,
+            .to_esm_ref = to_esm_ref,
+            .to_commonjs_ref = to_commonjs_ref,
             .require_ref = switch (c.options.output_format) {
-                .internal_kit_dev => ast.require_ref,
                 .cjs => null,
-                else => runtimeRequireRef,
+                else => runtime_require_ref,
             },
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,
                 requireOrImportMetaForSource,
                 c,
             ),
-            .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
+            .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (output_format == .internal_kit_dev and !part_range.source_index.isRuntime())
+            .input_files_for_dev_server = if (c.options.output_format == .internal_bake_dev)
                 c.parse_graph.input_files.items(.source)
             else
                 null,
         };
 
         writer.buffer.reset();
-        var printer = js_printer.BufferPrinter.init(
-            writer.*,
-        );
+        var printer = js_printer.BufferPrinter.init(writer.*);
         defer writer.* = printer.ctx;
 
-        switch (c.options.source_maps != .none and !part_range.source_index.isRuntime()) {
+        switch (c.options.source_maps != .none and !source_index.isRuntime()) {
             inline else => |enable_source_maps| {
                 return js_printer.printWithWriter(
                     *js_printer.BufferPrinter,
                     &printer,
                     ast.target,
                     ast.toAST(),
-                    c.source_(part_range.source_index.get()),
+                    c.source_(source_index.get()),
                     print_options,
                     ast.import_records.slice(),
                     parts_to_print,
@@ -10268,6 +10356,18 @@ pub const LinkerContext = struct {
                 var batch = ThreadPoolLib.Batch{};
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {
                     for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
+                        if (Environment.enable_logs) {
+                            debugPartRanges(
+                                "Part Range: {s} {s} ({d}..{d})",
+                                .{
+                                    c.parse_graph.input_files.items(.source)[part_range.source_index.get()].path.pretty,
+                                    @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeRenderer()),
+                                    part_range.part_index_begin,
+                                    part_range.part_index_end,
+                                },
+                            );
+                        }
+
                         remaining_part_ranges[0] = .{
                             .part_range = part_range,
                             .i = @truncate(i),
@@ -10294,32 +10394,55 @@ pub const LinkerContext = struct {
                 c.source_maps.quoted_contents_tasks.len = 0;
             }
 
-            // When kit.DevServer is in use, we're going to take a different code path at the end.
+            // When bake.DevServer is in use, we're going to take a different code path at the end.
             // We want to extract the source code of each part instead of combining it into a single file.
             // This is so that when hot-module updates happen, we can:
             //
             // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
             // - Send only the newly changed code through a socket.
             //
-            // When this isnt the initial bundle, the data we would get concatenating
-            // everything here would be useless.
-            if (c.kit_dev_server) |dev_server| {
+            // When this isnt the initial bundle, concatenation as usual would produce a
+            // broken module. It is DevServer's job to create and send HMR patches.
+            if (c.dev_server) |dev_server| {
                 const input_file_sources = c.parse_graph.input_files.items(.source);
+                const import_records = c.parse_graph.ast.items(.import_records);
                 const targets = c.parse_graph.ast.items(.target);
-                for (chunks) |chunk| {
-                    for (
-                        chunk.content.javascript.parts_in_chunk_in_order,
-                        chunk.compile_results_for_chunk,
-                    ) |part_range, compile_result| {
-                        try dev_server.receiveChunk(
-                            input_file_sources[part_range.source_index.get()].path.text,
-                            targets[part_range.source_index.get()].kitRenderer(),
-                            compile_result,
-                        );
-                    }
+
+                const resolved_index_cache = try c.allocator.alloc(u32, input_file_sources.len * 2);
+                const server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator, input_file_sources.len);
+
+                var ctx: bun.bake.DevServer.ReceiveContext = .{
+                    .import_records = import_records,
+                    .sources = input_file_sources,
+                    .resolved_index_cache = resolved_index_cache,
+                    .server_seen_bit_set = server_seen_bit_set,
+                };
+
+                bun.assert(chunks.len == 1);
+                const chunk = chunks[0];
+
+                // Pass 1, update the graph with all rebundle files
+                for (
+                    chunk.content.javascript.parts_in_chunk_in_order,
+                    chunk.compile_results_for_chunk,
+                ) |part_range, compile_result| {
+                    try dev_server.receiveChunk(
+                        &ctx,
+                        part_range.source_index,
+                        targets[part_range.source_index.get()].bakeRenderer(),
+                        compile_result,
+                    );
                 }
 
-                // kit.main_path = default_allocator.dupe(u8, c.parse_graph.input_files.items(.source)[chunks[0].entry_point.source_index].path.pretty) catch bun.outOfMemory();
+                // Pass 2, resolve all imports
+                for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+                    try dev_server.processChunkDependencies(
+                        &ctx,
+                        part_range.source_index,
+                        targets[part_range.source_index.get()].bakeRenderer(),
+                        c.allocator,
+                    );
+                }
 
                 return std.ArrayList(options.OutputFile).init(bun.default_allocator);
             }
@@ -11031,58 +11154,6 @@ pub const LinkerContext = struct {
             }
         }
 
-        // if (react_client_components_manifest.len > 0) {
-        //     switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-        //         &pathbuf,
-        //         JSC.Node.Arguments.WriteFile{
-        //             .data = JSC.Node.StringOrBuffer{
-        //                 .buffer = JSC.Buffer{
-        //                     .buffer = .{
-        //                         .ptr = @constCast(react_client_components_manifest.ptr),
-        //                         // TODO: handle > 4 GB files
-        //                         .len = @as(u32, @truncate(react_client_components_manifest.len)),
-        //                         .byte_len = @as(u32, @truncate(react_client_components_manifest.len)),
-        //                     },
-        //                 },
-        //             },
-        //             .encoding = .buffer,
-        //             .dirfd = bun.toFD(root_dir.fd),
-        //             .file = .{
-        //                 .path = JSC.Node.PathLike{
-        //                     .string = JSC.PathString.init(components_manifest_path),
-        //                 },
-        //             },
-        //         },
-        //     )) {
-        //         .err => |err| {
-        //             const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
-        //             defer utf8.deinit();
-        //             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-        //                 bun.fmt.quote(utf8.slice()),
-        //                 bun.fmt.quote(components_manifest_path),
-        //             }) catch unreachable;
-        //             return error.WriteFailed;
-        //         },
-        //         .result => {},
-        //     }
-
-        //     output_files.appendAssumeCapacity(
-        //         options.OutputFile.init(
-        //             options.OutputFile.Options{
-        //                 .data = .{
-        //                     .saved = 0,
-        //                 },
-        //                 .loader = .file,
-        //                 .input_loader = .file,
-        //                 .output_kind = .@"component-manifest",
-        //                 .size = @as(u32, @truncate(react_client_components_manifest.len)),
-        //                 .input_path = bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable,
-        //                 .output_path = bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable,
-        //             },
-        //         ),
-        //     );
-        // }
-
         {
             const offset = output_files.items.len;
             output_files.items.len += c.parse_graph.additional_output_files.items.len;
@@ -11204,12 +11275,13 @@ pub const LinkerContext = struct {
 
         bits.set(entry_points_count);
 
-        if (comptime bun.Environment.allow_assert)
+        if (comptime bun.Environment.enable_logs)
             debugTreeShake(
-                "markFileReachableForCodeSplitting(entry: {d}): {s} ({d})",
+                "markFileReachableForCodeSplitting(entry: {d}): {s} {s} ({d})",
                 .{
                     entry_points_count,
-                    c.parse_graph.input_files.get(source_index).source.path.text,
+                    c.parse_graph.input_files.items(.source)[source_index].path.pretty,
+                    @tagName(c.parse_graph.ast.items(.target)[source_index].bakeRenderer()),
                     out_dist,
                 },
             );
@@ -11257,10 +11329,11 @@ pub const LinkerContext = struct {
         entry_point_kinds: []EntryPoint.Kind,
     ) void {
         if (comptime bun.Environment.allow_assert) {
-            debugTreeShake("markFileLiveForTreeShaking({d}, {s}) = {s}", .{
+            debugTreeShake("markFileLiveForTreeShaking({d}, {s} {s}) = {s}", .{
                 source_index,
                 c.parse_graph.input_files.get(source_index).source.path.pretty,
-                if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
+                @tagName(c.parse_graph.ast.items(.target)[source_index].bakeRenderer()),
+                if (c.graph.files_live.isSet(source_index)) "already seen" else "first seen",
             });
         }
 
@@ -11268,12 +11341,7 @@ pub const LinkerContext = struct {
             debugTreeShake("end()", .{});
         };
 
-        if (c.graph.files_live.isSet(source_index)) {
-            if (Environment.allow_assert) {
-                debugTreeShake("already set", .{});
-            }
-            return;
-        }
+        if (c.graph.files_live.isSet(source_index)) return;
         c.graph.files_live.set(source_index);
 
         if (source_index >= c.graph.ast.len) {
@@ -11737,7 +11805,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
-                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_kit_dev) brk: {
+                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_bake_dev) brk: {
                     const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
@@ -11772,8 +11840,8 @@ pub const LinkerContext = struct {
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
 
-                // Kit uses a wrapping approach that does not use __commonJS
-                if (c.options.output_format != .internal_kit_dev) {
+                // Bake uses a wrapping approach that does not use __commonJS
+                if (c.options.output_format != .internal_bake_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
@@ -11795,7 +11863,7 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev)
+                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
@@ -11827,7 +11895,7 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-                if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev) {
+                if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
@@ -13196,7 +13264,7 @@ pub const AstBuilder = struct {
         return ref;
     }
 
-    pub fn toBundledAst(p: *AstBuilder) !js_ast.BundledAst {
+    pub fn toBundledAst(p: *AstBuilder, target: options.Target) !js_ast.BundledAst {
         // TODO: missing import scanner
         bun.assert(p.scopes.items.len == 0);
         const module_scope = p.current_scope;
@@ -13283,7 +13351,8 @@ pub const AstBuilder = struct {
             .top_level_symbols_to_parts = top_level_symbols_to_parts,
             .char_freq = .{},
             .flags = .{},
-            .top_level_await_keyword = bun.logger.Range.None,
+            .target = target,
+            .top_level_await_keyword = Logger.Range.None,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
             //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
             // else

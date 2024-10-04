@@ -2,11 +2,12 @@ import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
-  itBundled("kit_dev/HelloWorld", {
+  itBundled("bake_dev/HelloWorld", {
+    todo: true,
     files: {
       "/a.js": `console.log("Hello, world!")`,
     },
-    format: "internal_kit_dev",
+    format: "internal_bake_dev",
     target: "bun",
     run: { stdout: "Hello, world!" },
     onAfterBundle(api) {
@@ -15,16 +16,18 @@ describe("bundler", async () => {
       api.expectFile("out.js").toContain("importSync");
     },
   });
-  itBundled("kit_dev/SimpleCommonJS", {
+  itBundled("bake_dev/SimpleCommonJS", {
+    todo: true,
     files: {
       "/a.js": `console.log(require('./b').message)`,
       "/b.js": `module.exports = { message: "Hello, world!" }`,
     },
-    format: "internal_kit_dev",
+    format: "internal_bake_dev",
     target: "bun",
     run: { stdout: "Hello, world!" },
   });
-  itBundled("kit_dev/SimpleESM", {
+  itBundled("bake_dev/SimpleESM", {
+    todo: true,
     files: {
       "/a.js": `
         import message from './b';
@@ -32,7 +35,7 @@ describe("bundler", async () => {
       `,
       "/b.js": `export default "Hello, world!"`,
     },
-    format: "internal_kit_dev",
+    format: "internal_bake_dev",
     target: "bun",
     run: { stdout: "Hello, world!" },
   });

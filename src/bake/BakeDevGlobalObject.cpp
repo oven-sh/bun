@@ -1,17 +1,23 @@
-#include "KitDevGlobalObject.h"
+#include "BakeDevGlobalObject.h"
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
+#include "ProcessIdentifier.h"
 #include "headers-handwritten.h"
 
-namespace Kit {
+namespace Bake {
+
+extern "C" void BakeInitProcessIdentifier() {
+  // assert is on main thread
+  WebCore::Process::identifier();
+}
 
 JSC::JSInternalPromise *
 moduleLoaderImportModule(JSC::JSGlobalObject *jsGlobalObject,
                          JSC::JSModuleLoader *, JSC::JSString *moduleNameValue,
                          JSC::JSValue parameters,
                          const JSC::SourceOrigin &sourceOrigin) {
-  // TODO: forward this to the runtime
+  // TODO: forward this to the runtime?
   JSC::VM &vm = jsGlobalObject->vm();
   auto err = JSC::createTypeError(
       jsGlobalObject,
@@ -68,7 +74,7 @@ void DevGlobalObject::finishCreation(JSC::VM &vm) {
 extern "C" BunVirtualMachine *Bun__getVM();
 
 // A lot of this function is taken from 'Zig__GlobalObject__create'
-extern "C" DevGlobalObject *KitCreateDevGlobal(DevServer *owner,
+extern "C" DevGlobalObject *BakeCreateDevGlobal(DevServer *owner,
                                                void *console) {
   JSC::VM &vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
   vm.heap.acquireAccess();
@@ -90,18 +96,19 @@ extern "C" DevGlobalObject *KitCreateDevGlobal(DevServer *owner,
   global->setConsole(console);
   global->setStackTraceLimit(10); // Node.js defaults to 10
 
+  // TODO: it segfaults! process.nextTick is scoped out for now i guess!
   // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-  vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
-    if (auto nextTickQueue = global->m_nextTickQueue.get()) {
-      global->resetOnEachMicrotaskTick();
-      Bun::JSNextTickQueue *queue =
-          jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
-      queue->drain(vm, global);
-      return;
-    }
-  });
+  // vm.setOnEachMicrotaskTick([global](JSC::VM &vm) -> void {
+  //   if (auto nextTickQueue = global->m_nextTickQueue.get()) {
+  //     global->resetOnEachMicrotaskTick();
+  //     // Bun::JSNextTickQueue *queue =
+  //     //     jsCast<Bun::JSNextTickQueue *>(nextTickQueue);
+  //     // queue->drain(vm, global);
+  //     return;
+  //   }
+  // });
 
   return global;
 }
 
-}; // namespace Kit
+}; // namespace Bake

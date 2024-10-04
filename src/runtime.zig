@@ -210,8 +210,8 @@ pub const Runtime = struct {
         /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
 
-        /// `hot_module_reloading` is specific to if we are using bun.kit.DevServer.
-        /// It can be enabled on the command line with --format=internal_kit_dev
+        /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
+        /// It can be enabled on the command line with --format=internal_bake_dev
         ///
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.

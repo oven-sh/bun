@@ -645,7 +645,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    wipDevServerDoNotUseYet                        constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
+    wipDevServerExpectHugeBreakingChanges          constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

@@ -2,7 +2,7 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 
-namespace Kit {
+namespace Bake {
 
 struct DevServer; // DevServer.zig
 struct Route; // DevServer.zig
@@ -18,10 +18,10 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<DevGlobalObject, WebCore::UseCustomHeapCellType::Yes>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForKitGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForKitGlobalScope = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForKitGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForKitGlobalScope = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_clientSubspaceForBakeGlobalScope.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBakeGlobalScope = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBakeGlobalScope.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBakeGlobalScope = std::forward<decltype(space)>(space); },
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
     }
 
@@ -37,6 +37,7 @@ public:
 };
 
 // Zig API
+extern "C" void KitInitProcessIdentifier();
 extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner, void* console);
 
 }; // namespace Kit

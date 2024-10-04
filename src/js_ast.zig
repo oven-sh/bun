@@ -28,6 +28,7 @@ const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
+const OOM = bun.OOM;
 
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
@@ -1908,7 +1909,6 @@ pub const E = struct {
         pub const Rope = struct {
             head: Expr,
             next: ?*Rope = null,
-            const OOM = error{OutOfMemory};
             pub fn append(this: *Rope, expr: Expr, allocator: std.mem.Allocator) OOM!*Rope {
                 if (this.next) |next| {
                     return try next.append(expr, allocator);
@@ -2497,7 +2497,7 @@ pub const E = struct {
                 strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
         }
 
-        pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {
+        pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
             if (s.isUTF8()) {
                 return s.data;
             } else {
@@ -2505,7 +2505,7 @@ pub const E = struct {
             }
         }
 
-        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) !bun.stringZ {
+        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.stringZ {
             if (s.isUTF8()) {
                 return allocator.dupeZ(u8, s.data);
             } else {
@@ -2513,9 +2513,9 @@ pub const E = struct {
             }
         }
 
-        pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) !bun.string {
+        pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
             if (s.isUTF8()) {
-                return try allocator.dupe(u8, s.data);
+                return allocator.dupe(u8, s.data);
             } else {
                 return strings.toUTF8Alloc(allocator, s.slice16());
             }
@@ -3349,7 +3349,7 @@ pub const Expr = struct {
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
-            var out_expr = JSONParser.ParseJSONForMacro(&source, log, allocator) catch {
+            var out_expr = JSONParser.parseForMacro(&source, log, allocator) catch {
                 return error.MacroFailed;
             };
             out_expr.loc = loc;
@@ -3424,8 +3424,52 @@ pub const Expr = struct {
         return this.data.toJS(allocator, globalObject, opts);
     }
 
+    pub inline fn isArray(this: *const Expr) bool {
+        return this.data == .e_array;
+    }
+
+    pub inline fn isObject(this: *const Expr) bool {
+        return this.data == .e_object;
+    }
+
     pub fn get(expr: *const Expr, name: string) ?Expr {
         return if (asProperty(expr, name)) |query| query.expr else null;
+    }
+
+    pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
+        if (asProperty(expr, name)) |q| {
+            if (q.expr.asString(allocator)) |str| {
+                return .{
+                    str,
+                    q.expr.loc,
+                };
+            }
+        }
+        return null;
+    }
+
+    pub fn getNumber(expr: *const Expr, name: string) ?struct { f64, logger.Loc } {
+        if (asProperty(expr, name)) |q| {
+            if (q.expr.asNumber()) |num| {
+                return .{
+                    num,
+                    q.expr.loc,
+                };
+            }
+        }
+        return null;
+    }
+
+    pub fn getStringCloned(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?string {
+        return if (asProperty(expr, name)) |q| q.expr.asStringCloned(allocator) else null;
+    }
+
+    pub fn getStringClonedZ(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?stringZ {
+        return if (asProperty(expr, name)) |q| q.expr.asStringZ(allocator) else null;
+    }
+
+    pub fn getArray(expr: *const Expr, name: string) ?ArrayIterator {
+        return if (asProperty(expr, name)) |q| q.expr.asArray() else null;
     }
 
     pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuery {
@@ -3522,11 +3566,11 @@ pub const Expr = struct {
             else => return null,
         }
     }
-    pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) ?u64 {
+    pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) OOM!?u64 {
         switch (expr.data) {
             .e_string => |str| {
                 if (str.isUTF8()) return hash_fn(str.data);
-                const utf8_str = str.string(allocator) catch return null;
+                const utf8_str = try str.string(allocator);
                 defer allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
@@ -3535,18 +3579,18 @@ pub const Expr = struct {
         }
     }
 
-    pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+    pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) OOM!?string {
         switch (expr.data) {
-            .e_string => |str| return str.stringCloned(allocator) catch bun.outOfMemory(),
-            .e_utf8_string => |str| return allocator.dupe(u8, str.data) catch bun.outOfMemory(),
+            .e_string => |str| return try str.stringCloned(allocator),
+            .e_utf8_string => |str| return try allocator.dupe(u8, str.data),
             else => return null,
         }
     }
 
-    pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) ?stringZ {
+    pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?stringZ {
         switch (expr.data) {
-            .e_string => |str| return str.stringZ(allocator) catch bun.outOfMemory(),
-            .e_utf8_string => |str| return allocator.dupeZ(u8, str.data) catch bun.outOfMemory(),
+            .e_string => |str| return try str.stringZ(allocator),
+            .e_utf8_string => |str| return try allocator.dupeZ(u8, str.data),
             else => return null,
         }
     }
@@ -3557,6 +3601,12 @@ pub const Expr = struct {
         if (std.meta.activeTag(expr.data) != .e_boolean) return null;
 
         return expr.data.e_boolean.value;
+    }
+
+    pub fn asNumber(expr: *const Expr) ?f64 {
+        if (expr.data != .e_number) return null;
+
+        return expr.data.e_number.value;
     }
 
     pub const EFlags = enum { none, ts_decorator };
@@ -8554,7 +8604,7 @@ pub const ServerComponentBoundary = struct {
     /// server's code. For server actions, this is the client's code.
     reference_source_index: Index.Int,
 
-    /// When `kit.Framework.ServerComponents.separate_ssr_graph` is enabled this
+    /// When `bake.Framework.ServerComponents.separate_ssr_graph` is enabled this
     /// points to the separated module. When the SSR graph is not separate, this is
     /// equal to `reference_source_index`
     //

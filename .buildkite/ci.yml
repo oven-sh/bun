@@ -372,7 +372,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.citgm.mjs"
 
   # Linux x64-baseline
   - key: "linux-x64-baseline"

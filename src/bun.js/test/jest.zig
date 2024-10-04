@@ -152,6 +152,8 @@ pub const TestRunner = struct {
         this.pending_describe = null;
 
         const vm = JSC.VirtualMachine.get();
+
+        vm.onUnhandledRejectionCtx = null;
         vm.auto_killer.clear();
         vm.auto_killer.disable();
 
@@ -159,14 +161,14 @@ pub const TestRunner = struct {
         vm.wakeup();
     }
 
-    pub fn drain(this: *TestRunner, globalObject: *JSC.JSGlobalObject) void {
+    pub fn drain(this: *TestRunner, vm: *VirtualMachine, globalObject: *JSC.JSGlobalObject) void {
         if (this.pending_test != null or this.pending_describe != null) return;
 
         if (this.describe_queue.readItem()) |scope| {
             this.pending_describe = scope;
             this.has_pending_tests = true;
 
-            switch (scope.dequeue(globalObject)) {
+            switch (scope.dequeue(vm, globalObject)) {
                 .Error, .Sync => {
                     this.pending_describe = null;
                     this.has_pending_tests = false;
@@ -191,6 +193,7 @@ pub const TestRunner = struct {
             return;
         }
         this.only = true;
+        debug(".only was set!", .{});
 
         const list = this.queue.readableSlice(0);
         for (list) |task| {
@@ -853,6 +856,7 @@ pub const DescribeScope = struct {
     tag: Tag = .pass,
     function_value: JSC.Strong = .{},
     remaining_child_describe_count: u32 = 0,
+    ref: JSC.Ref = .{},
 
     const Synchronousness = enum {
         Sync,
@@ -860,11 +864,11 @@ pub const DescribeScope = struct {
         Error,
     };
 
-    pub fn dequeue(this: *DescribeScope, globalObject: *JSGlobalObject) Synchronousness {
+    pub fn dequeue(this: *DescribeScope, vm: *VirtualMachine, globalObject: *JSGlobalObject) Synchronousness {
         const function = this.function_value.swap();
         defer this.function_value.deinit();
 
-        return this.run(globalObject, function, &.{});
+        return this.run(vm, globalObject, function, &.{});
     }
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
@@ -886,11 +890,14 @@ pub const DescribeScope = struct {
     }
 
     pub fn shouldEvaluateScope(this: *const DescribeScope) bool {
-        if (this.tag == .skip or
-            this.tag == .todo) return false;
-        if (Jest.runner.?.only and this.tag == .only) return true;
-        if (this.parent != null) return this.parent.?.shouldEvaluateScope();
-        return true;
+        return switch (this.tag) {
+            .skip, .todo => false,
+            .only => Jest.runner.?.only,
+            else => if (this.parent) |parent|
+                parent.shouldEvaluateScope()
+            else
+                !Jest.runner.?.only,
+        };
     }
 
     const AsyncDescribe = struct {
@@ -904,17 +911,29 @@ pub const DescribeScope = struct {
             this.destroy();
         }
     };
+
+    fn onResumeDescribe(this: *DescribeScope, vm: *VirtualMachine) void {
+        bun.debugAssert(Jest.runner.?.pending_describe == this);
+        this.ref.unref(vm);
+        Jest.runner.?.pending_describe = null;
+        Jest.runner.?.has_pending_tests = false;
+        this.pop();
+    }
+
     pub fn onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         debug("onReject", .{});
         const arguments = callframe.arguments(2);
         const err = arguments.ptr[0];
-        _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
+        const vm = globalThis.bunVM();
+        const prev_ctx = vm.onUnhandledRejectionCtx;
+        defer vm.onUnhandledRejectionCtx = prev_ctx;
+        vm.onUnhandledRejectionCtx = null;
         var task: *AsyncDescribe = arguments.ptr[1].asPromisePtr(AsyncDescribe);
         defer task.deinit();
-        globalThis.bunVM().autoGarbageCollect();
-        task.describe.pop();
-        bun.debugAssert(Jest.runner.?.pending_describe == task.describe);
-        Jest.runner.?.pending_describe = null;
+        onResumeDescribe(task.describe, vm);
+        _ = vm.uncaughtException(globalThis, err, true);
+        vm.autoGarbageCollect();
+
         return JSValue.jsUndefined();
     }
     const jsOnReject = JSC.toJSHostFunction(onReject);
@@ -925,12 +944,9 @@ pub const DescribeScope = struct {
         const task: *AsyncDescribe = arguments.ptr[1].asPromisePtr(AsyncDescribe);
         defer task.deinit();
         task.describe.runTests(globalThis);
-        bun.debugAssert(Jest.runner.?.pending_describe == task.describe);
-        Jest.runner.?.pending_describe = null;
-
-        task.describe.pop();
-
-        globalThis.bunVM().autoGarbageCollect();
+        const vm = globalThis.bunVM();
+        onResumeDescribe(task.describe, vm);
+        vm.autoGarbageCollect();
         return JSValue.jsUndefined();
     }
     const jsOnResolve = JSC.toJSHostFunction(onResolve);
@@ -1019,7 +1035,7 @@ pub const DescribeScope = struct {
     pub const beforeAll = createCallback(.beforeAll);
     pub const beforeEach = createCallback(.beforeEach);
 
-    pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, ran_any_callbacks: *bool, comptime hook: LifecycleHook) ?JSValue {
         var hooks = &@field(this, @tagName(hook));
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1040,6 +1056,7 @@ pub const DescribeScope = struct {
             debug("{s}()", .{@tagName(hook)});
 
             const vm = VirtualMachine.get();
+            ran_any_callbacks.* = true;
             var result: JSValue = switch (cb.getLength(globalObject)) {
                 0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
                 else => brk: {
@@ -1116,30 +1133,41 @@ pub const DescribeScope = struct {
         return null;
     }
 
-    fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, ran_any_callbacks: *bool, comptime hook: LifecycleHook) ?JSValue {
         if (this.parent) |scope| {
-            if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
+            if (scope.runBeforeCallbacks(globalObject, ran_any_callbacks, hook)) |err| {
                 return err;
             }
         }
-        return this.execCallback(globalObject, hook);
+        return this.execCallback(globalObject, ran_any_callbacks, hook);
     }
 
-    pub fn runCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+    pub fn runCallbacksAndHandleRejections(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) void {
+        var ran_any_callbacks = false;
+        if (this.runCallback(globalObject, &ran_any_callbacks, hook)) |err| {
+            _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
+        }
+
+        if (ran_any_callbacks) {
+            globalObject.handleRejectedPromises();
+        }
+    }
+
+    fn runCallback(this: *DescribeScope, globalObject: *JSGlobalObject, ran_any_callbacks: *bool, comptime hook: LifecycleHook) ?JSValue {
         if (comptime hook == .afterAll or hook == .afterEach) {
             var parent: ?*DescribeScope = this;
 
             if (hook == .afterAll) {
                 while (parent) |scope| {
                     if (scope.remaining_child_describe_count > 0 or scope.pending_tests.findFirstSet() != null) break;
-                    if (scope.execCallback(globalObject, hook)) |err| {
+                    if (scope.execCallback(globalObject, ran_any_callbacks, hook)) |err| {
                         return err;
                     }
                     parent = scope.parent;
                 }
             } else {
                 while (parent) |scope| {
-                    if (scope.execCallback(globalObject, hook)) |err| {
+                    if (scope.execCallback(globalObject, ran_any_callbacks, hook)) |err| {
                         return err;
                     }
                     parent = scope.parent;
@@ -1154,7 +1182,7 @@ pub const DescribeScope = struct {
         }
 
         if (comptime hook == .beforeAll or hook == .beforeEach) {
-            if (this.runBeforeCallbacks(globalObject, hook)) |err| {
+            if (this.runBeforeCallbacks(globalObject, ran_any_callbacks, hook)) |err| {
                 return err;
             }
         }
@@ -1194,25 +1222,32 @@ pub const DescribeScope = struct {
         return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, .todo);
     }
 
-    pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) Synchronousness {
+    pub fn run(this: *DescribeScope, vm: *VirtualMachine, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) Synchronousness {
         if (comptime is_bindgen) return undefined;
 
         active = this;
         var is_async = false;
-        defer if (!is_async) this.pop();
+        defer {
+            if (!is_async) {
+                this.pop();
+                this.ref.unref(vm);
+            }
+        }
+
         debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         if (callback == .zero) {
             this.runTests(globalObject);
+
             return .Sync;
         }
 
         {
             JSC.markBinding(@src());
-            var result = callJSFunctionForTestRunner(VirtualMachine.get(), globalObject, callback, args);
+            var result = callJSFunctionForTestRunner(vm, globalObject, callback, args);
 
             if (result.asAnyPromise()) |prom| {
-                switch (prom.status(globalObject.ptr().vm())) {
+                switch (prom.status(globalObject.vm())) {
                     .fulfilled => {},
                     .pending => {
                         is_async = true;
@@ -1227,12 +1262,14 @@ pub const DescribeScope = struct {
                         return .Async;
                     },
                     else => {
-                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
+                        _ = vm.unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
+
                         return .Sync;
                     },
                 }
             } else if (result.toError()) |err| {
-                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
+                _ = vm.uncaughtException(globalObject, err, true);
+
                 return .Error;
             }
         }
@@ -1252,9 +1289,6 @@ pub const DescribeScope = struct {
         const tests: []TestScope = this.tests.items;
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
-        if (this.parent) |parent| {
-            parent.remaining_child_describe_count -|= 1;
-        }
 
         // Step 2. Update the runner with the count of how many tests we have for this block
         if (end > 0) this.test_id_start = Jest.runner.?.addTestCount(end);
@@ -1300,21 +1334,23 @@ pub const DescribeScope = struct {
         globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
-            if (this.runCallback(globalThis, .afterEach)) |err| {
-                _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-            }
+            this.runCallbacksAndHandleRejections(globalThis, .afterEach);
         }
 
         if (this.pending_tests.findFirstSet() != null) {
             return;
         }
 
+        if (this.remaining_child_describe_count == 0) {
+            if (this.parent) |parent| {
+                parent.remaining_child_describe_count -|= 1;
+            }
+        }
+
         if (this.shouldEvaluateScope() and this.remaining_child_describe_count == 0) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
-            if (this.execCallback(globalThis, .afterAll)) |err| {
-                _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-            }
+            this.runCallbacksAndHandleRejections(globalThis, .afterAll);
         }
 
         this.pending_tests.deinit(getAllocator(globalThis));
@@ -1472,16 +1508,27 @@ pub const TestRunnerTask = struct {
         const test_id = this.test_id;
 
         if (test_id == std.math.maxInt(TestRunner.Test.ID)) {
+            jsc_vm.onUnhandledRejectionCtx = null;
+
+            // Run beforeAll even if there were no tests for this scope.
+            if (describe.remaining_child_describe_count == 0 and
+                describe.pending_tests.findFirstSet() == null and
+                // jk maybe not
+                describe.shouldEvaluateScope())
+            {
+                describe.runCallbacksAndHandleRejections(globalThis, .beforeAll);
+            }
+
             describe.onTestComplete(globalThis, test_id, true);
             Jest.runner.?.runNextTest();
             this.deinit();
             return false;
         }
 
-        var test_: TestScope = this.describe.tests.items[test_id];
-        describe.current_test_id = test_id;
+        var test_: TestScope = describe.tests.items[test_id];
 
         if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
+            describe.current_test_id = test_id;
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
@@ -1496,32 +1543,23 @@ pub const TestRunnerTask = struct {
             return false;
         }
 
-        jsc_vm.onUnhandledRejectionCtx = this;
-        jsc_vm.onUnhandledRejection = onUnhandledRejection;
-
         if (this.needs_before_each) {
             this.needs_before_each = false;
-            const label = test_.label;
-
-            if (this.describe.runCallback(globalThis, .beforeAll)) |err| {
-                _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                return false;
-            }
-
-            if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
-                _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                return false;
-            }
+            jsc_vm.onUnhandledRejectionCtx = null;
+            globalThis.handleRejectedPromises();
+            describe.runCallbacksAndHandleRejections(globalThis, .beforeAll);
+            describe.runCallbacksAndHandleRejections(globalThis, .beforeEach);
         }
+        jsc_vm.onUnhandledRejectionCtx = this;
+        jsc_vm.onUnhandledRejection = onUnhandledRejection;
+        describe.current_test_id = test_id;
 
         this.sync_state = .pending;
         jsc_vm.auto_killer.enable();
         var result = TestScope.run(&test_, this);
 
-        if (this.describe.tests.items.len > test_id) {
-            this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
+        if (describe.tests.items.len > test_id) {
+            describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
         }
 
         // rejected promises should fail the test
@@ -1936,6 +1974,7 @@ inline fn createScope(
         parent.remaining_child_describe_count +|= 1;
 
         Jest.runner.?.describe_queue.writeItem(scope) catch unreachable;
+        scope.ref.ref(globalThis.bunVM());
     }
 
     return this;

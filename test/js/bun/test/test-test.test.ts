@@ -570,6 +570,25 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   expect(err).not.toContain("undefined");
 });
 
+it("https://github.com/oven-sh/bun/issues/14135", async () => {
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", join(import.meta.dir, "describe-only-fixture.js")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(0);
+
+  expect(stdout.toUnixString().trim().split("\n")).toEqual([
+    `bun test ${Bun.version_with_sha}`,
+    "beforeAll 2",
+    "test 2",
+  ]);
+});
+
+// https://jestjs.io/docs/setup-teardown
 it("test --preload supports global lifecycle hooks", () => {
   const preloadedPath = join(tmp, "test-fixture-preload-global-lifecycle-hook-preloaded.js");
   const path = join(tmp, "test-fixture-preload-global-lifecycle-hook-test.test.js");
@@ -588,6 +607,13 @@ bun test ${Bun.version_with_sha}
 beforeAll: #1
 beforeAll: #2
 beforeAll: TEST-FILE
+beforeEach: #1
+beforeEach: #2
+beforeEach: TEST-FILE
+-- the top-level test --
+afterEach: TEST-FILE
+afterEach: #1
+afterEach: #2
 beforeAll: one describe scope
 beforeEach: #1
 beforeEach: #2
@@ -599,13 +625,6 @@ afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
 afterAll: one describe scope
-beforeEach: #1
-beforeEach: #2
-beforeEach: TEST-FILE
--- the top-level test --
-afterEach: TEST-FILE
-afterEach: #1
-afterEach: #2
 afterAll: TEST-FILE
 afterAll: #1
 afterAll: #2
@@ -700,7 +719,7 @@ test("my-test", () => {
         "my-test.test.js": code,
         "package.json": "{}",
       });
-
+      console.log({ test_dir });
       const { stderr, exited } = spawnSync({
         cmd: [bunExe(), "test", "my-test.test.js"],
         cwd: test_dir,
@@ -722,6 +741,8 @@ test("my-test", () => {
             // Timers are a little inconsistent on macOS vs Linux
             // On Linux, it might not run in time, but on macOS it will
             if (a.includes(" expect() calls")) return false;
+
+            if (a.includes("promiseReactionJob")) return false;
 
             return true;
           })

@@ -4,7 +4,7 @@ let bytes = new Uint8Array(64);
 bytes[bytes.length - 1] = 42;
 
 const {
-  symbols: { napi_main, main, lastByte },
+  symbols: { napi_main, main, lastByte, memset_and_memcpy_work },
 } = cc({
   source: fixture,
   define: {
@@ -24,6 +24,10 @@ const {
       args: [],
       returns: "int",
     },
+    "memset_and_memcpy_work": {
+      args: [],
+      returns: "bool",
+    },
   },
 });
 
@@ -37,4 +41,8 @@ if (napi_main(null) !== "Hello, Napi!") {
 
 if (lastByte(bytes, bytes.byteLength) !== 42) {
   throw new Error("lastByte(bytes, bytes.length) !== 42");
+}
+
+if (!memset_and_memcpy_work()) {
+  throw new Error("memset/memcpy test detected error");
 }

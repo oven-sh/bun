@@ -117,13 +117,70 @@ const kAborted = Symbol("aborted");
 const kRequest = Symbol("request");
 
 function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
-}
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 hideFromStack(validateString);
+
+function validateFunction(value, name) {
+  if (typeof value !== "function") throw ERR_INVALID_ARG_TYPE(name, "Function", value);
+}
 hideFromStack(validateFunction);
+
+function validateObject(value, name) {
+  if (typeof value !== "object") throw ERR_INVALID_ARG_TYPE(name, "object", value);
+}
+hideFromStack(validateObject);
+
+/*
+  The rules for the Link header field are described here:
+  https://www.rfc-editor.org/rfc/rfc8288.html#section-3
+
+  This regex validates any string surrounded by angle brackets
+  (not necessarily a valid URI reference) followed by zero or more
+  link-params separated by semicolons.
+*/
+const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
+function validateLinkHeaderFormat(value, name) {
+  if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
+    throw ERR_INVALID_ARG_VALUE(
+      name,
+      value,
+      'must be an array or string of format "</styles.css>; rel=preload; as=style"',
+    );
+  }
+}
+function validateLinkHeaderValue(hints) {
+  if (typeof hints === "string") {
+    validateLinkHeaderFormat(hints, "hints");
+    return hints;
+  } else if (ArrayIsArray(hints)) {
+    const hintsLength = hints.length;
+    let result = "";
+
+    if (hintsLength === 0) {
+      return result;
+    }
+
+    for (let i = 0; i < hintsLength; i++) {
+      const link = hints[i];
+      validateLinkHeaderFormat(link, "hints");
+      result += link;
+
+      if (i !== hintsLength - 1) {
+        result += ", ";
+      }
+    }
+
+    return result;
+  }
+
+  throw ERR_INVALID_ARG_VALUE(
+    "hints",
+    hints,
+    'must be an array or string of format "</styles.css>; rel=preload; as=style"',
+  );
+}
+hideFromStack(validateLinkHeaderValue);
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
 /**
@@ -840,26 +897,25 @@ class Http2ServerResponse extends Stream {
   }
 
   writeEarlyHints(hints) {
-    //   validateObject(hints, "hints");
-    //   const headers = { __proto__: null };
-    //   const linkHeaderValue = validateLinkHeaderValue(hints.link);
-    //   for (const key of ObjectKeys(hints)) {
-    //     if (key !== "link") {
-    //       headers[key] = hints[key];
-    //     }
-    //   }
-    //   if (linkHeaderValue.length === 0) {
-    //     return false;
-    //   }
-    //   const stream = this[kStream];
-    //   if (stream.headersSent || this[kState].closed) return false;
-    //   stream.additionalHeaders({
-    //     ...headers,
-    //     [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_EARLY_HINTS,
-    //     "Link": linkHeaderValue,
-    //   });
-    //   return true;
-    // }
+    validateObject(hints, "hints");
+    const headers = { __proto__: null };
+    const linkHeaderValue = validateLinkHeaderValue(hints.link);
+    for (const key of ObjectKeys(hints)) {
+      if (key !== "link") {
+        headers[key] = hints[key];
+      }
+    }
+    if (linkHeaderValue.length === 0) {
+      return false;
+    }
+    const stream = this[kStream];
+    if (stream.headersSent || this[kState].closed) return false;
+    stream.additionalHeaders({
+      ...headers,
+      [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_EARLY_HINTS,
+      "Link": linkHeaderValue,
+    });
+    return true;
   }
 }
 

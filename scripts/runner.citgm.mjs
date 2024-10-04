@@ -11,20 +11,23 @@ function tmpdirSync(pattern = "bun.citgm.") {
 
 // keep this in sync with .buildkite/ci.yml
 const shards = [
-  [0, "binary-split"], //0
-  [0, "blake2b-wasm"], //1
-  [0, "bufferutil"], //2
-  [0, "crc32-stream"], //3
-  [0, "dicer"], //4
-  [0, "duplexer2"], //5
-  [0, "duplexify"], //6
-  [0, "flush-write-stream"], //7
-  [0, "from2"], //8
-  [0, "full-icu-test"], //9
-  [0, "iconv"], //10
-  [0, "pumpify"], //11
-  [0, "thread-sleep"], //12
-  [0, "throughv"], //13
+  // 0
+  [0, "binary-split"],
+  [0, "blake2b-wasm"],
+  [0, "bufferutil"],
+  [0, "crc32-stream"],
+  [0, "dicer"],
+  // 5
+  [0, "duplexer2"],
+  [0, "duplexify"],
+  [0, "flush-write-stream"],
+  [0, "from2"],
+  [0, "full-icu-test"],
+  // 10
+  [0, "iconv"],
+  [0, "pumpify"],
+  [0, "thread-sleep"],
+  [0, "throughv"],
 ];
 
 const shard_number = parseInt(process.argv[2] ?? process.env["BUILDKITE_PARALLEL_JOB"] ?? "0", 10);

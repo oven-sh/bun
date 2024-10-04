@@ -10,6 +10,12 @@ indicates a Message ID, with the length being inferred by the payload size.
 
 All integers are in little-endian
 
+## Client->Server messages
+
+### `v`
+
+Subscribe to visualizer packets (`v`)
+
 ## Server->Client messages
 
 ### `V`
@@ -36,3 +42,25 @@ Server-side code has reloaded. Client should either refetch the route or perform
   - `u32` Route ID
   - `u16` Length of route name.
   - `[n]u8` Route name in UTF-8 encoded text.
+
+### `v`
+
+Payload for `incremental_visualizer.html`. This can be accessed via `/_bun/incremental_visualizer`.
+
+- `u32`: Number of files in client graph
+- For each file in client graph
+  - `u32`: Length of name. If zero then no other fields are provided.
+  - `[n]u8`: File path in UTF-8 encoded text
+  - `u8`: If file is stale, set 1
+  - `u8`: If file is in server graph, set 1
+  - `u8`: If file is in ssr graph, set 1
+  - `u8`: If file is a server-side route root, set 1
+  - `u8`: If file is a server-side component boundary file, set 1
+- `u32`: Number of files in the server graph
+- For each file in server graph, repeat the same parser for the clienr graph
+- `u32`: Number of client edges. For each,
+  - `u32`: File index of the dependency file
+  - `u32`: File index of the imported file
+- `u32`: Number of server edges. For each,
+  - `u32`: File index of the dependency file
+  - `u32`: File index of the imported file

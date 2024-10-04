@@ -962,6 +962,10 @@ pub const BundleV2 = struct {
                 })) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
+
+                if (entry_point.is_route_root) {
+                    _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true);
+                }
             }
         }
 
@@ -2286,13 +2290,13 @@ pub const BundleV2 = struct {
             }
 
             if (this.bundler.options.dev_server) |dev_server| {
-                // TODO(paperdave/kit): this relative can be done without a clone in most cases
                 if (!dev_server.isFileStale(path.text, renderer)) {
                     import_record.source_index = Index.invalid;
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                     import_record.path.text = rel;
                     import_record.path.pretty = rel;
                     import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
             }

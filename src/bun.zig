@@ -3297,7 +3297,7 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
 }
 
 pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src },
+    comptime root: enum { codegen, src, src_eager },
     comptime sub_path: []const u8,
 ) []const u8 {
     comptime assert(Environment.isDebug);
@@ -3309,7 +3309,7 @@ pub fn runtimeEmbedFile(
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
                 .codegen => Environment.codegen_path,
-                .src => Environment.base_path ++ "/src",
+                .src, .src_eager => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
@@ -3333,6 +3333,11 @@ pub fn runtimeEmbedFile(
             };
         }
     };
+
+    if (root == .src_eager and static.once.done) {
+        static.once.done = false;
+        default_allocator.free(static.storage);
+    }
 
     static.once.call();
 

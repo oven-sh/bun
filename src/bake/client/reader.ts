@@ -16,8 +16,14 @@ export class DataViewReader {
   }
 
   u16() {
-    const value = this.view.getUint32(this.cursor, true);
+    const value = this.view.getUint16(this.cursor, true);
     this.cursor += 2;
+    return value;
+  }
+
+  u8() {
+    const value = this.view.getUint8(this.cursor);
+    this.cursor += 1;
     return value;
   }
 

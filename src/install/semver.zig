@@ -252,6 +252,11 @@ pub const String = extern struct {
         return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
+    pub fn toJS(this: *const String, buffer: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var str = bun.String.init(this.slice(buffer));
+        return str.transferToJS(globalThis);
+    }
+
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
         switch (this.bytes[max_inline_len - 1] & 128) {
@@ -609,6 +614,10 @@ pub const Version = extern struct {
         return this.patch == 0 and this.minor == 0 and this.major == 0;
     }
 
+    pub fn parseUTF8(slice: []const u8) ParseResult {
+        return parse(.{ .buf = slice, .slice = slice });
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,
@@ -622,8 +631,173 @@ pub const Version = extern struct {
         return this.tag.build.len + this.tag.pre.len;
     }
 
+    pub const Formatter = struct {
+        version: Version,
+        input: string,
+
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const self = formatter.version;
+            try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
+
+            if (self.tag.hasPre()) {
+                const pre = self.tag.pre.slice(formatter.input);
+                try writer.writeAll("-");
+                try writer.writeAll(pre);
+            }
+
+            if (self.tag.hasBuild()) {
+                const build = self.tag.build.slice(formatter.input);
+                try writer.writeAll("+");
+                try writer.writeAll(build);
+            }
+        }
+    };
+
     pub fn fmt(this: Version, input: string) Formatter {
         return .{ .version = this, .input = input };
+    }
+
+    pub const DiffFormatter = struct {
+        version: Version,
+        buf: string,
+        other: Version,
+        other_buf: string,
+
+        pub fn format(this: DiffFormatter, comptime fmt_: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            if (!Output.enable_ansi_colors) {
+                // print normally if no colors
+                const formatter: Formatter = .{ .version = this.version, .input = this.buf };
+                return Formatter.format(formatter, fmt_, options, writer);
+            }
+
+            const diff = this.version.whichVersionIsDifferent(this.other, this.buf, this.other_buf) orelse .none;
+
+            switch (diff) {
+                .major => try writer.print(Output.prettyFmt("<r><b><red>{d}.{d}.{d}", true), .{
+                    this.version.major, this.version.minor, this.version.patch,
+                }),
+                .minor => {
+                    if (this.version.major == 0) {
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><b><red>{d}.{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    } else {
+                        try writer.print(Output.prettyFmt("<d>{d}.<r><b><yellow>{d}.{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    }
+                },
+                .patch => {
+                    if (this.version.major == 0 and this.version.minor == 0) {
+                        try writer.print(Output.prettyFmt("<d>{d}.{d}.<r><b><red>{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    } else {
+                        try writer.print(Output.prettyFmt("<d>{d}.{d}.<r><b><green>{d}", true), .{
+                            this.version.major, this.version.minor, this.version.patch,
+                        });
+                    }
+                },
+                .none, .pre, .build => try writer.print(Output.prettyFmt("<d>{d}.{d}.{d}", true), .{
+                    this.version.major, this.version.minor, this.version.patch,
+                }),
+            }
+
+            // might be pre or build. loop through all characters, and insert <red> on
+            // first diff.
+
+            var set_color = false;
+            if (this.version.tag.hasPre()) {
+                if (this.other.tag.hasPre()) {
+                    const pre = this.version.tag.pre.slice(this.buf);
+                    const other_pre = this.other.tag.pre.slice(this.other_buf);
+
+                    var first = true;
+                    for (pre, 0..) |c, i| {
+                        if (!set_color and i < other_pre.len and c != other_pre[i]) {
+                            set_color = true;
+                            try writer.writeAll(Output.prettyFmt("<r><b><red>", true));
+                        }
+                        if (first) {
+                            first = false;
+                            try writer.writeByte('-');
+                        }
+                        try writer.writeByte(c);
+                    }
+                } else {
+                    try writer.print(Output.prettyFmt("<r><b><red>-{}", true), .{this.version.tag.pre.fmt(this.buf)});
+                    set_color = true;
+                }
+            }
+
+            if (this.version.tag.hasBuild()) {
+                if (this.other.tag.hasBuild()) {
+                    const build = this.version.tag.build.slice(this.buf);
+                    const other_build = this.other.tag.build.slice(this.other_buf);
+
+                    var first = true;
+                    for (build, 0..) |c, i| {
+                        if (!set_color and i < other_build.len and c != other_build[i]) {
+                            set_color = true;
+                            try writer.writeAll(Output.prettyFmt("<r><b><red>", true));
+                        }
+                        if (first) {
+                            first = false;
+                            try writer.writeByte('+');
+                        }
+                        try writer.writeByte(c);
+                    }
+                } else {
+                    if (!set_color) {
+                        try writer.print(Output.prettyFmt("<r><b><red>+{}", true), .{this.version.tag.build.fmt(this.buf)});
+                    } else {
+                        try writer.print("+{}", .{this.version.tag.build.fmt(this.other_buf)});
+                    }
+                }
+            }
+
+            try writer.writeAll(Output.prettyFmt("<r>", true));
+        }
+    };
+
+    pub fn diffFmt(this: Version, other: Version, this_buf: string, other_buf: string) DiffFormatter {
+        return .{
+            .version = this,
+            .buf = this_buf,
+            .other = other,
+            .other_buf = other_buf,
+        };
+    }
+
+    pub const ChangedVersion = enum {
+        major,
+        minor,
+        patch,
+        pre,
+        build,
+        none,
+    };
+
+    pub fn whichVersionIsDifferent(
+        left: Version,
+        right: Version,
+        left_buf: string,
+        right_buf: string,
+    ) ?ChangedVersion {
+        if (left.major != right.major) return .major;
+        if (left.minor != right.minor) return .minor;
+        if (left.patch != right.patch) return .patch;
+
+        if (left.tag.hasPre() != right.tag.hasPre()) return .pre;
+        if (!left.tag.hasPre() and !right.tag.hasPre()) return null;
+        if (left.tag.orderPre(right.tag, left_buf, right_buf) != .eq) return .pre;
+
+        if (left.tag.hasBuild() != right.tag.hasBuild()) return .build;
+        if (!left.tag.hasBuild() and !right.tag.hasBuild()) return null;
+        return if (left.tag.build.order(&right.tag.build, left_buf, right_buf) != .eq)
+            .build
+        else
+            null;
     }
 
     pub fn count(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
@@ -684,28 +858,6 @@ pub const Version = extern struct {
         const bytes = std.mem.asBytes(&hashable);
         return bun.Wyhash.hash(0, bytes);
     }
-
-    pub const Formatter = struct {
-        version: Version,
-        input: string,
-
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const self = formatter.version;
-            try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
-
-            if (self.tag.hasPre()) {
-                const pre = self.tag.pre.slice(formatter.input);
-                try writer.writeAll("-");
-                try writer.writeAll(pre);
-            }
-
-            if (self.tag.hasBuild()) {
-                const build = self.tag.build.slice(formatter.input);
-                try writer.writeAll("+");
-                try writer.writeAll(build);
-            }
-        }
-    };
 
     pub fn eql(lhs: Version, rhs: Version) bool {
         return lhs.major == rhs.major and lhs.minor == rhs.minor and lhs.patch == rhs.patch and rhs.tag.eql(lhs.tag);
@@ -1864,18 +2016,18 @@ pub const Query = struct {
             try std.json.encodeJsonString(temp, .{}, writer);
         }
 
-        pub fn deinit(this: *Group) void {
+        pub fn deinit(this: *const Group) void {
             var list = this.head;
             var allocator = this.allocator;
 
             while (list.next) |next| {
                 var query = list.head;
                 while (query.next) |next_query| {
-                    allocator.destroy(next_query);
                     query = next_query.*;
+                    allocator.destroy(next_query);
                 }
-                allocator.destroy(next);
                 list = next.*;
+                allocator.destroy(next);
             }
         }
 
@@ -2241,11 +2393,13 @@ pub const Query = struct {
         };
     };
 
+    const ParseError = error{OutOfMemory};
+
     pub fn parse(
         allocator: Allocator,
         input: string,
         sliced: SlicedString,
-    ) !Group {
+    ) ParseError!Group {
         var i: usize = 0;
         var list = Group{
             .allocator = allocator,
@@ -2586,7 +2740,15 @@ pub const SemverObject = struct {
             allocator,
             right.slice(),
             SlicedString.init(right.slice(), right.slice()),
-        ) catch return .false;
+        ) catch |err| {
+            switch (err) {
+                error.OutOfMemory => {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                },
+            }
+        };
+        defer right_group.deinit();
 
         const right_version = right_group.getExactVersion();
 

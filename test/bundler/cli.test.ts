@@ -1,5 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 

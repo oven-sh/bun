@@ -249,7 +249,7 @@ pub const Registry = struct {
 
         var newly_last_modified: string = "";
         var new_etag: string = "";
-        for (response.headers) |header| {
+        for (response.headers.list) |header| {
             if (!(header.name.len == "last-modified".len or header.name.len == "etag".len)) continue;
 
             const hashed = HTTPClient.hashHeaderName(header.name);
@@ -320,6 +320,72 @@ const ExternVersionMap = extern struct {
     }
 };
 
+fn Negatable(comptime T: type) type {
+    return struct {
+        added: T = T.none,
+        removed: T = T.none,
+        had_wildcard: bool = false,
+        had_unrecognized_values: bool = false,
+
+        // https://github.com/pnpm/pnpm/blob/1f228b0aeec2ef9a2c8577df1d17186ac83790f9/config/package-is-installable/src/checkPlatform.ts#L56-L86
+        // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/node_modules/npm-install-checks/lib/index.js#L2-L96
+        pub fn combine(this: Negatable(T)) T {
+            const added = if (this.had_wildcard) T.all_value else @intFromEnum(this.added);
+            const removed = @intFromEnum(this.removed);
+
+            // If none were added or removed, all are allowed
+            if (added == 0 and removed == 0) {
+                if (this.had_unrecognized_values) {
+                    return T.none;
+                }
+
+                // []
+                return T.all;
+            }
+
+            // If none were added, but some were removed, return the inverse of the removed
+            if (added == 0 and removed != 0) {
+                // ["!linux", "!darwin"]
+                return @enumFromInt(T.all_value & ~removed);
+            }
+
+            if (removed == 0) {
+                // ["linux", "darwin"]
+                return @enumFromInt(added);
+            }
+
+            // - ["linux", "!darwin"]
+            return @enumFromInt(added & ~removed);
+        }
+
+        pub fn apply(this: *Negatable(T), str: []const u8) void {
+            if (str.len == 0) {
+                return;
+            }
+
+            if (strings.eqlComptime(str, "any")) {
+                this.had_wildcard = true;
+                return;
+            }
+
+            const is_not = str[0] == '!';
+            const offset: usize = @intFromBool(is_not);
+
+            const field: u16 = T.NameMap.get(str[offset..]) orelse {
+                if (!is_not)
+                    this.had_unrecognized_values = true;
+                return;
+            };
+
+            if (is_not) {
+                this.* = .{ .added = this.added, .removed = @enumFromInt(@intFromEnum(this.removed) | field) };
+            } else {
+                this.* = .{ .added = @enumFromInt(@intFromEnum(this.added) | field), .removed = this.removed };
+            }
+        }
+    };
+}
+
 /// https://nodejs.org/api/os.html#osplatform
 pub const OperatingSystem = enum(u16) {
     none = 0,
@@ -338,16 +404,15 @@ pub const OperatingSystem = enum(u16) {
 
     pub const all_value: u16 = aix | darwin | freebsd | linux | openbsd | sunos | win32 | android;
 
+    pub const current: OperatingSystem = switch (Environment.os) {
+        .linux => @enumFromInt(linux),
+        .mac => @enumFromInt(darwin),
+        .windows => @enumFromInt(win32),
+        else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
+    };
+
     pub fn isMatch(this: OperatingSystem) bool {
-        if (comptime Environment.isLinux) {
-            return (@intFromEnum(this) & linux) != 0;
-        } else if (comptime Environment.isMac) {
-            return (@intFromEnum(this) & darwin) != 0;
-        } else if (comptime Environment.isWindows) {
-            return (@intFromEnum(this) & win32) != 0;
-        } else {
-            return false;
-        }
+        return (@intFromEnum(this) & @intFromEnum(current)) != 0;
     }
 
     pub inline fn has(this: OperatingSystem, other: u16) bool {
@@ -365,31 +430,42 @@ pub const OperatingSystem = enum(u16) {
         .{ "android", android },
     });
 
-    pub fn apply(this_: OperatingSystem, str: []const u8) OperatingSystem {
-        if (str.len == 0) {
-            return this_;
+    pub const current_name = switch (Environment.os) {
+        .linux => "linux",
+        .mac => "darwin",
+        .windows => "win32",
+        else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+    };
+
+    pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
+        return .{ .added = this, .removed = .none };
+    }
+
+    const JSC = bun.JSC;
+    pub fn jsFunctionOperatingSystemIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const args = callframe.arguments(1);
+        var operating_system = negatable(.none);
+        var iter = args.ptr[0].arrayIterator(globalObject);
+        while (iter.next()) |item| {
+            const slice = item.toSlice(globalObject, bun.default_allocator);
+            defer slice.deinit();
+            operating_system.apply(slice.slice());
+            if (globalObject.hasException()) return .zero;
         }
-        const this = @intFromEnum(this_);
-
-        const is_not = str[0] == '!';
-        const offset: usize = if (str[0] == '!') 1 else 0;
-
-        const field: u16 = NameMap.get(str[offset..]) orelse return this_;
-
-        if (is_not) {
-            return @as(OperatingSystem, @enumFromInt(this & ~field));
-        } else {
-            return @as(OperatingSystem, @enumFromInt(this | field));
-        }
+        if (globalObject.hasException()) return .zero;
+        return JSC.JSValue.jsBoolean(operating_system.combine().isMatch());
     }
 };
 
 pub const Libc = enum(u8) {
     none = 0,
+    all = all_value,
     _,
 
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
+
+    pub const all_value: u8 = glibc | musl;
 
     pub const NameMap = bun.ComptimeStringMap(u8, .{
         .{ "glibc", glibc },
@@ -400,22 +476,26 @@ pub const Libc = enum(u8) {
         return (@intFromEnum(this) & other) != 0;
     }
 
-    pub fn apply(this_: Libc, str: []const u8) Libc {
-        if (str.len == 0) {
-            return this_;
+    pub fn negatable(this: Libc) Negatable(Libc) {
+        return .{ .added = this, .removed = .none };
+    }
+
+    // TODO:
+    pub const current: Libc = @intFromEnum(glibc);
+
+    const JSC = bun.JSC;
+    pub fn jsFunctionLibcIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const args = callframe.arguments(1);
+        var libc = negatable(.none);
+        var iter = args.ptr[0].arrayIterator(globalObject);
+        while (iter.next()) |item| {
+            const slice = item.toSlice(globalObject, bun.default_allocator);
+            defer slice.deinit();
+            libc.apply(slice.slice());
+            if (globalObject.hasException()) return .zero;
         }
-        const this = @intFromEnum(this_);
-
-        const is_not = str[0] == '!';
-        const offset: usize = if (str[0] == '!') 1 else 0;
-
-        const field: u8 = NameMap.get(str[offset..]) orelse return this_;
-
-        if (is_not) {
-            return @as(Libc, @enumFromInt(this & ~field));
-        } else {
-            return @as(Libc, @enumFromInt(this | field));
-        }
+        if (globalObject.hasException()) return .zero;
+        return JSC.JSValue.jsBoolean(libc.combine().isMatch());
     }
 };
 
@@ -440,6 +520,18 @@ pub const Architecture = enum(u16) {
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
+    pub const current: Architecture = switch (Environment.arch) {
+        .arm64 => @enumFromInt(arm64),
+        .x64 => @enumFromInt(x64),
+        else => @compileError("Specify architecture: " ++ Environment.arch),
+    };
+
+    pub const current_name = switch (Environment.arch) {
+        .arm64 => "arm64",
+        .x64 => "x64",
+        else => @compileError("Unsupported architecture: " ++ @tagName(current)),
+    };
+
     pub const NameMap = bun.ComptimeStringMap(u16, .{
         .{ "arm", arm },
         .{ "arm64", arm64 },
@@ -459,34 +551,29 @@ pub const Architecture = enum(u16) {
     }
 
     pub fn isMatch(this: Architecture) bool {
-        if (comptime Environment.isAarch64) {
-            return (@intFromEnum(this) & arm64) != 0;
-        } else if (comptime Environment.isX64) {
-            return (@intFromEnum(this) & x64) != 0;
-        } else {
-            return false;
-        }
+        return @intFromEnum(this) & @intFromEnum(current) != 0;
     }
 
-    pub fn apply(this_: Architecture, str: []const u8) Architecture {
-        if (str.len == 0) {
-            return this_;
+    pub fn negatable(this: Architecture) Negatable(Architecture) {
+        return .{ .added = this, .removed = .none };
+    }
+
+    const JSC = bun.JSC;
+    pub fn jsFunctionArchitectureIsMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const args = callframe.arguments(1);
+        var architecture = negatable(.none);
+        var iter = args.ptr[0].arrayIterator(globalObject);
+        while (iter.next()) |item| {
+            const slice = item.toSlice(globalObject, bun.default_allocator);
+            defer slice.deinit();
+            architecture.apply(slice.slice());
+            if (globalObject.hasException()) return .zero;
         }
-        const this = @intFromEnum(this_);
-
-        const is_not = str[0] == '!';
-        const offset: usize = if (str[0] == '!') 1 else 0;
-        const input = str[offset..];
-
-        const field: u16 = NameMap.get(input) orelse return this_;
-
-        if (is_not) {
-            return @as(Architecture, @enumFromInt(this & ~field));
-        } else {
-            return @as(Architecture, @enumFromInt(this | field));
-        }
+        if (globalObject.hasException()) return .zero;
+        return JSC.JSValue.jsBoolean(architecture.combine().isMatch());
     }
 };
+
 const BigExternalString = Semver.BigExternalString;
 
 pub const PackageVersion = extern struct {
@@ -592,7 +679,8 @@ pub const PackageManifest = struct {
 
     pub const Serializer = struct {
         // - version 3: added serialization of registry url. it's used to invalidate when it changes
-        pub const version = "bun-npm-manifest-cache-v0.0.3\n";
+        // - version 4: fixed bug with cpu & os tag not being added correctly
+        pub const version = "bun-npm-manifest-cache-v0.0.4\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -909,10 +997,14 @@ pub const PackageManifest = struct {
                 .{ .mode = .read_only },
             ) catch return null;
             defer cache_file.close();
-            const bytes = try cache_file.readToEndAllocOptions(
+            return loadByFile(allocator, scope, cache_file);
+        }
+
+        pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: std.fs.File) !?PackageManifest {
+            const bytes = try manifest_file.readToEndAllocOptions(
                 allocator,
                 std.math.maxInt(u32),
-                cache_file.getEndPos() catch null,
+                manifest_file.getEndPos() catch null,
                 @alignOf(u8),
                 null,
             );
@@ -957,6 +1049,96 @@ pub const PackageManifest = struct {
             }
 
             return package_manifest;
+        }
+    };
+
+    pub const bindings = struct {
+        const JSC = bun.JSC;
+        const JSValue = JSC.JSValue;
+        const JSGlobalObject = JSC.JSGlobalObject;
+        const CallFrame = JSC.CallFrame;
+        const ZigString = JSC.ZigString;
+
+        pub fn generate(global: *JSGlobalObject) JSValue {
+            const obj = JSValue.createEmptyObject(global, 1);
+            const parseManifestString = ZigString.static("parseManifest");
+            obj.put(global, parseManifestString, JSC.createCallback(global, parseManifestString, 2, jsParseManifest));
+            return obj;
+        }
+
+        pub fn jsParseManifest(global: *JSGlobalObject, callFrame: *CallFrame) JSValue {
+            const args = callFrame.arguments(2).slice();
+            if (args.len < 2 or !args[0].isString() or !args[1].isString()) {
+                global.throw("expected manifest filename and registry string arguments", .{});
+                return .zero;
+            }
+
+            const manifest_filename_str = args[0].toBunString(global);
+            defer manifest_filename_str.deref();
+
+            const manifest_filename = manifest_filename_str.toUTF8(bun.default_allocator);
+            defer manifest_filename.deinit();
+
+            const registry_str = args[1].toBunString(global);
+            defer registry_str.deref();
+
+            const registry = registry_str.toUTF8(bun.default_allocator);
+            defer registry.deinit();
+
+            const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
+                global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
+                return .zero;
+            };
+            defer manifest_file.close();
+
+            const scope: Registry.Scope = .{
+                .url_hash = Registry.Scope.hash(strings.withoutTrailingSlash(registry.slice())),
+                .url = .{
+                    .host = strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.slice(), "http://")),
+                    .hostname = strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.slice(), "http://")),
+                    .href = registry.slice(),
+                    .origin = strings.withoutTrailingSlash(registry.slice()),
+                    .protocol = if (strings.indexOfChar(registry.slice(), ':')) |colon| registry.slice()[0..colon] else "",
+                },
+            };
+
+            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, manifest_file) catch |err| {
+                global.throw("failed to load manifest file: {s}", .{@errorName(err)});
+                return .zero;
+            };
+
+            const package_manifest: PackageManifest = maybe_package_manifest orelse {
+                global.throw("manifest is invalid ", .{});
+                return .zero;
+            };
+
+            var buf: std.ArrayListUnmanaged(u8) = .{};
+            const writer = buf.writer(bun.default_allocator);
+
+            // TODO: we can add more information. for now just versions is fine
+
+            writer.print("{{\"name\":\"{s}\",\"versions\":[", .{package_manifest.name()}) catch {
+                global.throwOutOfMemory();
+                return .zero;
+            };
+
+            for (package_manifest.versions, 0..) |version, i| {
+                if (i == package_manifest.versions.len - 1)
+                    writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)}) catch {
+                        global.throwOutOfMemory();
+                        return .zero;
+                    }
+                else
+                    writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)}) catch {
+                        global.throwOutOfMemory();
+                        return .zero;
+                    };
+            }
+
+            var result = bun.String.fromUTF8(buf.items);
+            defer result.deref();
+
+            return result.toJSByParseJSON(global);
         }
     };
 
@@ -1098,7 +1280,7 @@ pub const PackageManifest = struct {
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        const json = json_parser.ParseJSONUTF8(
+        const json = json_parser.parseUTF8(
             &source,
             log,
             arena.allocator(),
@@ -1126,19 +1308,19 @@ pub const PackageManifest = struct {
             .string_pool = string_pool,
         };
 
-        if (json.asProperty("name")) |name_q| {
-            const received_name = name_q.expr.asString(allocator) orelse return null;
-
-            // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
-            // from the default registry we don't check because the registry might have a different name in the manifest.
-            // https://githun.com/oven-sh/bun/issues/4925
-            if (scope.url_hash == Registry.default_url_hash and !strings.eqlLong(expected_name, received_name, true)) {
-                Output.panic("<r>internal: <red>Package name mismatch.<r> Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
-                return null;
+        if (PackageManager.verbose_install) {
+            if (json.asProperty("name")) |name_q| {
+                const received_name = name_q.expr.asString(allocator) orelse return null;
+                // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
+                // from the default registry we don't check because the registry might have a different name in the manifest.
+                // https://github.com/oven-sh/bun/issues/4925
+                if (scope.url_hash == Registry.default_url_hash and !strings.eqlLong(expected_name, received_name, true)) {
+                    Output.warn("Package name mismatch. Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
+                }
             }
-
-            string_builder.count(expected_name);
         }
+
+        string_builder.count(expected_name);
 
         if (json.asProperty("modified")) |name_q| {
             const field = name_q.expr.asString(allocator) orelse return null;
@@ -1372,70 +1554,70 @@ pub const PackageManifest = struct {
 
                     var package_version: PackageVersion = empty_version;
 
-                    if (prop.value.?.asProperty("cpu")) |cpu| {
-                        package_version.cpu = Architecture.all;
+                    if (prop.value.?.asProperty("cpu")) |cpu_q| {
+                        var cpu = Architecture.none.negatable();
 
-                        switch (cpu.expr.data) {
+                        switch (cpu_q.expr.data) {
                             .e_array => |arr| {
                                 const items = arr.slice();
                                 if (items.len > 0) {
-                                    package_version.cpu = Architecture.none;
                                     for (items) |item| {
                                         if (item.asString(allocator)) |cpu_str_| {
-                                            package_version.cpu = package_version.cpu.apply(cpu_str_);
+                                            cpu.apply(cpu_str_);
                                         }
                                     }
                                 }
                             },
                             .e_string => |stri| {
-                                package_version.cpu = Architecture.apply(Architecture.none, stri.data);
+                                cpu.apply(stri.data);
                             },
                             else => {},
                         }
+                        package_version.cpu = cpu.combine();
                     }
 
-                    if (prop.value.?.asProperty("os")) |os| {
-                        package_version.os = OperatingSystem.all;
+                    if (prop.value.?.asProperty("os")) |os_q| {
+                        var os = OperatingSystem.none.negatable();
 
-                        switch (os.expr.data) {
+                        switch (os_q.expr.data) {
                             .e_array => |arr| {
                                 const items = arr.slice();
                                 if (items.len > 0) {
-                                    package_version.os = OperatingSystem.none;
                                     for (items) |item| {
                                         if (item.asString(allocator)) |cpu_str_| {
-                                            package_version.os = package_version.os.apply(cpu_str_);
+                                            os.apply(cpu_str_);
                                         }
                                     }
                                 }
                             },
                             .e_string => |stri| {
-                                package_version.os = OperatingSystem.apply(OperatingSystem.none, stri.data);
+                                os.apply(stri.data);
                             },
                             else => {},
                         }
+                        package_version.os = os.combine();
                     }
 
                     if (prop.value.?.asProperty("libc")) |libc| {
-                        package_version.libc = Libc.none;
+                        var libc_ = Libc.none.negatable();
 
                         switch (libc.expr.data) {
                             .e_array => |arr| {
                                 const items = arr.slice();
                                 if (items.len > 0) {
-                                    package_version.libc = Libc.none;
                                     for (items) |item| {
                                         if (item.asString(allocator)) |libc_str_| {
-                                            package_version.libc = package_version.libc.apply(libc_str_);
+                                            libc_.apply(libc_str_);
                                         }
                                     }
                                 }
                             },
                             .e_string => |stri| {
-                                package_version.libc = Libc.apply(.none, stri.data);
+                                libc_.apply(stri.data);
                             },
                             else => {},
                         }
+                        package_version.libc = libc_.combine();
                     }
 
                     if (prop.value.?.asProperty("hasInstallScript")) |has_install_script| {

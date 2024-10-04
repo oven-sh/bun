@@ -63,7 +63,7 @@ Bun requires LLVM 16 (`clang` is part of LLVM). This version requirement is to m
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@16
+$ brew install llvm@18
 ```
 
 ```bash#Ubuntu/Debian
@@ -116,34 +116,18 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 ## Building Bun
 
-After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
-
-```bash
-$ bun setup
-```
-
-The binary will be located at `./build/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
-
-```bash
-$ build/bun-debug --version
-x.y.z_debug
-```
-
-To rebuild, you can invoke `bun run build`
+After cloning the repository, run the following command to build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
 $ bun run build
 ```
 
-These two scripts, `setup` and `build`, are aliases to do roughly the following:
+The binary will be located at `./build/debug/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
-$ ./scripts/setup.sh
-$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-$ ninja -C build # 'bun run build' runs just this
+$ build/debug/bun-debug --version
+x.y.z_debug
 ```
-
-Advanced users can pass CMake flags to customize the build.
 
 ## VSCode
 
@@ -163,8 +147,8 @@ Several code generation scripts are used during Bun's build process. These are r
 
 In particular, these are:
 
-- `./src/codegen/generate-jssink.ts` -- Generates `build/codegen/JSSink.cpp`, `build/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
-- `./src/codegen/generate-classes.ts` -- Generates `build/codegen/ZigGeneratedClasses*`, which generates Zig & C++ bindings for JavaScriptCore classes implemented in Zig. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Zig
+- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams works.
+- `./src/codegen/generate-classes.ts` -- Generates `build/debug/codegen/ZigGeneratedClasses*`, which generates Zig & C++ bindings for JavaScriptCore classes implemented in Zig. In `**/*.classes.ts` files, we define the interfaces for various classes, methods, prototypes, getters/setters etc which the code generator reads to generate boilerplate code implementing the JavaScript objects in C++ and wiring them up to Zig
 - `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files we can include in the final binary. In development, these can be reloaded without rebuilding Zig (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
 - `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream`, `WritableStream`, and a handful more. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions so that we can copy-paste the implementations from WebKit as a starting point.
 

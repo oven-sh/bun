@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 it("Should support printing 'hello world'", () => {
   const { stdout, exitCode } = spawnSync({

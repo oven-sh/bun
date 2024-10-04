@@ -1,7 +1,105 @@
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows } from "harness";
-import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import type { Socket } from "bun";
+import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
+import { createSocketPair } from "bun:internal-for-testing";
+import { expect, it, jest } from "bun:test";
+import { closeSync } from "fs";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
+
+it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  const connectError = jest.fn(() => {});
+  {
+    expect(
+      async () =>
+        await Bun.connect({
+          fd: getMaxFD() + 1024,
+          socket: {
+            open,
+            close,
+            data,
+            connectError,
+          },
+        }),
+    ).toThrow();
+    Bun.gc(true);
+    await Bun.sleep(10);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(0);
+  expect(close).toHaveBeenCalledTimes(0);
+  expect(data).toHaveBeenCalledTimes(0);
+  expect(connectError).toHaveBeenCalledTimes(1);
+  connectError.mockClear();
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
+});
+
+it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
+  const [server, client] = createSocketPair();
+  const open = jest.fn();
+  const close = jest.fn();
+  const data = jest.fn();
+  {
+    const socket = await Bun.connect({
+      fd: server,
+      socket: {
+        open,
+        close,
+        data,
+      },
+    });
+    Bun.gc(true);
+    await Bun.sleep(10);
+    closeSync(client);
+    Bun.gc(true);
+  }
+
+  await Bun.sleep(10);
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(data).toHaveBeenCalledTimes(0);
+  open.mockClear();
+  close.mockClear();
+  data.mockClear();
+});
+
+it.skipIf(isWindows)(
+  "should not crash when a socket from a file descriptor is already closed after opening",
+  async () => {
+    const [server, client] = createSocketPair();
+    const open = jest.fn();
+    const close = jest.fn();
+    const data = jest.fn();
+    closeSync(client);
+    {
+      const socket = await Bun.connect({
+        fd: server,
+        socket: {
+          open,
+          close,
+          data,
+        },
+      });
+      Bun.gc(true);
+      await Bun.sleep(10);
+      Bun.gc(true);
+    }
+    await Bun.sleep(10);
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(data).toHaveBeenCalledTimes(0);
+    open.mockClear();
+    close.mockClear();
+    data.mockClear();
+  },
+);
+
 it("should coerce '0' to 0", async () => {
   const listener = Bun.listen({
     // @ts-expect-error
@@ -354,7 +452,7 @@ it("it should not crash when returning a Error on client socket open", async () 
 });
 
 it("it should only call open once", async () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     port: 0,
     hostname: "localhost",
     socket: {
@@ -381,7 +479,6 @@ it("it should only call open once", async () => {
         expect().fail("connectError should not be called");
       },
       close(socket) {
-        server.stop();
         resolve();
       },
       data(socket, data) {},
@@ -397,7 +494,7 @@ it.skipIf(isWindows)("should not leak file descriptors when connecting", async (
 });
 
 it("should not call open if the connection had an error", async () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     port: 0,
     hostname: "0.0.0.0",
     socket: {
@@ -435,12 +532,11 @@ it("should not call open if the connection had an error", async () => {
 
   await Bun.sleep(50);
   await promise;
-  server.stop();
   expect(hadError).toBe(true);
 });
 
 it("should connect directly when using an ip address", async () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     port: 0,
     hostname: "127.0.0.1",
     socket: {
@@ -467,7 +563,6 @@ it("should connect directly when using an ip address", async () => {
         expect().fail("connectError should not be called");
       },
       close(socket) {
-        server.stop();
         resolve();
       },
       data(socket, data) {},
@@ -497,4 +592,184 @@ it("should not call drain before handshake", async () => {
   });
   await promise;
   expect(socket.authorized).toBe(true);
+});
+it("upgradeTLS handles errors", async () => {
+  using server = Bun.serve({
+    tls,
+    async fetch(req) {
+      return new Response("Hello World");
+    },
+  });
+  let body = "";
+  let rawBody = Buffer.alloc(0);
+
+  for (let i = 0; i < 100; i++) {
+    const socket = await Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        data(socket, data) {
+          rawBody = Buffer.concat([rawBody, data]);
+        },
+        close() {},
+        error(err) {},
+      },
+    });
+
+    const handlers = {
+      data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
+      socket: {
+        data: jest.fn(),
+        close: jest.fn(),
+        drain: jest.fn(),
+        error: jest.fn(),
+        open: jest.fn(),
+      },
+    };
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          ca: "invalid certificate!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
+
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          cert: "invalid certificate!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
+
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          ...tls,
+          key: "invalid key!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
+
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {
+          ...tls,
+          key: "invalid key!",
+          cert: "invalid cert!",
+        },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_BORINGSSL",
+      }),
+    );
+
+    expect(() =>
+      socket.upgradeTLS({
+        ...handlers,
+        tls: {},
+      }),
+    ).toThrow();
+
+    expect(handlers.socket.close).not.toHaveBeenCalled();
+    expect(handlers.socket.error).not.toHaveBeenCalled();
+    expect(handlers.socket.data).not.toHaveBeenCalled();
+    expect(handlers.socket.drain).not.toHaveBeenCalled();
+    expect(handlers.socket.open).not.toHaveBeenCalled();
+    socket.end();
+  }
+  Bun.gc(true);
+});
+it("should be able to upgrade to TLS", async () => {
+  using server = Bun.serve({
+    tls,
+    async fetch(req) {
+      return new Response("Hello World");
+    },
+  });
+  for (let i = 0; i < 50; i++) {
+    const { promise: tlsSocketPromise, resolve, reject } = Promise.withResolvers();
+    const { promise: rawSocketPromise, resolve: rawSocketResolve, reject: rawSocketReject } = Promise.withResolvers();
+    {
+      let body = "";
+      let rawBody = Buffer.alloc(0);
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            rawBody = Buffer.concat([rawBody, data]);
+          },
+          close() {
+            rawSocketResolve(rawBody);
+          },
+          error(err) {
+            rawSocketReject(err);
+          },
+        },
+      });
+      const result = socket.upgradeTLS({
+        data: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n"),
+        tls,
+        socket: {
+          data(socket, data) {
+            body += data.toString("utf8");
+            if (body.includes("\r\n\r\n")) {
+              socket.end();
+            }
+          },
+          close() {
+            resolve(body);
+          },
+          drain(socket) {
+            while (socket.data.byteLength > 0) {
+              const written = socket.write(socket.data);
+              if (written === 0) {
+                break;
+              }
+              socket.data = socket.data.slice(written);
+            }
+            socket.flush();
+          },
+          error(err) {
+            reject(err);
+          },
+        },
+      });
+
+      const [raw, tls_socket] = result;
+      expect(raw).toBeDefined();
+      expect(tls_socket).toBeDefined();
+    }
+    const [tlsData, rawData] = await Promise.all([tlsSocketPromise, rawSocketPromise]);
+    expect(tlsData).toContain("HTTP/1.1 200 OK");
+    expect(tlsData).toContain("Content-Length: 11");
+    expect(tlsData).toContain("\r\nHello World");
+    expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
+  }
+});
+
+it("should not leak memory", async () => {
+  // assert we don't leak the sockets
+  // we expect 1 or 2 because that's the prototype / structure
+  await expectMaxObjectTypeCount(expect, "Listener", 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 2);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", 2);
 });

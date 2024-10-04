@@ -3,5 +3,5 @@ export * from "util";
 const TextEncoder = globalThis.TextEncoder;
 const TextDecoder = globalThis.TextDecoder;
 
-export { TextEncoder, TextDecoder };
+export { TextDecoder, TextEncoder };
 export default { TextEncoder, TextDecoder };

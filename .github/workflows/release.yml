@@ -1,3 +1,6 @@
+# TODO: Move this to bash scripts intead of Github Actions
+# so it can be run from Buildkite, see: .buildkite/scripts/release.sh
+
 name: Release
 concurrency: release
 
@@ -85,6 +88,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # To workaround issue
+          ref: main
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

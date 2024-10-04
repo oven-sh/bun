@@ -52,8 +52,6 @@ pub const ErrorCSS = struct {
     }
 };
 
-pub const ReactRefresh = @embedFile("./react-refresh.js");
-
 pub const ErrorJS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
@@ -117,7 +115,7 @@ pub const Fallback = struct {
 
     pub inline fn scriptContent() string {
         if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
+            const dirpath = comptime bun.Environment.base_path ++ "/" ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
             var buf: bun.PathBuffer = undefined;
             const user = bun.getUserName(&buf) orelse "";
             const dir = std.mem.replaceOwned(
@@ -208,8 +206,17 @@ pub const Runtime = struct {
     }
 
     pub const Features = struct {
+        /// Enable the React Fast Refresh transform. What this does exactly
+        /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
+
+        /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
+        /// It can be enabled on the command line with --format=internal_bake_dev
+        ///
+        /// Standalone usage of this flag / usage of this flag
+        /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
+
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
         auto_import_jsx: bool = false,
@@ -228,29 +235,22 @@ pub const Runtime = struct {
 
         set_breakpoint_on_first_line: bool = false,
 
-        /// Instead of jsx("div", {}, void 0)
-        /// ->
-        /// {
-        ///    "type": "div",
-        ///    "props": {},
-        ///    "children": [],
-        ///    key: void 0,
-        ///   $$typeof: Symbol.for("react.element"),
-        /// }
-        /// See also https://github.com/babel/babel/commit/3cad2872335e2130f2ff6335027617ebbe9b5a46
-        /// See also https://github.com/babel/babel/pull/2972
-        /// See also https://github.com/facebook/react/issues/5138
-        jsx_optimization_inline: bool = false,
-        jsx_optimization_hoist: bool = false,
-
         trim_unused_imports: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
-        /// This is only supported in Bun.
+        /// This is only supported with --target=bun
         use_import_meta_require: bool = false,
+
+        /// Allow runtime usage of require(), converting `require` into `__require`
+        auto_polyfill_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},
 
+        /// Scan for '// @bun' at the top of this file, halting a parse if it is
+        /// seen. This is used in `bun run` after a `bun build --target=bun`,
+        /// and you know the contents is already correct.
+        ///
+        /// This comment must never be used manually.
         dont_bundle_twice: bool = false,
 
         /// This is a list of packages which even when require() is used, we will
@@ -262,6 +262,7 @@ pub const Runtime = struct {
         unwrap_commonjs_packages: []const string = &.{},
 
         commonjs_at_runtime: bool = false,
+        unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
 
@@ -325,29 +326,25 @@ pub const Runtime = struct {
         pub const ActivateFunction = "activate";
     };
 
+    /// See js_parser.StaticSymbolName
     pub const GeneratedSymbol = struct {
         primary: Ref,
         backup: Ref,
         ref: Ref,
+
+        pub const empty: GeneratedSymbol = .{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None };
     };
 
-    // If you change this, remember to update "runtime.footer.js" and rebuild the runtime.js
+    // If you change this, remember to update "runtime.js"
     pub const Imports = struct {
         __name: ?GeneratedSymbol = null,
-        __toModule: ?GeneratedSymbol = null,
-        __cJS2eSM: ?GeneratedSymbol = null,
         __require: ?GeneratedSymbol = null,
         __export: ?GeneratedSymbol = null,
         __reExport: ?GeneratedSymbol = null,
-        __load: ?GeneratedSymbol = null,
-        @"$$m": ?GeneratedSymbol = null,
-        @"$$lzy": ?GeneratedSymbol = null,
-        __HMRModule: ?GeneratedSymbol = null,
-        __HMRClient: ?GeneratedSymbol = null,
-        __FastRefreshModule: ?GeneratedSymbol = null,
         __exportValue: ?GeneratedSymbol = null,
         __exportDefault: ?GeneratedSymbol = null,
-        __FastRefreshRuntime: ?GeneratedSymbol = null,
+        // __refreshRuntime: ?GeneratedSymbol = null,
+        // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
         __merge: ?GeneratedSymbol = null,
         __legacyDecorateClassTS: ?GeneratedSymbol = null,
         __legacyDecorateParamTS: ?GeneratedSymbol = null,
@@ -357,23 +354,12 @@ pub const Runtime = struct {
         __callDispose: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
-            // __HMRClient goes first
-            // This is so we can call Bun.activate(true) as soon as possible
-            "__HMRClient",
             "__name",
-            "__toModule",
             "__require",
-            "__cJS2eSM",
             "__export",
             "__reExport",
-            "__load",
-            "$$m",
-            "$$lzy",
-            "__HMRModule",
-            "__FastRefreshModule",
             "__exportValue",
             "__exportDefault",
-            "__FastRefreshRuntime",
             "__merge",
             "__legacyDecorateClassTS",
             "__legacyDecorateParamTS",
@@ -428,7 +414,7 @@ pub const Runtime = struct {
                     defer this.i += 1;
 
                     switch (this.i) {
-                        inline 0...21 => |t| {
+                        inline 0...all.len - 1 => |t| {
                             if (@field(this.runtime_imports, all[t])) |val| {
                                 return Entry{ .key = t, .value = val.ref };
                             }
@@ -444,7 +430,7 @@ pub const Runtime = struct {
         };
 
         pub fn iter(imports: *Imports) Iterator {
-            return Iterator{ .runtime_imports = imports };
+            return .{ .runtime_imports = imports };
         }
 
         pub fn contains(imports: *const Imports, comptime key: string) bool {
@@ -477,7 +463,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                inline 0...21 => |t| (@field(imports, all[t]) orelse return null).ref,
+                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null).ref,
                 else => null,
             };
         }

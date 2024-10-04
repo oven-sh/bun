@@ -49,8 +49,8 @@ pub const API = struct {
     pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
-    pub const BrotliEncoder = @import("./bun.js/api/js_brotli.zig").BrotliEncoder;
-    pub const BrotliDecoder = @import("./bun.js/api/js_brotli.zig").BrotliDecoder;
+    pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
+    pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
@@ -112,3 +112,9 @@ pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else
     std.builtin.CallingConvention.C;
+
+pub const Error = @import("ErrorCode").Error;
+
+pub const MAX_SAFE_INTEGER = 9007199254740991;
+
+pub const MIN_SAFE_INTEGER = -9007199254740991;

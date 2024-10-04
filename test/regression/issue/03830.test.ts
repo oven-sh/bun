@@ -1,6 +1,6 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync, realpathSync } from "fs";
 import { join } from "path";
 
 it("macros should not lead to seg faults under any given input", async () => {
@@ -24,6 +24,6 @@ it("macros should not lead to seg faults under any given input", async () => {
     stderr: "pipe",
   });
 
-  expect(stderr.toString().trim().replaceAll(testDir, "[dir]")).toMatchSnapshot();
+  expect(stderr.toString().trim().replaceAll(testDir, "[dir]").replaceAll("\\", "/")).toMatchSnapshot();
   expect(exitCode).toBe(1);
 });

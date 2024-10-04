@@ -1,8 +1,8 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 import crypto from "node:crypto";
+import { PassThrough } from "node:stream";
 import util from "node:util";
-import { PassThrough, Readable } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);

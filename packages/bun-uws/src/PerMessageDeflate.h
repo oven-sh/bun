@@ -20,6 +20,8 @@
 #ifndef UWS_PERMESSAGEDEFLATE_H
 #define UWS_PERMESSAGEDEFLATE_H
 
+#define UWS_USE_LIBDEFLATE 1
+
 #include <cstdint>
 #include <cstring>
 
@@ -134,6 +136,9 @@ struct ZlibContext {
 
 struct DeflationStream {
     z_stream deflationStream = {};
+#ifdef UWS_USE_LIBDEFLATE
+    unsigned char reset_buffer[4096 + 1];
+#endif
 
     DeflationStream(CompressOptions compressOptions) {
 
@@ -154,13 +159,11 @@ struct DeflationStream {
         /* Run a fast path in case of shared_compressor */
         if (reset) {
             size_t written = 0;
-            static unsigned char buf[1024 + 1];
-
-            written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(), buf, 1024);
+            written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(), reset_buffer, 4096);
 
             if (written) {
-                memcpy(&buf[written], "\x00", 1);
-                return std::string_view((char *) buf, written + 1);
+                memcpy(&reset_buffer[written], "\x00", 1);
+                return std::string_view((char *) reset_buffer, written + 1);
             }
         }
 #endif
@@ -214,6 +217,9 @@ struct DeflationStream {
 
 struct InflationStream {
     z_stream inflationStream = {};
+#ifdef UWS_USE_LIBDEFLATE
+    char buf[4096];
+#endif
 
     InflationStream(CompressOptions compressOptions) {
         /* Inflation windowBits are the top 8 bits of the 16 bit compressOptions */
@@ -230,13 +236,12 @@ struct InflationStream {
 #ifdef UWS_USE_LIBDEFLATE
         /* Try fast path first */
         size_t written = 0;
-        static char buf[1024];
 
         /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
         char tmp[9];
         memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
         memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-        libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, buf, 1024, &written);
+        libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, buf, 4096, &written);
         memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
 
         if (res == 0) {

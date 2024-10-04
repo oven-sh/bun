@@ -1,6 +1,6 @@
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
-import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -666,6 +666,29 @@ describe("bundler", () => {
     entryPointsRaw: ["/entry.js"],
     bundleErrors: {
       "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
+    },
+  });
+  itBundled("edgecase/AssetEntryPoint", {
+    files: {
+      "/entry.zig": `
+        const std = @import("std");
+
+        pub fn main() void {
+          std.log.info("Hello, world!\\n", .{});
+        }
+      `,
+    },
+    outdir: "/out",
+    entryPointsRaw: ["./entry.zig"],
+    runtimeFiles: {
+      "/exec.js": `
+        import assert from 'node:assert';
+        import the_path from './out/entry.js';
+        assert.strictEqual(the_path, './entry-z5artd5z.zig');
+      `,
+    },
+    run: {
+      file: "./exec.js",
     },
   });
   itBundled("edgecase/ExportDefaultUndefined", {
@@ -1347,6 +1370,27 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { helloWorld } from "./second.ts";
+        console.log(helloWorld);
+      `,
+      "/src/second.ts": /* ts */ `
+        export const helloWorld = "Hello World";
+      `,
+    },
+    root: "/src",
+    entryPointsRaw: ["src/entry.ts"],
+    packages: "external",
+    target: "bun",
+    run: {
+      file: "/src/entry.ts",
+      stdout: `
+        Hello World
+      `,
+    },
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `
@@ -1443,6 +1487,123 @@ describe("bundler", () => {
       "/entry.ts": [`"Y" has already been declared`],
     },
   });
+  // This specifically only happens with 'export { ... } from ...' syntax
+  itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
+  itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFromCodeSplitting", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+        console.log('file1');
+      `,
+      "/file1b.js": `
+        import("./file2.js");
+        console.log('file2');
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    splitting: true,
+    outdir: "out",
+    entryPoints: ["./file1.js", "./file1b.js"],
+    run: [
+      {
+        file: "/out/file1.js",
+        stdout: "file1\nside effect",
+      },
+      {
+        file: "/out/file1b.js",
+        stdout: "file2\nside effect",
+      },
+    ],
+  });
+  itBundled("edgecase/RequireSideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        require("./file2.js");
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
+  itBundled("edgecase/SideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+      `,
+      "/file2.js": `
+        import * as foo from './file3.js';
+        export default foo;
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
   itBundled("edgecase/BuiltinWithTrailingSlash", {
     files: {
       "/entry.js": `
@@ -1455,6 +1616,415 @@ describe("bundler", () => {
     },
     run: {
       stdout: `{"default":{"hello":"world"}}`,
+    },
+  });
+  itBundled("edgecase/EsmWrapperClassHoisting", {
+    files: {
+      "/entry.ts": `
+        async function hi() {
+          const { default: MyInherited } = await import('./hello');
+          const myInstance = new MyInherited();
+          console.log(myInstance.greet())
+        }
+
+        hi();
+      `,
+      "/hello.ts": `
+        const MyReassignedSuper = class MySuper {
+          greet() {
+            return 'Hello, world!';
+          }
+        };
+
+        class MyInherited extends MyReassignedSuper {};
+
+        export default MyInherited;
+      `,
+    },
+    run: {
+      stdout: "Hello, world!",
+    },
+  });
+  itBundled("edgecase/EsmWrapperElimination1", {
+    files: {
+      "/entry.ts": `
+        async function load() {
+          return import('./hello');
+        }
+        load().then(({ default: def }) => console.log(def()));
+      `,
+      "/hello.ts": `
+        export var x = 123;
+        export var y = function() { return x; };
+        export function z() { return y(); }
+        function a() { return z(); }
+        export default function c() { return a(); }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  // this test checks that visit order doesnt matter (inline then use, above is use then inline)
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass2", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineNamespace", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        namespace TestClass {
+          console.log(JSON.stringify(TestEnum));
+          console.log((() => TestEnum.A).toString().includes('TestEnum'));
+        }
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        false
+      `,
+    },
+  });
+  itBundled("edgecase/ImportMetaMain", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("edgecase/ImportMetaMainTargetNode", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    target: "node",
+    capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
+      api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
+    },
+  });
+  itBundled("edgecase/IdentifierInEnum#13081", {
+    files: {
+      "/entry.ts": `
+        let ZZZZZZZZZ = 1;
+        enum B {
+          C = ZZZZZZZZZ,
+        }
+        console.log(B.C);
+      `,
+    },
+    run: { stdout: "1" },
+  });
+  itBundled("edgecase/DoNotMoveTaggedTemplateLiterals", {
+    files: {
+      "/entry.ts": `
+        globalThis.z = () => console.log(2)
+        const y = await import('./second.ts');
+      `,
+      "/second.ts": `
+        console.log(1);
+        export const y = z\`zyx\`;
+      `,
+    },
+    run: { stdout: "1\n2" },
+  });
+  itBundled("edgecase/Latin1StringInImportedJSON", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x + 'a');
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "bun",
+    run: { stdout: `测试a` },
+  });
+  itBundled("edgecase/Latin1StringInImportedJSONBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x + 'a');
+      `,
+      "/second.json": `
+        "测试"
+      `,
+    },
+    target: "browser",
+    run: { stdout: `测试a` },
+  });
+  itBundled("edgecase/Latin1StringKey", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试" + "a"]);
+      `,
+      "/second.json": `
+        {"测试a" : 123}
+      `,
+    },
+    target: "bun",
+    run: { stdout: `123` },
+  });
+  itBundled("edgecase/Latin1StringKeyBrowser", {
+    files: {
+      "/entry.ts": `
+        import x from './second.json';
+        console.log(x["测试" + "a"]);
+      `,
+      "/second.json": `
+        {"测试a" : 123}
+      `,
+    },
+    target: "browser",
+    run: { stdout: `123` },
+  });
+  itBundled("edgecase/UninitializedVariablesMoved", {
+    files: {
+      "/entry.ts": `
+        await import('./b.js');
+      `,
+      "/b.js": `
+        export var a = 32;
+        export var b;
+        (function (c) {
+            c.d = 1;
+        })(b ?? {});
+        +a;
+      `,
+    },
+    minifySyntax: true,
+    run: true, // pass if no thrown error
+  });
+
+  itBundled("edgecase/UsingExportDefault", {
+    files: {
+      "/entry.ts": `
+        import module from "./module.ts";
+        console.log(module.x);
+      `,
+      "/module.ts": `
+        using a = {
+          [Symbol.dispose]: () => { 
+            console.log("Disposing");
+          }
+        };
+        export default {x: 1};
+      `,
+    },
+    run: {
+      stdout: "Disposing\n1",
+    },
+  });
+
+  itBundled("edgecase/UsingExportClass", {
+    files: {
+      "/entry.ts": `
+        export class A {
+          [Symbol.dispose](){
+            console.info("Disposing");
+          }
+        }
+        using a = new A();
+      `,
+    },
+    run: {
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultThrows", {
+    files: {
+      "/entry.ts": `
+        import("./module.ts").catch(error => {
+          console.log("Caught error:", error.message);
+        });
+      `,
+      "/module.ts": `
+        function somethingThatThrows() {
+          throw new Error("This function throws");
+        }
+
+        using disposable = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        };
+
+        export default somethingThatThrows();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nCaught error: This function throws",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultAsync", {
+    files: {
+      "/entry.ts": `
+        const result = await import("./importer.ts");
+        console.log(await result.default);
+      `,
+      "/importer.ts": `
+        async function main() {
+          using disposable = {
+            [Symbol.dispose]: () => {
+              console.log("Disposing");
+            }
+          };
+          return "Success";
+        }
+        export default main();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nSuccess",
+    },
+  });
+
+  itBundled("edgecase/UsingDisposeThrowDoesntMask", {
+    files: {
+      "/entry.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            throw new Error("Error");
+          }
+        };
+        using b = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        }
+      `,
+    },
+    run: {
+      error: "error: Error",
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportFails", {
+    files: {
+      "/entry.ts": `
+        import a from "./import.ts";
+        console.log(a.ok);
+      `,
+      "/import.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          },
+          ok: true,
+        };
+        export default a;
+      `,
+    },
+    run: {
+      stdout: "Disposing\ntrue",
     },
   });
 

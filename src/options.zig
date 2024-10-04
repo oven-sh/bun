@@ -7,7 +7,6 @@ const Fs = @import("fs.zig");
 const resolver = @import("./resolver/resolver.zig");
 const api = @import("./api/schema.zig");
 const Api = api.Api;
-const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
@@ -28,6 +27,9 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+
+pub const defines = @import("./defines.zig");
+pub const Define = defines.Define;
 
 const assert = bun.assert;
 
@@ -382,12 +384,15 @@ pub const Target = enum {
     bun_macro,
     node,
 
+    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
+    kit_server_components_ssr,
+
     pub const Map = bun.ComptimeStringMap(Target, .{
-        .{ "browser", Target.browser },
-        .{ "bun", Target.bun },
-        .{ "bun_macro", Target.bun_macro },
-        .{ "macro", Target.bun_macro },
-        .{ "node", Target.node },
+        .{ "browser", .browser },
+        .{ "bun", .bun },
+        .{ "bun_macro", .bun_macro },
+        .{ "macro", .bun_macro },
+        .{ "node", .node },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Target {
@@ -403,36 +408,22 @@ pub const Target = enum {
         return switch (this) {
             .node => .node,
             .browser => .browser,
-            .bun => .bun,
+            .bun, .kit_server_components_ssr => .bun,
             .bun_macro => .bun_macro,
         };
     }
 
     pub inline fn isServerSide(this: Target) bool {
         return switch (this) {
-            .bun_macro, .node, .bun => true,
+            .bun_macro, .node, .bun, .kit_server_components_ssr => true,
             else => false,
         };
     }
 
     pub inline fn isBun(this: Target) bool {
         return switch (this) {
-            .bun_macro, .bun => true,
+            .bun_macro, .bun, .kit_server_components_ssr => true,
             else => false,
-        };
-    }
-
-    pub inline fn isNotBun(this: Target) bool {
-        return switch (this) {
-            .bun_macro, .bun => false,
-            else => true,
-        };
-    }
-
-    pub inline fn isClient(this: Target) bool {
-        return switch (this) {
-            .bun_macro, .bun => false,
-            else => true,
         };
     }
 
@@ -443,60 +434,38 @@ pub const Target = enum {
         };
     }
 
-    pub inline fn supportsBrowserField(this: Target) bool {
-        return switch (this) {
-            .browser => true,
-            else => false,
-        };
-    }
-
-    const browser_define_value_true = "true";
-    const browser_define_value_false = "false";
-
     pub inline fn processBrowserDefineValue(this: Target) ?string {
         return switch (this) {
-            .browser => browser_define_value_true,
-            .bun_macro, .bun, .node => browser_define_value_false,
+            .browser => "true",
+            else => "false",
         };
     }
 
-    pub inline fn isWebLike(target: Target) bool {
+    pub fn bakeRenderer(target: Target) bun.bake.Renderer {
         return switch (target) {
-            .browser => true,
-            else => false,
+            .browser => .client,
+            .kit_server_components_ssr => .ssr,
+            .bun_macro, .bun, .node => .server,
         };
     }
-
-    pub const Extensions = struct {
-        pub const In = struct {
-            pub const JavaScript = [_]string{ ".js", ".cjs", ".mts", ".cts", ".ts", ".tsx", ".jsx", ".json" };
-        };
-        pub const Out = struct {
-            pub const JavaScript = [_]string{
-                ".js",
-                ".mjs",
-            };
-        };
-    };
 
     pub fn outExtensions(target: Target, allocator: std.mem.Allocator) bun.StringHashMap(string) {
         var exts = bun.StringHashMap(string).init(allocator);
 
-        const js = Extensions.Out.JavaScript[0];
-        const mjs = Extensions.Out.JavaScript[1];
+        const out_extensions_list = [_][]const u8{ ".js", ".cjs", ".mts", ".cts", ".ts", ".tsx", ".jsx", ".json" };
 
         if (target == .node) {
-            exts.ensureTotalCapacity(Extensions.In.JavaScript.len * 2) catch unreachable;
-            for (Extensions.In.JavaScript) |ext| {
-                exts.put(ext, mjs) catch unreachable;
+            exts.ensureTotalCapacity(out_extensions_list.len * 2) catch unreachable;
+            for (out_extensions_list) |ext| {
+                exts.put(ext, ".mjs") catch unreachable;
             }
         } else {
-            exts.ensureTotalCapacity(Extensions.In.JavaScript.len + 1) catch unreachable;
-            exts.put(mjs, js) catch unreachable;
+            exts.ensureTotalCapacity(out_extensions_list.len + 1) catch unreachable;
+            exts.put(".mjs", ".js") catch unreachable;
         }
 
-        for (Extensions.In.JavaScript) |ext| {
-            exts.put(ext, js) catch unreachable;
+        for (out_extensions_list) |ext| {
+            exts.put(ext, ".js") catch unreachable;
         }
 
         return exts;
@@ -554,6 +523,7 @@ pub const Target = enum {
         array.set(Target.browser, &listc);
         array.set(Target.bun, &listd);
         array.set(Target.bun_macro, &listd);
+        array.set(Target.kit_server_components_ssr, &listd);
 
         // Original comment:
         // The neutral target is for people that don't want esbuild to try to
@@ -564,21 +534,25 @@ pub const Target = enum {
         break :brk array;
     };
 
-    pub const DefaultConditions: std.EnumArray(Target, []const string) = brk: {
+    pub const default_conditions: std.EnumArray(Target, []const string) = brk: {
         var array = std.EnumArray(Target, []const string).initUndefined();
 
-        array.set(Target.node, &[_]string{
+        array.set(Target.node, &.{
             "node",
         });
-        array.set(Target.browser, &[_]string{
+        array.set(Target.browser, &.{
             "browser",
             "module",
         });
-        array.set(Target.bun, &[_]string{
+        array.set(Target.bun, &.{
             "bun",
             "node",
         });
-        array.set(Target.bun_macro, &[_]string{
+        array.set(Target.kit_server_components_ssr, &.{
+            "bun",
+            "node",
+        });
+        array.set(Target.bun_macro, &.{
             "macro",
             "bun",
             "node",
@@ -586,17 +560,56 @@ pub const Target = enum {
 
         break :brk array;
     };
+
+    pub fn defaultConditions(t: Target) []const []const u8 {
+        return default_conditions.get(t);
+    }
 };
 
 pub const Format = enum {
+    /// ES module format
+    /// This is the default format
     esm,
-    cjs,
+
+    /// Immediately-invoked function expression
+    /// (function(){
+    ///     ...
+    /// })();
     iife,
+
+    /// CommonJS
+    cjs,
+
+    /// Bake uses a special module format for Hot-module-reloading. It includes a
+    /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
+    ///
+    /// ((input_graph, config) => {
+    ///   ... runtime code ...
+    /// })({
+    ///   "module1.ts"(module) { ... },
+    ///   "module2.ts"(module) { ... },
+    /// }, { metadata });
+    internal_bake_dev,
+
+    pub fn keepES6ImportExportSyntax(this: Format) bool {
+        return this == .esm;
+    }
+
+    pub inline fn isESM(this: Format) bool {
+        return this == .esm;
+    }
+
+    pub inline fn isAlwaysStrictMode(this: Format) bool {
+        return this == .esm;
+    }
 
     pub const Map = bun.ComptimeStringMap(Format, .{
         .{ "esm", .esm },
         .{ "cjs", .cjs },
         .{ "iife", .iife },
+
+        // TODO: Disable this outside of debug builds
+        .{ "internal_bake_dev", .internal_bake_dev },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
@@ -651,6 +664,8 @@ pub const Loader = enum(u8) {
             .napi,
             .sqlite,
             .sqlite_embedded,
+            // TODO: loader for reading bytes and creating module or instance
+            .wasm,
             => true,
             else => false,
         };
@@ -958,10 +973,6 @@ pub const JSX = struct {
         /// /** @jsxImportSource @emotion/core */
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
-        // https://github.com/facebook/react/commit/2f26eb85d657a08c21edbac1e00f9626d68f84ae
-        refresh_runtime: string = "react-refresh/runtime",
-        supports_fast_refresh: bool = true,
-        use_embedded_refresh_runtime: bool = false,
 
         development: bool = true,
         parse: bool = true,
@@ -1007,7 +1018,9 @@ pub const JSX = struct {
         }
 
         pub fn isReactLike(pragma: *const Pragma) bool {
-            return strings.eqlComptime(pragma.package_name, "react") or strings.eqlComptime(pragma.package_name, "@emotion/jsx") or strings.eqlComptime(pragma.package_name, "@emotion/react");
+            return strings.eqlComptime(pragma.package_name, "react") or
+                strings.eqlComptime(pragma.package_name, "@emotion/jsx") or
+                strings.eqlComptime(pragma.package_name, "@emotion/react");
         }
 
         pub fn setImportSource(pragma: *Pragma, allocator: std.mem.Allocator) void {
@@ -1108,7 +1121,6 @@ pub const JSX = struct {
                 pragma.classic_import_source = pragma.package_name;
             }
 
-            pragma.supports_fast_refresh = if (pragma.runtime == .solid) false else pragma.supports_fast_refresh;
             pragma.development = jsx.development;
             pragma.parse = true;
             return pragma;
@@ -1116,18 +1128,6 @@ pub const JSX = struct {
     };
 
     pub const Runtime = api.Api.JsxRuntime;
-};
-
-const TypeScript = struct {
-    parse: bool = false,
-};
-
-pub const Timings = struct {
-    resolver: i128 = 0,
-    parse: i128 = 0,
-    print: i128 = 0,
-    http: i128 = 0,
-    read_file: i128 = 0,
 };
 
 pub const DefaultUserDefines = struct {
@@ -1240,7 +1240,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    const resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.fromInput(user_defines, log, allocator);
 
     return try defines.Define.init(
         allocator,
@@ -1308,7 +1308,7 @@ pub const ResolveFileExtensions = struct {
     };
 };
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) !bun.StringArrayHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, target: Target) std.mem.Allocator.Error!bun.StringArrayHashMap(Loader) {
     const input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     const loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
@@ -1402,29 +1402,6 @@ pub const PackagesOption = enum {
     });
 };
 
-pub const OutputFormat = enum {
-    preserve,
-
-    /// ES module format
-    /// This is the default format
-    esm,
-    /// Immediately-invoked function expression
-    /// (
-    ///   function(){}
-    /// )();
-    iife,
-    /// CommonJS
-    cjs,
-
-    pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
-        return this == .esm;
-    }
-
-    pub inline fn isESM(this: OutputFormat) bool {
-        return this == .esm;
-    }
-};
-
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1440,9 +1417,9 @@ pub const BundleOptions = struct {
 
     trim_unused_imports: ?bool = null,
     mark_builtins_as_external: bool = false,
-    react_server_components: bool = false,
-    react_server_components_boundary: string = "",
+    server_components: bool = false,
     hot_module_reloading: bool = false,
+    react_fast_refresh: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},
     output_dir_handle: ?Dir = null,
@@ -1455,19 +1432,13 @@ pub const BundleOptions = struct {
     write: bool = false,
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
-    timings: Timings = Timings{},
     production: bool = false,
-    serve: bool = false,
 
     // only used by bundle_v2
-    output_format: OutputFormat = .esm,
+    output_format: Format = .esm,
 
     append_package_version_in_query_string: bool = false,
 
-    jsx_optimization_inline: ?bool = null,
-    jsx_optimization_hoist: ?bool = null,
-
-    resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
     target: Target = Target.browser,
     main_fields: []const string = Target.DefaultMainFields.get(Target.browser),
@@ -1482,8 +1453,6 @@ pub const BundleOptions = struct {
     main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
-    framework: ?Framework = null,
-    routes: RouteConfig = RouteConfig.zero(),
     defines_loaded: bool = false,
     env: Env = Env{},
     transform_options: Api.TransformOptions,
@@ -1510,15 +1479,26 @@ pub const BundleOptions = struct {
     install: ?*Api.BunInstall = null,
 
     inlining: bool = false,
+    inline_entrypoint_import_meta_main: bool = false,
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
+    ignore_dce_annotations: bool = false,
+    emit_dce_annotations: bool = false,
+    bytecode: bool = false,
+
     code_coverage: bool = false,
     debugger: bool = false,
 
     compile: bool = false,
+
+    /// Set when bake.DevServer is bundling. This changes the interface of the
+    /// bundler from emitting OutputFile to only emitting []CompileResult
+    dev_server: ?*bun.bake.DevServer = null,
+    /// Set when Bake is bundling. Affects module resolution.
+    framework: ?*bun.bake.Framework = null,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
@@ -1545,16 +1525,11 @@ pub const BundleOptions = struct {
         "react-client",
         "react-server",
         "react-refresh",
-        "__bun-test-unwrap-commonjs__",
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.target) {
             .browser => {
-                if (this.framework) |framework| {
-                    return framework.client_css_in_js;
-                }
-
                 return .auto_onimportcss;
             },
             else => return .facade,
@@ -1596,11 +1571,6 @@ pub const BundleOptions = struct {
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
         return this.loaders.get(ext) orelse .file;
-    }
-
-    pub fn isFrontendFrameworkEnabled(this: *const BundleOptions) bool {
-        const framework: *const Framework = &(this.framework orelse return false);
-        return framework.resolved and (framework.client.isEnabled() or framework.fallback.isEnabled());
     }
 
     pub const ImportPathFormat = enum {
@@ -1685,7 +1655,6 @@ pub const BundleOptions = struct {
     ) !BundleOptions {
         var opts: BundleOptions = BundleOptions{
             .log = log,
-            .resolve_mode = transform.resolve orelse .dev,
             .define = undefined,
             .loaders = try loadersFromTransformOptions(allocator, transform.loaders, Target.from(transform.target)),
             .output_dir = transform.output_dir orelse "out",
@@ -1722,7 +1691,7 @@ pub const BundleOptions = struct {
             opts.main_fields = Target.DefaultMainFields.get(opts.target);
         }
 
-        opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
+        opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
 
         if (transform.conditions.len > 0) {
             opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
@@ -1744,14 +1713,6 @@ pub const BundleOptions = struct {
                 }
             },
             else => {},
-        }
-
-        if (transform.framework) |_framework| {
-            opts.framework = try Framework.fromApi(_framework, allocator);
-        }
-
-        if (transform.router) |routes| {
-            opts.routes = try RouteConfig.fromApi(routes, allocator);
         }
 
         if (transform.main_fields.len > 0) {
@@ -1781,7 +1742,6 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
@@ -1871,6 +1831,7 @@ pub const OutputFile = struct {
     hash: u64 = 0,
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
+    bytecode_index: u32 = std.math.maxInt(u32),
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
     dest_path: []const u8 = "",
 
@@ -1975,6 +1936,7 @@ pub const OutputFile = struct {
         input_loader: Loader,
         hash: ?u64 = null,
         source_map_index: ?u32 = null,
+        bytecode_index: ?u32 = null,
         output_path: string,
         size: ?usize = null,
         input_path: []const u8 = "",
@@ -2009,6 +1971,7 @@ pub const OutputFile = struct {
             .size_without_sourcemap = options.display_size,
             .hash = options.hash orelse 0,
             .output_kind = options.output_kind,
+            .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
             .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
             .is_executable = options.is_executable,
             .value = switch (options.data) {
@@ -2373,127 +2336,6 @@ pub const EntryPoint = struct {
             this.env.allocator = allocator;
             try this.env.setFromAPI(env);
         }
-    }
-};
-
-pub const Framework = struct {
-    client: EntryPoint = EntryPoint{},
-    server: EntryPoint = EntryPoint{},
-    fallback: EntryPoint = EntryPoint{},
-
-    display_name: string = "",
-    /// "version" field in package.json
-    version: string = "",
-    /// "name" field in package.json
-    package: string = "",
-    development: bool = true,
-    resolved: bool = false,
-    from_bundle: bool = false,
-
-    resolved_dir: string = "",
-    override_modules: Api.StringMap,
-    override_modules_hashes: []u64 = &[_]u64{},
-
-    client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
-
-    pub const fallback_html: string = @embedFile("./fallback.html");
-
-    pub fn platformEntryPoint(this: *const Framework, target: Target) ?*const EntryPoint {
-        const entry: *const EntryPoint = switch (target) {
-            .browser => &this.client,
-            .bun => &this.server,
-            .node => return null,
-        };
-
-        if (entry.kind == .disabled) return null;
-        return entry;
-    }
-
-    pub fn fromLoadedFramework(loaded: Api.LoadedFramework, allocator: std.mem.Allocator) !Framework {
-        var framework = Framework{
-            .package = loaded.package,
-            .development = loaded.development,
-            .from_bundle = true,
-            .client_css_in_js = loaded.client_css_in_js,
-            .display_name = loaded.display_name,
-            .override_modules = loaded.override_modules,
-        };
-
-        if (loaded.entry_points.fallback) |fallback| {
-            try framework.fallback.fromLoaded(fallback, allocator, .fallback);
-        }
-
-        if (loaded.entry_points.client) |client| {
-            try framework.client.fromLoaded(client, allocator, .client);
-        }
-
-        if (loaded.entry_points.server) |server| {
-            try framework.server.fromLoaded(server, allocator, .server);
-        }
-
-        return framework;
-    }
-
-    pub fn toAPI(
-        this: *const Framework,
-        allocator: std.mem.Allocator,
-        toplevel_path: string,
-    ) !?Api.LoadedFramework {
-        if (this.client.kind == .disabled and this.server.kind == .disabled and this.fallback.kind == .disabled) return null;
-
-        return Api.LoadedFramework{
-            .package = this.package,
-            .development = this.development,
-            .display_name = this.display_name,
-            .entry_points = .{
-                .client = try this.client.toAPI(allocator, toplevel_path, .client),
-                .fallback = try this.fallback.toAPI(allocator, toplevel_path, .fallback),
-                .server = try this.server.toAPI(allocator, toplevel_path, .server),
-            },
-            .client_css_in_js = this.client_css_in_js,
-            .override_modules = this.override_modules,
-        };
-    }
-
-    pub fn needsResolveFromPackage(this: *const Framework) bool {
-        return !this.resolved and this.package.len > 0;
-    }
-
-    pub fn fromApi(
-        transform: Api.FrameworkConfig,
-        allocator: std.mem.Allocator,
-    ) !Framework {
-        var client = EntryPoint{};
-        var server = EntryPoint{};
-        var fallback = EntryPoint{};
-
-        if (transform.client) |_client| {
-            try client.fromAPI(_client, allocator, .client);
-        }
-
-        if (transform.server) |_server| {
-            try server.fromAPI(_server, allocator, .server);
-        }
-
-        if (transform.fallback) |_fallback| {
-            try fallback.fromAPI(_fallback, allocator, .fallback);
-        }
-
-        return Framework{
-            .client = client,
-            .server = server,
-            .fallback = fallback,
-            .package = transform.package orelse "",
-            .display_name = transform.display_name orelse "",
-            .development = transform.development orelse true,
-            .override_modules = transform.override_modules orelse .{ .keys = &.{}, .values = &.{} },
-            .resolved = false,
-            .client_css_in_js = switch (transform.client_css_in_js orelse .auto_onimportcss) {
-                .facade_onimportcss => .facade_onimportcss,
-                .facade => .facade,
-                else => .auto_onimportcss,
-            },
-        };
     }
 };
 

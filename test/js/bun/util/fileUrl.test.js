@@ -1,5 +1,5 @@
-import { expect, it, describe } from "bun:test";
-import { pathToFileURL, fileURLToPath } from "bun";
+import { fileURLToPath, pathToFileURL } from "bun";
+import { describe, expect, it } from "bun:test";
 import { isWindows } from "harness";
 
 describe("pathToFileURL", () => {

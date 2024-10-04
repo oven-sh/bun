@@ -729,7 +729,7 @@ pub const TestCommand = struct {
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec
-        Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         var env_loader = brk: {
@@ -740,7 +740,7 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        bun.JSC.initialize();
+        bun.JSC.initialize(false);
         HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
@@ -816,7 +816,7 @@ pub const TestCommand = struct {
 
         try vm.bundler.configureDefines();
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -1105,7 +1105,7 @@ pub const TestCommand = struct {
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exitWide(@intCast(reporter.jest.unhandled_errors_between_tests));
+            Global.exit(reporter.jest.unhandled_errors_between_tests);
         }
     }
 
@@ -1173,6 +1173,10 @@ pub const TestCommand = struct {
             Output.flush();
         }
 
+        // Restore test.only state after each module.
+        const prev_only = reporter.jest.only;
+        defer reporter.jest.only = prev_only;
+
         const file_start = reporter.jest.files.len;
         const resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
@@ -1202,13 +1206,14 @@ pub const TestCommand = struct {
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
+
                         Global.exit(1);
                     }
 
@@ -1250,7 +1255,7 @@ pub const TestCommand = struct {
                         if (!jest.Jest.runner.?.has_pending_tests) break;
                         vm.eventLoop().tick();
                     } else {
-                        vm.eventLoop().tickImmediateTasks();
+                        vm.eventLoop().tickImmediateTasks(vm);
                     }
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
@@ -1283,6 +1288,10 @@ pub const TestCommand = struct {
                 Output.prettyErrorln("<r>\n::endgroup::\n", .{});
                 Output.flush();
             }
+
+            // Ensure these never linger across files.
+            vm.auto_killer.clear();
+            vm.auto_killer.disable();
         }
 
         if (is_last) {

@@ -69,7 +69,7 @@ pub const FileSystemRouter = struct {
         var asset_prefix_slice: ZigString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-        if (argument.get(globalThis, "style")) |style_val| {
+        if (argument.getOwn(globalThis, "style")) |style_val| {
             if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
                 globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
                 return null;
@@ -79,7 +79,7 @@ pub const FileSystemRouter = struct {
             return null;
         }
 
-        if (argument.get(globalThis, "dir")) |dir| {
+        if (argument.getOwn(globalThis, "dir")) |dir| {
             if (!dir.isString()) {
                 globalThis.throwInvalidArguments("Expected dir to be a string", .{});
                 return null;
@@ -104,7 +104,7 @@ pub const FileSystemRouter = struct {
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
-        if (argument.get(globalThis, "fileExtensions")) |file_extensions| {
+        if (argument.getOwn(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
                 globalThis.throwInvalidArguments("Expected fileExtensions to be an Array", .{});
                 origin_str.deinit();
@@ -128,7 +128,7 @@ pub const FileSystemRouter = struct {
             }
         }
 
-        if (argument.getTruthy(globalThis, "assetPrefix")) |asset_prefix| {
+        if (argument.getOwnTruthy(globalThis, "assetPrefix")) |asset_prefix| {
             if (!asset_prefix.isString()) {
                 globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
                 origin_str.deinit();
@@ -174,7 +174,7 @@ pub const FileSystemRouter = struct {
             return null;
         };
 
-        if (argument.get(globalThis, "origin")) |origin| {
+        if (argument.getOwn(globalThis, "origin")) |origin| {
             if (!origin.isString()) {
                 globalThis.throwInvalidArguments("Expected origin to be a string", .{});
                 arena.deinit();
@@ -355,7 +355,7 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn getStyle(_: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
-        return ZigString.static("nextjs").toJS(globalThis);
+        return bun.String.static("nextjs").toJS(globalThis);
     }
 
     pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {

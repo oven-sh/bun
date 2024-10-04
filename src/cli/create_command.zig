@@ -31,8 +31,8 @@ const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
 
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
-const Archive = @import("../libarchive/libarchive.zig").Archive;
+const JSON = bun.JSON;
+const Archiver = bun.libarchive.Archiver;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
@@ -377,19 +377,19 @@ pub const CreateCommand = struct {
 
                 progress.refresh();
 
-                var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
+                var pluckers: [1]Archiver.Plucker = if (!create_options.skip_package_json)
+                    [1]Archiver.Plucker{try Archiver.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
-                    [1]Archive.Plucker{undefined};
+                    [1]Archiver.Plucker{undefined};
 
-                var archive_context = Archive.Context{
+                var archive_context = Archiver.Context{
                     .pluckers = pluckers[0..@as(usize, @intCast(@intFromBool(!create_options.skip_package_json)))],
                     .all_files = undefined,
                     .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
 
                 if (!create_options.overwrite) {
-                    try Archive.getOverwritingFileList(
+                    try Archiver.getOverwritingFileList(
                         tarball_buf_list.items,
                         destination,
                         &archive_context,
@@ -427,7 +427,7 @@ pub const CreateCommand = struct {
                     }
                 }
 
-                _ = try Archive.extractToDisk(
+                _ = try Archiver.extractToDisk(
                     tarball_buf_list.items,
                     destination,
                     &archive_context,
@@ -701,7 +701,7 @@ pub const CreateCommand = struct {
 
                 var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = ParseJSON(&source, ctx.log, ctx.allocator) catch {
+                var package_json_expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -1811,7 +1811,6 @@ pub const Example = struct {
 
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
     var url: URL = undefined;
-    pub const timeout: u32 = 6000;
 
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
@@ -1977,15 +1976,14 @@ pub const Example = struct {
             headers_buf,
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
         async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        const response = try async_http.sendSync(true);
+        const response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.GitHubRepositoryNotFound,
@@ -1998,7 +1996,7 @@ pub const Example = struct {
 
         var is_expected_content_type = false;
         var content_type: string = "";
-        for (response.headers) |header| {
+        for (response.headers.list) |header| {
             if (strings.eqlCaseInsensitiveASCII(header.name, "content-type", true)) {
                 content_type = header.value;
 
@@ -2055,15 +2053,14 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
         async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        var response = try async_http.sendSync(true);
+        var response = try async_http.sendSync();
 
         switch (response.status_code) {
             404 => return error.ExampleNotFound,
@@ -2078,7 +2075,7 @@ pub const Example = struct {
         refresher.refresh();
         initializeStore();
         var source = logger.Source.initPathString("package.json", mutable.list.items);
-        var expr = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
+        var expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
             refresher.refresh();
 
@@ -2145,17 +2142,16 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
         async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         refresher.maybeRefresh();
 
-        response = try async_http.sendSync(true);
+        response = try async_http.sendSync();
 
         refresher.maybeRefresh();
 
@@ -2188,18 +2184,17 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;
         }
 
-        const response = async_http.sendSync(true) catch |err| {
+        const response = async_http.sendSync() catch |err| {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});
@@ -2219,7 +2214,7 @@ pub const Example = struct {
 
         initializeStore();
         var source = logger.Source.initPathString("examples.json", mutable.list.items);
-        const examples_object = ParseJSON(&source, ctx.log, ctx.allocator) catch |err| {
+        const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
                 if (Output.enable_ansi_colors) {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);

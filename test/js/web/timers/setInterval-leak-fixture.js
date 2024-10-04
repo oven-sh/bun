@@ -1,30 +1,96 @@
-const huge = Array.from({ length: 1000000 }, () => 0);
-huge.fill(0);
 const delta = 1;
-const initialRuns = 5_000_000;
+const initialRuns = 10_000;
 let runs = initialRuns;
-var initial = 0;
 
-const gc = typeof Bun !== "undefined" ? Bun.gc : typeof globalThis.gc !== "undefined" ? globalThis.gc : () => {};
+function usage() {
+  return process.memoryUsage.rss();
+}
 
-function fn(huge) {
-  huge.length;
+Promise.withResolvers ??= () => {
+  let promise, resolve, reject;
+  promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
 
-  if (runs === initialRuns) {
-    gc(true);
-    initial = process.memoryUsage.rss();
-    console.log(this);
-  }
-
-  if (--runs === 0) {
-    const kb = (process.memoryUsage.rss() - initial) / 1024;
-    console.log("Memory usage increase between timer runs:", kb | 0, "KB");
-    if (kb > 2 * 1024) {
-      process.exit(1);
-    }
-
-    process.exit(0);
+function gc() {
+  if (typeof Bun !== "undefined") {
+    Bun.gc(true);
+  } else if (typeof globalThis.gc !== "undefined") {
+    globalThis.gc();
   }
 }
 
-for (let i = 0; i < 50_000; i++) setInterval(fn, delta, huge);
+var resolve, promise;
+
+// Attaches large allocated data to the current timer. Decrements the number of remaining iterations.
+// When invoked the last time, resolves promise with the memory usage at the end of this batch.
+function iterate() {
+  this.bigLeakyObject = {
+    huge: {
+      wow: {
+        big: {
+          data: runs.toString().repeat(50),
+        },
+      },
+    },
+  };
+
+  if (runs-- === 1) {
+    const rss = usage();
+    resolve(rss);
+  }
+}
+
+// Resets the global run counter. Creates `iterations` new timers with iterate as the callback.
+// Waits for them all to finish, then clears all the timers, triggers garbage collection, and
+// returns the final memory usage measured by a timer.
+async function batch(iterations) {
+  let result;
+  runs = initialRuns;
+  ({ promise, resolve } = Promise.withResolvers());
+  {
+    const timers = [];
+    for (let i = 0; i < iterations; i++) timers.push(setInterval(iterate, delta));
+    result = await promise;
+    timers.forEach(clearInterval);
+  }
+  gc();
+  return result;
+}
+
+{
+  // Warmup
+  for (let i = 0; i < 50; i++) {
+    await batch(1_000);
+  }
+  // Measure memory usage after the warmup
+  const initial = usage();
+  // Run batch 300 more times, each time creating 1,000 timers, waiting for them to finish, and
+  // clearing them.
+  for (let i = 0; i < 300; i++) {
+    await batch(1_000);
+  }
+  // Measure memory usage again, to check that cleared timers and the objects allocated inside each
+  // callback have not bloated it
+  const result = usage();
+  {
+    const delta = ((result - initial) / 1024 / 1024) | 0;
+    console.log("RSS", (result / 1024 / 1024) | 0, "MB");
+    console.log("Delta", delta, "MB");
+
+    if (globalThis.Bun) {
+      const heapStats = require("bun:jsc").heapStats();
+      console.log("Timeout object count:", heapStats.objectTypeCounts.Timeout || 0);
+      if (heapStats.protectedObjectTypeCounts.Timeout) {
+        throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
+      }
+    }
+
+    if (delta > 20) {
+      throw new Error("Memory leak detected");
+    }
+  }
+}

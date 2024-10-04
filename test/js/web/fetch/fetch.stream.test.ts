@@ -1,13 +1,12 @@
-import { Socket, Server, TCPSocketListener } from "bun";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
+import { createReadStream, readFileSync } from "fs";
 import { gcTick } from "harness";
-import zlib from "zlib";
 import http from "http";
-import { createReadStream } from "fs";
-import { pipeline } from "stream";
 import type { AddressInfo } from "net";
+import { join } from "path";
+import { pipeline } from "stream";
+import zlib from "zlib";
 
 const files = [
   join(import.meta.dir, "fixture.html"),
@@ -652,24 +651,28 @@ describe("fetch() with streaming", () => {
     }
   }
 
-  type CompressionType = "no" | "gzip" | "deflate" | "br" | "deflate_with_headers";
-  type TestType = { headers: Record<string, string>; compression: CompressionType; skip?: boolean };
-  const types: Array<TestType> = [
+  const types = [
     { headers: {}, compression: "no" },
     { headers: { "Content-Encoding": "gzip" }, compression: "gzip" },
+    { headers: { "Content-Encoding": "gzip" }, compression: "gzip-libdeflate" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate" },
+    { headers: { "Content-Encoding": "deflate" }, compression: "deflate-libdeflate" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers" },
-    // { headers: { "Content-Encoding": "br" }, compression: "br", skip: true }, // not implemented yet
-  ];
+    { headers: { "Content-Encoding": "br" }, compression: "br" },
+  ] as const;
 
-  function compress(compression: CompressionType, data: Uint8Array) {
+  function compress(compression, data: Uint8Array) {
     switch (compression) {
+      case "gzip-libdeflate":
       case "gzip":
-        return Bun.gzipSync(data);
+        return Bun.gzipSync(data, { library: compression === "gzip-libdeflate" ? "libdeflate" : "zlib" });
+      case "deflate-libdeflate":
       case "deflate":
-        return Bun.deflateSync(data);
+        return Bun.deflateSync(data, { library: compression === "deflate-libdeflate" ? "libdeflate" : "zlib" });
       case "deflate_with_headers":
         return zlib.deflateSync(data);
+      case "br":
+        return zlib.brotliCompressSync(data);
       default:
         return data;
     }
@@ -912,25 +915,44 @@ describe("fetch() with streaming", () => {
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
       {
         const content = "a".repeat(64 * 1024);
+        var onReceivedHeaders = Promise.withResolvers();
         using server = Bun.serve({
           port: 0,
-          fetch(req) {
-            return new Response(compress(compression, Buffer.from(content)), {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
+          async fetch(req) {
+            const data = compress(compression, Buffer.from(content));
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  const firstChunk = data.slice(0, 64);
+                  const secondChunk = data.slice(firstChunk.length);
+                  controller.enqueue(firstChunk);
+                  await onReceivedHeaders.promise;
+                  await Bun.sleep(1);
+                  controller.enqueue(secondChunk);
+                  controller.close();
+                },
+              }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain",
+                  ...headers,
+                },
               },
-            });
+            );
           },
         });
         let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        onReceivedHeaders.resolve();
+        onReceivedHeaders = Promise.withResolvers();
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
         res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        onReceivedHeaders.resolve();
+        onReceivedHeaders = Promise.withResolvers();
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -1186,7 +1208,14 @@ describe("fetch() with streaming", () => {
             gcTick(false);
             expect(buffer.toString("utf8")).toBe("unreachable");
           } catch (err) {
-            expect((err as Error).name).toBe("ZlibError");
+            if (compression === "br") {
+              expect((err as Error).name).toBe("BrotliDecompressionError");
+            } else if (compression === "deflate-libdeflate") {
+              // Since the compressed data is different, the error ends up different.
+              expect((err as Error).name).toBe("ShortRead");
+            } else {
+              expect((err as Error).name).toBe("ZlibError");
+            }
           }
         }
       });

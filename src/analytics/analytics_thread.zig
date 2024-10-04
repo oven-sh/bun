@@ -79,40 +79,46 @@ pub fn isCI() bool {
 
 /// This answers, "What parts of bun are people actually using?"
 pub const Features = struct {
-    /// Set right before JSC::initialize is called
-    pub var jsc: usize = 0;
+    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+
     pub var @"Bun.stderr": usize = 0;
     pub var @"Bun.stdin": usize = 0;
     pub var @"Bun.stdout": usize = 0;
+    pub var WebSocket: usize = 0;
     pub var abort_signal: usize = 0;
+    pub var binlinks: usize = 0;
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
-    /// Incremented for each call to `fetch`
     pub var fetch: usize = 0;
-    pub var filesystem_router: usize = 0;
     pub var git_dependencies: usize = 0;
     pub var html_rewriter: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
+    /// Set right before JSC::initialize is called
+    pub var jsc: usize = 0;
+    /// Set when kit.DevServer is initialized
+    pub var kit_dev: usize = 0;
     pub var lifecycle_scripts: usize = 0;
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
     pub var macros: usize = 0;
+    pub var no_avx2: usize = 0;
+    pub var no_avx: usize = 0;
     pub var shell: usize = 0;
     pub var spawn: usize = 0;
+    pub var standalone_executable: usize = 0;
     pub var standalone_shell: usize = 0;
+    /// Set when invoking a todo panic
+    pub var todo_panic: usize = 0;
     pub var transpiler_cache: usize = 0;
-    pub var tsconfig_paths: usize = 0;
     pub var tsconfig: usize = 0;
+    pub var tsconfig_paths: usize = 0;
     pub var virtual_modules: usize = 0;
-    pub var WebSocket: usize = 0;
-    pub var no_avx: usize = 0;
-    pub var no_avx2: usize = 0;
-    pub var binlinks: usize = 0;
-    pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
+    pub var workers_spawned: usize = 0;
+    pub var workers_terminated: usize = 0;
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -302,6 +308,23 @@ pub const GenerateHeader = struct {
         pub fn forOS() Analytics.Platform {
             run_once.call();
             return platform_;
+        }
+
+        // On macOS 13, tests that use sendmsg_x or recvmsg_x hang.
+        var use_msgx_on_macos_14_or_later: bool = undefined;
+        var detectUseMsgXOnMacOS14OrLater_once = std.once(detectUseMsgXOnMacOS14OrLater);
+        fn detectUseMsgXOnMacOS14OrLater() void {
+            const version = Semver.Version.parseUTF8(forOS().version);
+            use_msgx_on_macos_14_or_later = version.valid and version.version.max().major >= 14;
+        }
+        pub export fn Bun__doesMacOSVersionSupportSendRecvMsgX() i32 {
+            if (comptime !Environment.isMac) {
+                // this should not be used on non-mac platforms.
+                return 0;
+            }
+
+            detectUseMsgXOnMacOS14OrLater_once.call();
+            return @intFromBool(use_msgx_on_macos_14_or_later);
         }
 
         pub fn kernelVersion() Semver.Version {

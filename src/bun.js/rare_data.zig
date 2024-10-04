@@ -31,8 +31,7 @@ hot_map: ?HotMap = null,
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
-tail_cleanup_hook: ?*CleanupHook = null,
-cleanup_hook: ?*CleanupHook = null,
+cleanup_hooks: std.ArrayListUnmanaged(CleanupHook) = .{},
 
 file_polls_: ?*Async.FilePoll.Store = null,
 
@@ -45,7 +44,7 @@ mime_types: ?bun.http.MimeType.Map = null,
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
-listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+listening_sockets_for_watch_mode_lock: bun.Lock = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
@@ -156,7 +155,7 @@ pub const HotMap = struct {
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
-        this.file_polls_.?.* = Async.FilePoll.Store.init(vm.allocator);
+        this.file_polls_.?.* = Async.FilePoll.Store.init();
         return this.file_polls_.?;
     };
 }
@@ -220,7 +219,6 @@ pub const EntropyCache = struct {
 };
 
 pub const CleanupHook = struct {
-    next: ?*CleanupHook = null,
     ctx: ?*anyopaque,
     func: Function,
     globalThis: *JSC.JSGlobalObject,
@@ -233,13 +231,12 @@ pub const CleanupHook = struct {
         self.func(self.ctx);
     }
 
-    pub fn from(
+    pub fn init(
         globalThis: *JSC.JSGlobalObject,
         ctx: ?*anyopaque,
         func: CleanupHook.Function,
     ) CleanupHook {
         return .{
-            .next = null,
             .ctx = ctx,
             .func = func,
             .globalThis = globalThis,
@@ -255,14 +252,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    const hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
-    hook.* = CleanupHook.from(globalThis, ctx, func);
-    if (this.cleanup_hook == null) {
-        this.cleanup_hook = hook;
-        this.tail_cleanup_hook = hook;
-    } else {
-        this.cleanup_hook.?.next = hook;
-    }
+    this.cleanup_hooks.append(bun.default_allocator, CleanupHook.init(globalThis, ctx, func)) catch bun.outOfMemory();
 }
 
 pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
@@ -391,4 +381,17 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
         rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
         return rare.node_fs_stat_watcher_scheduler.?;
     };
+}
+
+pub fn deinit(this: *RareData) void {
+    if (this.temp_pipe_read_buffer) |pipe| {
+        this.temp_pipe_read_buffer = null;
+        bun.default_allocator.destroy(pipe);
+    }
+
+    if (this.boring_ssl_engine) |engine| {
+        _ = bun.BoringSSL.ENGINE_free(engine);
+    }
+
+    this.cleanup_hooks.clearAndFree(bun.default_allocator);
 }

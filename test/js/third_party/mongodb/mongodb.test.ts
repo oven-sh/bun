@@ -1,13 +1,12 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { getSecret } from "harness";
 import { MongoClient } from "mongodb";
 
-const CONNECTION_STRING = process.env.TLS_MONGODB_DATABASE_URL;
+const databaseUrl = getSecret("TLS_MONGODB_DATABASE_URL");
 
-const it = CONNECTION_STRING ? test : test.skip;
-
-describe("mongodb", () => {
-  it("should connect and inpect", async () => {
-    const client = new MongoClient(CONNECTION_STRING as string);
+describe.skipIf(!databaseUrl)("mongodb", () => {
+  test("should connect and inpect", async () => {
+    const client = new MongoClient(databaseUrl!);
 
     const clientConnection = await client.connect();
 

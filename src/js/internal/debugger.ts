@@ -1,4 +1,4 @@
-import type { Server as WebSocketServer, WebSocketHandler, ServerWebSocket, SocketHandler, Socket } from "bun";
+import type { ServerWebSocket, Socket, SocketHandler, WebSocketHandler, Server as WebSocketServer } from "bun";
 
 export default function (
   executionContextId: string,
@@ -28,11 +28,20 @@ export default function (
     Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
   }
 
-  const unix = process.env["BUN_INSPECT_NOTIFY"];
-  if (unix) {
-    const { protocol, pathname } = parseUrl(unix);
-    if (protocol === "unix:") {
-      notify(pathname);
+  const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
+  if (notifyUrl) {
+    if (notifyUrl.startsWith("unix://")) {
+      const path = require("node:path");
+      notify({
+        // This is actually a filesystem path, not a URL.
+        unix: path.resolve(notifyUrl.substring("unix://".length)),
+      });
+    } else {
+      const { hostname, port } = new URL(notifyUrl);
+      notify({
+        hostname,
+        port: port && port !== "0" ? Number(port) : undefined,
+      });
     }
   }
 }
@@ -73,7 +82,7 @@ class Debugger {
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url;
 
-    if (protocol === "ws:" || protocol === "ws+tcp:") {
+    if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
         hostname,
         port,
@@ -94,7 +103,7 @@ class Debugger {
       return;
     }
 
-    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:', 'ws+unix:', or 'unix:')`);
+    throw new TypeError(`Unsupported protocol: '${protocol}' (expected 'ws:' or 'ws+unix:')`);
   }
 
   get #websocket(): WebSocketHandler<Connection> {
@@ -321,9 +330,9 @@ function reset(): string {
   return "";
 }
 
-function notify(unix: string): void {
+function notify(options): void {
   Bun.connect({
-    unix,
+    ...options,
     socket: {
       open: socket => {
         socket.end("1");

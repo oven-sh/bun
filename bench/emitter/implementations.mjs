@@ -1,4 +1,3 @@
-import EventEmitter3 from "eventemitter3";
 import { group } from "mitata";
 import EventEmitterNative from "node:events";
 

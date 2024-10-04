@@ -1,14 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
-pub const build_options = @import("build_options");
-
 const bun = @import("root").bun;
 const Output = bun.Output;
 const Environment = bun.Environment;
 
 pub const panic = bun.crash_handler.panic;
 pub const std_options = std.Options{
-    .enable_segfault_handler = !bun.crash_handler.enable,
+    .enable_segfault_handler = false,
 };
 
 pub const io_mode = .blocking;
@@ -72,3 +70,7 @@ pub const overrides = struct {
         }
     };
 };
+
+pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
+    Output.panic("{s}", .{msg[0..len]});
+}

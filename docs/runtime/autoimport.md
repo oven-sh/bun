@@ -1,6 +1,6 @@
 If no `node_modules` directory is found in the working directory or higher, Bun will abandon Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
 
-Under Bun-style module resolution, all imported packages are auto-installed on the fly into a [global module cache](/docs/install/cache) during execution (the same cache used by [`bun install`](/docs/cli/install)).
+Under Bun-style module resolution, all imported packages are auto-installed on the fly into a [global module cache](https://bun.sh/docs/install/cache) during execution (the same cache used by [`bun install`](https://bun.sh/docs/cli/install)).
 
 ```ts
 import { foo } from "foo"; // install `latest` version

@@ -62,7 +62,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         // not "requires" because "require" could be confusing
         JSC::throwTypeError(globalObject, scope, "require.resolve needs 1 argument (a string)"_s);
         scope.release();
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
@@ -93,7 +93,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         if (moduleName.isUndefinedOrNull()) {
             JSC::throwTypeError(globalObject, scope, "require.resolve expects a string"_s);
             scope.release();
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
 
         if (callFrame->argumentCount() > 1) {
@@ -102,12 +102,12 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
             // require.resolve also supports a paths array
             // we only support a single path
             if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
                     if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                         auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                         if (pathsArray->length() > 0) {
                             fromValue = pathsArray->getIndex(globalObject, 0);
-                            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                            RETURN_IF_EXCEPTION(scope, {});
                         }
                     }
                 }
@@ -115,7 +115,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
 
             if (fromValue.isString()) {
                 WTF::String str = fromValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                RETURN_IF_EXCEPTION(scope, {});
                 return doIt(str);
             }
         }
@@ -191,7 +191,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     if (moduleName.isUndefinedOrNull()) {
         JSC::throwTypeError(globalObject, scope, "expects a string"_s);
         scope.release();
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     JSC__JSValue from = JSC::JSValue::encode(JSC::jsUndefined());
@@ -203,25 +203,25 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             JSC::JSValue isESMValue = callFrame->argument(2);
             if (isESMValue.isBoolean()) {
                 isESM = isESMValue.toBoolean(globalObject);
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
-            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+            if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                        RETURN_IF_EXCEPTION(scope, {});
                     }
                 }
             }
 
         } else if (fromValue.isBoolean()) {
             isESM = fromValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+            RETURN_IF_EXCEPTION(scope, {});
             fromValue = JSC::jsUndefined();
         }
 
@@ -238,7 +238,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         if (UNLIKELY(!thisObject)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync must be bound to an import.meta object"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
+            return {};
         }
 
         auto clientData = WebCore::clientData(vm);
@@ -263,7 +263,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     scope.release();
@@ -285,10 +285,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (moduleName.isUndefinedOrNull()) {
         JSC::throwTypeError(lexicalGlobalObject, scope, "expected module name as a string"_s);
         scope.release();
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
@@ -303,26 +303,28 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     if (!isESM) {
         if (LIKELY(globalObject)) {
-            auto overrideHandler = globalObject->m_nodeModuleOverriddenResolveFilename.get();
-            if (UNLIKELY(overrideHandler)) {
-                ASSERT(overrideHandler->isCallable());
-                JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
+            if (UNLIKELY(globalObject->hasOverridenModuleResolveFilenameFunction)) {
+                auto overrideHandler = jsCast<JSObject*>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
+                if (UNLIKELY(overrideHandler)) {
+                    ASSERT(overrideHandler->isCallable());
+                    JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
 
-                JSValue parentID = jsUndefined();
-                if (auto* parent = jsDynamicCast<Bun::JSCommonJSModule*>(parentModuleObject)) {
-                    parentID = parent->id();
-                } else {
-                    parentID = from;
+                    JSValue parentID = jsUndefined();
+                    if (auto* parent = jsDynamicCast<Bun::JSCommonJSModule*>(parentModuleObject)) {
+                        parentID = parent->id();
+                    } else {
+                        parentID = from;
+                    }
+
+                    MarkedArgumentBuffer args;
+                    args.append(moduleName);
+                    args.append(parentModuleObject);
+                    auto parentIdStr = parentID.toWTFString(globalObject);
+                    auto bunStr = Bun::toString(parentIdStr);
+                    args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
+
+                    return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
                 }
-
-                MarkedArgumentBuffer args;
-                args.append(moduleName);
-                args.append(parentModuleObject);
-                auto parentIdStr = parentID.toWTFString(globalObject);
-                auto bunStr = Bun::toString(parentIdStr);
-                args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
-
-                return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
             }
         }
     }
@@ -331,7 +333,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     scope.release();
@@ -349,7 +351,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto specifierValue = callFrame->argument(0);
     // 1. Set specifier to ? ToString(specifier).
     auto specifier = specifierValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Node.js allows a second argument for parent
     JSValue from = {};
@@ -358,12 +360,12 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         JSValue fromValue = callFrame->uncheckedArgument(1);
 
         if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+            if (JSValue pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName())) {
                 if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto* pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                        RETURN_IF_EXCEPTION(scope, {});
                     }
                 }
             }
@@ -397,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
     // from.toWTFString() *should* always be the fast case, since above we check that it's a string.
     auto fromWTFString = from.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
     if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)
@@ -426,7 +428,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
     if (!result.isString()) {
         JSC::throwException(globalObject, scope, result);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto resultString = result.toWTFString(globalObject);
@@ -535,7 +537,7 @@ public:
         reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
-        auto mainGetter = JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject);
+        auto mainGetter = JSFunction::create(vm, globalObject, importMetaObjectMainCodeGenerator(vm), globalObject);
 
         this->putDirectAccessor(
             this->globalObject(),

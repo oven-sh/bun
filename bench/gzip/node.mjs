@@ -1,19 +1,22 @@
-import { run, bench } from "mitata";
-import { gzipSync, gunzipSync } from "zlib";
+import { readFileSync } from "fs";
+import { bench, run } from "mitata";
+import { createRequire } from "module";
+import { gunzipSync, gzipSync } from "zlib";
 
-const data = new TextEncoder().encode("Hello World!".repeat(9999));
+const require = createRequire(import.meta.url);
+const data = readFileSync(require.resolve("@babel/standalone/babel.min.js"));
 
 const compressed = gzipSync(data);
 
-bench(`roundtrip - "Hello World!".repeat(9999))`, () => {
+bench(`roundtrip - @babel/standalone/babel.min.js)`, () => {
   gunzipSync(gzipSync(data));
 });
 
-bench(`gzipSync("Hello World!".repeat(9999)))`, () => {
+bench(`gzipSync(@babel/standalone/babel.min.js))`, () => {
   gzipSync(data);
 });
 
-bench(`gunzipSync("Hello World!".repeat(9999)))`, () => {
+bench(`gunzipSync(@babel/standalone/babel.min.js))`, () => {
   gunzipSync(compressed);
 });
 

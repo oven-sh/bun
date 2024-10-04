@@ -370,7 +370,7 @@ pub const TrustCommand = struct {
 
         const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
 
-        var package_json = bun.JSON.ParseJSONUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+        var package_json = bun.JSON.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {},
             }

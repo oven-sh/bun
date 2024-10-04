@@ -1,6 +1,6 @@
+import { isAscii } from "buffer";
 import fs from "fs";
 import path from "path";
-import { isAscii } from "buffer";
 
 // MSVC has a max of 16k characters per string literal
 // Combining string literals didn't support constexpr apparently
@@ -18,7 +18,17 @@ export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
       .join(",") +
     (nullTerminated ? ",0" : "") +
     "}";
-  return [chars, normalized.length + (nullTerminated ? 1 : 0)];
+  return [chars, normalized.length + (nullTerminated ? 1 : 0)] as const;
+}
+
+export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
+  const normalized = str.trim() + "\n";
+  return (
+    normalized
+      .split("")
+      .map(a => a.charCodeAt(0))
+      .join(",") + (nullTerminated ? ",0" : "")
+  );
 }
 
 export function declareASCIILiteral(name: string, value: string) {
@@ -65,13 +75,14 @@ export function checkAscii(str: string) {
 
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
+  contents = contents.replaceAll("\r\n", "\n").trim() + "\n";
 
-  if (fs.existsSync(file)) {
+  try {
     const oldContents = fs.readFileSync(file, "utf8");
     if (oldContents === contents) {
       return;
     }
-  }
+  } catch (e) {}
 
   try {
     fs.writeFileSync(file, contents);

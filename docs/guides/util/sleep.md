@@ -14,9 +14,9 @@ await Bun.sleep(1000);
 Internally, this is equivalent to the following snippet that uses [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/setTimeout).
 
 ```ts
-await new Promise((resolve) => setTimeout(resolve, ms));
+await new Promise(resolve => setTimeout(resolve, ms));
 ```
 
 ---
 
-See [Docs > API > Utils](/docs/api/utils) for more useful utilities.
+See [Docs > API > Utils](https://bun.sh/docs/api/utils) for more useful utilities.

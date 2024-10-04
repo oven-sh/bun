@@ -57,10 +57,11 @@ AbortSignal& AbortController::signal()
 void AbortController::abort(JSDOMGlobalObject& globalObject, JSC::JSValue reason)
 {
     ASSERT(reason);
-    if (reason.isUndefined())
-        reason = toJS(&globalObject, &globalObject, DOMException::create(ExceptionCode::AbortError));
-
-    protectedSignal()->signalAbort(reason);
+    if (reason.isUndefined()) {
+        protectedSignal()->signalAbort(&globalObject, CommonAbortReason::UserAbort);
+    } else {
+        protectedSignal()->signalAbort(reason);
+    }
 }
 
 WebCoreOpaqueRoot AbortController::opaqueRoot()

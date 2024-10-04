@@ -305,7 +305,7 @@ pub const StatWatcher = struct {
             if (obj.js_this != .zero) {
                 return obj.js_this;
             }
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
     };
 
@@ -314,7 +314,7 @@ pub const StatWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -322,7 +322,7 @@ pub const StatWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) bool {
@@ -345,7 +345,7 @@ pub const StatWatcher = struct {
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         this.close();
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
@@ -415,18 +415,16 @@ pub const StatWatcher = struct {
         const jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
-        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
+        const vm = this.globalThis.bunVM();
+
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
+            .undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
             },
-        );
-
-        const vm = this.globalThis.bunVM();
-        if (result.isAnyError()) {
-            _ = vm.uncaughtException(this.globalThis, result, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
@@ -452,17 +450,14 @@ pub const StatWatcher = struct {
         const current_jsvalue = statToJSStats(this.globalThis, this.last_stat, this.bigint);
         this.last_jsvalue.set(this.globalThis, current_jsvalue);
 
-        const result = StatWatcher.listenerGetCached(this.js_this).?.call(
+        _ = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
+            .undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,
             },
-        );
-        if (result.isAnyError()) {
-            const vm = this.globalThis.bunVM();
-            _ = vm.uncaughtException(this.globalThis, result, false);
-        }
+        ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
     }
 
     pub fn onTimerInterval(timer: *uws.Timer) callconv(.C) void {

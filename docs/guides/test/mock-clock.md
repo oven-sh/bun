@@ -20,7 +20,7 @@ test("party like it's 1999", () => {
 
 ---
 
-The `setSystemTime` function is commonly used on conjunction with [Lifecycle Hooks](/docs/test/lifecycle) to configure a testing environment with a deterministic "fake clock".
+The `setSystemTime` function is commonly used on conjunction with [Lifecycle Hooks](https://bun.sh/docs/test/lifecycle) to configure a testing environment with a deterministic "fake clock".
 
 ```ts
 import { test, expect, beforeAll, setSystemTime } from "bun:test";
@@ -45,4 +45,4 @@ setSystemTime(); // reset to actual time
 
 ---
 
-See [Docs > Test Runner > Date and time](/docs/test/time) for complete documentation on mocking with the Bun test runner.
+See [Docs > Test Runner > Date and time](https://bun.sh/docs/test/time) for complete documentation on mocking with the Bun test runner.

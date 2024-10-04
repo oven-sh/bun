@@ -114,7 +114,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         errorValue = jsUndefined();
     else {
-        errorValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "error"_s));
+        errorValue = object->get(&lexicalGlobalObject, vm.propertyNames->error);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!errorValue.isUndefined()) {
@@ -150,7 +150,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         messageValue = jsUndefined();
     else {
-        messageValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "message"_s));
+        messageValue = object->get(&lexicalGlobalObject, vm.propertyNames->message);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!messageValue.isUndefined()) {
@@ -214,10 +214,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSErrorEventDOMConstruct
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<ErrorEvent::Init>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = ErrorEvent::create(type, WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

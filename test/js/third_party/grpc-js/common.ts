@@ -1,9 +1,9 @@
-import * as loader from "@grpc/proto-loader";
 import * as grpc from "@grpc/grpc-js";
-import path from "node:path";
+import * as loader from "@grpc/proto-loader";
 import { which } from "bun";
-import { AddressInfo } from "ws";
 import { readFileSync } from "fs";
+import path from "node:path";
+import { AddressInfo } from "ws";
 
 const nodeExecutable = which("node");
 async function nodeEchoServer(env: any) {
@@ -40,6 +40,7 @@ export class TestServer {
       GRPC_TEST_USE_TLS: this.useTls ? "true" : "false",
       GRPC_TEST_OPTIONS: JSON.stringify(this.#options),
       GRPC_SERVICE_TYPE: this.service_type.toString(),
+      "grpc-node.max_session_memory": 1024,
     });
     this.address = result.address as AddressInfo;
     this.url = result.url as string;

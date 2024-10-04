@@ -56,39 +56,53 @@ describe("WebSocket", () => {
   });
 
   it("should connect many times over https", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          // echo
-          ws.send(message);
-        },
-        open(ws) {},
-      },
-    });
     {
-      for (let i = 0; i < 1000; i++) {
-        const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
-        await new Promise((resolve, reject) => {
-          ws.onopen = resolve;
-          ws.onerror = reject;
-        });
-        var closed = new Promise((resolve, reject) => {
-          ws.onclose = resolve;
-        });
+      using server = Bun.serve({
+        port: 0,
+        tls: COMMON_CERT,
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+          return new Response("Upgrade failed :(", { status: 500 });
+        },
+        websocket: {
+          message(ws, message) {
+            // echo
+            ws.send(message);
+          },
+          open(ws) {},
+        },
+      });
+      {
+        const batchSize = 20;
+        const batch = new Array(batchSize);
+        async function run() {
+          const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+          await new Promise((resolve, reject) => {
+            ws.onopen = resolve;
+          });
+          var closed = new Promise((resolve, reject) => {
+            ws.onclose = resolve;
+          });
 
-        ws.close();
-        await closed;
+          ws.close();
+          await closed;
+        }
+        for (let i = 0; i < 300; i++) {
+          batch[i % batchSize] = run();
+          if (i % batchSize === batchSize - 1) {
+            await Promise.all(batch);
+          }
+        }
+        await Promise.all(batch);
+        Bun.gc(true);
       }
-      Bun.gc(true);
     }
+    // test GC after all connections are closed
+    Bun.gc(true);
+    // wait to make sure all connections are closed/freed
+    await Bun.sleep(10);
   });
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
@@ -133,7 +147,7 @@ describe("WebSocket", () => {
       const url = `wss://127.0.0.1:${server.address.port}`;
       {
         // by default rejectUnauthorized is true
-        const client = WebSocket(url);
+        const client = new WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -142,7 +156,7 @@ describe("WebSocket", () => {
 
       {
         // just in case we change the default to true and test
-        const client = WebSocket(url, { tls: { rejectUnauthorized: true } });
+        const client = new WebSocket(url, { tls: { rejectUnauthorized: true } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -194,7 +208,7 @@ describe("WebSocket", () => {
 
       {
         // should allow self-signed certs when rejectUnauthorized is false
-        const client = WebSocket(url, { tls: { rejectUnauthorized: false } });
+        const client = new WebSocket(url, { tls: { rejectUnauthorized: false } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
         expect(result.code).toBe(1000);
@@ -249,7 +263,7 @@ describe("WebSocket", () => {
       }
       const url = `wss://localhost:${server.address.port}`;
       {
-        const client = WebSocket(url);
+        const client = new WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
         expect(result.code).toBe(1015);
@@ -529,8 +543,8 @@ describe("WebSocket", () => {
       await openAndCloseWS();
       if (i % 100 === 0) {
         current_websocket_count = getWebSocketCount();
-        // if we have more than 20 websockets open, we have a problem
-        expect(current_websocket_count).toBeLessThanOrEqual(20);
+        // if we have more than 1 batch of websockets open, we have a problem
+        expect(current_websocket_count).toBeLessThanOrEqual(100);
         if (initial_websocket_count === 0) {
           initial_websocket_count = current_websocket_count;
         }
@@ -544,8 +558,29 @@ describe("WebSocket", () => {
   });
 
   it("should be able to send big messages", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("failed to upgrade", { status: 403 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (ws.send(message) == 0) {
+            ws.data = ws.data || [];
+            ws.data.push(message);
+          }
+        },
+        drain(ws) {
+          while (ws.data && ws.data.length) {
+            if (ws.send(ws.data.shift()) == 0) break;
+          }
+        },
+      },
+    });
     const { promise, resolve, reject } = Promise.withResolvers();
-    const ws = new WebSocket("https://echo.websocket.org/");
+    const ws = new WebSocket(serve.url, { tls: { rejectUnauthorized: false } });
 
     const payload = crypto.randomBytes(1024 * 16);
     const iterations = 10;

@@ -76,7 +76,7 @@ class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_FAST_ALLOCATED;
 
 public:
-    explicit JSVMClientData(JSC::VM&);
+    explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);
 
     virtual ~JSVMClientData();
 
@@ -189,6 +189,11 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 }
 
 } // namespace WebCore
+
+inline void* bunVM(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->bunVM;
+}
 
 namespace WebCore {
 using JSVMClientData = WebCore::JSVMClientData;

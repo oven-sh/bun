@@ -13,6 +13,7 @@ const std = @import("std");
 const uws = bun.uws;
 const JSC = bun.JSC;
 const WaiterThread = JSC.Subprocess.WaiterThread;
+const OOM = bun.OOM;
 
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -139,7 +140,7 @@ pub const RunCommand = struct {
     pub inline fn replacePackageManagerRun(
         copy_script: *std.ArrayList(u8),
         script: string,
-    ) !void {
+    ) OOM!void {
         var entry_i: usize = 0;
         var delimiter: u8 = ' ';
 
@@ -265,7 +266,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    fn runPackageScriptForeground(
+    pub fn runPackageScriptForeground(
         ctx: Command.Context,
         allocator: std.mem.Allocator,
         original_script: string,
@@ -275,7 +276,7 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
         use_system_shell: bool,
-    ) !bool {
+    ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
@@ -307,12 +308,12 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        if (!use_system_shell) {
-            if (!silent) {
-                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-                Output.flush();
-            }
+        if (!silent) {
+            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+            Output.flush();
+        }
 
+        if (!use_system_shell) {
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
                 if (!silent) {
@@ -328,10 +329,10 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exitWide(code);
+                Global.exit(code);
             }
 
-            return true;
+            return;
         }
 
         const argv = [_]string{
@@ -340,10 +341,11 @@ pub const RunCommand = struct {
             combined_script,
         };
 
-        if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-            Output.flush();
-        }
+        const ipc_fd = if (!Environment.isWindows) blk: {
+            const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
+            const fd = std.fmt.parseInt(u32, node_ipc_fd, 10) catch break :blk null;
+            break :blk bun.toFD(@as(i32, @intCast(fd)));
+        } else null; // TODO: implement on Windows
 
         const spawn_result = switch ((bun.spawnSync(&.{
             .argv = &argv,
@@ -357,6 +359,7 @@ pub const RunCommand = struct {
             .stderr = .inherit,
             .stdout = .inherit,
             .stdin = .inherit,
+            .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
                 .loop = JSC.EventLoopHandle.init(JSC.MiniEventLoop.initGlobal(env)),
@@ -367,7 +370,7 @@ pub const RunCommand = struct {
             }
 
             Output.flush();
-            return true;
+            return;
         })) {
             .err => |err| {
                 if (!silent) {
@@ -375,7 +378,7 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return true;
+                return;
             },
             .result => |result| result,
         };
@@ -414,13 +417,13 @@ pub const RunCommand = struct {
                 }
 
                 Output.flush();
-                return true;
+                return;
             },
 
             else => {},
         }
 
-        return true;
+        return;
     }
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
@@ -578,8 +581,7 @@ pub const RunCommand = struct {
                             });
                         }
 
-                        Output.flush();
-                        Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
+                        Global.raiseIgnoringPanicHandler(signal);
                     },
 
                     .exited => |exit_code| {
@@ -592,8 +594,7 @@ pub const RunCommand = struct {
                                 });
                             }
 
-                            Output.flush();
-                            Global.raiseIgnoringPanicHandler(@intFromEnum(exit_code.signal));
+                            Global.raiseIgnoringPanicHandler(exit_code.signal);
                         }
 
                         const code = exit_code.code;
@@ -1443,7 +1444,7 @@ pub const RunCommand = struct {
                     defer ctx.allocator.free(temp_script_buffer);
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
-                        if (!try runPackageScriptForeground(
+                        try runPackageScriptForeground(
                             ctx,
                             ctx.allocator,
                             prescript,
@@ -1453,12 +1454,10 @@ pub const RunCommand = struct {
                             &.{},
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
-                        )) {
-                            return false;
-                        }
+                        );
                     }
 
-                    if (!try runPackageScriptForeground(
+                    try runPackageScriptForeground(
                         ctx,
                         ctx.allocator,
                         script_content,
@@ -1468,12 +1467,12 @@ pub const RunCommand = struct {
                         passthrough,
                         ctx.debug.silent,
                         ctx.debug.use_system_shell,
-                    )) return false;
+                    );
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
-                        if (!try runPackageScriptForeground(
+                        try runPackageScriptForeground(
                             ctx,
                             ctx.allocator,
                             postscript,
@@ -1483,9 +1482,7 @@ pub const RunCommand = struct {
                             &.{},
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
-                        )) {
-                            return false;
-                        }
+                        );
                     }
 
                     return true;

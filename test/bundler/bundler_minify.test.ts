@@ -1,5 +1,5 @@
-import { itBundled } from "./expectBundled";
 import { describe, expect } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
@@ -396,5 +396,99 @@ describe("bundler", () => {
     run: {
       stdout: "PASS",
     },
+  });
+  itBundled("minify/RequireInDeadBranch", {
+    files: {
+      "/entry.ts": /* js */ `
+        if (0 !== 0) {
+          require;
+        }
+      `,
+    },
+    outfile: "/out.js",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("minify/TypeOfRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(typeof require); 
+      `,
+    },
+    outfile: "/out.js",
+    capture: ['"function"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("minify/RequireMainToImportMetaMain", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(require.main === module); 
+        capture(require.main !== module); 
+        capture(require.main == module); 
+        capture(require.main != module); 
+        capture(!(require.main === module)); 
+        capture(!(require.main !== module)); 
+        capture(!(require.main == module)); 
+        capture(!(require.main != module)); 
+        capture(!!(require.main === module)); 
+        capture(!!(require.main !== module)); 
+        capture(!!(require.main == module)); 
+        capture(!!(require.main != module)); 
+      `,
+    },
+    outfile: "/out.js",
+    capture: [
+      "import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+      "import.meta.main",
+      "!import.meta.main",
+    ],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("minify/ConstantFoldingUnaryPlusString", {
+    files: {
+      "/entry.ts": `
+        // supported
+        capture(+'1.0');
+        capture(+'-123.567');
+        capture(+'8.325');
+        capture(+'100000000');
+        // unsupported
+        capture(+'\\u0030\\u002e\\u0031');
+        capture(+'\\x30\\x2e\\x31');
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "1",
+      "-123.567",
+      "8.325",
+      "1e8",
+      // untouched
+      "+\"0.1\"",
+      "+\"0.1\"",
+    ],
   });
 });

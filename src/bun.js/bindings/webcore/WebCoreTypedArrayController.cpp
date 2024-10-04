@@ -35,14 +35,9 @@
 
 #include <JavaScriptCore/JSArrayBuffer.h>
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    if (auto* global = jsDynamicCast<WebCore::JSDOMGlobalObject*>(lexicalGlobalObject)) {
-        return global;
-    }
-
-    return Bun__getDefaultGlobal();
+    return defaultGlobalObject(lexicalGlobalObject);
 }
 
 namespace WebCore {

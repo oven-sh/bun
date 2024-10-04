@@ -27,6 +27,7 @@ pub const Stdio = union(enum) {
     array_buffer: JSC.ArrayBuffer.Strong,
     memfd: bun.FileDescriptor,
     pipe: void,
+    ipc: void,
 
     const log = bun.sys.syslog;
 
@@ -197,6 +198,7 @@ pub const Stdio = union(enum) {
                 },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .capture, .pipe, .array_buffer => .{ .buffer = {} },
+                .ipc => .{ .ipc = {} },
                 .fd => |fd| .{ .pipe = fd },
                 .memfd => |fd| .{ .pipe = fd },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -248,6 +250,7 @@ pub const Stdio = union(enum) {
 
                     break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
                 },
+                .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .capture, .pipe, .array_buffer => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
@@ -282,6 +285,7 @@ pub const Stdio = union(enum) {
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
             .capture, .array_buffer, .blob, .pipe => true,
+            .ipc => Environment.isWindows,
             else => false,
         };
     }
@@ -312,7 +316,7 @@ pub const Stdio = union(enum) {
             } else if (str.eqlComptime("pipe") or str.eqlComptime("overlapped")) {
                 out_stdio.* = Stdio{ .pipe = {} };
             } else if (str.eqlComptime("ipc")) {
-                out_stdio.* = Stdio{ .pipe = {} }; // TODO:
+                out_stdio.* = Stdio{ .ipc = {} };
             } else {
                 globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
                 return false;
@@ -330,7 +334,7 @@ pub const Stdio = union(enum) {
             if (file_fd >= std.math.maxInt(i32)) {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
                 globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{
-                    value.toFmt(globalThis, &formatter),
+                    value.toFmt(&formatter),
                 });
                 return false;
             }

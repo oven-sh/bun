@@ -1917,7 +1917,7 @@ pub const types = struct {
             defer value.deinit();
             var str = bun.String.fromUTF8(value.slice());
             defer str.deref();
-            const parse_result = JSValue.parseJSON(str.toJS(globalObject), globalObject);
+            const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
             if (parse_result.isAnyError()) {
                 globalObject.throwValue(parse_result);
                 return error.JSError;
@@ -2085,7 +2085,7 @@ pub const PostgresSQLQuery = struct {
             return;
         }
 
-        const instance = globalObject.createTypeErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
+        const instance = globalObject.createErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
 
         // TODO: error handling
         const vm = JSC.VirtualMachine.get();
@@ -2882,13 +2882,13 @@ pub const PostgresSQLConnection = struct {
         if (on_close == .zero) return;
         const instance = this.globalObject.createErrorInstance("{s}", .{message});
         instance.put(this.globalObject, JSC.ZigString.static("code"), String.init(@errorName(err)).toJS(this.globalObject));
-        _ = on_close.callWithThis(
+        _ = on_close.call(
             this.globalObject,
             this.js_value,
             &[_]JSValue{
                 instance,
             },
-        );
+        ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
     }
 
     pub fn onClose(this: *PostgresSQLConnection) void {
@@ -3514,13 +3514,13 @@ pub const PostgresSQLConnection = struct {
             }
         }
 
-        // #define pg_hton16(x)		(x)
-        // #define pg_hton32(x)		(x)
-        // #define pg_hton64(x)		(x)
+        // #define pg_hton16(x)        (x)
+        // #define pg_hton32(x)        (x)
+        // #define pg_hton64(x)        (x)
 
-        // #define pg_ntoh16(x)		(x)
-        // #define pg_ntoh32(x)		(x)
-        // #define pg_ntoh64(x)		(x)
+        // #define pg_ntoh16(x)        (x)
+        // #define pg_ntoh32(x)        (x)
+        // #define pg_ntoh64(x)        (x)
 
         fn pg_ntoT(comptime IntSize: usize, i: anytype) std.meta.Int(.unsigned, IntSize) {
             @setRuntimeSafety(false);

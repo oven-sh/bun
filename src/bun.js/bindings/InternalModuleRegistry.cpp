@@ -1,5 +1,4 @@
 #include "InternalModuleRegistry.h"
-
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -42,7 +41,7 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     maybeAddCodeCoverage(vm, source);                                                       \
     JSFunction* func                                                                        \
         = JSFunction::create(                                                               \
-            vm,                                                                             \
+            vm, globalObject,                                                               \
             createBuiltinExecutable(                                                        \
                 vm, source,                                                                 \
                 Identifier(),                                                               \

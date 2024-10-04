@@ -149,8 +149,12 @@ pub const TestRunner = struct {
         this.has_pending_tests = false;
         this.pending_test = null;
 
+        const vm = JSC.VirtualMachine.get();
+        vm.auto_killer.clear();
+        vm.auto_killer.disable();
+
         // disable idling
-        JSC.VirtualMachine.get().wakeup();
+        vm.wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {
@@ -264,6 +268,8 @@ pub const TestRunner = struct {
             skip,
             todo,
             fail_because_todo_passed,
+            fail_because_expected_has_assertions,
+            fail_because_expected_assertion_count,
         };
     };
 };
@@ -754,11 +760,11 @@ pub const TestScope = struct {
             // TODO: not easy to coerce JSInternalPromise as JSValue,
             // so simply wait for completion for now.
             switch (promise) {
-                .Internal => vm.waitForPromise(promise),
+                .internal => vm.waitForPromise(promise),
                 else => {},
             }
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     if (!promise.isHandled(vm.global.vm())) {
                         _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
                     }
@@ -769,10 +775,10 @@ pub const TestScope = struct {
 
                     return .{ .fail = expect.active_test_expectation_counter.actual };
                 },
-                .Pending => {
+                .pending => {
                     task.promise_state = .pending;
                     switch (promise) {
-                        .Normal => |p| {
+                        .normal => |p| {
                             _ = p.asValue(vm.global).then(vm.global, task, jsOnResolve, jsOnReject);
                             return .{ .pending = {} };
                         },
@@ -981,7 +987,7 @@ pub const DescribeScope = struct {
                 },
             };
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(globalObject.vm()) == .Pending) {
+                if (promise.status(globalObject.vm()) == .pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
@@ -1021,7 +1027,7 @@ pub const DescribeScope = struct {
             var result: JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
 
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(globalThis.vm()) == .Pending) {
+                if (promise.status(globalThis.vm()) == .pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
@@ -1121,7 +1127,7 @@ pub const DescribeScope = struct {
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
                 switch (prom.status(globalObject.ptr().vm())) {
-                    JSPromise.Status.Fulfilled => {},
+                    .fulfilled => {},
                     else => {
                         _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
                         return .undefined;
@@ -1340,6 +1346,20 @@ pub const TestRunnerTask = struct {
         }
     }
 
+    pub fn checkAssertionsCounter(result: *Result) void {
+        if (expect.is_expecting_assertions and expect.active_test_expectation_counter.actual == 0) {
+            expect.is_expecting_assertions = false;
+            expect.is_expecting_assertions_count = false;
+            result.* = .{ .fail_because_expected_has_assertions = {} };
+        }
+
+        if (expect.is_expecting_assertions_count and expect.active_test_expectation_counter.actual != expect.active_test_expectation_counter.expected) {
+            expect.is_expecting_assertions = false;
+            expect.is_expecting_assertions_count = false;
+            result.* = .{ .fail_because_expected_assertion_count = expect.active_test_expectation_counter };
+        }
+    }
+
     pub fn run(this: *TestRunnerTask) bool {
         var describe = this.describe;
         var globalThis = this.globalThis;
@@ -1364,7 +1384,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (test_.func == .zero or !describe.shouldEvaluateScope()) {
+        if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
             const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
@@ -1394,7 +1414,7 @@ pub const TestRunnerTask = struct {
         }
 
         this.sync_state = .pending;
-
+        jsc_vm.auto_killer.enable();
         var result = TestScope.run(&test_, this);
 
         if (this.describe.tests.items.len > test_id) {
@@ -1402,40 +1422,23 @@ pub const TestRunnerTask = struct {
         }
 
         // rejected promises should fail the test
-        if (result != .fail)
+        if (!result.isFailure())
             globalThis.handleRejectedPromises();
 
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
+
+            if (this.reported and this.promise_state != .pending) {
+                // An unhandled error was reported.
+                // Let's allow any pending work to run, and then move on to the next test.
+                this.continueRunningTestsAfterMicrotasksRun();
+            }
             return true;
         }
 
-        if (expect.is_expecting_assertions and expect.active_test_expectation_counter.actual == 0) {
-            const fmt = comptime "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
-            const error_value = if (Output.enable_ansi_colors)
-                globalThis.createErrorInstance(Output.prettyFmt(fmt, true), .{})
-            else
-                globalThis.createErrorInstance(Output.prettyFmt(fmt, false), .{});
+        this.handleResultPtr(&result, .sync);
 
-            globalThis.*.bunVM().runErrorHandler(error_value, null);
-            result = .{ .fail = 0 };
-        }
-
-        if (expect.is_expecting_assertions_count and expect.active_test_expectation_counter.actual != expect.expected_assertions_number) {
-            const fmt = comptime "<d>expect.assertions({})<r>\n\nExpected <green>{} assertion<r> to be called but <red>found {} assertions<r> instead.\n";
-            const fmt_args = .{ expect.expected_assertions_number, expect.expected_assertions_number, expect.active_test_expectation_counter.actual };
-            const error_value = if (Output.enable_ansi_colors)
-                globalThis.createErrorInstance(Output.prettyFmt(fmt, true), fmt_args)
-            else
-                globalThis.createErrorInstance(Output.prettyFmt(fmt, false), fmt_args);
-
-            globalThis.*.bunVM().runErrorHandler(error_value, null);
-            result = .{ .fail = expect.active_test_expectation_counter.actual };
-        }
-
-        this.handleResult(result, .sync);
-
-        if (result == .fail) {
+        if (result.isFailure()) {
             globalThis.handleRejectedPromises();
         }
 
@@ -1459,12 +1462,25 @@ pub const TestRunnerTask = struct {
     };
 
     pub fn handleResult(this: *TestRunnerTask, result: Result, from: ResultType) void {
+        var result_copy = result;
+        this.handleResultPtr(&result_copy, from);
+    }
+
+    fn continueRunningTestsAfterMicrotasksRun(this: *TestRunnerTask) void {
+        if (this.ref.has)
+            // Drain microtasks one more time.
+            // But don't hang forever.
+            // We report the test failure before that task is run.
+            this.globalThis.bunVM().enqueueTask(JSC.ManagedTask.New(@This(), deinit).init(this));
+    }
+
+    pub fn handleResultPtr(this: *TestRunnerTask, result: *Result, from: ResultType) void {
         switch (from) {
             .promise => {
                 if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
 
-                if (this.done_callback_state == .pending and result == .pass) {
+                if (this.done_callback_state == .pending and result.* == .pass) {
                     return;
                 }
             },
@@ -1472,7 +1488,7 @@ pub const TestRunnerTask = struct {
                 if (comptime Environment.allow_assert) assert(this.done_callback_state == .pending);
                 this.done_callback_state = .fulfilled;
 
-                if (this.promise_state == .pending and result == .pass) {
+                if (this.promise_state == .pending and result.* == .pass) {
                     return;
                 }
             },
@@ -1488,8 +1504,43 @@ pub const TestRunnerTask = struct {
                 this.deinit();
         }
 
-        if (this.reported)
+        if (this.reported) {
+            // This covers the following scenario:
+            //
+            // test("foo", async done => {
+            //     await Bun.sleep(42);
+            //     throw new Error("foo");
+            // });
+            //
+            // The test will hang forever if we don't drain microtasks here.
+            //
+            // It is okay for this to be called multiple times, as it unrefs() the event loop once, and doesn't free memory.
+            if (result.* != .pass and this.promise_state != .pending and this.done_callback_state == .pending and this.sync_state == .fulfilled) {
+                this.continueRunningTestsAfterMicrotasksRun();
+            }
             return;
+        }
+
+        // This covers the following scenario:
+        //
+        //
+        //   test("foo", done => {
+        //       setTimeout(() => {
+        //           if (Math.random() > 0.5) {
+        //               done();
+        //           } else {
+        //               throw new Error("boom");
+        //           }
+        //       }, 100);
+        //    })
+        //
+        // It is okay for this to be called multiple times, as it unrefs() the event loop once, and doesn't free memory.
+        if (this.promise_state != .pending and this.sync_state != .pending and this.done_callback_state == .pending) {
+            // Drain microtasks one more time.
+            // But don't hang forever.
+            // We report the test failure before that task is run.
+            this.continueRunningTestsAfterMicrotasksRun();
+        }
 
         this.reported = true;
 
@@ -1503,11 +1554,26 @@ pub const TestRunnerTask = struct {
         describe.tests.items[test_id] = test_;
 
         if (from == .timeout) {
-            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
+            const vm = this.globalThis.bunVM();
+            const cancel_result = vm.auto_killer.kill();
+
+            const err = brk: {
+                if (cancel_result.processes > 0) {
+                    switch (Output.enable_ansi_colors_stdout) {
+                        inline else => |enable_ansi_colors| {
+                            break :brk this.globalThis.createErrorInstance(comptime Output.prettyFmt("Test {} timed out after {d}ms <r><d>({})<r>", enable_ansi_colors), .{ bun.fmt.quote(test_.label), test_.timeout_millis, cancel_result });
+                        },
+                    }
+                } else {
+                    break :brk this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+                }
+            };
+
+            _ = vm.uncaughtException(this.globalThis, err, true);
         }
 
-        processTestResult(this, this.globalThis, result, test_, test_id, describe);
+        checkAssertionsCounter(result);
+        processTestResult(this, this.globalThis, result.*, test_, test_id, describe);
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
@@ -1528,6 +1594,33 @@ pub const TestRunnerTask = struct {
                 this.started_at.sinceNow(),
                 describe,
             ),
+            .fail_because_expected_has_assertions => {
+                Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
+                Output.flush();
+                Jest.runner.?.reportFailure(
+                    test_id,
+                    this.source_file_path,
+                    test_.label,
+                    0,
+                    this.started_at.sinceNow(),
+                    describe,
+                );
+            },
+            .fail_because_expected_assertion_count => |counter| {
+                Output.err(error.AssertionError, "expected <green>{d} assertions<r>, but test ended with <red>{d} assertions<r>\n", .{
+                    counter.expected,
+                    counter.actual,
+                });
+                Output.flush();
+                Jest.runner.?.reportFailure(
+                    test_id,
+                    this.source_file_path,
+                    test_.label,
+                    counter.actual,
+                    this.started_at.sinceNow(),
+                    describe,
+                );
+            },
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
@@ -1544,6 +1637,7 @@ pub const TestRunnerTask = struct {
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
+
         Jest.runner.?.runNextTest();
     }
 
@@ -1576,6 +1670,12 @@ pub const Result = union(TestRunner.Test.Status) {
     skip: void,
     todo: void,
     fail_because_todo_passed: u32,
+    fail_because_expected_has_assertions: void,
+    fail_because_expected_assertion_count: Counter,
+
+    pub fn isFailure(this: *const Result) bool {
+        return this.* == .fail or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
+    }
 
     pub fn forceTODO(this: Result, is_todo: bool) Result {
         if (is_todo and this == .pass)
@@ -1625,7 +1725,7 @@ inline fn createScope(
     }
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-        if (tag != .todo) {
+        if (tag != .todo and tag != .skip) {
             globalThis.throwPretty("{s} expects a function", .{signature});
             return .zero;
         }
@@ -1674,7 +1774,7 @@ inline fn createScope(
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
-        return .zero;
+        return .undefined;
     }
 
     var is_skip = tag == .skip or
@@ -1739,7 +1839,7 @@ inline fn createScope(
 inline fn createIfScope(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
-    comptime property: string,
+    comptime property: [:0]const u8,
     comptime signature: string,
     comptime Scope: type,
     comptime tag: Tag,
@@ -1781,9 +1881,9 @@ fn consumeArg(
     if (should_write) {
         const owned_slice = arg.toSliceOrNull(globalThis) orelse return error.Failed;
         defer owned_slice.deinit();
-        try array_list.appendSlice(allocator, owned_slice.slice());
+        array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
     } else {
-        try array_list.appendSlice(allocator, fallback);
+        array_list.appendSlice(allocator, fallback) catch bun.outOfMemory();
     }
     str_idx.* += 1;
     args_idx.* += 1;
@@ -1794,7 +1894,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     const allocator = getAllocator(globalThis);
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len);
+    var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
 
     while (idx < label.len) {
         const char = label[idx];
@@ -1818,9 +1918,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var str = bun.String.empty;
                     defer str.deref();
                     current_arg.jsonStringify(globalThis, 0, &str);
-                    const owned_slice = try str.toOwnedSlice(allocator);
+                    const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
                     defer allocator.free(owned_slice);
-                    try list.appendSlice(allocator, owned_slice);
+                    list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();
                     idx += 1;
                     args_idx += 1;
                 },
@@ -1829,28 +1929,28 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
-                    const value_fmt = current_arg.toFmt(globalThis, &formatter);
-                    const test_index_str = try std.fmt.allocPrint(allocator, "{any}", .{value_fmt});
+                    const value_fmt = current_arg.toFmt(&formatter);
+                    const test_index_str = std.fmt.allocPrint(allocator, "{any}", .{value_fmt}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);
-                    try list.appendSlice(allocator, test_index_str);
+                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
                     idx += 1;
                     args_idx += 1;
                 },
                 '#' => {
-                    const test_index_str = try std.fmt.allocPrint(allocator, "{d}", .{test_idx});
+                    const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);
-                    try list.appendSlice(allocator, test_index_str);
+                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
                     idx += 1;
                 },
                 '%' => {
-                    try list.append(allocator, '%');
+                    list.append(allocator, '%') catch bun.outOfMemory();
                     idx += 1;
                 },
                 else => {
                     // ignore unrecognized fmt
                 },
             }
-        } else try list.append(allocator, char);
+        } else list.append(allocator, char) catch bun.outOfMemory();
         idx += 1;
     }
 
@@ -1918,14 +2018,14 @@ fn eachBind(
         const allocator = getAllocator(globalThis);
         const each_data = bun.cast(*EachData, data);
         JSC.setFunctionData(callee, null);
-        const array = each_data.*.strong.get() orelse return .zero;
+        const array = each_data.*.strong.get() orelse return .undefined;
         defer {
             each_data.*.strong.deinit();
             allocator.destroy(each_data);
         }
 
         if (array.isUndefinedOrNull() or !array.jsType().isArray()) {
-            return .zero;
+            return .undefined;
         }
 
         var iter = array.arrayIterator(globalThis);
@@ -1996,7 +2096,7 @@ fn eachBind(
                 function.unprotect();
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {
-                    return .zero;
+                    return .undefined;
                 } else {
                     function.protect();
                     parent.tests.append(allocator, TestScope{
@@ -2026,13 +2126,13 @@ fn eachBind(
         }
     }
 
-    return .zero;
+    return .undefined;
 }
 
 inline fn createEach(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
-    comptime property: string,
+    comptime property: [:0]const u8,
     comptime signature: string,
     comptime is_test: bool,
 ) JSValue {
@@ -2064,15 +2164,10 @@ inline fn createEach(
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalObject, function: JSValue, args: []const JSValue) JSValue {
     vm.eventLoop().enter();
-    defer {
-        vm.eventLoop().exit();
-    }
+    defer vm.eventLoop().exit();
 
     globalObject.clearTerminationException();
-    const result = function.call(globalObject, args);
-    result.ensureStillAlive();
-
-    return result;
+    return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
 }
 
 const assert = bun.assert;

@@ -244,13 +244,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
   var drainMicrotasks = drainMicrotasksFn;
   var reportUncaughtException = reportUncaughtExceptionFn;
 
-  function validateFunction(cb) {
-    if (typeof cb !== "function") {
-      const err = new TypeError(`The "callback" argument must be of type "function". Received type ${typeof cb}`);
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
-    }
-  }
+  const { validateFunction } = require("internal/validators");
 
   var setup;
   setup = () => {
@@ -306,7 +300,7 @@ export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksF
   };
 
   function nextTick(cb, args) {
-    validateFunction(cb);
+    validateFunction(cb, "callback");
     if (setup) {
       setup();
       process = globalThis.process;
@@ -402,4 +396,22 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       return envMapList.slice();
     },
   });
+}
+
+export function getChannel() {
+  const EventEmitter = require("node:events");
+  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+  return new (class Control extends EventEmitter {
+    constructor() {
+      super();
+    }
+
+    ref() {
+      setRef(true);
+    }
+
+    unref() {
+      setRef(false);
+    }
+  })();
 }

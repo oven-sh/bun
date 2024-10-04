@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 
-import { jest, test, describe, expect } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 function testPBKDF2_(password, salt, iterations, keylen, expected) {
   async function runPBKDF2(password, salt, iterations, keylen, hash) {
     const syncResult = crypto.pbkdf2Sync(password, salt, iterations, keylen, hash);
@@ -72,7 +72,7 @@ describe("invalid inputs", () => {
   for (let input of ["test", {}, [], true, undefined, null]) {
     test(`${input} is invalid`, () => {
       expect(() => crypto.pbkdf2("pass", "salt", input, 8, "sha256")).toThrow(
-        `The "iteration count" argument must be of type integer. Received ${typeof input}`,
+        `The "iteration count" argument must be of type integer. Received "${typeof input}"`,
       );
     });
   }
@@ -115,7 +115,7 @@ describe("invalid inputs", () => {
 [Infinity, -Infinity, NaN].forEach(input => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The \"keylen\" argument must be of type integer. Received number`,
+      `The \"keylen\" argument must be of type integer. Received "number"`,
     );
   });
 });

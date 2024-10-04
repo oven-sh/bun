@@ -1497,13 +1497,35 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  type ModuleFormat = "esm"; // later: "cjs", "iife"
-
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
     target?: Target; // default: "browser"
-    format?: ModuleFormat; // later: "cjs", "iife"
+    /**
+     * Output module format. Top-level await is only supported for `"esm"`.
+     *
+     * Can be:
+     * - `"esm"`
+     * - `"cjs"` (**experimental**)
+     * - `"iife"` (**experimental**)
+     *
+     * @default "esm"
+     */
+    format?: /**
+
+     * ECMAScript Module format
+     */
+    | "esm"
+      /**
+       * CommonJS format
+       * **Experimental**
+       */
+      | "cjs"
+      /**
+       * IIFE format
+       * **Experimental**
+       */
+      | "iife";
     naming?:
       | string
       | {
@@ -1521,7 +1543,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1537,6 +1559,16 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+    /**
+     * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
+     * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
+     * annotations in libraries.
+     */
+    ignoreDCEAnnotations?: boolean;
+    /**
+     * Force emitting @__PURE__ annotations even if minify.whitespace is true.
+     */
+    emitDCEAnnotations?: boolean;
     // treeshaking?: boolean;
 
     // jsx?:
@@ -1551,6 +1583,18 @@ declare module "bun" {
     //       /** Only works when runtime=automatic */
     //       importSource?: string; // default: "react"
     //     };
+
+    /**
+     * Generate bytecode for the output. This can dramatically improve cold
+     * start times, but will make the final output larger and slightly increase
+     * memory usage.
+     *
+     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     *
+     * Must be `target: "bun"`
+     * @default false
+     */
+    bytecode?: boolean;
   }
 
   namespace Password {
@@ -1771,7 +1815,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
   }
 
@@ -2272,7 +2316,7 @@ declare module "bun" {
      */
     development?: boolean;
 
-    error?: (this: Server, request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 
     /**
      * Uniquely identify a server instance with an ID
@@ -2288,6 +2332,26 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
+
+    /**
+     * Server static Response objects by route.
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   static: {
+     *     "/": new Response("Hello World"),
+     *     "/about": new Response("About"),
+     *   },
+     *   fetch(req) {
+     *     return new Response("Fallback response");
+     *   },
+     * });
+     * ```
+     *
+     * @experimental
+     */
+    static?: Record<`/${string}`, Response>;
   }
 
   interface ServeOptions extends GenericServeOptions {
@@ -2331,6 +2395,14 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix?: never;
+
+    /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
 
     /**
      * Handle HTTP requests
@@ -2622,7 +2694,7 @@ declare module "bun" {
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
-    stop(closeActiveConnections?: boolean): void;
+    stop(closeActiveConnections?: boolean): Promise<void>;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -2750,6 +2822,16 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * A count of connections subscribed to a given topic
+     *
+     * This operation will loop through each topic internally to get the count.
+     *
+     * @param topic the websocket topic to check how many subscribers are connected to
+     * @returns the number of subscribers
+     */
+    subscriberCount(topic: string): number;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
@@ -2763,6 +2845,21 @@ declare module "bun" {
      */
     requestIP(request: Request): SocketAddress | null;
 
+    /**
+     * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    server.timeout(request, 60);
+     *    await Bun.sleep(30000);
+     *    return new Response("30 seconds have passed");
+     *  }
+     * }
+     * ```
+     */
+    timeout(request: Request, seconds: number): void;
     /**
      * Undo a call to {@link Server.unref}
      *
@@ -2849,6 +2946,13 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.
@@ -2958,6 +3062,87 @@ declare module "bun" {
   const stdin: BunFile;
 
   type StringLike = string | { toString(): string };
+
+  type ColorInput =
+    | { r: number; g: number; b: number; a?: number }
+    | [number, number, number]
+    | [number, number, number, number]
+    | Uint8Array
+    | Uint8ClampedArray
+    | Float32Array
+    | Float64Array
+    | string
+    | number
+    | { toString(): string };
+
+  function color(
+    input: ColorInput,
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
+      /**
+       * 256 color ANSI color string, for use in terminals which don't support true color
+       *
+       * Tries to match closest 24-bit color to 256 color palette
+       */
+      | "ansi256"
+      /**
+       * Lowercase hex color string without alpha
+       * @example #aabb11
+       */
+      | "hex"
+      /**
+       * RGB color string without alpha
+       * rgb(100, 200, 200)
+       */
+      | "rgb"
+      /**
+       * RGB color string with alpha
+       * rgba(100, 200, 200, 0.5)
+       */
+      | "rgba"
+      | "hsl"
+      | "lab"
+      | "css"
+      | "lab"
+      | "HEX",
+  ): string | null;
+
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGB color
+     * @example [100, 200, 200]
+     */
+    outputFormat: "[rgb]",
+  ): [number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGBA color
+     * @example [100, 200, 200, 255]
+     */
+    outputFormat: "[rgba]",
+  ): [number, number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGB color
+     * @example { r: 100, g: 200, b: 200 }
+     */
+    outputFormat: "{rgb}",
+  ): { r: number; g: number; b: number } | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGBA color
+     * @example { r: 100, g: 200, b: 200, a: 0.5 }
+     */
+    outputFormat: "{rgba}",
+  ): { r: number; g: number; b: number; a: number } | null;
+  function color(input: ColorInput, outputFormat: "number"): number | null;
 
   interface Semver {
     /**
@@ -3194,8 +3379,9 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
+     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
      */
-    constructor(algorithm: SupportedCryptoAlgorithms);
+    constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
@@ -3481,6 +3667,13 @@ declare module "bun" {
      * Filtered data consists mostly of small values with a somewhat random distribution.
      */
     strategy?: number;
+
+    library?: "zlib";
+  }
+
+  interface LibdeflateCompressionOptions {
+    level?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+    library?: "libdeflate";
   }
 
   /**
@@ -3489,26 +3682,38 @@ declare module "bun" {
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function deflateSync(data: Uint8Array | string | ArrayBuffer, options?: ZlibCompressionOptions): Uint8Array;
+  function deflateSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function gzipSync(data: Uint8Array | string | ArrayBuffer, options?: ZlibCompressionOptions): Uint8Array;
+  function gzipSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function inflateSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
+  function inflateSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function gunzipSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
+  function gunzipSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
 
   type Target =
     /**
@@ -3828,7 +4033,7 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
-  interface Socket<Data = undefined> {
+  interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
      *
@@ -4110,7 +4315,7 @@ declare module "bun" {
     setMaxSendFragment(size: number): boolean;
   }
 
-  interface SocketListener<Data = undefined> {
+  interface SocketListener<Data = undefined> extends Disposable {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
@@ -4526,6 +4731,32 @@ declare module "bun" {
        * @default cmds[0]
        */
       argv0?: string;
+
+      /**
+       * An {@link AbortSignal} that can be used to abort the subprocess.
+       *
+       * This is useful for aborting a subprocess when some other part of the
+       * program is aborted, such as a `fetch` response.
+       *
+       * Internally, this works by calling `subprocess.kill(1)`.
+       *
+       * @example
+       * ```ts
+       * const controller = new AbortController();
+       * const { signal } = controller;
+       * const start = performance.now();
+       * const subprocess = Bun.spawn({
+       *  cmd: ["sleep", "100"],
+       *  signal,
+       * });
+       * await Bun.sleep(1);
+       * controller.abort();
+       * await subprocess.exited;
+       * const end = performance.now();
+       * console.log(end - start); // 1ms instead of 101ms
+       * ```
+       */
+      signal?: AbortSignal;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -5028,6 +5259,12 @@ declare module "bun" {
    * "0.2.0"
    */
   const version: string;
+
+  /**
+   * The current version of Bun with the shortened commit sha of the build
+   * @example "v1.1.30 (d09df1af)"
+   */
+  const version_with_sha: string;
 
   /**
    * The git sha at the time the currently-running version of Bun was compiled

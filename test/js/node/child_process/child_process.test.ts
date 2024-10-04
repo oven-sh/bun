@@ -1,10 +1,10 @@
-import { describe, it, expect, afterAll, beforeEach } from "bun:test";
-import { ChildProcess, spawn, execFile, exec, spawnSync, execFileSync, execSync } from "node:child_process";
-import { promisify } from "node:util";
-import { bunExe, bunEnv, isWindows, tmpdirSync, nodeExe, shellExe } from "harness";
-import path from "path";
-import { semver } from "bun";
+import { semver, write } from "bun";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
+import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
 const originalProcessEnv = process.env;
@@ -64,6 +64,33 @@ describe("spawn()", () => {
   it("should spawn a process", () => {
     const child = spawn("bun", ["-v"]);
     expect(!!child).toBe(true);
+  });
+
+  it("should use cwd from options to search for executables", async () => {
+    const tmpdir = tmpdirSync();
+    await Promise.all([
+      write(
+        path.join(tmpdir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            foo: "file:foo-1.2.3.tgz",
+          },
+        }),
+      ),
+      fs.promises.cp(path.join(import.meta.dir, "fixtures", "foo-1.2.3.tgz"), path.join(tmpdir, "foo-1.2.3.tgz")),
+    ]);
+    await runBunInstall(bunEnv, tmpdir);
+
+    const { exitCode, out } = await new Promise<any>(resolve => {
+      const child = spawn("./node_modules/.bin/foo", { cwd: tmpdir, env: bunEnv });
+      child.on("exit", async exitCode => {
+        const out = await new Response(child.stdout).text();
+        resolve({ exitCode, out });
+      });
+    });
+    expect(out).toBe("hello bun!\n");
+    expect(exitCode).toBe(0);
   });
 
   it("should disallow invalid filename", () => {
@@ -223,7 +250,7 @@ describe("spawn()", () => {
 
   it("should allow us to spawn in the default shell", async () => {
     const shellPath: string = await new Promise(resolve => {
-      const child = spawn("echo", [isWindows ? "$env:SHELL" : "$SHELL"], { shell: true });
+      const child = spawn("echo", [isWindows ? "$PSHOME" : "$SHELL"], { shell: true });
       child.stdout.on("data", data => {
         resolve(data.toString().trim());
       });
@@ -240,7 +267,7 @@ describe("spawn()", () => {
   it("should allow us to spawn in a specified shell", async () => {
     const shell = shellExe();
     const shellPath: string = await new Promise(resolve => {
-      const child = spawn("echo", [isWindows ? "$env:SHELL" : "$SHELL"], { shell });
+      const child = spawn("echo", [isWindows ? "$PSHOME" : "$SHELL"], { shell });
       child.stdout.on("data", data => {
         resolve(data.toString().trim());
       });

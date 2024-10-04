@@ -1,8 +1,11 @@
 #pragma once
-#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
+
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
+#include "BunClientData.h"
 
 namespace Zig {
 class GlobalObject;
@@ -15,6 +18,8 @@ class AbstractModuleRecord;
 }
 
 namespace Bun {
+
+using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
@@ -35,7 +40,19 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_filename;
     mutable JSC::WriteBarrier<JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
-    mutable JSC::WriteBarrier<Unknown> m_parent;
+
+    // Visited by the GC. When the module is assigned a non-JSCommonJSModule
+    // parent, it is assigned to this field.
+    //
+    //    module.parent = parent;
+    //
+    mutable JSC::WriteBarrier<Unknown> m_overridenParent;
+
+    // Not visited by the GC.
+    // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
+    // This is the normal state.
+    JSC::Weak<JSCommonJSModule> m_parent {};
+
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
@@ -72,6 +89,11 @@ public:
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
+        JSC::JSString* key,
+        JSValue exportsObject, bool hasEvaluated, JSValue parent);
+
+    static JSCommonJSModule* create(
+        Zig::GlobalObject* globalObject,
         const WTF::String& key,
         ResolvedSource resolvedSource);
 
@@ -83,6 +105,7 @@ public:
         JSC::MarkedArgumentBuffer& exportValues);
 
     JSValue exportsObject();
+    void setExportsObject(JSC::JSValue exportsObject);
     JSValue id();
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
@@ -135,7 +158,7 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
-    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 
@@ -161,7 +184,7 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
-    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 

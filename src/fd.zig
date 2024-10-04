@@ -170,14 +170,29 @@ pub const FDImpl = packed struct {
         return switch (env.os) {
             else => numberToHandle(this.value.as_system),
             .windows => switch (this.kind) {
-                .system => std.debug.panic(
-                    \\Cast {} -> FDImpl.UV makes closing impossible!
-                    \\
-                    \\The supplier of this FileDescriptor should call 'bun.toLibUVOwnedFD'
-                    \\or 'FDImpl.makeLibUVOwned', probably where open() was called.
-                ,
-                    .{this},
-                ),
+                .system => {
+                    const w = std.os.windows;
+
+                    const S = struct {
+                        fn is_stdio_handle(id: w.DWORD, handle: w.HANDLE) bool {
+                            const h = w.GetStdHandle(id) catch return false;
+                            return handle == h;
+                        }
+                    };
+                    const handle = this.encode().cast();
+                    if (S.is_stdio_handle(w.STD_INPUT_HANDLE, handle)) return 0;
+                    if (S.is_stdio_handle(w.STD_OUTPUT_HANDLE, handle)) return 1;
+                    if (S.is_stdio_handle(w.STD_ERROR_HANDLE, handle)) return 2;
+
+                    std.debug.panic(
+                        \\Cast {} -> FDImpl.UV makes closing impossible!
+                        \\
+                        \\The supplier of this FileDescriptor should call 'bun.toLibUVOwnedFD'
+                        \\or 'FDImpl.makeLibUVOwned', probably where open() was called.
+                    ,
+                        .{this},
+                    );
+                },
                 .uv => this.value.as_uv,
             },
         };
@@ -272,7 +287,6 @@ pub const FDImpl = packed struct {
         if (env.isDebug) {
             if (result) |err| {
                 if (err.errno == @intFromEnum(posix.E.BADF)) {
-                    // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{this_fmt});
                 } else {
                     log("close({s}) = {}", .{ this_fmt, err });
@@ -287,8 +301,12 @@ pub const FDImpl = packed struct {
 
     /// This "fails" if not given an int32, returning null in that case
     pub fn fromJS(value: JSValue) ?FDImpl {
-        if (!value.isInt32()) return null;
-        const fd = value.asInt32();
+        if (!value.isAnyInt()) return null;
+        const fd64 = value.toInt64();
+        if (fd64 < 0 or fd64 > std.math.maxInt(i32)) {
+            return null;
+        }
+        const fd: i32 = @intCast(fd64);
         if (comptime env.isWindows) {
             return switch (bun.FDTag.get(fd)) {
                 .stdin => FDImpl.decode(bun.STDIN_FD),
@@ -303,11 +321,12 @@ pub const FDImpl = packed struct {
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
     pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, exception_ref: JSC.C.ExceptionRef) !?FDImpl {
-        if (!value.isInt32()) return null;
-        const fd = value.asInt32();
-        if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
+        if (!value.isAnyInt()) return null;
+        const fd64 = value.toInt64();
+        if (!JSC.Node.Valid.fileDescriptor(fd64, global, exception_ref)) {
             return error.JSException;
         }
+        const fd: i32 = @intCast(fd64);
 
         if (comptime env.isWindows) {
             return switch (bun.FDTag.get(fd)) {

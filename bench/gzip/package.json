@@ -7,5 +7,8 @@
     "bench:node": "$NODE node.mjs",
     "bench:deno": "$DENO run -A --unstable deno.js",
     "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
+  },
+  "dependencies": {
+    "@babel/standalone": "7.24.10"
   }
 }

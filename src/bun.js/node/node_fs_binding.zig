@@ -89,11 +89,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
-        pub fn bind(
-            _: *JSC.Node.NodeJSFS,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) JSC.JSValue {
+        pub fn bind(this: *JSC.Node.NodeJSFS, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
             var arguments = callframe.arguments(8);
 
             var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
@@ -123,7 +119,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
             if (comptime FunctionEnum == .cp) {
-                return Task.create(globalObject, args, globalObject.bunVM(), slice.arena);
+                return Task.create(globalObject, this, args, globalObject.bunVM(), slice.arena);
             } else {
                 if (comptime FunctionEnum == .readdir) {
                     if (args.recursive) {
@@ -131,7 +127,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                     }
                 }
 
-                return Task.create(globalObject, args, globalObject.bunVM());
+                return Task.create(globalObject, this, args, globalObject.bunVM());
             }
         }
     };
@@ -267,4 +263,29 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         module.node_fs.vm = vm;
 
     return module.toJS(globalObject);
+}
+
+pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+    const arguments = callFrame.arguments(1);
+
+    if (arguments.len < 1) {
+        return .undefined;
+    }
+
+    if (comptime !bun.Environment.isLinux) {
+        globalObject.throw("memfd_create is not implemented on this platform", .{});
+        return .zero;
+    }
+
+    const size = arguments.ptr[0].toInt64();
+    switch (bun.sys.memfd_create("my_memfd", std.os.linux.MFD.CLOEXEC)) {
+        .result => |fd| {
+            _ = bun.sys.ftruncate(fd, size);
+            return JSC.JSValue.jsNumber(fd.cast());
+        },
+        .err => |err| {
+            globalObject.throwValue(err.toJSC(globalObject));
+            return .zero;
+        },
+    }
 }

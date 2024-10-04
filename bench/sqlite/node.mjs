@@ -1,8 +1,9 @@
-import { run, bench } from "mitata";
-import { createRequire } from "module";
+// Run `node --experimental-sqlite bench/sqlite/node.mjs` to run the script.
+// You will need `--experimental-sqlite` flag to run this script and node v22.5.0 or higher.
+import { bench, run } from "mitata";
+import { DatabaseSync as Database } from "node:sqlite";
 
-const require = createRequire(import.meta.url);
-const db = require("better-sqlite3")("./src/northwind.sqlite");
+const db = new Database("./src/northwind.sqlite");
 
 {
   const sql = db.prepare(`SELECT * FROM "Order"`);

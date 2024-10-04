@@ -1,7 +1,6 @@
 #include "root.h"
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
-#include "root.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/Strong.h>
 

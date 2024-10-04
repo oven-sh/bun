@@ -5,7 +5,7 @@
 #include <wtf/dtoa.h>
 #include <atomic>
 
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)
 #include <uv.h>
 #endif

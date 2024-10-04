@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "path";
 
 test("reportError", () => {
   const cwd = import.meta.dir;

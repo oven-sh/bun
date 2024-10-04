@@ -25,8 +25,9 @@ typedef int int32_t;
 typedef unsigned int uint32_t;
 typedef long long int64_t;
 typedef unsigned long long uint64_t;
-typedef unsigned long long size_t;
-typedef long intptr_t;
+typedef int64_t ssize_t;
+typedef uint64_t size_t;
+typedef int64_t intptr_t;
 typedef uint64_t uintptr_t;
 typedef _Bool bool;
 

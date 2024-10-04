@@ -911,7 +911,8 @@ pub const Resolver = struct {
         }
     }
 
-    /// Runs a resolution but also checking if a Bun Kit framework has an override. This is used in one place in the bundler.
+    /// Runs a resolution but also checking if a Bun Bake framework has an
+    /// override. This is used in one place in the bundler.
     pub fn resolveWithFramework(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
         if (r.opts.framework) |f| {
             if (f.built_in_modules.get(import_path)) |mod| {

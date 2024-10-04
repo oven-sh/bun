@@ -127,7 +127,7 @@ const debugPartRanges = Output.scoped(.PartRanges, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
-const kit = bun.kit;
+const bake = bun.bake;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -331,10 +331,10 @@ pub const BundleV2 = struct {
     /// When Server Component is enabled, this is used for the client bundles
     /// and `bundler` is used for the server bundles.
     client_bundler: *Bundler,
-    /// See kit.Framework.ServerComponents.separate_ssr_graph
+    /// See bake.Framework.ServerComponents.separate_ssr_graph
     ssr_bundler: *Bundler,
-    /// When Bun Kit is used, the resolved framework is passed here
-    framework: ?kit.Framework,
+    /// When Bun Bake is used, the resolved framework is passed here
+    framework: ?bake.Framework,
     graph: Graph,
     linker: LinkerContext,
     bun_watcher: ?*bun.JSC.Watcher,
@@ -352,7 +352,7 @@ pub const BundleV2 = struct {
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
     const KitOptions = struct {
-        framework: kit.Framework,
+        framework: bake.Framework,
         client_bundler: *Bundler,
         ssr_bundler: *Bundler,
     };
@@ -569,7 +569,7 @@ pub const BundleV2 = struct {
         ) catch |err| {
             // Only perform directory busting when hot-reloading is enabled
             if (err == error.ModuleNotFound) {
-                if (this.bundler.options.kit) |dev| {
+                if (this.bundler.options.dev_server) |dev| {
                     if (!had_busted_dir_cache) {
                         // Only re-query if we previously had something cached.
                         if (bundler.resolver.bustDirCacheFromSpecifier(import_record.source_file, import_record.specifier)) {
@@ -582,7 +582,7 @@ pub const BundleV2 = struct {
                     dev.directory_watchers.trackResolutionFailure(
                         import_record.source_file,
                         import_record.specifier,
-                        target.kitRenderer(),
+                        target.bakeRenderer(),
                     ) catch bun.outOfMemory();
                 }
             }
@@ -839,10 +839,10 @@ pub const BundleV2 = struct {
         this.bundler.log.msgs.allocator = this.graph.allocator;
         this.bundler.log.clone_line_text = true;
 
-        // We don't expose an option to disable this. Kit requires tree-shaking
-        // disabled since every export must is always exist in case a future
-        // module starts depending on it.
-        if (this.bundler.options.output_format == .internal_kit_dev) {
+        // We don't expose an option to disable this. Bake forbids tree-shaking
+        // since every export must is always exist in case a future module
+        // starts depending on it.
+        if (this.bundler.options.output_format == .internal_bake_dev) {
             this.bundler.options.tree_shaking = false;
             this.bundler.resolver.opts.tree_shaking = false;
         } else {
@@ -865,7 +865,7 @@ pub const BundleV2 = struct {
         this.linker.options.public_path = bundler.options.public_path;
         this.linker.options.target = bundler.options.target;
         this.linker.options.output_format = bundler.options.output_format;
-        this.linker.kit_dev_server = bundler.options.kit;
+        this.linker.dev_server = bundler.options.dev_server;
 
         this.graph.generate_bytecode_cache = bundler.options.bytecode;
 
@@ -913,8 +913,8 @@ pub const BundleV2 = struct {
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
-        // Kit has two source indexes which are computed at the end of the
-        // Scan+Parse phase, but reserved now so that resolution works.
+        // Bake reserves two source indexes at the start of the file list, but
+        // gets its content set after the scan+parse phase, but before linking.
         try this.reserveSourceIndexesForKit();
 
         {
@@ -972,7 +972,7 @@ pub const BundleV2 = struct {
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
     /// at the same time in one pass over the SBC list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
-        // If Kit is not being used, do nothing
+        // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
@@ -981,8 +981,8 @@ pub const BundleV2 = struct {
 
         const alloc = this.graph.allocator;
 
-        var server = try AstBuilder.init(this.graph.allocator, &kit.server_virtual_source, this.bundler.options.hot_module_reloading);
-        var client = try AstBuilder.init(this.graph.allocator, &kit.client_virtual_source, this.bundler.options.hot_module_reloading);
+        var server = try AstBuilder.init(this.graph.allocator, &bake.server_virtual_source, this.bundler.options.hot_module_reloading);
+        var client = try AstBuilder.init(this.graph.allocator, &bake.client_virtual_source, this.bundler.options.hot_module_reloading);
 
         var server_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
         var client_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
@@ -1014,7 +1014,7 @@ pub const BundleV2 = struct {
                 // re-generate this file later with the properly decided
                 // manifest. However, I will probably reconsider how this
                 // manifest is being generated when I write the whole
-                // "production build" part of Kit.
+                // "production build" part of Bake.
 
                 const keys = named_exports_array[source_id].keys();
                 const client_manifest_items = try alloc.alloc(G.Property, keys.len);
@@ -1087,8 +1087,8 @@ pub const BundleV2 = struct {
             .is_export = true,
         });
 
-        this.graph.ast.set(Index.kit_server_data.get(), try server.toBundledAst(.bun));
-        this.graph.ast.set(Index.kit_client_data.get(), try client.toBundledAst(.browser));
+        this.graph.ast.set(Index.bake_server_data.get(), try server.toBundledAst(.bun));
+        this.graph.ast.set(Index.bake_client_data.get(), try client.toBundledAst(.browser));
     }
 
     pub fn enqueueParseTask(
@@ -1988,8 +1988,8 @@ pub const BundleV2 = struct {
         try this.graph.ast.ensureUnusedCapacity(this.graph.allocator, 2);
         try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, 2);
 
-        const server_source = kit.server_virtual_source;
-        const client_source = kit.client_virtual_source;
+        const server_source = bake.server_virtual_source;
+        const client_source = bake.client_virtual_source;
 
         this.graph.input_files.appendAssumeCapacity(.{
             .source = server_source,
@@ -2002,8 +2002,8 @@ pub const BundleV2 = struct {
             .side_effects = .no_side_effects__pure_data,
         });
 
-        bun.assert(this.graph.input_files.items(.source)[Index.kit_server_data.get()].index.get() == Index.kit_server_data.get());
-        bun.assert(this.graph.input_files.items(.source)[Index.kit_client_data.get()].index.get() == Index.kit_client_data.get());
+        bun.assert(this.graph.input_files.items(.source)[Index.bake_server_data.get()].index.get() == Index.bake_server_data.get());
+        bun.assert(this.graph.input_files.items(.source)[Index.bake_client_data.get()].index.get() == Index.bake_client_data.get());
 
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
@@ -2054,7 +2054,7 @@ pub const BundleV2 = struct {
             if (this.framework) |fw| if (fw.server_components != null) {
                 switch (ast.target.isServerSide()) {
                     inline else => |is_server| {
-                        const src = if (is_server) kit.server_virtual_source else kit.client_virtual_source;
+                        const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
                             if (is_server) {
                                 this.graph.kit_referenced_server_data = true;
@@ -2123,8 +2123,8 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const bundler, const renderer: kit.Renderer, const target =
-                if (import_record.tag == .kit_resolve_to_ssr_graph)
+            const bundler, const renderer: bake.Renderer, const target =
+                if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
                 // TODO: consider moving this error into js_parser so it is caught more reliably
                 // Then we can assert(this.framework != null)
@@ -2133,7 +2133,7 @@ pub const BundleV2 = struct {
                         source,
                         import_record.range.loc,
                         this.graph.allocator,
-                        "The 'bun_kit_graph' import attribute cannot be used outside of a Bun Kit bundle",
+                        "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
                         .{},
                     ) catch @panic("unexpected log error");
                     continue;
@@ -2159,7 +2159,7 @@ pub const BundleV2 = struct {
                 };
             } else .{
                 this.bundlerForTarget(ast.target),
-                ast.target.kitRenderer(),
+                ast.target.bakeRenderer(),
                 ast.target,
             };
 
@@ -2171,7 +2171,7 @@ pub const BundleV2 = struct {
             ) catch |err| {
                 // Only perform directory busting when hot-reloading is enabled
                 if (err == error.ModuleNotFound) {
-                    if (this.bundler.options.kit) |dev| {
+                    if (this.bundler.options.dev_server) |dev| {
                         if (!had_busted_dir_cache) {
                             // Only re-query if we previously had something cached.
                             if (bundler.resolver.bustDirCacheFromSpecifier(
@@ -2187,7 +2187,7 @@ pub const BundleV2 = struct {
                         dev.directory_watchers.trackResolutionFailure(
                             source.path.text,
                             import_record.path.text,
-                            ast.target.kitRenderer(), // use the source file target not the altered one
+                            ast.target.bakeRenderer(), // use the source file target not the altered one
                         ) catch bun.outOfMemory();
                     }
                 }
@@ -2266,7 +2266,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (this.bundler.options.kit) |dev_server| {
+            if (this.bundler.options.dev_server) |dev_server| {
                 // TODO(paperdave/kit): this relative can be done without a clone in most cases
                 if (!dev_server.isFileStale(path.text, renderer)) {
                     import_record.source_index = Index.invalid;
@@ -2602,7 +2602,7 @@ pub const BundleV2 = struct {
 /// Used to keep the bundle thread from spinning on Windows
 pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
 
-/// Originally, kit.DevServer required a separate bundling thread, but that was
+/// Originally, bake.DevServer required a separate bundling thread, but that was
 /// later removed. The bundling thread's scheduling logic is generalized over
 /// the completion structure.
 ///
@@ -2634,8 +2634,7 @@ pub fn BundleThread(CompletionStruct: type) type {
         }
 
         /// Lazily-initialized singleton. This is used for `Bun.build` since the
-        /// bundle thread may not be needed. Kit always uses the bundler, so it
-        /// just initializes `BundleThread`
+        /// bundle thread may not be needed.
         pub const singleton = struct {
             var once = std.once(loadOnceImpl);
             var instance: ?*Self = null;
@@ -3366,7 +3365,7 @@ pub const ParseTask = struct {
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.use_import_meta_require = target.isBun();
-        opts.features.top_level_await = output_format == .esm or output_format == .internal_kit_dev;
+        opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
         opts.features.trim_unused_imports = loader.isTypeScript() or (bundler.options.trim_unused_imports orelse false);
         opts.features.inlining = bundler.options.minify_syntax;
@@ -3375,7 +3374,7 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;
-        opts.features.hot_module_reloading = output_format == .internal_kit_dev and !source.index.isRuntime();
+        opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
         opts.features.react_fast_refresh = target == .browser and
             bundler.options.react_fast_refresh and
             loader.isJSX() and
@@ -4564,9 +4563,9 @@ pub const LinkerContext = struct {
     /// to know whether or not we can free it safely.
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-    /// Used by Kit to extract []CompileResult before it is joined
-    kit_dev_server: ?*bun.kit.DevServer = null,
-    framework: ?*const kit.Framework = null,
+    /// Used by Bake to extract []CompileResult before it is joined
+    dev_server: ?*bun.bake.DevServer = null,
+    framework: ?*const bake.Framework = null,
 
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
@@ -4866,7 +4865,7 @@ pub const LinkerContext = struct {
 
         // The dev server never compiles chunks, and requires every reachable
         // file to be printed, So the logic is special-cased.
-        if (this.kit_dev_server != null) {
+        if (this.dev_server != null) {
             var js_chunks = try std.ArrayListUnmanaged(Chunk).initCapacity(this.allocator, 1);
             const entry_bits = &this.graph.files.items(.entry_bits)[0];
 
@@ -6432,7 +6431,7 @@ pub const LinkerContext = struct {
                         count += "init_".len + ident_fmt_len;
                     }
 
-                    if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
+                    if (wrap != .cjs and export_kind != .cjs and output_format != .internal_bake_dev) {
                         count += "exports_".len + ident_fmt_len;
                         count += "module_".len + ident_fmt_len;
                     }
@@ -6480,7 +6479,7 @@ pub const LinkerContext = struct {
                 // actual CommonJS files from being renamed. This is purely about
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
-                if (wrap != .cjs and export_kind != .cjs and output_format != .internal_kit_dev) {
+                if (wrap != .cjs and export_kind != .cjs and output_format != .internal_bake_dev) {
                     const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
                     const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
 
@@ -6628,7 +6627,7 @@ pub const LinkerContext = struct {
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
-                    if (force_include_exports and output_format != .internal_kit_dev) {
+                    if (force_include_exports and output_format != .internal_bake_dev) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             Index.part(entry_point_part_index),
@@ -6655,7 +6654,7 @@ pub const LinkerContext = struct {
 
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
-                            if (output_format == .internal_kit_dev) continue;
+                            if (output_format == .internal_bake_dev) continue;
 
                             // This is an external import. Check if it will be a "require()" call.
                             if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
@@ -6726,7 +6725,7 @@ pub const LinkerContext = struct {
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
-                            if (kind != .require and other_export_kind == .cjs and output_format != .internal_kit_dev) {
+                            if (kind != .require and other_export_kind == .cjs and output_format != .internal_bake_dev) {
                                 record.wrap_with_to_esm = true;
                                 to_esm_uses += 1;
                             }
@@ -6822,7 +6821,7 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    if (output_format != .internal_kit_dev) {
+                    if (output_format != .internal_bake_dev) {
                         // If there's an ES6 import of a CommonJS module, then we're going to need the
                         // "__toESM" symbol from the runtime to wrap the result of "require()"
                         this.graph.generateRuntimeSymbolImportAndUse(
@@ -7105,7 +7104,7 @@ pub const LinkerContext = struct {
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
             c.graph.ast.items(.parts)[id].slice()[js_ast.namespace_export_part_index] = .{
-                .stmts = if (c.options.output_format != .internal_kit_dev) all_export_stmts else &.{},
+                .stmts = if (c.options.output_format != .internal_bake_dev) all_export_stmts else &.{},
                 .symbol_uses = ns_export_symbol_uses,
                 .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
                 .declared_symbols = declared_symbols,
@@ -8273,10 +8272,10 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "generateCodeForFileInChunkJS");
         defer trace.end();
 
-        // Client bundles for Kit must be globally allocated,
+        // Client bundles for Bake must be globally allocated,
         // as it must outlive the bundle task.
-        const use_global_allocator = c.kit_dev_server != null and
-            c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer() == .client;
+        const use_global_allocator = c.dev_server != null and
+            c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeRenderer() == .client;
 
         var arena = &worker.temporary_arena;
         var buffer_writer = js_printer.BufferWriter.init(
@@ -8744,7 +8743,7 @@ pub const LinkerContext = struct {
 
         // For Kit, hoist runtime.js outside of the IIFE
         const compile_results = chunk.compile_results_for_chunk;
-        if (c.options.output_format == .internal_kit_dev) {
+        if (c.options.output_format == .internal_bake_dev) {
             for (compile_results) |compile_result| {
                 const source_index = compile_result.sourceIndex();
                 if (source_index != Index.runtime.value) break;
@@ -8754,8 +8753,8 @@ pub const LinkerContext = struct {
         }
 
         switch (c.options.output_format) {
-            .internal_kit_dev => {
-                const start = bun.kit.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
+            .internal_bake_dev => {
+                const start = bun.bake.getHmrRuntime(if (c.options.target.isBun()) .server else .client);
                 j.pushStatic(start);
                 line_offset.advance(start);
             },
@@ -8814,7 +8813,7 @@ pub const LinkerContext = struct {
                     CommentType.single;
 
                 if (!c.options.minify_whitespace and
-                    (output_format == .iife or output_format == .internal_kit_dev))
+                    (output_format == .iife or output_format == .internal_bake_dev))
                 {
                     j.pushStatic("  ");
                     line_offset.advance("  ");
@@ -8847,7 +8846,7 @@ pub const LinkerContext = struct {
             }
 
             if (is_runtime) {
-                if (c.options.output_format != .internal_kit_dev) {
+                if (c.options.output_format != .internal_bake_dev) {
                     line_offset.advance(compile_result.code());
                     j.push(compile_result.code(), bun.default_allocator);
                 }
@@ -8901,7 +8900,7 @@ pub const LinkerContext = struct {
 
                 j.pushStatic(with_newline);
             },
-            .internal_kit_dev => {
+            .internal_bake_dev => {
                 {
                     const str = "}, {\n  main: ";
                     j.pushStatic(str);
@@ -9634,7 +9633,7 @@ pub const LinkerContext = struct {
             // TODO: iife
             .iife => {},
 
-            .internal_kit_dev => {
+            .internal_bake_dev => {
                 // nothing needs to be done here, as the exports are already
                 // forwarded in the module closure.
             },
@@ -10613,7 +10612,7 @@ pub const LinkerContext = struct {
         // - export wrapping is already done.
         // - import wrapping needs to know resolved paths
         // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
-        if (c.options.output_format == .internal_kit_dev) {
+        if (c.options.output_format == .internal_bake_dev) {
             bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
 
             for (parts) |part| {
@@ -11204,7 +11203,7 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_kit_dev)
+            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_bake_dev)
                 ast.module_ref
             else
                 Ref.None,
@@ -11234,7 +11233,7 @@ pub const LinkerContext = struct {
             .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
             .target = c.options.target,
 
-            .input_files_for_kit = if (c.options.output_format == .internal_kit_dev)
+            .input_files_for_dev_server = if (c.options.output_format == .internal_bake_dev)
                 c.parse_graph.input_files.items(.source)
             else
                 null,
@@ -11418,7 +11417,7 @@ pub const LinkerContext = struct {
                                         "Part Range: {s} {s} ({d}..{d})",
                                         .{
                                             c.parse_graph.input_files.items(.source)[part_range.source_index.get()].path.pretty,
-                                            @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].kitRenderer()),
+                                            @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeRenderer()),
                                             part_range.part_index_begin,
                                             part_range.part_index_end,
                                         },
@@ -11469,7 +11468,7 @@ pub const LinkerContext = struct {
                 c.source_maps.quoted_contents_tasks.len = 0;
             }
 
-            // When kit.DevServer is in use, we're going to take a different code path at the end.
+            // When bake.DevServer is in use, we're going to take a different code path at the end.
             // We want to extract the source code of each part instead of combining it into a single file.
             // This is so that when hot-module updates happen, we can:
             //
@@ -11478,7 +11477,7 @@ pub const LinkerContext = struct {
             //
             // When this isnt the initial bundle, concatenation as usual would produce a
             // broken module. It is DevServer's job to create and send HMR patches.
-            if (c.kit_dev_server) |dev_server| {
+            if (c.dev_server) |dev_server| {
                 const input_file_sources = c.parse_graph.input_files.items(.source);
                 const import_records = c.parse_graph.ast.items(.import_records);
                 const targets = c.parse_graph.ast.items(.target);
@@ -11504,7 +11503,7 @@ pub const LinkerContext = struct {
                     try dev_server.receiveChunk(
                         &ctx,
                         part_range.source_index,
-                        targets[part_range.source_index.get()].kitRenderer(),
+                        targets[part_range.source_index.get()].bakeRenderer(),
                         compile_result,
                     );
                 }
@@ -11514,7 +11513,7 @@ pub const LinkerContext = struct {
                     try dev_server.processChunkDependencies(
                         &ctx,
                         part_range.source_index,
-                        targets[part_range.source_index.get()].kitRenderer(),
+                        targets[part_range.source_index.get()].bakeRenderer(),
                         c.allocator,
                     );
                 }
@@ -12357,7 +12356,7 @@ pub const LinkerContext = struct {
                 .{
                     entry_points_count,
                     c.parse_graph.input_files.items(.source)[source_index].path.pretty,
-                    @tagName(c.parse_graph.ast.items(.target)[source_index].kitRenderer()),
+                    @tagName(c.parse_graph.ast.items(.target)[source_index].bakeRenderer()),
                     out_dist,
                 },
             );
@@ -12430,7 +12429,7 @@ pub const LinkerContext = struct {
             debugTreeShake("markFileLiveForTreeShaking({d}, {s} {s}) = {s}", .{
                 source_index,
                 c.parse_graph.input_files.get(source_index).source.path.pretty,
-                @tagName(c.parse_graph.ast.items(.target)[source_index].kitRenderer()),
+                @tagName(c.parse_graph.ast.items(.target)[source_index].bakeRenderer()),
                 if (c.graph.files_live.isSet(source_index)) "already seen" else "first seen",
             });
         }
@@ -12926,7 +12925,7 @@ pub const LinkerContext = struct {
                 }
 
                 // Generate a dummy part that depends on the "__commonJS" symbol.
-                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_kit_dev) brk: {
+                const dependencies: []js_ast.Dependency = if (c.options.output_format != .internal_bake_dev) brk: {
                     const dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch bun.outOfMemory();
                     for (common_js_parts, dependencies) |part, *cjs| {
                         cjs.* = .{
@@ -12961,8 +12960,8 @@ pub const LinkerContext = struct {
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
 
-                // Kit uses a wrapping approach that does not use __commonJS
-                if (c.options.output_format != .internal_kit_dev) {
+                // Bake uses a wrapping approach that does not use __commonJS
+                if (c.options.output_format != .internal_bake_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,
@@ -12984,7 +12983,7 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev)
+                const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
@@ -13016,7 +13015,7 @@ pub const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-                if (wrapper_ref.isValid() and c.options.output_format != .internal_kit_dev) {
+                if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev) {
                     c.graph.generateSymbolImportAndUse(
                         source_index,
                         part_index,

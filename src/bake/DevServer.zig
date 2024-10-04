@@ -7,7 +7,7 @@
 //! the remainder of this process' lifespan. Later, it will be required to fully
 //! clean up server state.
 pub const DevServer = @This();
-pub const debug = bun.Output.Scoped(.Kit, false);
+pub const debug = bun.Output.Scoped(.Bake, false);
 
 pub const Options = struct {
     allocator: ?Allocator = null, // defaults to a named heap
@@ -224,7 +224,7 @@ pub fn init(options: Options) !*DevServer {
         .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
     }) catch |err|
         Output.panic("Failed to create Global object: {}", .{err});
-    dev.server_global = c.KitCreateDevGlobal(dev, dev.vm.console);
+    dev.server_global = c.BakeCreateDevGlobal(dev, dev.vm.console);
     dev.vm.global = dev.server_global.js();
     dev.vm.regular_event_loop.global = dev.vm.global;
     dev.vm.jsc = dev.vm.global.vm();
@@ -289,7 +289,7 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: bake.Rende
     };
     bundler.options.entry_points = &.{};
     bundler.options.log = &dev.log;
-    bundler.options.output_format = .internal_kit_dev;
+    bundler.options.output_format = .internal_bake_dev;
     bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
     bundler.options.hot_module_reloading = true;
 
@@ -311,7 +311,7 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: bake.Rende
     bundler.options.minify_identifiers = false;
     bundler.options.minify_whitespace = false;
 
-    bundler.options.kit = dev;
+    bundler.options.dev_server = dev;
     bundler.options.framework = &dev.framework;
 
     bundler.configureLinker();
@@ -507,7 +507,7 @@ fn theRealBundlingFunction(
             const abs_path = file.path.text;
             if (!std.fs.path.isAbsolute(abs_path)) continue;
 
-            switch (target.kitRenderer()) {
+            switch (target.bakeRenderer()) {
                 .server => {
                     _ = dev.server_graph.insertStale(abs_path, false) catch bun.outOfMemory();
                 },
@@ -571,7 +571,7 @@ fn theRealBundlingFunction(
 
     if (server_bundle.len > 0) {
         if (is_first_server_chunk) {
-            const server_code = c.KitLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
+            const server_code = c.BakeLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
                 fail.* = Failure.fromJSServerLoad(dev.server_global.js().takeException(err), dev.server_global.js());
                 return error.ServerJSLoad;
             };
@@ -586,7 +586,7 @@ fn theRealBundlingFunction(
                 .fulfilled => |v| bun.assert(v == .undefined),
             }
 
-            const default_export = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
+            const default_export = c.BakeGetRequestHandlerFromModule(dev.server_global, server_code.key);
             if (!default_export.isObject())
                 @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
             const fetch_function: JSValue = default_export.get(dev.server_global.js(), "handleRequest") orelse
@@ -600,7 +600,7 @@ fn theRealBundlingFunction(
             fetch_function.ensureStillAlive();
             register_update.ensureStillAlive();
         } else {
-            const server_code = c.KitLoadServerHmrPatch(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
+            const server_code = c.BakeLoadServerHmrPatch(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
                 // No user code has been evaluated yet, since everything is to
                 // be wrapped in a function clousure. This means that the likely
                 // error is going to be a syntax error, or other mistake in the
@@ -780,7 +780,7 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
     const bun_string = result.toBunString(dev.server_global.js());
     defer bun_string.deref();
     if (bun_string.tag == .Dead) {
-        bun.todoPanic(@src(), "Kit: support non-string return value", .{});
+        bun.todoPanic(@src(), "Bake: support non-string return value", .{});
     }
 
     const utf8 = bun_string.toUTF8(dev.allocator);
@@ -836,7 +836,7 @@ fn sendBuiltInNotFound(resp: *Response) void {
     resp.end(message, true);
 }
 
-/// The paradigm of Kit's incremental state is to store a separate list of files
+/// The paradigm of Bake's incremental state is to store a separate list of files
 /// than the Graph in bundle_v2. When watch events happen, the bundler is run on
 /// the changed files, excluding non-stale files via `isFileStale`.
 ///
@@ -1169,7 +1169,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (g.current_chunk_len == 0) return "";
 
             const runtime = switch (kind) {
-                .initial_response => bun.kit.getHmrRuntime(side),
+                .initial_response => bun.bake.getHmrRuntime(side),
                 .hmr_chunk => "({\n",
             };
 
@@ -1745,7 +1745,7 @@ const DevWebSocket = struct {
     }
 };
 
-/// Kit uses a special global object extending Zig::GlobalObject
+/// Bake uses a special global object extending Zig::GlobalObject
 pub const DevGlobalObject = opaque {
     /// Safe downcast to use other Bun APIs
     pub fn js(ptr: *DevGlobalObject) *JSC.JSGlobalObject {
@@ -1757,23 +1757,23 @@ pub const DevGlobalObject = opaque {
     }
 };
 
-pub const KitSourceProvider = opaque {};
+pub const BakeSourceProvider = opaque {};
 
 const c = struct {
-    // KitDevGlobalObject.cpp
-    extern fn KitCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
+    // BakeDevGlobalObject.cpp
+    extern fn BakeCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
 
-    // KitSourceProvider.cpp
-    extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
+    // BakeSourceProvider.cpp
+    extern fn BakeGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
 
     const LoadServerCodeResult = struct {
         promise: *JSInternalPromise,
         key: *JSC.JSString,
     };
 
-    fn KitLoadServerHmrPatch(global: *DevGlobalObject, code: bun.String) !JSValue {
+    fn BakeLoadServerHmrPatch(global: *DevGlobalObject, code: bun.String) !JSValue {
         const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) JSValue, .{
-            .name = "KitLoadServerHmrPatch",
+            .name = "BakeLoadServerHmrPatch",
         });
         const result = f(global, code);
         if (result == .zero) {
@@ -1783,13 +1783,13 @@ const c = struct {
         return result;
     }
 
-    fn KitLoadInitialServerCode(global: *DevGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
+    fn BakeLoadInitialServerCode(global: *DevGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
         const Return = extern struct {
             promise: ?*JSInternalPromise,
             key: *JSC.JSString,
         };
         const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) Return, .{
-            .name = "KitLoadInitialServerCode",
+            .name = "BakeLoadInitialServerCode",
         });
         const result = f(global, code);
         return .{
@@ -2070,7 +2070,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const assert = bun.assert;
 
-const bake = bun.kit;
+const bake = bun.bake;
 
 const Log = bun.logger.Log;
 

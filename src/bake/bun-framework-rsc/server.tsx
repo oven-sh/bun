@@ -1,6 +1,6 @@
 import type { Bake } from "bun";
 import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
-import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunKitGraph: "ssr" };
+import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
 
 // `server.tsx` exports a function to be used for handling user routes. It takes

@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
 #define FFI_EXPORT __declspec(dllexport)
@@ -65,6 +66,8 @@ FFI_EXPORT uint16_t add_uint16_t(uint16_t a, uint16_t b);
 FFI_EXPORT uint32_t add_uint32_t(uint32_t a, uint32_t b);
 FFI_EXPORT uint64_t add_uint64_t(uint64_t a, uint64_t b);
 
+FFI_EXPORT bool memset_and_memcpy_work(void);
+
 bool returns_false() { return false; }
 bool returns_true() { return true; }
 char returns_42_char() { return '*'; }
@@ -79,18 +82,20 @@ uint32_t returns_42_uint32_t() { return 42; }
 uint64_t returns_42_uint64_t() { return 42; }
 uint8_t returns_42_uint8_t() { return (uint8_t)42; }
 
-char identity_char(char a) { return a; }
-float identity_float(float a) { return a; }
-double identity_double(double a) { return a; }
-int8_t identity_int8_t(int8_t a) { return a; }
-int16_t identity_int16_t(int16_t a) { return a; }
-int32_t identity_int32_t(int32_t a) { return a; }
-int64_t identity_int64_t(int64_t a) { return a; }
-uint8_t identity_uint8_t(uint8_t a) { return a; }
-uint16_t identity_uint16_t(uint16_t a) { return a; }
-uint32_t identity_uint32_t(uint32_t a) { return a; }
-uint64_t identity_uint64_t(uint64_t a) { return a; }
-bool identity_bool(bool ident) { return ident; }
+// these all add 0 because for floats it causes the bit pattern of a NaN to
+// change, which can reveal bugs if we don't unbox JSValue correctly
+char identity_char(char a) { return a + 0; }
+float identity_float(float a) { return a + 0.0f; }
+double identity_double(double a) { return a + 0.1; }
+int8_t identity_int8_t(int8_t a) { return a + 0; }
+int16_t identity_int16_t(int16_t a) { return a + 0; }
+int32_t identity_int32_t(int32_t a) { return a + 0; }
+int64_t identity_int64_t(int64_t a) { return a + 0; }
+uint8_t identity_uint8_t(uint8_t a) { return a + 0; }
+uint16_t identity_uint16_t(uint16_t a) { return a + 0; }
+uint32_t identity_uint32_t(uint32_t a) { return a + 0; }
+uint64_t identity_uint64_t(uint64_t a) { return a + 0; }
+bool identity_bool(bool ident) { return !!ident; }
 void *identity_ptr(void *ident) { return ident; }
 
 char add_char(char a, char b) { return a + b; }
@@ -130,22 +135,68 @@ FFI_EXPORT bool is_null(int32_t *ptr) { return ptr == NULL; }
 FFI_EXPORT bool does_pointer_equal_42_as_int32_t(int32_t *ptr);
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr) { return *ptr == 42; }
 
-FFI_EXPORT void *return_a_function_ptr_to_function_that_returns_true();
-void *return_a_function_ptr_to_function_that_returns_true() {
-  return (void *)&returns_true;
+FFI_EXPORT bool (*return_a_function_ptr_to_function_that_returns_true())();
+bool (*return_a_function_ptr_to_function_that_returns_true())() {
+  return &returns_true;
 }
 
-FFI_EXPORT bool cb_identity_true(bool (*cb)()) { return cb(); }
+FFI_EXPORT bool cb_identity_true(bool (*cb)()) { return !!cb(); }
+FFI_EXPORT bool cb_identity_false(bool (*cb)()) { return !!cb(); }
+FFI_EXPORT char cb_identity_42_char(char (*cb)()) { return cb() + 0; }
+FFI_EXPORT float cb_identity_42_float(float (*cb)()) { return cb() + 0.0f; }
+FFI_EXPORT double cb_identity_42_double(double (*cb)()) { return cb() + 0.0; }
+FFI_EXPORT uint8_t cb_identity_42_uint8_t(uint8_t (*cb)()) { return cb() + 0; }
+FFI_EXPORT int8_t cb_identity_neg_42_int8_t(int8_t (*cb)()) { return cb() + 0; }
+FFI_EXPORT uint16_t cb_identity_42_uint16_t(uint16_t (*cb)()) {
+  return cb() + 0;
+}
+FFI_EXPORT uint32_t cb_identity_42_uint32_t(uint32_t (*cb)()) {
+  return cb() + 0;
+}
+FFI_EXPORT uint64_t cb_identity_42_uint64_t(uint64_t (*cb)()) {
+  return cb() + 0;
+}
+FFI_EXPORT int16_t cb_identity_neg_42_int16_t(int16_t (*cb)()) {
+  return cb() + 0;
+}
+FFI_EXPORT int32_t cb_identity_neg_42_int32_t(int32_t (*cb)()) {
+  return cb() + 0;
+}
+FFI_EXPORT int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) {
+  return cb() + 0;
+}
 
-FFI_EXPORT bool cb_identity_false(bool (*cb)()) { return cb(); }
-FFI_EXPORT char cb_identity_42_char(char (*cb)()) { return cb(); }
-FFI_EXPORT float cb_identity_42_float(float (*cb)()) { return cb(); }
-FFI_EXPORT double cb_identity_42_double(double (*cb)()) { return cb(); }
-FFI_EXPORT uint8_t cb_identity_42_uint8_t(uint8_t (*cb)()) { return cb(); }
-FFI_EXPORT int8_t cb_identity_neg_42_int8_t(int8_t (*cb)()) { return cb(); }
-FFI_EXPORT uint16_t cb_identity_42_uint16_t(uint16_t (*cb)()) { return cb(); }
-FFI_EXPORT uint32_t cb_identity_42_uint32_t(uint32_t (*cb)()) { return cb(); }
-FFI_EXPORT uint64_t cb_identity_42_uint64_t(uint64_t (*cb)()) { return cb(); }
-FFI_EXPORT int16_t cb_identity_neg_42_int16_t(int16_t (*cb)()) { return cb(); }
-FFI_EXPORT int32_t cb_identity_neg_42_int32_t(int32_t (*cb)()) { return cb(); }
-FFI_EXPORT int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) { return cb(); }
+bool memset_and_memcpy_work(void) {
+  char dst[10] = {0};
+  char src[10] = {0};
+
+  if (memset(src, 5, 9) != src) {
+    return false;
+  }
+  for (int i = 0; i < 9; i++) {
+    if (src[i] != 5) {
+      return false;
+    }
+  }
+  if (src[9] != 0) {
+    return false;
+  }
+
+  for (int i = 0; i < 10; i++) {
+    src[i] = i + 1;
+  }
+
+  if (memcpy(dst, src, 9) != dst) {
+    return false;
+  }
+  for (int i = 0; i < 9; i++) {
+    if (dst[i] != src[i]) {
+      return false;
+    }
+  }
+  if (dst[9] != 0) {
+    return false;
+  }
+
+  return true;
+}

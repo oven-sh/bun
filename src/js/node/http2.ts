@@ -1765,8 +1765,10 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     }
     stream[bunHTTP2Closed] = true;
     stream[bunHTTP2Session] = null;
-    stream.resume(); // we have a error we consume and close
-    stream.push(null);
+    if (stream.readable) {
+      stream.resume(); // we have a error we consume and close
+      stream.push(null);
+    }
 
     if (destroy) stream.destroy(error_instance, stream.rstCode);
     else {
@@ -1836,7 +1838,7 @@ class ServerHttp2Session extends Http2Session {
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
-      if (stream.rstCode === undefined) {
+      if (stream.readable) {
         stream.rstCode = 0;
         // If the user hasn't tried to consume the stream (and this is a server
         // session) then just dump the incoming data so that the stream can
@@ -2191,7 +2193,6 @@ class ServerHttp2Session extends Http2Session {
     this.#connected = false;
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-      socket.resume();
       socket.end();
     } else {
       this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
@@ -2267,11 +2268,11 @@ class ClientHttp2Session extends Http2Session {
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
-      if (stream.rstCode === undefined) {
+      if (stream.readable) {
         stream.rstCode = 0;
-        stream.push(null);
         // Push a null so the stream can end whenever the client consumes
         // it completely.
+        stream.push(null);
         stream.read(0);
       }
 

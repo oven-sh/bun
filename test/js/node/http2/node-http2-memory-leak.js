@@ -100,6 +100,8 @@ async function main() {
     await sleep(10);
     gc(true);
     await sleep(10);
+    gc(true);
+
     // take an end snapshot
     const end = process.memoryUsage.rss();
 

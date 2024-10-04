@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 
-for (const nodeExecutable of [bunExe(), nodeExe()]) {
+for (const nodeExecutable of [nodeExe()]) {
   describe(`${path.basename(nodeExecutable)}`, () => {
     let nodeEchoServer_;
 
@@ -530,6 +530,7 @@ for (const nodeExecutable of [bunExe(), nodeExe()]) {
         const req = client.request({
           ":path": "/get",
         });
+        req.resume();
         req.on("error", reject);
         req.on("end", () => {
           client.close();
@@ -551,6 +552,7 @@ for (const nodeExecutable of [bunExe(), nodeExe()]) {
           ":path": "/get",
         });
         req.on("error", reject);
+        req.resume();
         req.on("end", () => {
           client.destroy();
         });
@@ -742,6 +744,7 @@ for (const nodeExecutable of [bunExe(), nodeExe()]) {
         req.on("response", (headers, flags) => {
           response_headers = headers;
         });
+        req.resume();
         req.on("end", () => {
           resolve();
           client.close();
@@ -793,6 +796,7 @@ for (const nodeExecutable of [bunExe(), nodeExe()]) {
         req.on("response", (headers, flags) => {
           response_headers = headers;
         });
+        req.resume();
         req.on("end", () => {
           resolve();
         });

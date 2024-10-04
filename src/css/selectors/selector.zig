@@ -72,10 +72,12 @@ pub const serialize = struct {
         var is_relative = __is_relative;
 
         if (comptime bun.Environment.isDebug) {
+            std.debug.print("Selector components:\n", .{});
             for (selector.components.items) |*comp| {
-                std.debug.print("Selector components:\n  {}", .{comp});
+                std.debug.print(" {}\n", .{comp});
             }
 
+            std.debug.print("Compound selector iter\n", .{});
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
@@ -1144,6 +1146,7 @@ const CompoundSelectorIter = struct {
     ///  .rev() // reverse
     /// ```
     pub inline fn next(this: *@This()) ?[]const parser.Component {
+        // Since we iterating backwards, we convert all indices into "backwards form" by doing `this.sel.components.items.len - 1 - i`
         while (this.i < this.sel.components.items.len) {
             const next_index: ?usize = next_index: {
                 for (this.i..this.sel.components.items.len) |j| {
@@ -1152,7 +1155,7 @@ const CompoundSelectorIter = struct {
                 break :next_index null;
             };
             if (next_index) |combinator_index| {
-                const start = combinator_index - 1;
+                const start = if (combinator_index == 0) 0 else combinator_index - 1;
                 const end = this.i;
                 const slice = this.sel.components.items[this.sel.components.items.len - 1 - start .. this.sel.components.items.len - end];
                 this.i = combinator_index + 1;

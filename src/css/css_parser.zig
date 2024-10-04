@@ -2570,7 +2570,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
             for (this.license_comments.items) |comment| {
                 try printer.writeStr("/*");
                 try printer.writeStr(comment);
-                try printer.writeStr("*/\n");
+                try printer.writeStr("*/");
+                try printer.newline();
             }
 
             if (this.options.css_modules) |*config| {

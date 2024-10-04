@@ -28,9 +28,6 @@ jobs:
         run: |
           bun install
       - name: Prettier Format
-        env:
-          ENABLE_CCACHE: OFF
-          LLVM_VERSION: "ignore"
         run: |
           bun run prettier:diff
       - name: Commit

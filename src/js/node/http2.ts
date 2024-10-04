@@ -103,6 +103,7 @@ const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
 const kBeginSend = Symbol("begin-send");
+const kServer = Symbol("server");
 const kState = Symbol("state");
 const kStream = Symbol("stream");
 const kResponse = Symbol("response");
@@ -1779,7 +1780,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
 }
 
 class ServerHttp2Session extends Http2Session {
-  #server: Http2Server = null;
+  [kServer]: Http2Server = null;
   /// close indicates that we called closed
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
@@ -1892,7 +1893,7 @@ class ServerHttp2Session extends Http2Session {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
-        self.#server.emit("stream", stream, headers, flags, rawheaders);
+        self[kServer].emit("stream", stream, headers, flags, rawheaders);
 
         stream[bunHTTP2StreamResponded] = true;
         self.emit("stream", stream, headers, flags, rawheaders);
@@ -2013,7 +2014,7 @@ class ServerHttp2Session extends Http2Session {
 
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server) {
     super();
-    this.#server = server;
+    this[kServer] = server;
     this.#connected = true;
     if (socket instanceof TLSSocket) {
       // server will receive the preface to know if is or not h2
@@ -2089,8 +2090,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get type() {
-    if (this.#server) return 0;
-    return 1;
+    return 0;
   }
 
   get socket() {
@@ -2207,7 +2207,6 @@ class ServerHttp2Session extends Http2Session {
   }
 }
 class ClientHttp2Session extends Http2Session {
-  #server: Http2Server = null;
   /// close indicates that we called closed
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
@@ -2514,7 +2513,6 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get type() {
-    if (this.#server) return 0;
     return 1;
   }
   unref() {
@@ -2801,14 +2799,63 @@ function setupCompat(ev) {
     this.on("stream", FunctionPrototypeBind(onServerStream, this, ServerRequest, ServerResponse));
   }
 }
-class Http2Server extends net.Server {
-  #timeout = 0;
-  #hasTimeoutEvent = false;
-  static #connectionListener(socket: Socket) {
-    socket.setTimeout(0);
-    const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
-    this.emit("session", session);
+
+function sessionOnError(error) {
+  this[kServer]?.emit("sessionError", error, this);
+}
+function sessionOnTimeout() {
+  if (this.destroyed || this.closed) return;
+  const server = this[kServer];
+  if (!server.emit("timeout", this)) {
+    this.destroy();
   }
+}
+function connectionListener(socket: Socket) {
+  const options = this[bunSocketServerOptions] || {};
+  if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
+    // TODO: Fallback to HTTP/1.1
+    // if (options.allowHTTP1 === true) {
+
+    // }
+    // Let event handler deal with the socket
+
+    if (!this.emit("unknownProtocol", socket)) {
+      // Install a timeout if the socket was not successfully closed, then
+      // destroy the socket to ensure that the underlying resources are
+      // released.
+      const timer = setTimeout(() => {
+        if (!socket.destroyed) {
+          socket.destroy();
+        }
+      }, options.unknownProtocolTimeout);
+      // Un-reference the timer to avoid blocking of application shutdown and
+      // clear the timeout if the socket was successfully closed.
+      timer.unref();
+
+      socket.once("close", () => clearTimeout(timer));
+
+      // We don't know what to do, so let's just tell the other side what's
+      // going on in a format that they *might* understand.
+      socket.end(
+        "HTTP/1.0 403 Forbidden\r\n" +
+          "Content-Type: text/plain\r\n\r\n" +
+          "Missing ALPN Protocol, expected `h2` to be available.\n" +
+          "If this is a HTTP request: The server was not " +
+          "configured with the `allowHTTP1` option or a " +
+          "listener for the `unknownProtocol` event.\n",
+      );
+    }
+  }
+
+  const session = new ServerHttp2Session(socket, options, this);
+  session.on("error", sessionOnError);
+  const timeout = this.timeout;
+  if (timeout) session.setTimeout(timeout, sessionOnTimeout);
+
+  this.emit("session", session);
+}
+class Http2Server extends net.Server {
+  timeout = 0;
   constructor(options, onRequestHandler) {
     if (typeof options === "function") {
       onRequestHandler = options;
@@ -2818,30 +2865,17 @@ class Http2Server extends net.Server {
     } else {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }
-    super(options);
+    super(options, connectionListener);
     this.on("newListener", setupCompat);
-    this.on("connection", Http2Server.#connectionListener);
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);
     }
   }
-  #onTimeout() {
-    this.emit("timeout");
-  }
-
-  get timeout() {
-    return this.#timeout;
-  }
 
   setTimeout(ms, callback) {
-    this.#timeout = ms;
-    const socket = this[bunSocketInternal];
-    if (socket) {
-      socket.setTimeout(ms, callback);
-      if (!this.#hasTimeoutEvent) {
-        this.#hasTimeoutEvent = true;
-        socket.on("timeout", this.#onTimeout.bind(this));
-      }
+    this.timeout = ms;
+    if (typeof callback === "function") {
+      this.on("timeout", callback);
     }
   }
   updateSettings(settings) {
@@ -2852,15 +2886,14 @@ class Http2Server extends net.Server {
     }
   }
 }
+
+function onErrorSecureServerSession(err, socket) {
+  if (!this.emit("clientError", err, socket)) socket.destroy(err);
+}
 class Http2SecureServer extends tls.Server {
-  #timeout = 0;
-  #hasTimeoutEvent = false;
-  static #connectionListener(socket: TLSSocket | Socket) {
-    socket.setTimeout(0);
-    const session = new ServerHttp2Session(socket, this[bunSocketServerOptions], this);
-    this.emit("session", session);
-  }
+  timeout = 0;
   constructor(options, onRequestHandler) {
+    //TODO: add 'http/1.1' on ALPNProtocols list after allowHTTP1 support
     if (typeof options === "function") {
       onRequestHandler = options;
       options = { ALPNProtocols: ["h2"] };
@@ -2869,30 +2902,17 @@ class Http2SecureServer extends tls.Server {
     } else {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }
-    super(options);
+    super(options, connectionListener);
     this.on("newListener", setupCompat);
-    this.on("secureConnection", Http2SecureServer.#connectionListener);
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);
     }
+    this.on("tlsClientError", onErrorSecureServerSession);
   }
-  #onTimeout() {
-    this.emit("timeout");
-  }
-
-  get timeout() {
-    return this.#timeout;
-  }
-
   setTimeout(ms, callback) {
-    this.#timeout = ms;
-    const socket = this[bunSocketInternal];
-    if (socket) {
-      socket.setTimeout(ms, callback);
-      if (!this.#hasTimeoutEvent) {
-        this.#hasTimeoutEvent = true;
-        socket.on("timeout", this.#onTimeout.bind(this));
-      }
+    this.timeout = ms;
+    if (typeof callback === "function") {
+      this.on("timeout", callback);
     }
   }
   updateSettings(settings) {

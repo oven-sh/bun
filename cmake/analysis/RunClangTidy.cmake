@@ -1,18 +1,5 @@
 # https://clang.llvm.org/extra/clang-tidy/
 
-find_command(
-  VARIABLE
-    CLANG_TIDY_PROGRAM
-  VERSION_VARIABLE
-    LLVM_VERSION
-  COMMAND
-    clang-tidy
-  VERSION
-    ${LLVM_VERSION}
-  REQUIRED
-    OFF
-)
-
 set(CLANG_TIDY_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
 
 set(CLANG_TIDY_COMMAND ${CLANG_TIDY_PROGRAM}

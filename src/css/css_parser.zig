@@ -880,25 +880,35 @@ fn parse_at_rule(
                     .result => |v| v,
                     .err => break :out,
                 };
-                if (tok.* != .open_curly and tok.* != .semicolon) unreachable;
+                if (tok.* != .open_curly and tok.* != .semicolon) bun.unreachablePanic("Should have consumed these delimiters", .{});
                 break :out;
             }
             return .{ .err = e };
         },
     };
     const next = switch (input.next()) {
-        .result => |v| v,
+        .result => |v| v.*,
         .err => {
             return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-                .result => |v| .{ .result = v },
-                .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
             };
         },
     };
-    switch (next.*) {
-        .semicolon => return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-            .result => |v| .{ .result = v },
-            .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+    switch (next) {
+        .semicolon => {
+            switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
+            }
         },
         .open_curly => {
             const AnotherClosure = struct {
@@ -3955,7 +3965,7 @@ const Tokenizer = struct {
     pub fn currentSourceLocation(this: *const Tokenizer) SourceLocation {
         return SourceLocation{
             .line = this.current_line_number,
-            .column = @intCast(this.position - this.current_line_start_position + 1),
+            .column = @intCast((this.position - this.current_line_start_position) + 1),
         };
     }
 

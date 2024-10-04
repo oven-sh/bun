@@ -1280,73 +1280,73 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     // invalid_response
     case 1: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid response");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // expected_101_status_code
     case 2: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Expected 101 status code");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // missing_upgrade_header
     case 3: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing upgrade header");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // missing_connection_header
     case 4: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing connection header");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // missing_websocket_accept_header
     case 5: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing websocket accept header");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // invalid_upgrade_header
     case 6: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid upgrade header");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // invalid_connection_header
     case 7: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid connection header");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // invalid_websocket_version
     case 8: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid websocket version");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // mismatch_websocket_accept_header
     case 9: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Mismatch websocket accept header");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // missing_client_protocol
     case 10: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing client protocol");
-        didReceiveClose(CleanStatus::Clean, 1002, message);
+        didReceiveClose(CleanStatus::Clean, 1002, message, true);
         break;
     }
     // mismatch_client_protocol
     case 11: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Mismatch client protocol");
-        didReceiveClose(CleanStatus::Clean, 1002, message);
+        didReceiveClose(CleanStatus::Clean, 1002, message, true);
         break;
     }
     // timeout
     case 12: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Timeout");
-        didReceiveClose(CleanStatus::Clean, 1013, message);
+        didReceiveClose(CleanStatus::Clean, 1013, message, true);
         break;
     }
     // closed
@@ -1358,7 +1358,7 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     // failed_to_write
     case 14: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to write");
-        didReceiveClose(CleanStatus::NotClean, 1006, message);
+        didReceiveClose(CleanStatus::NotClean, 1006, message, true);
         break;
     }
     // failed_to_connect
@@ -1370,7 +1370,7 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     // headers_too_large
     case 16: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Headers too large");
-        didReceiveClose(CleanStatus::NotClean, 1007, message);
+        didReceiveClose(CleanStatus::NotClean, 1007, message, true);
         break;
     }
     // ended
@@ -1383,61 +1383,61 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     // failed_to_allocate_memory
     case 18: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to allocate memory");
-        didReceiveClose(CleanStatus::NotClean, 1001, message);
+        didReceiveClose(CleanStatus::NotClean, 1001, message, true);
         break;
     }
     // control_frame_is_fragmented
     case 19: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - control frame is fragmented");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // invalid_control_frame
     case 20: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - invalid control frame");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // compression_unsupported
     case 21: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Compression not implemented yet");
-        didReceiveClose(CleanStatus::Clean, 1011, message);
+        didReceiveClose(CleanStatus::Clean, 1011, message, true);
         break;
     }
     // unexpected_mask_from_server
     case 22: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected mask from server");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // expected_control_frame
     case 23: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - expected control frame");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // unsupported_control_frame
     case 24: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unsupported control frame");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // unexpected_opcode
     case 25: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected opcode");
-        didReceiveClose(CleanStatus::NotClean, 1002, message);
+        didReceiveClose(CleanStatus::NotClean, 1002, message, true);
         break;
     }
     // invalid_utf8
     case 26: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Server sent invalid UTF8");
-        didReceiveClose(CleanStatus::NotClean, 1003, message);
+        didReceiveClose(CleanStatus::NotClean, 1003, message, true);
         break;
     }
     // tls_handshake_failed
     case 27: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("TLS handshake failed");
-        didReceiveClose(CleanStatus::NotClean, 1015, message);
+        didReceiveClose(CleanStatus::NotClean, 1015, message, true);
         break;
     }
     }

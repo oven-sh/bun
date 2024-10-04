@@ -771,7 +771,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling()) {
+            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -859,6 +859,8 @@ pub const BundleV2 = struct {
         this.linker.options.minify_whitespace = bundler.options.minify_whitespace;
         this.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
         this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
+
+        this.linker.options.experimental_css = bundler.options.experimental_css;
 
         this.linker.options.source_maps = bundler.options.source_map;
         this.linker.options.tree_shaking = bundler.options.tree_shaking;
@@ -1121,7 +1123,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling()) {
+            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1174,7 +1176,7 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling()) {
+            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1452,6 +1454,7 @@ pub const BundleV2 = struct {
             bundler.options.code_splitting = config.code_splitting;
             bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+            bundler.options.experimental_css = config.experimental_css;
 
             bundler.configureLinker();
             try bundler.configureDefines();
@@ -1756,7 +1759,7 @@ pub const BundleV2 = struct {
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-                            if (loader.shouldCopyForBundling()) {
+                            if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
                                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2475,7 +2478,7 @@ pub const BundleV2 = struct {
                             continue;
                         }
 
-                        if (loader.shouldCopyForBundling()) {
+                        if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
                             new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
@@ -2486,7 +2489,7 @@ pub const BundleV2 = struct {
                         graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
                     } else {
                         const loader = value.loader orelse graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.bundler.options.loaders) orelse options.Loader.file;
-                        if (loader.shouldCopyForBundling()) {
+                        if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
                             var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
                             additional_files.push(this.graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;
                             graph.estimated_file_loader_count += 1;
@@ -3084,7 +3087,7 @@ pub const ParseTask = struct {
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-                ast.addUrlForCss(allocator, &source, "text/plain");
+                ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, "text/plain");
                 return ast;
             },
 
@@ -3182,7 +3185,7 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .css => {
-                if (comptime bun.FeatureFlags.css) {
+                if (bundler.options.experimental_css) {
                     // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     // unique_key_for_additional_file.* = unique_key;
                     const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
@@ -3216,7 +3219,7 @@ pub const ParseTask = struct {
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-        ast.addUrlForCss(allocator, &source, null);
+        ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, null);
         return ast;
     }
 
@@ -3260,7 +3263,7 @@ pub const ParseTask = struct {
                 }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
-                    if (loader.shouldCopyForBundling())
+                    if (loader.shouldCopyForBundling(this.ctx.bundler.options.experimental_css))
                         // The OutputFile will own the memory for the contents
                         bun.default_allocator
                     else
@@ -3434,7 +3437,7 @@ pub const ParseTask = struct {
             .unique_key_for_additional_file = unique_key_for_additional_file,
 
             // Hash the files in here so that we do it in parallel.
-            .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
+            .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.bundler.options.experimental_css))
                 ContentHasher.run(source.contents)
             else
                 0,
@@ -4575,6 +4578,7 @@ pub const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        experimental_css: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
 
@@ -4925,7 +4929,7 @@ pub const LinkerContext = struct {
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
-            if (comptime bun.FeatureFlags.css) {
+            if (this.options.experimental_css) {
                 if (this.graph.ast.items(.css)[source_index]) |*css| {
                     _ = css; // autofix
                     // Create a chunk for the entry point here to ensure that the chunk is
@@ -4967,7 +4971,7 @@ pub const LinkerContext = struct {
                 .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
             };
 
-            if (comptime bun.FeatureFlags.css) {
+            if (this.options.experimental_css) {
                 // If this JS entry point has an associated CSS entry point, generate it
                 // now. This is essentially done by generating a virtual CSS file that
                 // only contains "@import" statements in the order that the files were
@@ -11322,7 +11326,7 @@ pub const LinkerContext = struct {
             c.source_maps.line_offset_tasks.len = 0;
         }
 
-        if (comptime bun.FeatureFlags.css) {
+        if (c.options.experimental_css) {
             // Per CSS chunk:
             // Remove duplicate rules across files. This must be done in serial, not
             // in parallel, and must be done from the last rule to the first rule.

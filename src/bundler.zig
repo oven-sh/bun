@@ -934,7 +934,7 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (comptime bun.FeatureFlags.css) {
+                if (bundler.options.experimental_css) {
                     const alloc = bundler.allocator;
 
                     const entry = bundler.resolver.caches.fs.readFileWithAllocator(

@@ -7156,8 +7156,8 @@ pub const BundledAst = struct {
     }
 
     /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
-    pub fn addUrlForCss(this: *BundledAst, allocator: std.mem.Allocator, source: *const logger.Source, mime_type_: ?[]const u8) void {
-        if (comptime bun.FeatureFlags.css) {
+    pub fn addUrlForCss(this: *BundledAst, allocator: std.mem.Allocator, css_enabled: bool, source: *const logger.Source, mime_type_: ?[]const u8) void {
+        if (css_enabled) {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
             const contents = source.contents;
             this.url_for_css = url_for_css: {

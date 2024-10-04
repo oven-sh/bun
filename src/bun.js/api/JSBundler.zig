@@ -72,6 +72,7 @@ pub const JSBundler = struct {
         packages: options.PackagesOption = .bundle,
         format: options.Format = .esm,
         bytecode: bool = false,
+        experimental_css: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 

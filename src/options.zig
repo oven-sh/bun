@@ -656,8 +656,8 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader) bool {
-        if (comptime bun.FeatureFlags.css) {
+    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
+        if (experimental_css) {
             return switch (this) {
                 .file,
                 .css,
@@ -672,7 +672,7 @@ pub const Loader = enum(u8) {
         }
         return switch (this) {
             .file,
-            // .css,
+            .css,
             .napi,
             .sqlite,
             .sqlite_embedded,
@@ -1497,6 +1497,8 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
+    experimental_css: bool,
+
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
     bytecode: bool = false,
@@ -1677,6 +1679,7 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
+            .experimental_css = false,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));

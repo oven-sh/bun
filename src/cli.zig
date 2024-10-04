@@ -280,6 +280,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+        clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
@@ -776,6 +777,9 @@ pub const Arguments = struct {
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
             }
+
+            const experimental_css = args.flag("--experimental-css");
+            ctx.bundler_options.experimental_css = experimental_css;
 
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
@@ -1398,6 +1402,7 @@ pub const Command = struct {
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
             bytecode: bool = false,
+            experimental_css: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

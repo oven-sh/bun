@@ -8,6 +8,7 @@ import { itBundled } from "../expectBundled";
 
 describe('bundler', () => {
   itBundled("css/CSSEntryPoint", {
+    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         body {
@@ -28,6 +29,7 @@ body {
 
 
   itBundled("css/CSSAtImportMissing", {
+    experimentalCss: true,
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
@@ -37,6 +39,7 @@ body {
   });
 
   itBundled("css/CSSAtImportSimple", {
+    experimentalCss: true,
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -59,6 +62,7 @@ body {
   });
 
   itBundled("css/CSSAtImportDiamond", {
+    experimentalCss: true,
     // GENERATED
     files: {
       "/a.css": /* css */ `
@@ -103,6 +107,7 @@ body {
 
 
   itBundled("css/CSSAtImportCycle", {
+    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
         @import "./a.css";
@@ -122,6 +127,7 @@ body {
 
 
   itBundled("css/CSSUrlImport", {
+    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
         .hello {

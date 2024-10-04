@@ -1473,8 +1473,8 @@ class Http2Stream extends Duplex {
 
       session[bunHTTP2Native]?.rstStream(this.#id, 0);
       this.rstCode = 0;
-      this[bunHTTP2Session] = null;
     }
+    this[bunHTTP2Session] = null;
 
     callback(err);
   }
@@ -1882,6 +1882,10 @@ class ServerHttp2Session extends Http2Session {
           headers[key] = value.join(", ");
         }
       }
+      if (headers[":status"] === constants.HTTP_STATUS_CONTINUE) {
+        stream.emit("continue");
+        return;
+      }
       if (stream[bunHTTP2StreamResponded]) {
         try {
           stream.emit("trailers", headers, flags, rawheaders);
@@ -1971,11 +1975,15 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
+    // this[bunHTTP2Socket] = null;
+    // this.emit("close");
     this.close();
   }
 
   #onError(error: Error) {
     this.#parser = null;
+    // this[bunHTTP2Socket] = null;
+    // this.emit("error", error);
     this.destroy(error);
   }
 
@@ -2021,7 +2029,6 @@ class ServerHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     this[bunHTTP2Socket] = socket;
-
     const nativeSocket = socket[bunSocketInternal];
     this.#encrypted = socket instanceof TLSSocket;
 
@@ -2273,7 +2280,6 @@ class ClientHttp2Session extends Http2Session {
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
         stream[bunHTTP2Closed] = true;
-        // stream[bunHTTP2Session] = null;
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
@@ -2308,11 +2314,6 @@ class ClientHttp2Session extends Http2Session {
       let set_cookies = headers["set-cookie"];
       if (typeof set_cookies === "string") {
         (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
-      }
-
-      if (headers[":status"] === constants.HTTP_STATUS_CONTINUE) {
-        stream.emit("continue");
-        return;
       }
 
       let cookie = headers["cookie"];
@@ -2380,14 +2381,12 @@ class ClientHttp2Session extends Http2Session {
       }
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
-
       self.#parser = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
-
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
@@ -2453,16 +2452,19 @@ class ClientHttp2Session extends Http2Session {
     }
     process.nextTick(emitConnectNT, this, socket);
   }
+
   #onClose() {
     this.#parser = null;
+    // this[bunHTTP2Socket] = null;
+    // this.emit("close");
     this.close();
   }
-
   #onError(error: Error) {
     this.#parser = null;
+    // this[bunHTTP2Socket] = null;
+    // this.emit("error", error);
     this.destroy(error);
   }
-
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {
@@ -2620,7 +2622,6 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
-
       if (socket.secureConnecting === true) {
         socket.on("secureConnect", onConnect.bind(this));
       } else if (socket.connecting === true) {
@@ -2684,6 +2685,7 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
     }
+    this[bunHTTP2Socket] = null;
 
     if (error) {
       this.emit("error", error);

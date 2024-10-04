@@ -19,6 +19,7 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
+const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;
@@ -1323,15 +1324,32 @@ fn NewSocket(comptime ssl: bool) type {
         // `Listener` keep a list of all the sockets JSValue in there
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-        native_callbacks: NativeCallbacks = .{},
+        native_callback: NativeCallbacks = .none,
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
         // We use this direct callbacks on HTTP2 when available
-        pub const NativeCallbacks = struct {
-            onData: ?*const fn (ctx: ?*anyopaque, data: []const u8) void = null,
-            onClose: ?*const fn (ctx: ?*anyopaque) void = null,
-            onWritable: ?*const fn (ctx: ?*anyopaque) void = null,
-            ctx: ?*anyopaque = null,
+        pub const NativeCallbacks = union(enum) {
+            h2: *H2FrameParser,
+            none,
+
+            pub fn onData(this: NativeCallbacks, data: []const u8) bool {
+                switch (this) {
+                    .h2 => |h2| {
+                        h2.onNativeRead(data);
+                        return true;
+                    },
+                    .none => return false,
+                }
+            }
+            pub fn onWritable(this: NativeCallbacks) bool {
+                switch (this) {
+                    .h2 => |h2| {
+                        h2.onNativeWritable();
+                        return true;
+                    },
+                    .none => return false,
+                }
+            }
         };
 
         const This = @This();
@@ -1359,6 +1377,29 @@ fn NewSocket(comptime ssl: bool) type {
             @fence(.acquire);
 
             return this.has_pending_activity.load(.acquire);
+        }
+
+        pub fn attachNativeCallback(this: *This, callback: NativeCallbacks) bool {
+            if (this.native_callback != .none) return false;
+            this.native_callback = callback;
+
+            switch (callback) {
+                .h2 => |h2| h2.ref(),
+                .none => {},
+            }
+            return true;
+        }
+        pub fn detachNativeCallback(this: *This) void {
+            const native_callback = this.native_callback;
+            this.native_callback = .none;
+
+            switch (native_callback) {
+                .h2 => |h2| {
+                    h2.onNativeClose();
+                    h2.unref();
+                },
+                .none => {},
+            }
         }
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
@@ -1417,10 +1458,7 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onWritable", .{});
             if (this.socket.isDetached()) return;
-            if (this.native_callbacks.onWritable) |nativeCallback| {
-                nativeCallback(this.native_callbacks.ctx);
-                return;
-            }
+            if (this.native_callback.onWritable()) return;
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
@@ -1552,6 +1590,8 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn closeAndDetach(this: *This, code: uws.CloseCode) void {
             const socket = this.socket;
             this.socket.detach();
+            this.detachNativeCallback();
+
             socket.close(code);
         }
 
@@ -1783,13 +1823,10 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
+            this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
             defer this.markInactive();
-
-            if (this.native_callbacks.onClose) |nativeCallback| {
-                nativeCallback(this.native_callbacks.ctx);
-            }
 
             if (this.flags.finalizing) {
                 return;
@@ -1828,10 +1865,7 @@ fn NewSocket(comptime ssl: bool) type {
             log("onData({d})", .{data.len});
             if (this.socket.isDetached()) return;
 
-            if (this.native_callbacks.onData) |nativeCallback| {
-                nativeCallback(this.native_callbacks.ctx, data);
-                return;
-            }
+            if (this.native_callback.onData(data)) return;
 
             const handlers = this.handlers;
             const callback = handlers.onData;
@@ -2273,6 +2307,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn deinit(this: *This) void {
             this.markInactive();
+            this.detachNativeCallback();
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
@@ -3334,6 +3369,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer this.deref();
 
             // detach and invalidate the old instance
+            this.detachNativeCallback();
             this.socket.detach();
 
             // start TLS handshake after we set extension on the socket

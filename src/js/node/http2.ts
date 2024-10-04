@@ -2407,6 +2407,12 @@ class ClientHttp2Session extends Http2Session {
       if ($isArray(cookie)) {
         headers["cookie"] = (headers["cookie"] as string[]).join("; ");
       }
+      for (let key in headers) {
+        const value = headers[key];
+        if ($isArray(value)) {
+          headers[key] = value.join(", ");
+        }
+      }
       if (stream[bunHTTP2StreamResponded]) {
         try {
           stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags, rawheaders);

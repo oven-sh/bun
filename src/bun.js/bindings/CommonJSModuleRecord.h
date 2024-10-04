@@ -23,6 +23,7 @@ using namespace JSC;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCommonJSModuleRecord_compile);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -108,7 +109,7 @@ public:
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue id();
 
-    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
+    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, JSGlobalObject* functionGlobalObject, WTF::NakedPtr<JSC::Exception>&);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

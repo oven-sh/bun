@@ -23,6 +23,14 @@ test("module.globalPaths exists", () => {
   expect(Array.isArray(require("module").globalPaths)).toBe(true);
 });
 
+test("_compile exists", () => {
+  const m = new Module("asdf");
+  Module.prototype._compile.call(m, "exports.foo = 1; return 42", "asdf");
+  expect(m.exports.foo).toBe(1);
+  Module.prototype._compile.call(m, "exports.foo = 2; return 42", "asdf");
+  expect(m.exports.foo).toBe(2);
+});
+
 test("createRequire trailing slash", () => {
   const req = createRequire(import.meta.dir + "/");
   expect(req.resolve("./node-module-module.test.js")).toBe(

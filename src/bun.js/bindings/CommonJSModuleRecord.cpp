@@ -103,7 +103,7 @@ static bool canPerformFastEnumeration(Structure* s)
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* functionGlobalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
     SourceCode code = std::move(moduleObject->sourceCode);
 
@@ -152,7 +152,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     }
 
     // This will return 0 if there was a syntax error or an allocation failure
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), exception);
+    JSValue fnValue = JSC::evaluate(functionGlobalObject, code, jsUndefined(), exception);
 
     if (UNLIKELY(exception.get() || fnValue.isEmpty())) {
         return false;
@@ -180,12 +180,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
-    JSC::call(globalObject, fn, callData, moduleObject, args, exception);
+    JSC::call(functionGlobalObject, fn, callData, moduleObject, args, exception);
 
     return exception.get() == nullptr;
 }
 
-bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>& exception)
+bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject, JSGlobalObject* functionGlobalObject, WTF::NakedPtr<JSC::Exception>& exception)
 {
     if (this->hasEvaluated || this->sourceCode.isNull()) {
         return true;
@@ -193,16 +193,19 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::N
 
     evaluateCommonJSModuleOnce(
         globalObject->vm(),
-        jsCast<Zig::GlobalObject*>(globalObject),
+        globalObject,
+        functionGlobalObject,
         this,
         this->m_dirname.get(),
         this->m_filename.get(),
         exception);
 
     if (exception.get()) {
-        // On error, remove the module from the require map/
-        // so that it can be re-evaluated on the next require.
-        globalObject->requireMap()->remove(globalObject, this->id());
+        if (LIKELY(functionGlobalObject == globalObject)) {
+            // On error, remove the module from the require map/
+            // so that it can be re-evaluated on the next require.
+            globalObject->requireMap()->remove(globalObject, this->id());
+        }
 
         return false;
     }
@@ -213,7 +216,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::N
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto& vm = lexicalGlobalObject->vm();
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->argument(0));
     if (!moduleObject) {
@@ -222,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalOb
 
     WTF::NakedPtr<Exception> exception;
 
-    if (!moduleObject->load(vm, globalObject, exception)) {
+    if (!moduleObject->load(vm, globalObject, lexicalGlobalObject, exception)) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
         return {};
@@ -500,7 +503,7 @@ static JSValue createChildren(VM& vm, JSObject* object)
     return constructEmptyArray(object->globalObject(), nullptr, 0);
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCommonJSModuleRecord_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
     if (!moduleObject) {
@@ -543,7 +546,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
         vm,
-        jsCast<Zig::GlobalObject*>(globalObject),
+        defaultGlobalObject(globalObject),
+        globalObject,
         moduleObject,
         jsString(vm, dirnameString),
         jsString(vm, filenameString),
@@ -559,7 +563,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 }
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
-    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionCommonJSModuleRecord_compile, 2 } },
+    { "_compile"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFunctionCommonJSModuleRecord_compile, 2 } },
     { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
@@ -1074,7 +1078,7 @@ bool JSCommonJSModule::evaluate(
     this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
 
     WTF::NakedPtr<JSC::Exception> exception;
-    evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get(), exception);
+    evaluateCommonJSModuleOnce(vm, globalObject, globalObject, this, this->m_dirname.get(), this->m_filename.get(), exception);
 
     if (exception.get()) {
         // On error, remove the module from the require map/
@@ -1156,6 +1160,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                             WTF::NakedPtr<JSC::Exception> exception;
                             if (!evaluateCommonJSModuleOnce(
                                     vm,
+                                    globalObject,
                                     globalObject,
                                     moduleObject,
                                     moduleObject->m_dirname.get(),

@@ -15,6 +15,7 @@
 
 #include "NodeModuleModule.h"
 
+#include "CommonJSModuleRecord.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -624,16 +625,48 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * globalObject,
   return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(getterModuleConstructor,
+                         (JSGlobalObject * lexicalGlobalObject,
+                          JSC::EncodedJSValue thisValue,
+                          JSC::PropertyName propertyName)) {
+  auto *globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+  return JSValue::encode(
+      globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(
+          globalObject));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterModuleConstructor,
+                         (JSGlobalObject * lexicalGlobalObject,
+                          JSC::EncodedJSValue thisValue,
+                          JSC::EncodedJSValue value,
+                          JSC::PropertyName propertyName)) {
+  return false;
+}
+
 static JSValue getModulePrototypeObject(VM &vm, JSObject *moduleObject) {
   auto *globalObject = defaultGlobalObject(moduleObject->globalObject());
   auto prototype =
-      constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+      constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+  prototype->structure()->setMayBePrototype(true);
 
   prototype->putDirectCustomAccessor(
       vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
       JSC::CustomGetterSetter::create(vm, getterRequireFunction,
                                       setterRequireFunction),
       0);
+
+  prototype->putDirectCustomAccessor(
+      vm, vm.propertyNames->constructor,
+      JSC::CustomGetterSetter::create(vm, getterModuleConstructor,
+                                      setterModuleConstructor),
+      PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+
+  prototype->putDirectNativeFunction(
+      vm, globalObject, Identifier::fromString(vm, "_compile"_s), 1,
+      jsFunctionCommonJSModuleRecord_compile,
+      JSC::ImplementationVisibility::Public, NoIntrinsic,
+      JSC::PropertyAttribute::DontEnum | 0);
 
   return prototype;
 }

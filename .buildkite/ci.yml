@@ -345,8 +345,8 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
-      - key: "linux-x64-test-ubuntu-2004-citgm"
-        label: ":ubuntu: 20.04 x64 - test-bun"
+      - key: "linux-x64-test-ubuntu-2204-citgm"
+        label: ":ubuntu: 22.04 x64 - test-citgm"
         if: "build.branch != 'main'"
         parallelism: 14
         soft_fail:
@@ -370,7 +370,7 @@ steps:
           os: "linux"
           arch: "x64"
           distro: "ubuntu"
-          release: "20.04"
+          release: "22.04"
         command:
           - "./scripts/runner.citgm.mjs"
 

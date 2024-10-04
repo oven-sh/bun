@@ -702,6 +702,10 @@ pub const Expect = struct {
                     break;
                 }
             }
+
+            if (globalThis.hasException()) {
+                return .zero;
+            }
         } else if (list_value.isIterable(globalThis)) {
             var expected_entry = ExpectedEntry{
                 .globalThis = globalThis,
@@ -725,6 +729,10 @@ pub const Expect = struct {
             }.sameValueIterator);
         } else {
             globalThis.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
+            return .zero;
+        }
+
+        if (globalThis.hasException()) {
             return .zero;
         }
 
@@ -1496,6 +1504,10 @@ pub const Expect = struct {
         const truthy = value.toBooleanSlow(globalThis);
         if (truthy) pass = true;
 
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
         if (not) pass = !pass;
         if (pass) return .undefined;
 
@@ -1690,6 +1702,9 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var pass = value.jestDeepEquals(expected, globalThis);
+        if (globalThis.hasException()) {
+            return .zero;
+        }
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -1732,6 +1747,9 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var pass = value.jestStrictDeepEquals(expected, globalThis);
+        if (globalThis.hasException()) {
+            return .zero;
+        }
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -1785,11 +1803,17 @@ pub const Expect = struct {
 
         if (pass) {
             received_property = value.getIfPropertyExistsFromPath(globalThis, expected_property_path);
+            if (globalThis.hasException()) {
+                return .zero;
+            }
             pass = !received_property.isEmpty();
         }
 
         if (pass and expected_property != null) {
             pass = received_property.jestDeepEquals(expected_property.?, globalThis);
+            if (globalThis.hasException()) {
+                return .zero;
+            }
         }
 
         if (not) pass = !pass;
@@ -2724,6 +2748,9 @@ pub const Expect = struct {
             const prop_matchers = _prop_matchers;
 
             if (!value.jestDeepMatch(prop_matchers, globalThis, true)) {
+                if (globalThis.hasException()) {
+                    return .zero;
+                }
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -2731,6 +2758,9 @@ pub const Expect = struct {
 
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
                 globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
+                return .zero;
+            }
+            if (globalThis.hasException()) {
                 return .zero;
             }
         }
@@ -4169,6 +4199,9 @@ pub const Expect = struct {
         const property_matchers = args[0];
 
         var pass = received_object.jestDeepMatch(property_matchers, globalThis, true);
+        if (globalThis.hasException()) {
+            return .zero;
+        }
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -4229,6 +4262,8 @@ pub const Expect = struct {
                     if (!callArg.jestDeepEquals(arguments[callItr.i - 1], globalThis)) {
                         match = false;
                         break;
+                    } else if (globalThis.hasException()) {
+                        return .zero;
                     }
                 }
 
@@ -4237,6 +4272,10 @@ pub const Expect = struct {
                     break;
                 }
             }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
         }
 
         const not = this.flags.not;
@@ -4296,6 +4335,10 @@ pub const Expect = struct {
                     }
                 }
             }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
         }
 
         const not = this.flags.not;
@@ -4364,6 +4407,10 @@ pub const Expect = struct {
                     }
                 }
             }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
         }
 
         const not = this.flags.not;

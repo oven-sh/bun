@@ -146,7 +146,6 @@ pub const TestRunner = struct {
         this.queue.writeItem(task) catch unreachable;
     }
 
-
     pub fn runNextTest(this: *TestRunner) void {
         this.has_pending_tests = false;
         this.pending_test = null;

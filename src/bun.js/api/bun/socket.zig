@@ -1328,6 +1328,7 @@ fn NewSocket(comptime ssl: bool) type {
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
+        bytesWritten: u64 = 0,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -2080,12 +2081,18 @@ fn NewSocket(comptime ssl: bool) type {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
                     const res = this.socket.rawWrite(buffer, is_end);
+                    if (res > 0) {
+                        this.bytesWritten += @intCast(res);
+                    }
                     log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
                     return res;
                 }
             }
 
             const res = this.socket.write(buffer, is_end);
+            if (res > 0) {
+                this.bytesWritten += @intCast(res);
+            }
             log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
             return res;
         }
@@ -2555,7 +2562,12 @@ fn NewSocket(comptime ssl: bool) type {
             bun.assert(result_size == size);
             return buffer;
         }
-
+        pub fn getBytesWritten(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+        ) JSValue {
+            return JSC.JSValue.jsNumber(this.bytesWritten);
+        }
         pub fn getALPNProtocol(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

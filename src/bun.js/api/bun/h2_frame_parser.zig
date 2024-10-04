@@ -1362,6 +1362,7 @@ pub const H2FrameParser = struct {
 
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
         JSC.markBinding(@src());
+
         const ctx_value = this.strong_ctx.get() orelse return;
         value.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
@@ -1369,16 +1370,19 @@ pub const H2FrameParser = struct {
 
     pub fn call(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
+
         const ctx_value = this.strong_ctx.get() orelse return .zero;
         value.ensureStillAlive();
         return this.handlers.callEventHandlerWithResult(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
     pub fn dispatchArbitrary(this: *H2FrameParser, callback: JSC.JSValue) void {
         JSC.markBinding(@src());
+
         _ = this.handlers.callArbitraryCallBack(callback, .undefined, &[_]JSC.JSValue{});
     }
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
+
         const ctx_value = this.strong_ctx.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
@@ -1387,6 +1391,7 @@ pub const H2FrameParser = struct {
 
     pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
         JSC.markBinding(@src());
+
         const ctx_value = this.strong_ctx.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
@@ -2180,6 +2185,8 @@ pub const H2FrameParser = struct {
         this.currentFrame = header;
         this.remainingLength = header.length;
         const stream = this.handleReceivedStreamID(header.streamIdentifier);
+        this.streams.lockPointers();
+        defer this.streams.unlockPointers();
         this.ajustWindowSize(stream, header.length);
         return switch (header.type) {
             @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[FrameHeader.byteSize..]) + FrameHeader.byteSize,
@@ -3479,25 +3486,24 @@ pub const H2FrameParser = struct {
         return .zero;
     }
 
-    pub fn onNativeRead(ctx: ?*anyopaque, data: []const u8) void {
-        const self = ctx orelse return;
-        const this = bun.cast(*H2FrameParser, self);
+    pub fn onNativeRead(this: *H2FrameParser, data: []const u8) void {
         var bytes = data;
+        this.ref();
+        defer this.unref();
+
         while (bytes.len > 0) {
             const result = this.readBytes(bytes);
             bytes = bytes[result..];
         }
     }
 
-    pub fn onNativeWritable(ctx: ?*anyopaque) void {
-        const self = ctx orelse return;
-        const this = bun.cast(*H2FrameParser, self);
+    pub fn onNativeWritable(this: *H2FrameParser) void {
+        this.ref();
+        defer this.unref();
         _ = this.flush();
     }
 
-    pub fn onNativeClose(ctx: ?*anyopaque) void {
-        const self = ctx orelse return;
-        const this = bun.cast(*H2FrameParser, self);
+    pub fn onNativeClose(this: *H2FrameParser) void {
         this.detachNativeSocket();
     }
 
@@ -3512,12 +3518,8 @@ pub const H2FrameParser = struct {
         const socket_js = args_list.ptr[0];
         if (JSTLSSocket.fromJS(socket_js)) |socket| {
             log("TLSSocket attached", .{});
-
-            if (socket.native_callbacks.ctx == null) {
-                socket.native_callbacks.onData = H2FrameParser.onNativeRead;
-                socket.native_callbacks.onClose = H2FrameParser.onNativeClose;
-                socket.native_callbacks.onWritable = H2FrameParser.onNativeWritable;
-                socket.native_callbacks.ctx = bun.cast(*anyopaque, this);
+            socket.ref();
+            if (socket.attachNativeCallback(.{ .h2 = this })) {
                 this.native_socket = .{ .tls = socket };
             } else {
                 this.native_socket = .{ .tls_writeonly = socket };
@@ -3526,11 +3528,9 @@ pub const H2FrameParser = struct {
             this.has_nonnative_backpressure = false;
         } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
             log("TCPSocket attached", .{});
-            if (socket.native_callbacks.ctx == null) {
-                socket.native_callbacks.onData = H2FrameParser.onNativeRead;
-                socket.native_callbacks.onClose = H2FrameParser.onNativeClose;
-                socket.native_callbacks.onWritable = H2FrameParser.onNativeWritable;
-                socket.native_callbacks.ctx = bun.cast(*anyopaque, this);
+            socket.ref();
+
+            if (socket.attachNativeCallback(.{ .h2 = this })) {
                 this.native_socket = .{ .tcp = socket };
             } else {
                 this.native_socket = .{ .tcp_writeonly = socket };
@@ -3542,20 +3542,18 @@ pub const H2FrameParser = struct {
     }
 
     pub fn detachNativeSocket(this: *H2FrameParser) void {
-        switch (this.native_socket) {
-            .tls => |socket| {
-                if (socket.native_callbacks.ctx != null) {
-                    socket.native_callbacks = .{};
-                }
-            },
-            .tcp => |socket| {
-                if (socket.native_callbacks.ctx != null) {
-                    socket.native_callbacks = .{};
-                }
-            },
-            else => {},
-        }
         this.native_socket = .{ .none = {} };
+        const native_socket = this.native_socket;
+        switch (native_socket) {
+            inline .tcp, .tls => |socket| {
+                socket.detachNativeCallback();
+                socket.deref();
+            },
+            inline .tcp_writeonly, .tls_writeonly => |socket| {
+                socket.deref();
+            },
+            .none => {},
+        }
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*H2FrameParser {
@@ -3605,23 +3603,16 @@ pub const H2FrameParser = struct {
         if (options.get(globalObject, "native")) |socket_js| {
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
                 log("TLSSocket attached", .{});
-
-                if (socket.native_callbacks.ctx == null) {
-                    socket.native_callbacks.onData = H2FrameParser.onNativeRead;
-                    socket.native_callbacks.onClose = H2FrameParser.onNativeClose;
-                    socket.native_callbacks.onWritable = H2FrameParser.onNativeWritable;
-                    socket.native_callbacks.ctx = bun.cast(*anyopaque, this);
+                socket.ref();
+                if (socket.attachNativeCallback(.{ .h2 = this })) {
                     this.native_socket = .{ .tls = socket };
                 } else {
                     this.native_socket = .{ .tls_writeonly = socket };
                 }
             } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
                 log("TCPSocket attached", .{});
-                if (socket.native_callbacks.ctx == null) {
-                    socket.native_callbacks.onData = H2FrameParser.onNativeRead;
-                    socket.native_callbacks.onClose = H2FrameParser.onNativeClose;
-                    socket.native_callbacks.onWritable = H2FrameParser.onNativeWritable;
-                    socket.native_callbacks.ctx = bun.cast(*anyopaque, this);
+                socket.ref();
+                if (socket.attachNativeCallback(.{ .h2 = this })) {
                     this.native_socket = .{ .tcp = socket };
                 } else {
                     this.native_socket = .{ .tcp_writeonly = socket };
@@ -3673,6 +3664,7 @@ pub const H2FrameParser = struct {
         this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
+
         if (is_server) {
             this.setSettings(this.localSettings);
         } else {
@@ -3711,11 +3703,11 @@ pub const H2FrameParser = struct {
 
         this.streams.deinit();
     }
-    fn ref(this: *H2FrameParser) void {
+    pub fn ref(this: *H2FrameParser) void {
         this.ref_count += 1;
     }
 
-    fn unref(this: *H2FrameParser) void {
+    pub fn unref(this: *H2FrameParser) void {
         const ref_count = this.ref_count;
         bun.assert(ref_count > 0);
         this.ref_count -= 1;

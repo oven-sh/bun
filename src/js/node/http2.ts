@@ -2389,7 +2389,6 @@ class ClientHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
-      const rawheaders = { ...headers };
 
       let status: string | number = headers[":status"] as string;
       if (status) {
@@ -2415,14 +2414,14 @@ class ClientHttp2Session extends Http2Session {
       }
       if (stream[bunHTTP2StreamResponded]) {
         try {
-          stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags, rawheaders);
+          stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
-        self.emit("stream", stream, headers, flags, rawheaders);
-        stream.emit("response", headers, flags, rawheaders);
+        self.emit("stream", stream, headers, flags);
+        stream.emit("response", headers, flags);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {

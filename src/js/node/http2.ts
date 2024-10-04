@@ -1466,8 +1466,9 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
-    this.push(null);
-
+    if (this.readable) {
+      this.push(null);
+    }
     if (!this[bunHTTP2Closed]) {
       this[bunHTTP2Closed] = true;
 
@@ -1838,9 +1839,10 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       if (stream.rstCode === undefined) {
         stream.rstCode = 0;
-        stream.emit("end");
       }
-
+      if (stream.readable) {
+        stream.push(null);
+      }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
         stream[bunHTTP2Closed] = true;
@@ -2265,8 +2267,11 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       if (stream.rstCode === undefined) {
         stream.rstCode = 0;
-        stream.emit("end");
       }
+      if (stream.readable) {
+        stream.push(null);
+      }
+
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
         stream[bunHTTP2Closed] = true;

@@ -874,7 +874,7 @@ pub const Arguments = struct {
                 };
 
                 switch (format) {
-                    .internal_kit_dev => {
+                    .internal_bake_dev => {
                         bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
                         bun.Output.flush();
                     },

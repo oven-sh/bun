@@ -24,11 +24,13 @@ const shards = [
 
 const shard_number = parseInt(process.argv[2] ?? process.env["BUILDKITE_PARALLEL_JOB"] ?? "0", 10);
 
-const the_shard = shards[shard_number];
+let the_shard = shards[shard_number];
 
 console.log("❯", the_shard);
 
 const clone_url = await (async () => {
+  if (shard_number === -1) the_shard = [0, process.argv[3]];
+  if (shard_number === -2) the_shard = [1, process.argv[3]];
   switch (the_shard[0]) {
     case 0: {
       let result = await fetch(`https://registry.npmjs.org/${the_shard[1]}`);

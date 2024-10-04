@@ -43,6 +43,38 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// Since the web-standard `WebSocket` does not provide a way to set headers,
+// the `ws` package defined their own `finishRequest` callback that allows you
+// to set headers on a `ClientRequest` object before it is sent.
+//
+// This is rarely used, but in most cases, the callback looks like this:
+// ```js
+// const ws = new WebSocket(url, {
+//   finishRequest: (req) => {
+//     req.setHeader("Authorization", "...");
+//     req.end();
+//   },
+// });
+// ```
+//
+// Bun supports a non-standard `headers` option instead, which is a nicer alternative
+// to the `finishRequest` option which requires APIs from `node:http` module.
+//
+// This wrapper is a simple hack that allows for most of these rare cases, instead of
+// requiring the entire `node:http` module.
+class FakeWsClientRequest {
+  _headers;
+
+  setHeader(key, value) {
+    this._headers ??= {};
+    this._headers[key] = value;
+  }
+
+  end() {
+    Object.freeze(this._headers);
+  }
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -65,11 +97,45 @@ class BunWebSocket extends EventEmitter {
 
   constructor(url, protocols, options) {
     super();
+
     // https://github.com/oven-sh/bun/issues/11866
     if (!WebSocket) {
       WebSocket = $cpp("JSWebSocket.cpp", "getWebSocketConstructor");
     }
-    let ws = (this.#ws = new WebSocket(url, protocols));
+
+    if (typeof protocols === "object" && protocols !== null && !Array.isArray(protocols)) {
+      options = protocols;
+      protocols = undefined;
+    }
+
+    if (typeof options === "object" && options !== null) {
+      const { headers, finishRequest } = options;
+
+      // Even if `finishRequest` is defined as a function, do not run the callback
+      // if `headers` is also defined. This likely means the developer knows this is running in Bun.
+      if (typeof finishRequest === "function" && typeof headers === "undefined") {
+        const clientRequest = new FakeWsClientRequest();
+        try {
+          finishRequest(clientRequest);
+        } catch (cause) {
+          throw new Error("There was an error while processing the `finishRequest` callback from `WebSocket`. Bun does not have full support for this API, so if you think this is a bug in Bun and not your code, please open an issue: https://bun.sh/issues", { cause });
+        }
+        options.headers = clientRequest._headers;
+      }
+    }
+
+    let init;
+    if (typeof options === "object" && options !== null) {
+      if (typeof protocols === "undefined") {
+        init = options;
+      } else {
+        init = { ...options, protocols };
+      }
+    } else {
+      init = protocols;
+    }
+
+    let ws = (this.#ws = new WebSocket(url, init));
     ws.binaryType = "nodebuffer";
     // TODO: options
   }

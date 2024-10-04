@@ -378,8 +378,7 @@ class Http2ServerRequest extends Readable {
   }
 
   get socket() {
-    const stream = this[kStream];
-    return stream?.socket;
+    return this[kStream]?.[bunHTTP2Session]?.socket;
   }
 
   get connection() {
@@ -474,8 +473,7 @@ class Http2ServerResponse extends Stream {
     // only from ServerResponse but not IncomingMessage
     if (this[kState].closed) return undefined;
 
-    const stream = this[kStream];
-    return stream?.socket;
+    return this[kStream]?.[bunHTTP2Session]?.socket;
   }
 
   get connection() {
@@ -1301,7 +1299,7 @@ function assertSession(session) {
 hideFromStack(assertSession);
 class Http2Stream extends Duplex {
   #id: number;
-  [bunHTTP2Session]: ClientHttp2Session | null = null;
+  [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamEnded]: boolean = false;
   [bunHTTP2WantTrailers]: boolean = false;
   [bunHTTP2Closed]: boolean = false;
@@ -1765,7 +1763,6 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       error_instance = streamErrorFromCode(error);
     }
     stream[bunHTTP2Closed] = true;
-    stream[bunHTTP2Session] = null;
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       stream.push(null);
@@ -1852,7 +1849,6 @@ class ServerHttp2Session extends Http2Session {
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
         stream[bunHTTP2Closed] = true;
-        stream[bunHTTP2Session] = null;
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
@@ -1975,13 +1971,13 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
+
     this.emit("close");
   }
 
   #onError(error: Error) {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
+
     this.emit("error", error);
   }
 
@@ -2027,6 +2023,7 @@ class ServerHttp2Session extends Http2Session {
       this.#alpnProtocol = "h2c";
     }
     this[bunHTTP2Socket] = socket;
+
     const nativeSocket = socket[bunSocketInternal];
     this.#encrypted = socket instanceof TLSSocket;
 
@@ -2278,7 +2275,7 @@ class ClientHttp2Session extends Http2Session {
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
         stream[bunHTTP2Closed] = true;
-        stream[bunHTTP2Session] = null;
+        // stream[bunHTTP2Session] = null;
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
@@ -2385,12 +2382,14 @@ class ClientHttp2Session extends Http2Session {
       }
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
+
       self.#parser = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self[bunHTTP2Socket]?.end();
       self[bunHTTP2Socket] = null;
+
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
@@ -2459,12 +2458,11 @@ class ClientHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
     this.emit("close");
   }
   #onError(error: Error) {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
+
     this.emit("error", error);
   }
   #onTimeout() {
@@ -2624,6 +2622,7 @@ class ClientHttp2Session extends Http2Session {
     if (typeof options?.createConnection === "function") {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
+
       if (socket.secureConnecting === true) {
         socket.on("secureConnect", onConnect.bind(this));
       } else if (socket.connecting === true) {
@@ -2687,7 +2686,6 @@ class ClientHttp2Session extends Http2Session {
     } else {
       this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
     }
-    this[bunHTTP2Socket] = null;
 
     if (error) {
       this.emit("error", error);

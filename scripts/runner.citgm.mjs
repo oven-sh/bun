@@ -14,11 +14,10 @@ const shards = [
   // 0
   [0, "binary-split"],
   [0, "blake2b-wasm"],
-  [0, "duplexify"],
   [0, "flush-write-stream"],
   [0, "from2"],
-  // 5
   [0, "full-icu-test"],
+  // 5
   [0, "pumpify"],
   [0, "thread-sleep"],
 ];

@@ -5249,6 +5249,23 @@ pub const Token = union(TokenKind) {
         };
     }
 
+    pub fn format(this: *const Token, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype,) !void {
+        _ = fmt; // autofix
+        _ = opts; // autofix
+        return switch (this.*) {
+            inline .ident, .function, .at_keyword, .hash, .idhash, .quoted_string, .bad_string, .unquoted_url, .bad_url, .whitespace, .comment, => |str| {
+                try writer.print("{s} = {s}", .{@tagName(this.*), str});
+            },
+            .delim => |d| {
+                try writer.print("'{c}'", .{@as(u8, @truncate( d ))});
+            },
+            else => {
+                try writer.print("{s}", .{@tagName(this.*)});
+            },
+        };
+    }
+
+
     pub fn raw(this: Token) []const u8 {
         return switch (this) {
             .ident => this.ident,

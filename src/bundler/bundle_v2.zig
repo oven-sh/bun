@@ -3197,8 +3197,8 @@ pub const ParseTask = struct {
                     )) {
                         .result => |v| v,
                         .err => |e| {
-                            bundler.log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{} parsing", .{e}) catch unreachable;
-                            @panic("handle this");
+                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{}", .{e.kind}) catch unreachable;
+                            return error.SyntaxError;
                         },
                     };
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);

@@ -85,7 +85,18 @@ pub const BackgroundRepeat = struct {
 /// in a single direction.
 ///
 /// See [BackgroundRepeat](BackgroundRepeat).
-pub const BackgroundRepeatKeyword = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const BackgroundRepeatKeyword = enum {
+    /// The image is repeated in this direction.
+    repeat,
+    /// The image is repeated so that it fits, and then spaced apart evenly.
+    space,
+    /// The image is scaled so that it repeats an even number of times.
+    round,
+    /// The image is placed once and not repeated in this direction.
+    noRepeat,
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [background-attachment](https://www.w3.org/TR/css-backgrounds-3/#background-attachment) property.
 pub const BackgroundAttachment = enum {

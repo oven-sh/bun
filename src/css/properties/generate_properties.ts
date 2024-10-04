@@ -717,9 +717,9 @@ generateCode({
   //   ty: "Outline",
   //   shorthand: true,
   // },
-  // "outline-color": {
-  //   ty: "CssColor",
-  // },
+  "outline-color": {
+    ty: "CssColor",
+  },
   // "outline-style": {
   //   ty: "OutlineStyle",
   // },
@@ -1253,10 +1253,10 @@ generateCode({
   //   ty: "TextDecorationStyle",
   //   valid_prefixes: ["webkit", "moz"],
   // },
-  // "text-decoration-color": {
-  //   ty: "CssColor",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
+  "text-decoration-color": {
+    ty: "CssColor",
+    valid_prefixes: ["webkit", "moz"],
+  },
   // "text-decoration-thickness": {
   //   ty: "TextDecorationThickness",
   // },
@@ -1273,10 +1273,10 @@ generateCode({
   //   ty: "TextEmphasisStyle",
   //   valid_prefixes: ["webkit"],
   // },
-  // "text-emphasis-color": {
-  //   ty: "CssColor",
-  //   valid_prefixes: ["webkit"],
-  // },
+  "text-emphasis-color": {
+    ty: "CssColor",
+    valid_prefixes: ["webkit"],
+  },
   // "text-emphasis": {
   //   ty: "TextEmphasis",
   //   valid_prefixes: ["webkit"],

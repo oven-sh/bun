@@ -1,6 +1,6 @@
 import * as grpc from "@grpc/grpc-js";
 import * as loader from "@grpc/proto-loader";
-import { bunExe } from "harness";
+import { bunExe, nodeExe } from "harness";
 import { readFileSync } from "fs";
 import path from "node:path";
 import { AddressInfo } from "ws";
@@ -20,7 +20,7 @@ async function nodeEchoServer(env: any) {
   const decoder = new TextDecoder("utf-8");
   const json = decoder.decode(data.value);
   const address = JSON.parse(json);
-  const url = `${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`;
+  const url = `localhost:${address.port}`;
   return { address, url, subprocess };
 }
 

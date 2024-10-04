@@ -65,6 +65,8 @@ void* NapiHandleScope__push(void* jsGlobalObject, bool detached);
 void NapiHandleScope__pop(void* jsGlobalObject, void* handleScope);
 #endif
 
+// call this to cause a breakpoint, in case you need to debug functions in FFI.h
+void __builtin_debugtrap(void);
 
 #ifdef INJECT_BEFORE
 // #include <stdint.h>

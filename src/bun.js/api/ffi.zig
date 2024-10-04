@@ -2442,6 +2442,10 @@ const CompilerRT = struct {
         @memcpy(dest[0..byte_count], source[0..byte_count]);
     }
 
+    fn breakpoint() callconv(.C) void {
+        @breakpoint();
+    }
+
     pub fn define(state: *TCC.TCCState) void {
         if (comptime Environment.isX64) {
             _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
@@ -2489,6 +2493,7 @@ const CompilerRT = struct {
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
         _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
         _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
+        _ = TCC.tcc_add_symbol(state, "__builtin_debugtrap", &breakpoint);
 
         _ = TCC.tcc_add_symbol(
             state,

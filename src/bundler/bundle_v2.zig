@@ -326,6 +326,25 @@ pub const ThreadPool = struct {
 
 const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 
+/// Bake needs to specify more information per entry point.
+pub const BakeEntryPoint = struct {
+    path: []const u8,
+    graph: bake.Renderer,
+    is_route_root: bool = false,
+
+    pub fn init(path: []const u8, graph: bake.Renderer) BakeEntryPoint {
+        return .{ .path = path, .graph = graph };
+    }
+
+    pub fn route(path: []const u8) BakeEntryPoint {
+        return .{
+            .path = path,
+            .graph = .server,
+            .is_route_root = true,
+        };
+    }
+};
+
 pub const BundleV2 = struct {
     bundler: *Bundler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -886,7 +905,11 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8, ssr_entry_points: []const []const u8) !ThreadPoolLib.Batch {
+    pub fn enqueueEntryPoints(
+        this: *BundleV2,
+        user_entry_points: []const []const u8,
+        bake_entry_points: []const BakeEntryPoint,
+    ) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
 
         {
@@ -930,16 +953,13 @@ pub const BundleV2 = struct {
                 } else {}
             }
 
-            for (client_entry_points) |entry_point| {
-                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved, true, .browser)) |source_index| {
-                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                } else {}
-            }
-
-            for (ssr_entry_points) |entry_point| {
-                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved, true, .kit_server_components_ssr)) |source_index| {
+            for (bake_entry_points) |entry_point| {
+                const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch continue;
+                if (try this.enqueueItem(null, &batch, resolved, true, switch (entry_point.graph) {
+                    .client => .browser,
+                    .server => this.bundler.options.target,
+                    .ssr => .kit_server_components_ssr,
+                })) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -1234,7 +1254,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}, &.{}));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1832,8 +1852,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-        client_entry_points: []const []const u8,
-        ssr_entry_points: []const []const u8,
+        bake_entry_points: []const BakeEntryPoint,
     ) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
@@ -1846,7 +1865,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points, ssr_entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, bake_entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2758,7 +2777,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             completion.result = .{
                 .value = .{
-                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}, &.{}),
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}),
                 },
             };
 
@@ -10404,46 +10423,8 @@ pub const LinkerContext = struct {
             // When this isnt the initial bundle, concatenation as usual would produce a
             // broken module. It is DevServer's job to create and send HMR patches.
             if (c.dev_server) |dev_server| {
-                const input_file_sources = c.parse_graph.input_files.items(.source);
-                const import_records = c.parse_graph.ast.items(.import_records);
-                const targets = c.parse_graph.ast.items(.target);
-
-                const resolved_index_cache = try c.allocator.alloc(u32, input_file_sources.len * 2);
-                const server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator, input_file_sources.len);
-
-                var ctx: bun.bake.DevServer.ReceiveContext = .{
-                    .import_records = import_records,
-                    .sources = input_file_sources,
-                    .resolved_index_cache = resolved_index_cache,
-                    .server_seen_bit_set = server_seen_bit_set,
-                };
-
                 bun.assert(chunks.len == 1);
-                const chunk = chunks[0];
-
-                // Pass 1, update the graph with all rebundle files
-                for (
-                    chunk.content.javascript.parts_in_chunk_in_order,
-                    chunk.compile_results_for_chunk,
-                ) |part_range, compile_result| {
-                    try dev_server.receiveChunk(
-                        &ctx,
-                        part_range.source_index,
-                        targets[part_range.source_index.get()].bakeRenderer(),
-                        compile_result,
-                    );
-                }
-
-                // Pass 2, resolve all imports
-                for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-                    try dev_server.processChunkDependencies(
-                        &ctx,
-                        part_range.source_index,
-                        targets[part_range.source_index.get()].bakeRenderer(),
-                        c.allocator,
-                    );
-                }
-
+                try dev_server.finalizeBundle(c, &chunks[0]);
                 return std.ArrayList(options.OutputFile).init(bun.default_allocator);
             }
 

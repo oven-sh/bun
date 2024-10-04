@@ -8,6 +8,8 @@ two components; Any other use-case is unsupported.
 Every message is to use `.binary`/`ArrayBuffer` transport mode. The first byte
 indicates a Message ID, with the length being inferred by the payload size.
 
+All integers are in little-endian
+
 ## Server->Client messages
 
 ### `V`
@@ -29,4 +31,8 @@ Hot-module-reloading patch. The entire payload is UTF-8 Encoded JavaScript Paylo
 
 Server-side code has reloaded. Client should either refetch the route or perform a hard reload.
 
-TODO: pass route(s) changed so the client can only update when it matches the route.
+- `u32` Number of updated routes
+- For each route:
+  - `u32` Route ID
+  - `u16` Length of route name.
+  - `[n]u8` Route name in UTF-8 encoded text.

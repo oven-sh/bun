@@ -9,7 +9,7 @@ interface Config {
 
   // Server
   separateSSRGraph?: true;
-  
+
   // Client
   /** If available, this is the Id of `react-refresh/runtime` */
   refresh?: Id;

@@ -8,6 +8,7 @@
 //! clean up server state.
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.Bake, false);
+pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
 pub const Options = struct {
     allocator: ?Allocator = null, // defaults to a named heap
@@ -65,6 +66,7 @@ watch_current: u1 = 0,
 generation: usize = 0,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
+incremental_result: IncrementalResult,
 graph_safety_lock: bun.DebugThreadLock,
 framework: bake.Framework,
 // Each logical graph gets it's own bundler configuration
@@ -81,6 +83,8 @@ pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
 
 pub const Route = struct {
+    pub const Index = bun.GenericIndex(u32, Route);
+
     // Config
     pattern: [:0]const u8,
     entry_point: []const u8,
@@ -97,8 +101,6 @@ pub const Route = struct {
     pub fn clientPublicPath(route: *const Route) []const u8 {
         return route.client_bundled_url[0 .. route.client_bundled_url.len - "/client.js".len];
     }
-
-    pub const Index = enum(u32) { _ };
 };
 
 /// Three-way maybe state
@@ -175,6 +177,7 @@ pub fn init(options: Options) !*DevServer {
 
         .client_graph = IncrementalGraph(.client).empty,
         .server_graph = IncrementalGraph(.server).empty,
+        .incremental_result = IncrementalResult.empty,
 
         .server_bundler = undefined,
         .client_bundler = undefined,
@@ -405,13 +408,13 @@ fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
 fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bundle {
     return dev.theRealBundlingFunction(
         &.{
-            dev.framework.entry_server.?,
-            route.entry_point,
+            // TODO: only enqueue these two if they don't exist
+            // tbh it would be easier just to pre-bundle the framework.
+            BakeEntryPoint.init(dev.framework.entry_server.?, .server),
+            BakeEntryPoint.init(dev.framework.entry_client.?, .client),
+            // The route!
+            BakeEntryPoint.route(route.entry_point),
         },
-        &.{
-            dev.framework.entry_client.?,
-        },
-        &.{},
         route,
         .initial_response,
         fail,
@@ -423,10 +426,7 @@ fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bu
 /// error, including replying to the request as well as console logging.
 fn theRealBundlingFunction(
     dev: *DevServer,
-    // TODO: the way these params are passed in is very sloppy
-    server_requirements: []const []const u8,
-    client_requirements: []const []const u8,
-    ssr_requirements: []const []const u8,
+    files: []const BakeEntryPoint,
     dependant_route: ?*Route,
     comptime client_chunk_kind: ChunkKind,
     fail: *Failure,
@@ -442,7 +442,7 @@ fn theRealBundlingFunction(
         }
     };
 
-    assert(server_requirements.len > 0 or client_requirements.len > 0 or ssr_requirements.len > 0);
+    assert(files.len > 0);
 
     var heap = try ThreadlocalArena.init();
     defer heap.deinit();
@@ -524,7 +524,7 @@ fn theRealBundlingFunction(
         dev.server_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
     }
 
-    const output_files = try bv2.runFromJSInNewThread(server_requirements, client_requirements, ssr_requirements);
+    const output_files = try bv2.runFromJSInNewThread(&.{}, files);
 
     try dev.client_graph.ensureStaleBitCapacity(false);
     try dev.server_graph.ensureStaleBitCapacity(false);
@@ -642,7 +642,7 @@ pub const ReceiveContext = struct {
     /// Used to tell if the server should replace or append import records.
     ///
     /// Caller initializes with `sources.len` items to `false`
-    server_seen_bit_set: bun.bit_set.DynamicBitSetUnmanaged,
+    server_seen_bit_set: DynamicBitSetUnmanaged,
 
     pub fn getCachedIndex(
         rc: *const ReceiveContext,
@@ -661,6 +661,55 @@ pub const ReceiveContext = struct {
         return @ptrCast(&subslice[i.get()]);
     }
 };
+
+/// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
+pub fn finalizeBundle(
+    dev: *DevServer,
+    linker: *bun.bundle_v2.LinkerContext,
+    chunk: *bun.bundle_v2.Chunk,
+) !void {
+    const input_file_sources = linker.parse_graph.input_files.items(.source);
+    const import_records = linker.parse_graph.ast.items(.import_records);
+    const targets = linker.parse_graph.ast.items(.target);
+
+    const resolved_index_cache = try linker.allocator.alloc(u32, input_file_sources.len * 2);
+    const server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(linker.allocator, input_file_sources.len);
+
+    var ctx: bun.bake.DevServer.ReceiveContext = .{
+        .import_records = import_records,
+        .sources = input_file_sources,
+        .resolved_index_cache = resolved_index_cache,
+        .server_seen_bit_set = server_seen_bit_set,
+    };
+
+    // Pass 1, update the graph with all rebundle files
+    for (
+        chunk.content.javascript.parts_in_chunk_in_order,
+        chunk.compile_results_for_chunk,
+    ) |part_range, compile_result| {
+        try dev.receiveChunk(
+            &ctx,
+            part_range.source_index,
+            targets[part_range.source_index.get()].bakeRenderer(),
+            compile_result,
+        );
+    }
+
+    dev.client_graph.affected_by_update = try DynamicBitSetUnmanaged.initEmpty(linker.allocator, dev.client_graph.bundled_files.count());
+    defer dev.client_graph.affected_by_update = .{};
+    dev.server_graph.affected_by_update = try DynamicBitSetUnmanaged.initEmpty(linker.allocator, dev.server_graph.bundled_files.count());
+    defer dev.client_graph.affected_by_update = .{};
+
+    // Pass 2, resolve all imports
+    for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+        try dev.processChunkDependencies(
+            &ctx,
+            part_range.source_index,
+            targets[part_range.source_index.get()].bakeRenderer(),
+            linker.allocator,
+        );
+    }
+}
 
 pub fn receiveChunk(
     dev: *DevServer,
@@ -845,9 +894,9 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// needed. A call to `takeBundle` joins all of the chunks, resulting in the
 /// code to send to client or evaluate on the server.
 ///
-/// This approach was selected as it resulted in the fewest changes in the
-/// bundler. It also allows the bundler to avoid memory buildup by ensuring its
-/// arenas don't live too long.
+/// Then, `processChunkDependencies` is called on each chunk to update the
+/// list of imports. When a change in imports is detected, the dependencies
+/// are updated accordingly.
 ///
 /// Since all routes share the two graphs, bundling a new route that shared
 /// a module from a previously bundled route will perform the same exclusion
@@ -857,26 +906,44 @@ fn sendBuiltInNotFound(resp: *Response) void {
 /// be re-materialized (required when pressing Cmd+R after any client update)
 pub fn IncrementalGraph(side: bake.Side) type {
     return struct {
+        // Unless otherwise mentioned, all data structures use DevServer's allocator.
+
         /// Key contents are owned by `default_allocator`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
         /// Track bools for files which are "stale", meaning
         /// they should be re-bundled before being used.
-        stale_files: bun.bit_set.DynamicBitSetUnmanaged,
-        /// Indexed by FileIndex, contains the start of it's dependency list.
-        first_dep: std.ArrayListUnmanaged(DepIndex.Optional),
+        stale_files: DynamicBitSetUnmanaged,
 
-        /// Each dependency entry is stored in a long list,
-        /// which are joined to each other in a linked list.
-        deps: std.ArrayListUnmanaged(Dep),
-        /// Dependencies are added and removed very frequently.
-        /// This free list is used to re-use freed indexes, so
-        /// that garbage collection can be invoked less often.
-        deps_free_list: std.ArrayListUnmanaged(DepIndex),
+        /// Start of the 'dependencies' linked list. These are the other files
+        /// that import used by this file. Walk this list to discover what
+        /// files are to be reloaded when something changes.
+        first_dep: ArrayListUnmanaged(EdgeIndex.Optional),
+        /// Start of the 'imports' linked list. These are the files that this
+        /// file imports.
+        first_import: ArrayListUnmanaged(EdgeIndex.Optional),
+        /// `File` objects act as nodes in a directional many-to-many graph,
+        /// where edges represent the imports between modules. An 'dependency'
+        /// is a file that must to be notified when it `imported` changes. This
+        /// is implemented using an array of `Edge` objects that act as linked
+        /// list nodes; each file stores the first imports and dependency.
+        edges: ArrayListUnmanaged(Edge),
+        /// HMR Dependencies are added and removed very frequently, but indexes
+        /// must remain stable. This free list is used to re-use freed indexes,
+        /// allowing garbage collection to run less often.
+        edges_free_list: ArrayListUnmanaged(EdgeIndex),
+
+        /// Used during an incremental update to determine what "HMR roots"
+        /// are affected. Set for all `bundled_files` that have been visited
+        /// by the dependency tracing logic.
+        ///
+        /// Outside of an incremental bundle, this is empty.
+        /// Backed by the bundler thread's arena allocator.
+        affected_by_update: DynamicBitSetUnmanaged,
 
         /// Byte length of every file queued for concatenation
         current_chunk_len: usize = 0,
         /// All part contents
-        current_chunk_parts: std.ArrayListUnmanaged(switch (side) {
+        current_chunk_parts: ArrayListUnmanaged(switch (side) {
             .client => FileIndex,
             // These slices do not outlive the bundler, and must
             // be joined before its arena is deinitialized.
@@ -886,10 +953,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const empty: @This() = .{
             .bundled_files = .{},
             .stale_files = .{},
-            .first_dep = .{},
 
-            .deps = .{},
-            .deps_free_list = .{},
+            .first_dep = .{},
+            .first_import = .{},
+            .edges = .{},
+            .edges_free_list = .{},
+
+            .affected_by_update = .{},
 
             .current_chunk_len = 0,
             .current_chunk_parts = .{},
@@ -905,32 +975,54 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 is_rsc: bool,
                 /// Is this file built for the SSR graph.
                 is_ssr: bool,
-                /// If this file is a route root, the route can
-                /// be looked up in the route list.
-                is_route: bool,
+                /// This is a file is an entry point to the framework.
+                /// Changing this will always cause a full page reload.
+                is_special_framework_file: bool,
                 /// Changing code in a client component should rebuild code for
                 /// SSR, but it should not count as changing the server code
                 /// since a connected client can hot-update these files.
                 is_client_to_server_component_boundary: bool,
+                /// If this file is a route root, the route can be looked up in
+                /// the route list. This also stops dependency propagation.
+                is_route: bool,
 
-                unused: enum(u4) { unused = 0 } = .unused,
+                unused: enum(u3) { unused = 0 } = .unused,
+
+                fn stopsPropagation(flags: @This()) bool {
+                    return flags.is_special_framework_file or
+                        flags.is_route or
+                        flags.is_client_to_server_component_boundary;
+                }
             },
             .client => struct {
                 /// Allocated by default_allocator
                 code: []const u8,
+
+                inline fn stopsPropagation(_: @This()) bool {
+                    return false;
+                }
             },
         };
 
-        pub const Dep = struct {
-            next: DepIndex.Optional,
-            file: FileIndex,
+        // If this data structure is not clear, see `DirectoryWatchStore.Dep`
+        // for a simpler example. It is more complicated here because this
+        // structure is two-way.
+        pub const Edge = struct {
+            /// The file with the `import` statement
+            dependency: FileIndex,
+            /// The file that `dependency` is importing
+            imported: FileIndex,
+
+            next_import: EdgeIndex.Optional,
+            next_dependency: EdgeIndex.Optional,
+            prev_dependency: EdgeIndex.Optional,
         };
 
-        /// An index into `bundled_files`, `stale_files`, or `first_dep`
+        /// An index into `bundled_files`, `stale_files`, `first_dep`, `first_import`, or `affected_by_update`
         pub const FileIndex = bun.GenericIndex(u32, File);
 
-        /// An index into `deps`
-        const DepIndex = bun.GenericIndex(u32, Dep);
+        /// An index into `edges`
+        const EdgeIndex = bun.GenericIndex(u32, Edge);
 
         /// Tracks a bundled code chunk for cross-bundle chunks,
         /// ensuring it has an entry in `bundled_files`.
@@ -989,9 +1081,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (!gop.found_existing) {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
                 try g.first_dep.append(g.owner().allocator, .none);
+                try g.first_import.append(g.owner().allocator, .none);
             }
 
-            ctx.getCachedIndex(side, index).* = @enumFromInt(gop.index);
+            ctx.getCachedIndex(side, index).* = FileIndex.init(@intCast(gop.index));
 
             switch (side) {
                 .client => {
@@ -1001,7 +1094,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     gop.value_ptr.* = .{
                         .code = code,
                     };
-                    try g.current_chunk_parts.append(g.owner().allocator, @enumFromInt(gop.index));
+                    try g.current_chunk_parts.append(g.owner().allocator, FileIndex.init(@intCast(gop.index)));
                 },
                 .server => {
                     if (!gop.found_existing) {
@@ -1010,7 +1103,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_ssr = is_ssr_graph,
                             .is_route = false, // set after the entire bundler task (TODO: ???)
                             .is_client_to_server_component_boundary = false, // TODO
-
+                            .is_special_framework_file = false, // TODO: set later
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -1023,8 +1116,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         const TempLookup = struct {
+            edge_index: EdgeIndex,
             seen: bool,
-            dep_index: DepIndex,
         };
 
         /// Second pass of IncrementalGraph indexing
@@ -1040,56 +1133,119 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // TODO: put this on receive context so we can REUSE memory
             var quick_lookup: std.AutoArrayHashMapUnmanaged(FileIndex, TempLookup) = .{};
-            defer quick_lookup.clearRetainingCapacity();
+            defer quick_lookup.clearAndFree(temp_alloc);
             {
-                var it: ?DepIndex = g.first_dep.items[@intFromEnum(file_index)].unwrap();
-                while (it) |dep_index| {
-                    const dep = g.deps.items[@intFromEnum(dep_index)];
-                    it = dep.next.unwrap();
-                    try quick_lookup.putNoClobber(temp_alloc, dep.file, .{
+                var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
+                while (it) |edge_index| {
+                    const dep = g.edges.items[edge_index.get()];
+                    it = dep.next_import.unwrap();
+                    try quick_lookup.putNoClobber(temp_alloc, dep.imported, .{
                         .seen = false,
-                        .dep_index = dep_index,
+                        .edge_index = edge_index,
                     });
                 }
             }
 
-            var new_dependencies: DepIndex.Optional = .none;
+            var new_imports: EdgeIndex.Optional = .none;
+            defer g.first_import.items[file_index.get()] = new_imports;
 
             for (ctx.import_records[index.get()].slice()) |import_record| {
                 if (import_record.source_index.isValid() and !import_record.source_index.isRuntime()) {
-                    const graph_file_index = ctx.getCachedIndex(side, import_record.source_index).*;
+                    const imported_file_index = ctx.getCachedIndex(side, import_record.source_index).*;
 
-                    // Reuse `Dep` objects via the lookup map. This is also how
-                    // we swiftly detect dependency removals
-                    if (quick_lookup.getPtr(graph_file_index)) |lookup| {
+                    if (quick_lookup.getPtr(imported_file_index)) |lookup| {
                         // if already has been seen, we can pretend this entry
                         // doesn't exist. this eliminates duplicate dependencies
                         // in IncrementalGraph's dependency list
                         if (lookup.seen) continue;
                         lookup.seen = true;
 
-                        const dep = &g.deps.items[@intFromEnum(lookup.dep_index)];
-                        dep.next = new_dependencies;
-                        new_dependencies = lookup.dep_index.toOptional();
+                        const dep = &g.edges.items[lookup.edge_index.get()];
+                        dep.next_import = new_imports;
+                        new_imports = lookup.edge_index.toOptional();
                     } else {
-                        // a new `Dep` is needed
+                        // A new `Dep` is needed to represent the dependency and import.
+                        const first_dep = &g.first_dep.items[imported_file_index.get()];
                         const new_dep = try g.newDep(.{
-                            .next = new_dependencies,
-                            .file = graph_file_index,
+                            .next_import = new_imports,
+                            .next_dependency = first_dep.*,
+                            .prev_dependency = .none,
+                            .imported = imported_file_index,
+                            .dependency = file_index,
                         });
-                        new_dependencies = new_dep.toOptional();
+                        if (first_dep.*.unwrap()) |dep| {
+                            g.edges.items[dep.get()].prev_dependency = new_dep.toOptional();
+                        }
+                        new_imports = new_dep.toOptional();
+                        first_dep.* = new_dep.toOptional();
                     }
-
-                    // Follow `graph_file_index` to it's HMR root.
-                    // TODO:
                 }
             }
 
-            // '.seen = false' means a dependency was removed and should be freed
+            // '.seen = false' means an import was removed and should be freed
             for (quick_lookup.values()) |val| {
                 if (!val.seen) {
-                    try g.freeDep(val.dep_index);
+                    // Unlink from dependency list. At this point
+                    const edge = &g.edges.items[val.edge_index.get()];
+                    if (edge.prev_dependency.unwrap()) |prev| {
+                        const prev_dependency = &g.edges.items[prev.get()];
+                        prev_dependency.next_dependency = edge.next_dependency;
+                    }
+                    if (edge.next_dependency.unwrap()) |next| {
+                        const next_dependency = &g.edges.items[next.get()];
+                        next_dependency.prev_dependency = edge.prev_dependency;
+                    }
+
+                    // With no references to this edge, it can be freed
+                    try g.freeDep(val.edge_index);
                 }
+            }
+
+            // Follow this node to it's HMR root
+            try g.propagateHotUpdate(file_index);
+        }
+
+        fn propagateHotUpdate(g: *@This(), file_index: FileIndex) !void {
+            if (Environment.enable_logs) {
+                igLog("propagateHotUpdate(.{s}, {}{s})", .{
+                    @tagName(side),
+                    bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
+                    if (g.affected_by_update.isSet(file_index.get())) " [already visited]" else "",
+                });
+            }
+
+            if (g.affected_by_update.isSet(file_index.get()))
+                return;
+            g.affected_by_update.set(file_index.get());
+
+            const file = g.bundled_files.values()[file_index.get()];
+
+            switch (side) {
+                .server => {
+                    if (file.is_route) {
+                        igLog("\\<- mark the route my friend", .{});
+                        // g.owner().incremental_result.routes_affected.append(g.owner().allocator, )
+                    }
+                },
+                .client => {
+                    // igLog("\\<- client side track", .{});
+                },
+            }
+
+            // Certain files do not propagate updates to dependencies.
+            // This is how updating a client component doesn't cause
+            // a server-side reload.
+            if (file.stopsPropagation()) {
+                igLog("\\<- this file stops propagation", .{});
+                return;
+            }
+
+            // Recurse
+            var it: ?EdgeIndex = g.first_dep.items[file_index.get()].unwrap();
+            while (it) |dep_index| {
+                const edge = g.edges.items[dep_index.get()];
+                it = edge.next_dependency.unwrap();
+                try g.propagateHotUpdate(edge.dependency);
             }
         }
 
@@ -1119,6 +1275,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_ssr = is_ssr_graph,
                             .is_route = false, // set after the entire bundler task (TODO: ???)
                             .is_client_to_server_component_boundary = false, // TODO
+
+                            .is_special_framework_file = false, // TODO:
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -1128,14 +1286,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 },
             }
 
-            return @enumFromInt(gop.index);
+            return FileIndex.init(@intCast(gop.index));
         }
 
         pub fn ensureStaleBitCapacity(g: *@This(), val: bool) !void {
             try g.stale_files.resize(g.owner().allocator, @max(g.bundled_files.count(), g.stale_files.bit_length), val);
         }
 
-        pub fn invalidate(g: *@This(), paths: []const []const u8, out_paths: *FileLists, file_list_alloc: Allocator) !void {
+        pub fn invalidate(g: *@This(), paths: []const []const u8, out_paths: *std.ArrayList(BakeEntryPoint)) !void {
             g.owner().graph_safety_lock.assertLocked();
             const values = g.bundled_files.values();
             for (paths) |path| {
@@ -1147,13 +1305,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 };
                 g.stale_files.set(index);
                 switch (side) {
-                    .client => try out_paths.client.append(file_list_alloc, path),
+                    .client => try out_paths.append(BakeEntryPoint.init(path, .client)),
                     .server => {
                         const data = &values[index];
                         if (data.is_rsc)
-                            try out_paths.server.append(file_list_alloc, path);
+                            try out_paths.append(BakeEntryPoint.init(path, .server));
                         if (data.is_ssr)
-                            try out_paths.ssr.append(file_list_alloc, path);
+                            try out_paths.append(BakeEntryPoint.init(path, .ssr));
                     },
                 }
             }
@@ -1228,7 +1386,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const files = g.bundled_files.values();
 
             // This function performs one allocation, right here
-            var chunk = try std.ArrayListUnmanaged(u8).initCapacity(
+            var chunk = try ArrayListUnmanaged(u8).initCapacity(
                 g.owner().allocator,
                 g.current_chunk_len + runtime.len + end.len,
             );
@@ -1237,7 +1395,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             for (g.current_chunk_parts.items) |entry| {
                 chunk.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
-                    .client => files[@intFromEnum(entry)].code,
+                    .client => files[entry.get()].code,
                     // entry is the '[]const u8' itself
                     .server => entry,
                 });
@@ -1259,28 +1417,28 @@ pub fn IncrementalGraph(side: bake.Side) type {
             return chunk.items;
         }
 
-        fn newDep(g: *@This(), dep: Dep) !DepIndex {
-            if (g.deps_free_list.popOrNull()) |index| {
-                g.deps.items[@intFromEnum(index)] = dep;
+        fn newDep(g: *@This(), edge: Edge) !EdgeIndex {
+            if (g.edges_free_list.popOrNull()) |index| {
+                g.edges.items[index.get()] = edge;
                 return index;
             }
 
-            const index: DepIndex = @enumFromInt(g.deps.items.len);
-            try g.deps.append(g.owner().allocator, dep);
+            const index = EdgeIndex.init(@intCast(g.edges.items.len));
+            try g.edges.append(g.owner().allocator, edge);
             return index;
         }
 
         /// Does nothing besides release the `Dep` at `dep_index` for reallocation by `newDep`
         /// Caller must detach the dependency from the linked list it is in.
-        fn freeDep(g: *@This(), dep_index: DepIndex) !void {
+        fn freeDep(g: *@This(), dep_index: EdgeIndex) !void {
             if (Environment.isDebug) {
-                g.deps.items[@intFromEnum(dep_index)] = undefined;
+                g.edges.items[dep_index.get()] = undefined;
             }
 
-            if (@intFromEnum(dep_index) == (g.deps.items.len - 1)) {
-                g.deps.items.len -= 1;
+            if (dep_index.get() == (g.edges.items.len - 1)) {
+                g.edges.items.len -= 1;
             } else {
-                try g.deps_free_list.append(g.owner().allocator, dep_index);
+                try g.edges_free_list.append(g.owner().allocator, dep_index);
             }
         }
 
@@ -1289,6 +1447,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
     };
 }
+
+const IncrementalResult = struct {
+    routes_affected: ArrayListUnmanaged(Route.Index),
+
+    const empty: IncrementalResult = .{
+        .routes_affected = .{},
+    };
+};
 
 /// When a file fails to import a relative path, directory watchers are added so
 /// that when a matching file is created, the dependencies can be rebuilt. This
@@ -1303,9 +1469,9 @@ const DirectoryWatchStore = struct {
 
     /// List of active watchers. Can be re-ordered on removal
     watches: bun.StringArrayHashMapUnmanaged(Entry),
-    dependencies: std.ArrayListUnmanaged(Dep),
+    dependencies: ArrayListUnmanaged(Dep),
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
-    dependencies_free_list: std.ArrayListUnmanaged(Dep.Index),
+    dependencies_free_list: ArrayListUnmanaged(Dep.Index),
 
     const empty: DirectoryWatchStore = .{
         .lock = .{},
@@ -1342,11 +1508,11 @@ const DirectoryWatchStore = struct {
         const owned_file_path = switch (renderer) {
             .client => path: {
                 const index = try dev.client_graph.insertStale(import_source, false);
-                break :path dev.client_graph.bundled_files.keys()[@intFromEnum(index)];
+                break :path dev.client_graph.bundled_files.keys()[index.get()];
             },
             .server, .ssr => path: {
                 const index = try dev.client_graph.insertStale(import_source, renderer == .ssr);
-                break :path dev.client_graph.bundled_files.keys()[@intFromEnum(index)];
+                break :path dev.client_graph.bundled_files.keys()[index.get()];
             },
         };
 
@@ -1469,13 +1635,13 @@ const DirectoryWatchStore = struct {
 
     /// Caller must detach the dependency from the linked list it is in.
     fn freeDependencyIndex(store: *DirectoryWatchStore, alloc: Allocator, index: Dep.Index) !void {
-        alloc.free(store.dependencies.items[@intFromEnum(index)].specifier);
+        alloc.free(store.dependencies.items[index.get()].specifier);
 
         if (Environment.isDebug) {
-            store.dependencies.items[@intFromEnum(index)] = undefined;
+            store.dependencies.items[index.get()] = undefined;
         }
 
-        if (@intFromEnum(index) == (store.dependencies.items.len - 1)) {
+        if (index.get() == (store.dependencies.items.len - 1)) {
             store.dependencies.items.len -= 1;
         } else {
             try store.dependencies_free_list.append(alloc, index);
@@ -1504,11 +1670,11 @@ const DirectoryWatchStore = struct {
 
     fn appendDepAssumeCapacity(store: *DirectoryWatchStore, dep: Dep) Dep.Index {
         if (store.dependencies_free_list.popOrNull()) |index| {
-            store.dependencies.items[@intFromEnum(index)] = dep;
+            store.dependencies.items[index.get()] = dep;
             return index;
         }
 
-        const index: Dep.Index = @enumFromInt(store.dependencies.items.len);
+        const index = Dep.Index.init(@intCast(store.dependencies.items.len));
         store.dependencies.appendAssumeCapacity(dep);
         return index;
     }
@@ -1802,14 +1968,8 @@ const c = struct {
     }
 };
 
-const FileLists = struct {
-    client: std.ArrayListUnmanaged([]const u8),
-    server: std.ArrayListUnmanaged([]const u8),
-    ssr: std.ArrayListUnmanaged([]const u8),
-};
-
 /// Called on DevServer thread via HotReloadTask
-pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) void {
+pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     defer reload_task.files.clearRetainingCapacity();
 
     const changed_file_paths = reload_task.files.keys();
@@ -1827,34 +1987,26 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) void {
 
     // pre-allocate a few files worth of strings. it is unlikely but supported
     // to change more than 8 files in the same bundling round.
-    var files: FileLists = .{
-        .client = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
-        .server = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
-        .ssr = std.ArrayListUnmanaged([]const u8).initCapacity(temp_alloc, 8) catch unreachable, // sfb has enough space
-    };
-    defer files.client.deinit(temp_alloc);
-    defer files.server.deinit(temp_alloc);
-    defer files.ssr.deinit(temp_alloc);
+    var files = std.ArrayList(BakeEntryPoint).initCapacity(temp_alloc, 8) catch unreachable;
+    defer files.deinit();
 
     {
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
 
         inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-            g.invalidate(changed_file_paths, &files, temp_alloc) catch bun.outOfMemory();
+            g.invalidate(changed_file_paths, &files) catch bun.outOfMemory();
         }
     }
 
-    if (files.server.items.len == 0 and files.client.items.len == 0 and files.ssr.items.len == 0) {
+    if (files.items.len == 0) {
         Output.debugWarn("nothing to bundle?? this is a bug?", .{});
         return;
     }
 
     var fail: Failure = undefined;
     const bundle = dev.theRealBundlingFunction(
-        files.server.items,
-        files.client.items,
-        files.ssr.items,
+        files.items,
         null,
         .hmr_chunk,
         &fail,
@@ -1864,10 +2016,25 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) void {
         return;
     };
 
-    // TODO: be more specific with the kinds of files we send events for. this is a hack
-    if (files.server.items.len > 0) {
-        _ = dev.app.publish("*", "R", .binary, true);
+    if (dev.incremental_result.routes_affected.items.len > 0) {
+        var sfb2 = std.heap.stackFallback(4096, bun.default_allocator);
+        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 4096) catch
+            unreachable; // enough space
+        defer payload.deinit();
+        payload.appendAssumeCapacity('R');
+        const w = payload.writer();
+        try w.writeInt(u32, @intCast(dev.incremental_result.routes_affected.items.len), .little);
+
+        for (dev.incremental_result.routes_affected.items) |route| {
+            try w.writeInt(u32, route.get(), .little);
+            const pattern = dev.routes[route.get()].pattern;
+            try w.writeInt(u16, @intCast(pattern.len), .little);
+            try w.writeAll(pattern);
+        }
+
+        _ = dev.app.publish("*", payload.items, .binary, true);
     }
+
     _ = bundle; // already sent to client
 }
 
@@ -1905,8 +2072,11 @@ pub const HotReloadTask = struct {
     }
 
     pub fn run(initial: *HotReloadTask) void {
-        // debug.log("HMR Task start", .{});
-        // defer debug.log("HMR Task end", .{});
+        debug.log("HMR Task start", .{});
+        defer debug.log("HMR Task end", .{});
+
+        // TODO: audit the atomics with this reloading strategy
+        // It was not written by an expert.
 
         const dev = initial.dev;
         if (Environment.allow_assert) {
@@ -1914,7 +2084,7 @@ pub const HotReloadTask = struct {
         }
 
         // const start_timestamp = std.time.nanoTimestamp();
-        dev.reload(initial);
+        dev.reload(initial) catch bun.outOfMemory();
 
         // if there was a pending run, do it now
         if (dev.watch_state.swap(0, .seq_cst) > 1) {
@@ -1925,7 +2095,7 @@ pub const HotReloadTask = struct {
                 &dev.watch_events[0].aligned;
             if (current.state.swap(1, .seq_cst) == 0) {
                 // debug.log("case 1 (run now)", .{});
-                dev.reload(current);
+                dev.reload(current) catch bun.outOfMemory();
                 current.state.store(0, .seq_cst);
             } else {
                 // Watcher will emit an event since it reads watch_state 0
@@ -1945,6 +2115,9 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
     const file_paths = slice.items(.file_path);
     const counts = slice.items(.count);
     const kinds = slice.items(.kind);
+
+    // TODO: audit the atomics with this reloading strategy
+    // It was not written by an expert.
 
     // Get a Hot reload task pointer
     var ev: *HotReloadTask = &dev.watch_events[dev.watch_current].aligned;
@@ -2006,7 +2179,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                     var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
 
                     while (it) |index| {
-                        const dep = &dev.directory_watchers.dependencies.items[@intFromEnum(index)];
+                        const dep = &dev.directory_watchers.dependencies.items[index.get()];
                         it = dep.next.unwrap();
                         if ((dev.server_bundler.resolver.resolve(
                             bun.path.dirname(dep.source_file_path, .auto),
@@ -2065,21 +2238,24 @@ pub fn getLoaders(dev: *DevServer) *bun.options.Loader.HashTable {
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mutex = std.Thread.Mutex;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const assert = bun.assert;
+const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 
 const bake = bun.bake;
 
 const Log = bun.logger.Log;
+const Output = bun.Output;
 
 const Bundler = bun.bundler.Bundler;
 const BundleV2 = bun.bundle_v2.BundleV2;
+const BakeEntryPoint = bun.bundle_v2.BakeEntryPoint;
+
 const Define = bun.options.Define;
 const OutputFile = bun.options.OutputFile;
-
-const Output = bun.Output;
 
 const uws = bun.uws;
 const App = uws.NewApp(false);

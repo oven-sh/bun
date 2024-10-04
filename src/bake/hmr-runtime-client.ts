@@ -4,22 +4,39 @@ import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
 import { showErrorOverlay } from "./client/overlay";
 import { Bake } from "bun";
 import { int } from "./macros" with { type: "macro" };
+import { td } from "./text-decoder";
+import { DataViewReader } from "./client/reader";
+import { routeMatch } from "./client/route";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
+function performRouteReload() {
+  if (onServerSideReload) {
+    try {
+      onServerSideReload();
+    } catch (err) {
+      if (IS_BUN_DEVELOPMENT) {
+        return showErrorOverlay(err);
+      }
+    }
+  }
+
+  // Fallback for when reloading fails or is not implemented by the framework is
+  // to hard-reload.
+  location.reload();
+}
+
 try {
   const main = loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AssertPresent);
 
-  const { onServerSideReload, ...rest } = main.exports;
+  var { onServerSideReload, ...rest } = main.exports;
   if (Object.keys(rest).length > 0) {
     console.warn(
       `Framework client entry point (${config.main}) exported unknown properties, found: ${Object.keys(rest).join(", ")}`,
     );
   }
-
-  const td = new TextDecoder();
 
   const enum SocketState {
     Connecting,
@@ -52,19 +69,19 @@ try {
           break;
         }
         case int("R"): {
-          try {
-            if (onServerSideReload) {
-              onServerSideReload();
-            } else {
-              location.reload();
-            }
-          } catch (err) {
-            if (IS_BUN_DEVELOPMENT) {
-              return showErrorOverlay(err);
-            }
+          const reader = new DataViewReader(view, 1);
+          let routeCount = reader.u32();
 
-            location.reload();
+          while (routeCount > 0) {
+            routeCount -= 1;
+            const routeId = reader.u32();
+            const routePattern = reader.string(reader.u16());
+            if (routeMatch(routeId, routePattern)) {
+              performRouteReload();
+              break;
+            }
           }
+
           break;
         }
         default: {

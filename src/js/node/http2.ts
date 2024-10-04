@@ -23,6 +23,18 @@ class ERR_HTTP2_INVALID_HEADER_VALUE extends TypeError {
     this.code = "ERR_HTTP2_INVALID_HEADER_VALUE";
   }
 }
+class ERR_HTTP2_SEND_FILE extends Error {
+  constructor() {
+    super("Directories cannot be sent");
+    this.code = "ERR_HTTP2_SEND_FILE";
+  }
+}
+class ERR_HTTP2_SEND_FILE_NOSEEK extends Error {
+  constructor() {
+    super("Offset or length can only be specified for regular files");
+    this.code = "ERR_HTTP2_SEND_FILE_NOSEEK";
+  }
+}
 
 class ERR_HTTP2_HEADERS_SENT extends Error {
   constructor() {
@@ -1601,15 +1613,25 @@ class ServerHttp2Stream extends Http2Stream {
 
     offset = offset || 0;
     const end = length || 0 + offset;
+    let openned_fd = null;
     try {
       const fd = fs.openSync(path, "r");
+      openned_fd = fd;
+      const stat = fs.fstatSync(fd);
       if (typeof statCheck === "function") {
-        const stat = fs.fstatSync(fd);
+        if (stat.isFile()) {
+          headers[constants.HTTP2_HEADER_CONTENT_LENGTH] =
+            length !== undefined || length < 0 ? stat.size : Math.min(length, stat.size);
+        } else {
+          const isDirectory = stat.isDirectory();
+          throw isDirectory ? new ERR_HTTP2_SEND_FILE() : new ERR_HTTP2_SEND_FILE_NOSEEK();
+        }
         statCheck(stat, headers, {
           offset: offset,
           length: length !== undefined ? length : -1,
         });
       }
+
       if (headers[":status"] === undefined) {
         headers[":status"] = 200;
       }
@@ -1634,8 +1656,12 @@ class ServerHttp2Stream extends Http2Stream {
       if (typeof onError === "function") {
         onError(err);
       } else {
-        this.close(constants.NGHTTP2_INTERNAL_ERROR, undefined);
+        this.destroy(err);
       }
+    } finally {
+      try {
+        if (openned_fd) fs.close(openned_fd);
+      } catch {}
     }
   }
   respondWithFD(fd, headers, options) {
@@ -1653,6 +1679,11 @@ class ServerHttp2Stream extends Http2Stream {
     const end = length || 0 + offset;
     if (typeof statCheck === "function") {
       const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) {
+        const isDirectory = stat.isDirectory();
+        this.destroy(isDirectory ? new ERR_HTTP2_SEND_FILE() : new ERR_HTTP2_SEND_FILE_NOSEEK());
+        return;
+      }
       statCheck(stat, headers, {
         offset: offset,
         length: length !== undefined ? length : -1,

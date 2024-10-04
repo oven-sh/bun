@@ -48,10 +48,6 @@ const clone_url = await (async () => {
 
 const clone_dir = tmpdirSync();
 
-process.on("exit", () => {
-  fs.rmSync(clone_dir, { recursive: true, force: true });
-});
-
 {
   console.log();
   const cmd = "git";
@@ -105,3 +101,5 @@ process.on("exit", () => {
   }
   console.log("---");
 }
+
+fs.rmSync(clone_dir, { recursive: true, force: true });

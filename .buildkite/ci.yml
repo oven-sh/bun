@@ -342,7 +342,7 @@ steps:
       - key: "linux-x64-test-ubuntu-2204-citgm"
         label: ":ubuntu: 22.04 x64 - test-citgm"
         if: "build.branch != 'main'"
-        parallelism: 14 # keep this in sync with scripts/runner.citgm.mjs
+        parallelism: 8 # keep this in sync with scripts/runner.citgm.mjs
         soft_fail:
           - exit_status: 2
         retry:

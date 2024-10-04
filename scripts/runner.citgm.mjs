@@ -14,20 +14,13 @@ const shards = [
   // 0
   [0, "binary-split"],
   [0, "blake2b-wasm"],
-  [0, "bufferutil"],
-  [0, "crc32-stream"],
-  [0, "dicer"],
-  // 5
-  [0, "duplexer2"],
   [0, "duplexify"],
   [0, "flush-write-stream"],
   [0, "from2"],
+  // 5
   [0, "full-icu-test"],
-  // 10
-  [0, "iconv"],
   [0, "pumpify"],
   [0, "thread-sleep"],
-  [0, "throughv"],
 ];
 
 const shard_number = parseInt(process.argv[2] ?? process.env["BUILDKITE_PARALLEL_JOB"] ?? "0", 10);

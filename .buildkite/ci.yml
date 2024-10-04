@@ -62,12 +62,6 @@ steps:
           - exit_status: 2
         retry:
           automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
             - signal_reason: agent_stop
               limit: 3
             - signal: SIGTERM

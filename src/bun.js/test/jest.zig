@@ -1118,10 +1118,8 @@ pub const DescribeScope = struct {
 
     fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         if (this.parent) |scope| {
-            if (hook == .beforeEach or scope.remaining_child_describe_count == 0) {
-                if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
-                    return err;
-                }
+            if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
+                return err;
             }
         }
         return this.execCallback(globalObject, hook);
@@ -1266,16 +1264,6 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |err| {
-                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                while (i < end) {
-                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
-                    i += 1;
-                }
-                this.tests.clearAndFree(allocator);
-                this.pending_tests.deinit(allocator);
-                return;
-            }
             if (end == 0) {
                 var runner = allocator.create(TestRunnerTask) catch unreachable;
                 runner.* = .{
@@ -1514,6 +1502,12 @@ pub const TestRunnerTask = struct {
         if (this.needs_before_each) {
             this.needs_before_each = false;
             const label = test_.label;
+
+            if (this.describe.runCallback(globalThis, .beforeAll)) |err| {
+                _ = jsc_vm.uncaughtException(globalThis, err, true);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
+                return false;
+            }
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);

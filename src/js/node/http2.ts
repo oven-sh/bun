@@ -1971,14 +1971,12 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-
-    this.emit("close");
+    this.close();
   }
 
   #onError(error: Error) {
     this.#parser = null;
-
-    this.emit("error", error);
+    this.destroy(error);
   }
 
   #onTimeout() {
@@ -2455,16 +2453,16 @@ class ClientHttp2Session extends Http2Session {
     }
     process.nextTick(emitConnectNT, this, socket);
   }
-
   #onClose() {
     this.#parser = null;
-    this.emit("close");
+    this.close();
   }
+
   #onError(error: Error) {
     this.#parser = null;
-
-    this.emit("error", error);
+    this.destroy(error);
   }
+
   #onTimeout() {
     const parser = this.#parser;
     if (parser) {

@@ -1480,6 +1480,8 @@ pub const Finalizer = struct {
 
     pub fn drain(this: *Finalizer.Queue, env: napi_env) void {
         while (this.readItem()) |*finalizer| {
+            const handle_scope = NapiHandleScope.open(env, false);
+            defer if (handle_scope) |scope| scope.close(env);
             finalizer.fun.?(env, finalizer.data, finalizer.hint);
         }
     }
@@ -1642,7 +1644,7 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, this.finalizer.data, this.ctx);
+            Finalizer.napi_enqueue_finalizer(fun, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {

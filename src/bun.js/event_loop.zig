@@ -1258,8 +1258,8 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) void {
-        JSC.napi.Finalizer.drain(&this.napi_finalizer_queue, this.global);
         _ = this.tickQueueWithCount(virtual_machine, "immediate_tasks");
+        JSC.napi.Finalizer.drain(&this.napi_finalizer_queue, this.global);
     }
 
     fn tickConcurrent(this: *EventLoop) void {

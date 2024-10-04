@@ -3690,6 +3690,13 @@ JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, cons
     return JSC::JSValue::encode(object);
 }
 
+extern "C" JSC__JSValue JSC__JSValue__bind(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue this_value, JSC__JSValue* args, size_t arg_count)
+{
+    auto& vm = globalObject->vm();
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    return JSC::JSValue::encode(JSC::JSBoundFunction::create(vm, globalObject, value.getObject(), JSValue::decode(this_value), ArgList(args, arg_count), arg_count, nullptr));
+}
+
 JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     JSC__JSGlobalObject* globalObject,
     const unsigned char* arg1, uint32_t arg2)

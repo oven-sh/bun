@@ -1234,19 +1234,20 @@ pub const TestCommand = struct {
             }
 
             const file_end = reporter.jest.files.len;
+            const global = vm.global;
 
             for (file_start..file_end) |module_id| {
                 const module: *jest.DescribeScope = reporter.jest.files.items(.module_scope)[module_id];
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
-                module.runTests(vm.global);
+                module.runTests(global);
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
                 while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
                     if (!jest.Jest.runner.?.has_pending_tests) {
-                        jest.Jest.runner.?.drain();
+                        jest.Jest.runner.?.drain(global);
                     }
                     vm.eventLoop().tick();
 

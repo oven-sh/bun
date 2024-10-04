@@ -73,10 +73,11 @@ pub const TestRunner = struct {
 
     drainer: JSC.AnyTask = undefined,
     queue: std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }) = std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }).init(default_allocator),
+    describe_queue: std.fifo.LinearFifo(*DescribeScope, .{ .Dynamic = {} }) = std.fifo.LinearFifo(*DescribeScope, .{ .Dynamic = {} }).init(default_allocator),
 
     has_pending_tests: bool = false,
     pending_test: ?*TestRunnerTask = null,
-
+    pending_describe: ?*DescribeScope = null,
     snapshots: Snapshots,
 
     default_timeout_ms: u32,
@@ -145,9 +146,11 @@ pub const TestRunner = struct {
         this.queue.writeItem(task) catch unreachable;
     }
 
+
     pub fn runNextTest(this: *TestRunner) void {
         this.has_pending_tests = false;
         this.pending_test = null;
+        this.pending_describe = null;
 
         const vm = JSC.VirtualMachine.get();
         vm.auto_killer.clear();
@@ -157,8 +160,22 @@ pub const TestRunner = struct {
         vm.wakeup();
     }
 
-    pub fn drain(this: *TestRunner) void {
-        if (this.pending_test != null) return;
+    pub fn drain(this: *TestRunner, globalObject: *JSC.JSGlobalObject) void {
+        if (this.pending_test != null or this.pending_describe != null) return;
+
+        if (this.describe_queue.readItem()) |scope| {
+            this.pending_describe = scope;
+            this.has_pending_tests = true;
+
+            switch (scope.dequeue(globalObject)) {
+                .Error, .Sync => {
+                    this.pending_describe = null;
+                    this.has_pending_tests = false;
+                },
+                .Async => {},
+            }
+            return;
+        }
 
         if (this.queue.readItem()) |task| {
             this.pending_test = task;
@@ -835,6 +852,21 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    function_value: JSC.Strong = .{},
+    remaining_child_describe_count: u32 = 0,
+
+    const Synchronousness = enum {
+        Sync,
+        Async,
+        Error,
+    };
+
+    pub fn dequeue(this: *DescribeScope, globalObject: *JSGlobalObject) Synchronousness {
+        const function = this.function_value.swap();
+        defer this.function_value.deinit();
+
+        return this.run(globalObject, function, &.{});
+    }
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -861,6 +893,48 @@ pub const DescribeScope = struct {
         if (this.parent != null) return this.parent.?.shouldEvaluateScope();
         return true;
     }
+
+    const AsyncDescribe = struct {
+        describe: *DescribeScope,
+        promise: JSC.Strong = .{},
+
+        pub usingnamespace bun.New(AsyncDescribe);
+
+        pub fn deinit(this: *AsyncDescribe) void {
+            this.promise.deinit();
+            this.destroy();
+        }
+    };
+    pub fn onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+        debug("onReject", .{});
+        const arguments = callframe.arguments(2);
+        const err = arguments.ptr[0];
+        _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
+        var task: *AsyncDescribe = arguments.ptr[1].asPromisePtr(AsyncDescribe);
+        defer task.deinit();
+        globalThis.bunVM().autoGarbageCollect();
+        task.describe.pop();
+        bun.debugAssert(Jest.runner.?.pending_describe == task.describe);
+        Jest.runner.?.pending_describe = null;
+        return JSValue.jsUndefined();
+    }
+    const jsOnReject = JSC.toJSHostFunction(onReject);
+
+    pub fn onResolve(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+        debug("onResolve", .{});
+        const arguments = callframe.arguments(2);
+        const task: *AsyncDescribe = arguments.ptr[1].asPromisePtr(AsyncDescribe);
+        defer task.deinit();
+        task.describe.runTests(globalThis);
+        bun.debugAssert(Jest.runner.?.pending_describe == task.describe);
+        Jest.runner.?.pending_describe = null;
+
+        task.describe.pop();
+
+        globalThis.bunVM().autoGarbageCollect();
+        return JSValue.jsUndefined();
+    }
+    const jsOnResolve = JSC.toJSHostFunction(onResolve);
 
     pub fn push(new: *DescribeScope) void {
         if (comptime is_bindgen) return;
@@ -964,6 +1038,7 @@ pub const DescribeScope = struct {
                     cb.unprotect();
                 }
             }
+            debug("{s}()", .{@tagName(hook)});
 
             const vm = VirtualMachine.get();
             var result: JSValue = switch (cb.getLength(globalObject)) {
@@ -1044,8 +1119,10 @@ pub const DescribeScope = struct {
 
     fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         if (this.parent) |scope| {
-            if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
-                return err;
+            if (hook == .beforeEach or scope.remaining_child_describe_count == 0) {
+                if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
+                    return err;
+                }
             }
         }
         return this.execCallback(globalObject, hook);
@@ -1054,16 +1131,29 @@ pub const DescribeScope = struct {
     pub fn runCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         if (comptime hook == .afterAll or hook == .afterEach) {
             var parent: ?*DescribeScope = this;
-            while (parent) |scope| {
-                if (scope.execCallback(globalObject, hook)) |err| {
-                    return err;
+
+            if (hook == .afterAll) {
+                while (parent) |scope| {
+                    if (scope.remaining_child_describe_count > 0 or scope.pending_tests.findFirstSet() != null) break;
+                    if (scope.execCallback(globalObject, hook)) |err| {
+                        return err;
+                    }
+                    parent = scope.parent;
                 }
-                parent = scope.parent;
+            } else {
+                while (parent) |scope| {
+                    if (scope.execCallback(globalObject, hook)) |err| {
+                        return err;
+                    }
+                    parent = scope.parent;
+                }
             }
         }
 
-        if (runGlobalCallbacks(globalObject, hook)) |err| {
-            return err;
+        if (hook != .afterAll) {
+            if (runGlobalCallbacks(globalObject, hook)) |err| {
+                return err;
+            }
         }
 
         if (comptime hook == .beforeAll or hook == .beforeEach) {
@@ -1107,17 +1197,17 @@ pub const DescribeScope = struct {
         return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, .todo);
     }
 
-    pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) JSValue {
+    pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) Synchronousness {
         if (comptime is_bindgen) return undefined;
-        callback.protect();
-        defer callback.unprotect();
-        this.push();
-        defer this.pop();
+
+        active = this;
+        var is_async = false;
+        defer if (!is_async) this.pop();
         debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         if (callback == .zero) {
             this.runTests(globalObject);
-            return .undefined;
+            return .Sync;
         }
 
         {
@@ -1125,22 +1215,35 @@ pub const DescribeScope = struct {
             var result = callJSFunctionForTestRunner(VirtualMachine.get(), globalObject, callback, args);
 
             if (result.asAnyPromise()) |prom| {
-                globalObject.bunVM().waitForPromise(prom);
                 switch (prom.status(globalObject.ptr().vm())) {
                     .fulfilled => {},
+                    .pending => {
+                        is_async = true;
+                        const task = AsyncDescribe.new(.{ .describe = this, .promise = JSC.Strong.create(result, globalObject) });
+                        result.then(
+                            globalObject,
+                            task,
+                            jsOnResolve,
+                            jsOnReject,
+                        );
+
+                        return .Async;
+                    },
                     else => {
                         _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
-                        return .undefined;
+                        return .Sync;
                     },
                 }
             } else if (result.toError()) |err| {
                 _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
-                return .undefined;
+                return .Error;
             }
         }
 
-        this.runTests(globalObject);
-        return .undefined;
+        if (this.remaining_child_describe_count == 0) {
+            this.runTests(globalObject);
+        }
+        return .Sync;
     }
 
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
@@ -1152,6 +1255,9 @@ pub const DescribeScope = struct {
         const tests: []TestScope = this.tests.items;
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
+        if (this.parent) |parent| {
+            parent.remaining_child_describe_count -|= 1;
+        }
 
         // Step 2. Update the runner with the count of how many tests we have for this block
         if (end > 0) this.test_id_start = Jest.runner.?.addTestCount(end);
@@ -1216,7 +1322,7 @@ pub const DescribeScope = struct {
             return;
         }
 
-        if (this.shouldEvaluateScope()) {
+        if (this.shouldEvaluateScope() and this.remaining_child_describe_count == 0) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
@@ -1245,6 +1351,10 @@ pub const DescribeScope = struct {
     //     // }
     // }
 
+    comptime {
+        @export(jsOnResolve, .{ .name = "DescribeScope__onResolve" });
+        @export(jsOnReject, .{ .name = "DescribeScope__onReject" });
+    }
 };
 
 pub fn wrapTestFunction(comptime name: []const u8, comptime func: anytype) DescribeScope.CallbackFn {
@@ -1822,15 +1932,17 @@ inline fn createScope(
             .timeout_millis = timeout_ms,
         }) catch unreachable;
     } else {
-        var scope = allocator.create(DescribeScope) catch unreachable;
+        const scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
             .tag = tag_to_use,
+            .function_value = JSC.Strong.create(function, globalThis),
         };
+        parent.remaining_child_describe_count +|= 1;
 
-        return scope.run(globalThis, function, &.{});
+        Jest.runner.?.describe_queue.writeItem(scope) catch unreachable;
     }
 
     return this;
@@ -2110,16 +2222,16 @@ fn eachBind(
                     }) catch unreachable;
                 }
             } else {
-                var scope = allocator.create(DescribeScope) catch unreachable;
+                const scope = allocator.create(DescribeScope) catch unreachable;
                 scope.* = .{
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
+                    .function_value = JSC.Strong.create(function.bind(globalThis, .undefined, function_args), globalThis),
                 };
-
-                const ret = scope.run(globalThis, function, function_args);
-                _ = ret;
+                parent.remaining_child_describe_count +|= 1;
+                Jest.runner.?.describe_queue.writeItem(scope) catch unreachable;
                 allocator.free(function_args);
             }
             test_idx += 1;

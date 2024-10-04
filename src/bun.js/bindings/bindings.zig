@@ -4207,6 +4207,11 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC__JSValue__putBunString(value, global, key, result);
     }
 
+    extern fn JSC__JSValue__bind(value: JSValue, global: *JSGlobalObject, this_value: JSC.JSValue, args: [*]const JSC.JSValue, arg_count: usize) JSC.JSValue;
+    pub fn bind(value: JSValue, global: *JSGlobalObject, this_value: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+        return JSC__JSValue__bind(value, global, this_value, args.ptr, args.len);
+    }
+
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .Pointer) {

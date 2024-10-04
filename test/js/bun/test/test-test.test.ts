@@ -571,10 +571,10 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
 });
 
 it("https://github.com/oven-sh/bun/issues/14135", async () => {
-  const { stdout, stderr, exitCode } = spawnSync({
+  const { stdout, exitCode } = spawnSync({
     cmd: [bunExe(), "test", join(import.meta.dir, "describe-only-fixture.js")],
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
     env: bunEnv,
     cwd: import.meta.dir,
   });
@@ -586,6 +586,35 @@ it("https://github.com/oven-sh/bun/issues/14135", async () => {
     "beforeAll 2",
     "test 2",
   ]);
+});
+
+it("https://github.com/oven-sh/bun/issues/12250 with --bail", async () => {
+  const { stdout, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", join(import.meta.dir, "bail-fixture.js"), "--bail"],
+    stderr: "inherit",
+    stdout: "pipe",
+    env: { ...bunEnv, BEFORE: "NOT IN THE TEXT - WITH BAIL", "AFTER": "BAIL!" },
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(1);
+  const err = stdout!.toUnixString().trim();
+  expect(err).toContain("NOT IN THE TEXT - WITH BAIL");
+  expect(err).not.toContain("BAIL!");
+});
+
+it("https://github.com/oven-sh/bun/issues/12250 without --bail", async () => {
+  const { stdout, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", join(import.meta.dir, "bail-fixture.js")],
+    stdout: "pipe",
+    env: { ...bunEnv, BEFORE: "NOT IN THE TEXT - WITHOUT BAIL", "AFTER": "BAIL!" },
+    cwd: import.meta.dir,
+  });
+
+  expect(exitCode).toBe(1);
+  const err = stdout!.toUnixString().trim();
+  expect(err).toContain("NOT IN THE TEXT - WITHOUT BAIL");
+  expect(err).toContain("BAIL!");
 });
 
 // https://jestjs.io/docs/setup-teardown

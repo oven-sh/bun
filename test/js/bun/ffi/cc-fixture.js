@@ -1,5 +1,6 @@
 import { cc } from "bun:ffi";
 import fixture from "./cc-fixture.c" with { type: "file" };
+import errorFixture from "./cc-compile-error-fixture.c" with { type: "file" };
 let bytes = new Uint8Array(64);
 bytes[bytes.length - 1] = 42;
 
@@ -45,4 +46,15 @@ if (lastByte(bytes, bytes.byteLength) !== 42) {
 
 if (!memset_and_memcpy_work()) {
   throw new Error("memset/memcpy test detected error");
+}
+
+let threw = undefined;
+try {
+  cc({ source: errorFixture, symbols: { foo: { args: [], returns: "i32" } } });
+} catch (e) {
+  threw = e;
+} finally {
+  if (threw === undefined) {
+    throw new Error("cc invalid C code did not throw an error");
+  }
 }

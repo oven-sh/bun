@@ -589,7 +589,7 @@ pub const PublishCommand = struct {
                     return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, otp_response);
                 }
 
-                if (res.headers.get("npm-notice")) |notice| {
+                if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                     Output.printError("\n", .{});
                     Output.note("{s}", .{notice});
                     Output.flush();
@@ -638,7 +638,7 @@ pub const PublishCommand = struct {
                         return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, otp_response);
                     },
                     else => {
-                        if (otp_res.headers.get("npm-notice")) |notice| {
+                        if (otp_res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                             Output.printError("\n", .{});
                             Output.note("{s}", .{notice});
                             Output.flush();
@@ -858,7 +858,7 @@ pub const PublishCommand = struct {
                             Global.crash();
                         };
 
-                        if (res.headers.get("npm-notice")) |notice| {
+                        if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                             Output.printError("\n", .{});
                             Output.note("{s}", .{notice});
                             Output.flush();

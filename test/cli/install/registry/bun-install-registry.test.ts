@@ -549,10 +549,11 @@ describe("publish", async () => {
       setAuthHeader?: boolean;
       otpFail?: boolean;
       npmNotice?: boolean;
+      xLocalCache?: boolean;
       expectedCI?: string;
     }) {
       return async function (req: Request) {
-        const { token, setAuthHeader = true, otpFail = false, npmNotice = false } = opts;
+        const { token, setAuthHeader = true, otpFail = false, npmNotice = false, xLocalCache = false } = opts;
         if (req.url.includes("otp-pkg")) {
           if (opts.expectedCI) {
             expect(req.headers.get("user-agent")).toContain("ci/" + opts.expectedCI);
@@ -575,6 +576,9 @@ describe("publish", async () => {
             // `bun publish` won't request a url from a message in the npm-notice header, but we
             // can test that it's displayed
             if (npmNotice) headers.set("npm-notice", `visit http://localhost:${this.port}/auth to login`);
+
+            // npm-notice will be ignored
+            if (xLocalCache) headers.set("x-local-cache", "true");
 
             return new Response(
               JSON.stringify({
@@ -666,43 +670,48 @@ describe("publish", async () => {
       expect(err).toContain(" - Received invalid OTP");
     });
 
-    test("npm-notice with login url", async () => {
-      // Situation: user has 2FA enabled account with faceid sign-in.
-      // They run `bun publish` with --auth-type=legacy, prompting them
-      // to enter their OTP. Because they have faceid sign-in, they don't
-      // have a code to enter, so npm sends a message in the npm-notice
-      // header with a url for logging in.
+    for (const shouldIgnoreNotice of [false, true]) {
+      test(`npm-notice with login url${shouldIgnoreNotice ? " (ignored)" : ""}`, async () => {
+        // Situation: user has 2FA enabled account with faceid sign-in.
+        // They run `bun publish` with --auth-type=legacy, prompting them
+        // to enter their OTP. Because they have faceid sign-in, they don't
+        // have a code to enter, so npm sends a message in the npm-notice
+        // header with a url for logging in.
+        const token = await generateRegistryUser(`otp-notice${shouldIgnoreNotice ? "-ignore" : ""}`, "otp");
+        using mockRegistry = Bun.serve({
+          port: 0,
+          fetch: mockRegistryFetch({ token, npmNotice: true, xLocalCache: shouldIgnoreNotice }),
+        });
 
-      const token = await generateRegistryUser("otp-notice", "otp");
-      using mockRegistry = Bun.serve({
-        port: 0,
-        fetch: mockRegistryFetch({ token, npmNotice: true }),
+        const bunfig = `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
+
+        await Promise.all([
+          rm(join(import.meta.dir, "packages", "otp-pkg-3"), { recursive: true, force: true }),
+          write(join(packageDir, "bunfig.toml"), bunfig),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "otp-pkg-3",
+              version: "3.3.3",
+              dependencies: {
+                "otp-pkg-3": "3.3.3",
+              },
+            }),
+          ),
+        ]);
+
+        const { out, err, exitCode } = await publish(env, packageDir);
+        expect(exitCode).toBe(0);
+        if (shouldIgnoreNotice) {
+          expect(err).not.toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
+        } else {
+          expect(err).toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
+        }
       });
-
-      const bunfig = `
-      [install]
-      cache = false
-      registry = { url = "http://localhost:${mockRegistry.port}", token = "${token}" }`;
-
-      await Promise.all([
-        rm(join(import.meta.dir, "packages", "otp-pkg-3"), { recursive: true, force: true }),
-        write(join(packageDir, "bunfig.toml"), bunfig),
-        write(
-          join(packageDir, "package.json"),
-          JSON.stringify({
-            name: "otp-pkg-3",
-            version: "3.3.3",
-            dependencies: {
-              "otp-pkg-3": "3.3.3",
-            },
-          }),
-        ),
-      ]);
-
-      const { out, err, exitCode } = await publish(env, packageDir);
-      expect(exitCode).toBe(0);
-      expect(err).toContain(`note: visit http://localhost:${mockRegistry.port}/auth to login`);
-    });
+    }
 
     const fakeCIEnvs = [
       { ci: "expo-application-services", envs: { EAS_BUILD: "hi" } },

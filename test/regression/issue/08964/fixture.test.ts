@@ -1,4 +1,4 @@
-import { afterAll, describe, test } from "bun:test";
+// import { afterAll, afterEach, describe, test } from "bun:test";
 
 var expected: number[] = [];
 var runs: number[] = [];
@@ -6,6 +6,9 @@ var count = 0;
 function makeTest(yes = false) {
   const thisCount = count++;
   if (yes) expected.push(thisCount);
+  if (yes) {
+    console.log("expected: test " + thisCount);
+  }
   test("test " + thisCount, () => {
     runs.push(thisCount);
   });

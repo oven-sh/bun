@@ -1,17 +1,17 @@
 describe("desc1", () => {
   beforeAll(() => {
-    console.log("beforeAll 1");
+    expect.unreachable();
   });
   test("test1", () => {
-    console.log("test 1");
+    expect.unreachable();
   });
 });
 
 describe.only("desc2", () => {
   beforeAll(() => {
-    console.log("beforeAll 2");
+    expect().pass();
   });
   test("test2", () => {
-    console.log("test 2");
+    expect().pass();
   });
 });

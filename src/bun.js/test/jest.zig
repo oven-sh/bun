@@ -81,6 +81,7 @@ pub const TestRunner = struct {
     snapshots: Snapshots,
 
     default_timeout_ms: u32,
+    tests_not_run_due_to_before_scope_error: usize = 0,
 
     // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
@@ -860,14 +861,12 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     tag: Tag = .pass,
     function_value: JSC.Strong = .{},
-    remaining_child_describe_count: u32 = 0,
+    child_describes_to_run: u32 = 0,
+    child_describes_to_enqueue: u32 = 0,
     ref: JSC.Ref = .{},
     flags: Flags = .{},
 
-    pub const Flags = packed struct {
-        done: bool = false,
-        any_tests_ran: bool = false,
-    };
+    pub const Flags = packed struct { done: bool = false, any_tests_ran: bool = false, before_scope_failed: bool = false, any_tests_scheduled: bool = false };
 
     const Synchronousness = enum {
         Sync,
@@ -902,6 +901,17 @@ pub const DescribeScope = struct {
             else
                 !is_only_set,
         };
+    }
+
+    pub fn anyOnly(this: *const DescribeScope) bool {
+        var scope: ?*const DescribeScope = this;
+        while (scope) |s| {
+            if (s.tag == .only) {
+                return true;
+            }
+            scope = s.parent;
+        }
+        return false;
     }
 
     const AsyncDescribe = struct {
@@ -1150,10 +1160,22 @@ pub const DescribeScope = struct {
         var ran_any_callbacks = false;
         if (this.runCallback(globalObject, &ran_any_callbacks, hook)) |err| {
             _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
+            if (comptime hook == .beforeAll or hook == .beforeEach) {
+                this.flags.before_scope_failed = true;
+            }
         }
 
         if (ran_any_callbacks) {
+            var prev_counter: usize = undefined;
+            if (comptime hook == .beforeAll or hook == .beforeEach) {
+                prev_counter = globalObject.bunVM().unhandled_error_counter;
+            }
             globalObject.handleRejectedPromises();
+            if (comptime hook == .beforeAll or hook == .beforeEach) {
+                if (globalObject.bunVM().unhandled_error_counter > prev_counter) {
+                    this.flags.before_scope_failed = true;
+                }
+            }
         }
     }
 
@@ -1163,11 +1185,12 @@ pub const DescribeScope = struct {
 
             if (hook == .afterAll) {
                 while (parent) |scope| {
-                    if (scope.remaining_child_describe_count > 0 or scope.pending_tests.findFirstSet() != null) break;
-                    if (!scope.flags.any_tests_ran) continue;
-
-                    if (scope.execCallback(globalObject, ran_any_callbacks, hook)) |err| {
-                        return err;
+                    if (scope.child_describes_to_run == 0 and scope.pending_tests.findFirstSet() == null) {
+                        if (scope.flags.any_tests_ran) {
+                            if (scope.execCallback(globalObject, ran_any_callbacks, hook)) |err| {
+                                return err;
+                            }
+                        }
                     }
                     parent = scope.parent;
                 }
@@ -1242,13 +1265,7 @@ pub const DescribeScope = struct {
 
         debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
-        if (callback == .zero) {
-            this.runTests(globalObject);
-
-            return .Sync;
-        }
-
-        {
+        if (callback != .zero) {
             JSC.markBinding(@src());
             var result = callJSFunctionForTestRunner(vm, globalObject, callback, args);
 
@@ -1280,13 +1297,23 @@ pub const DescribeScope = struct {
             }
         }
 
-        if (this.remaining_child_describe_count == 0) {
+        if (this.child_describes_to_enqueue == 0 and !this.flags.any_tests_scheduled) {
             this.runTests(globalObject);
         }
         return .Sync;
     }
 
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
+        {
+            if (this.parent) |scope| {
+                if (!scope.flags.any_tests_scheduled and scope.child_describes_to_enqueue == 0) {
+                    scope.runTests(globalObject);
+                }
+                scope.child_describes_to_enqueue -|= 1;
+            }
+        }
+        this.flags.any_tests_scheduled = true;
+
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
 
@@ -1295,6 +1322,7 @@ pub const DescribeScope = struct {
         const tests: []TestScope = this.tests.items;
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
+        const vm = globalObject.bunVM();
 
         // Step 2. Update the runner with the count of how many tests we have for this block
         if (end > 0) this.test_id_start = Jest.runner.?.addTestCount(end);
@@ -1312,7 +1340,7 @@ pub const DescribeScope = struct {
                     .globalThis = globalObject,
                     .source_file_path = source.path.text,
                 };
-                runner.ref.ref(globalObject.bunVM());
+                runner.ref.ref(vm);
 
                 Jest.runner.?.enqueue(runner);
                 return;
@@ -1327,7 +1355,7 @@ pub const DescribeScope = struct {
                 .globalThis = globalObject,
                 .source_file_path = source.path.text,
             };
-            runner.ref.ref(globalObject.bunVM());
+            runner.ref.ref(vm);
 
             Jest.runner.?.enqueue(runner);
         }
@@ -1348,13 +1376,13 @@ pub const DescribeScope = struct {
             return;
         }
 
-        if (this.remaining_child_describe_count == 0) {
+        if (this.child_describes_to_run == 0) {
             if (this.parent) |parent| {
-                parent.remaining_child_describe_count -|= 1;
+                parent.child_describes_to_run -|= 1;
             }
         }
 
-        if (this.shouldEvaluateScope(Jest.runner.?.only) and this.remaining_child_describe_count == 0 and this.flags.any_tests_ran) {
+        if (this.child_describes_to_run == 0) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             this.runCallbacksAndHandleRejections(globalThis, .afterAll);
@@ -1519,7 +1547,7 @@ pub const TestRunnerTask = struct {
             jsc_vm.onUnhandledRejectionCtx = null;
 
             // Run beforeAll even if there were no tests for this scope.
-            if (describe.remaining_child_describe_count == 0 and
+            if (describe.child_describes_to_run == 0 and
                 describe.pending_tests.findFirstSet() == null and
                 // jk maybe not
                 describe.shouldEvaluateScope(is_only_set))
@@ -1535,8 +1563,9 @@ pub const TestRunnerTask = struct {
 
         var test_: TestScope = describe.tests.items[test_id];
 
-        if (test_.func == .zero or !test_.shouldEvaluateScope(is_only_set)) {
+        if (test_.func == .zero or !test_.shouldEvaluateScope(is_only_set) or describe.flags.before_scope_failed) {
             describe.current_test_id = test_id;
+            Jest.runner.?.tests_not_run_due_to_before_scope_error += @as(usize, @intFromBool(describe.flags.before_scope_failed));
             const tag = if (!describe.shouldEvaluateScope(is_only_set)) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
@@ -1556,7 +1585,17 @@ pub const TestRunnerTask = struct {
             jsc_vm.onUnhandledRejectionCtx = null;
             globalThis.handleRejectedPromises();
             describe.runCallbacksAndHandleRejections(globalThis, .beforeAll);
+            if (describe.flags.before_scope_failed) {
+                this.deinit();
+                Jest.runner.?.tests_not_run_due_to_before_scope_error += 1;
+                return false;
+            }
             describe.runCallbacksAndHandleRejections(globalThis, .beforeEach);
+            if (describe.flags.before_scope_failed) {
+                this.deinit();
+                Jest.runner.?.tests_not_run_due_to_before_scope_error += 1;
+                return false;
+            }
         }
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
@@ -1917,18 +1956,19 @@ inline fn createScope(
     else
         (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
 
-    var tag_to_use = tag;
-
-    if (tag_to_use == .only or parent.tag == .only) {
+    if (tag == .only) {
         Jest.runner.?.setOnly();
-        tag_to_use = .only;
-    } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
+    } else if (is_test and Jest.runner.?.only and !parent.anyOnly()) {
+        // Silently skip non-only tests
         return .undefined;
     }
 
-    var is_skip = tag == .skip or
-        (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
-        (tag != .only and Jest.runner.?.only and parent.tag != .only);
+    var is_skip = switch (tag) {
+        .skip => true,
+        .todo => !Jest.runner.?.test_options.run_todo,
+        .only => false,
+        else => !parent.shouldEvaluateScope(Jest.runner.?.only),
+    };
 
     if (is_test) {
         if (!is_skip) {
@@ -1940,15 +1980,16 @@ inline fn createScope(
                 const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
                 is_skip = !regex.matches(str);
                 if (is_skip) {
-                    tag_to_use = .skip;
+                    // Silently skip non-matching tests
+                    return .undefined;
                 }
             }
         }
 
-        if (is_skip) {
-            function.unprotect();
-        } else {
-            function.protect();
+        if (comptime is_test) {
+            if (!is_skip) {
+                function.protect();
+            }
         }
 
         const func_params_length = function.getLength(globalThis);
@@ -1963,7 +2004,7 @@ inline fn createScope(
         parent.tests.append(allocator, TestScope{
             .label = label,
             .parent = parent,
-            .tag = tag_to_use,
+            .tag = tag,
             .func = if (is_skip) .zero else function,
             .func_arg = function_args,
             .func_has_callback = has_callback,
@@ -1975,10 +2016,11 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
-            .tag = tag_to_use,
+            .tag = tag,
             .function_value = JSC.Strong.create(function, globalThis),
         };
-        parent.remaining_child_describe_count +|= 1;
+        parent.child_describes_to_run +|= 1;
+        parent.child_describes_to_enqueue +|= 1;
 
         Jest.runner.?.describe_queue.writeItem(scope) catch unreachable;
         scope.ref.ref(globalThis.bunVM());
@@ -2179,6 +2221,15 @@ fn eachBind(
             return .undefined;
         }
 
+        const tag = parent.tag;
+
+        if (tag == .only) {
+            Jest.runner.?.setOnly();
+        } else if (each_data.is_test and Jest.runner.?.only and !parent.anyOnly()) {
+            // Silently skip non-only tests
+            return .undefined;
+        }
+
         var iter = array.arrayIterator(globalThis);
 
         var test_idx: usize = 0;
@@ -2223,42 +2274,40 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            const tag = parent.tag;
+            var is_skip = switch (tag) {
+                .skip => true,
+                .todo => !Jest.runner.?.test_options.run_todo,
+                .only => false,
+                else => !parent.shouldEvaluateScope(Jest.runner.?.only),
+            };
 
-            if (tag == .only) {
-                Jest.runner.?.setOnly();
-            }
-
-            var is_skip = tag == .skip or
-                (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
-                (tag != .only and parent.shouldEvaluateScope(Jest.runner.?.only));
-
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
-                buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(formattedLabel) catch unreachable;
-                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
-                is_skip = !regex.matches(str);
-            }
-
-            if (is_skip) {
-                function.unprotect();
-            } else if (each_data.is_test) {
-                if (Jest.runner.?.only and tag != .only) {
-                    return .undefined;
-                } else {
-                    function.protect();
-                    parent.tests.append(allocator, TestScope{
-                        .label = formattedLabel,
-                        .parent = parent,
-                        .tag = tag,
-                        .func = function,
-                        .func_arg = function_args,
-                        .func_has_callback = has_callback_function,
-                        .timeout_millis = timeout_ms,
-                    }) catch unreachable;
+            if (!is_skip) {
+                if (Jest.runner.?.filter_regex) |regex| {
+                    var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                    buffer.reset();
+                    appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                    buffer.append(formattedLabel) catch unreachable;
+                    const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                    is_skip = !regex.matches(str);
                 }
+            }
+
+            if (is_skip and each_data.is_test) {
+                // Silently skip non-matching tests
+                // a describe.only could happen as a child of this describe scope,
+                // so we cannot skip those here.
+                allocator.free(function_args);
+            } else if (each_data.is_test) {
+                function.protect();
+                parent.tests.append(allocator, TestScope{
+                    .label = formattedLabel,
+                    .parent = parent,
+                    .tag = tag,
+                    .func = function,
+                    .func_arg = function_args,
+                    .func_has_callback = has_callback_function,
+                    .timeout_millis = timeout_ms,
+                }) catch unreachable;
             } else {
                 const scope = allocator.create(DescribeScope) catch unreachable;
                 scope.* = .{
@@ -2268,7 +2317,8 @@ fn eachBind(
                     .tag = tag,
                     .function_value = JSC.Strong.create(function.bind(globalThis, .undefined, function_args), globalThis),
                 };
-                parent.remaining_child_describe_count +|= 1;
+                parent.child_describes_to_run +|= 1;
+                parent.child_describes_to_enqueue +|= 1;
                 Jest.runner.?.describe_queue.writeItem(scope) catch unreachable;
                 allocator.free(function_args);
             }

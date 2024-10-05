@@ -1036,7 +1036,19 @@ pub const TestCommand = struct {
 
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
             if (reporter.jest.unhandled_errors_between_tests > 0) {
-                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+                Output.prettyError(" <r><red>{d:5>} error{s}<r>", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+
+                switch (reporter.jest.tests_not_run_due_to_before_scope_error) {
+                    0 => {},
+                    1 => {
+                        Output.prettyError("<d>, causing 1 or more tests to not run<r>", .{});
+                    },
+                    else => {
+                        Output.prettyError("<d>, causing {d}+ tests to not run<r>", .{reporter.jest.tests_not_run_due_to_before_scope_error});
+                    },
+                }
+
+                Output.prettyError("\n", .{});
             }
 
             var print_expect_calls = reporter.summary.expectations > 0;

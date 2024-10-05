@@ -1604,8 +1604,10 @@ class Http2Stream extends Duplex {
       queue.shift();
     }
   }
-
   end(chunk, encoding, callback) {
+    if (this[bunHTTP2StreamEnded]) {
+      typeof callback == "function" && callback();
+    }
     if (!chunk) {
       chunk = Buffer.alloc(0);
     }
@@ -1613,8 +1615,36 @@ class Http2Stream extends Duplex {
     return super.end(chunk, encoding, callback);
   }
 
+  _writev(data, callback) {
+    const session = this[bunHTTP2Session];
+    if (session) {
+      const native = session[bunHTTP2Native];
+      if (native) {
+        const allBuffers = data.allBuffers;
+        let chunks;
+        if (allBuffers) {
+          chunks = data;
+          for (let i = 0; i < data.length; i++) data[i] = data[i].chunk;
+        } else {
+          chunks = new Array(data.length << 1);
+          for (let i = 0; i < data.length; i++) {
+            const entry = data[i];
+            chunks[i * 2] = entry.chunk;
+            chunks[i * 2 + 1] = entry.encoding;
+          }
+        }
+        const chunk = Buffer.concat(chunks || []);
+        native.writeStream(this.#id, chunk, this[bunHTTP2StreamEnded], callback);
+        return;
+      }
+    }
+    if (typeof callback == "function") {
+      callback();
+    }
+  }
   _write(chunk, encoding, callback) {
     if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
+
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -2433,6 +2463,7 @@ class ClientHttp2Session extends Http2Session {
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
+
       if (stream.readable) {
         stream.rstCode = 0;
         // Push a null so the stream can end whenever the client consumes
@@ -3002,6 +3033,7 @@ function connectionListener(socket: Socket) {
   session.on("error", sessionOnError);
   const timeout = this.timeout;
   if (timeout) session.setTimeout(timeout, sessionOnTimeout);
+  else socket.setTimeout(0);
 
   this.emit("session", session);
 }

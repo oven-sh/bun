@@ -50,7 +50,7 @@ const is_bindgen: bool = false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 
-pub const Tag = enum(u3) {
+pub const Tag = enum {
     pass,
     fail,
     only,
@@ -624,6 +624,15 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
+    pub fn shouldEvaluateScope(this: *const TestScope, is_only_set: bool) bool {
+        return switch (this.tag) {
+            .only => true,
+            .skip => false,
+            .todo => Jest.runner.?.test_options.run_todo,
+            else => this.parent.shouldEvaluateScope(is_only_set),
+        };
+    }
+
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         return createScope(globalThis, callframe, "test()", true, .pass);
     }
@@ -845,24 +854,36 @@ pub const DescribeScope = struct {
     afterEach: std.ArrayListUnmanaged(JSValue) = .{},
     afterAll: std.ArrayListUnmanaged(JSValue) = .{},
     test_id_start: TestRunner.Test.ID = 0,
-    test_id_len: TestRunner.Test.ID = 0,
     tests: std.ArrayListUnmanaged(TestScope) = .{},
     pending_tests: std.DynamicBitSetUnmanaged = .{},
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
-    value: JSValue = .zero,
-    done: bool = false,
-    skip_count: u32 = 0,
     tag: Tag = .pass,
     function_value: JSC.Strong = .{},
     remaining_child_describe_count: u32 = 0,
     ref: JSC.Ref = .{},
+    flags: Flags = .{},
+
+    pub const Flags = packed struct {
+        done: bool = false,
+        any_tests_ran: bool = false,
+    };
 
     const Synchronousness = enum {
         Sync,
         Async,
         Error,
     };
+
+    pub fn setAnyTestsRan(this: *DescribeScope) void {
+        if (this.flags.any_tests_ran) return;
+        this.flags.any_tests_ran = true;
+        var scope = this;
+        while (scope.parent) |parent| {
+            parent.flags.any_tests_ran = true;
+            scope = parent;
+        }
+    }
 
     pub fn dequeue(this: *DescribeScope, vm: *VirtualMachine, globalObject: *JSGlobalObject) Synchronousness {
         const function = this.function_value.swap();
@@ -871,32 +892,15 @@ pub const DescribeScope = struct {
         return this.run(vm, globalObject, function, &.{});
     }
 
-    fn isWithinOnlyScope(this: *const DescribeScope) bool {
-        if (this.tag == .only) return true;
-        if (this.parent != null) return this.parent.?.isWithinOnlyScope();
-        return false;
-    }
-
-    fn isWithinSkipScope(this: *const DescribeScope) bool {
-        if (this.tag == .skip) return true;
-        if (this.parent != null) return this.parent.?.isWithinSkipScope();
-        return false;
-    }
-
-    fn isWithinTodoScope(this: *const DescribeScope) bool {
-        if (this.tag == .todo) return true;
-        if (this.parent != null) return this.parent.?.isWithinTodoScope();
-        return false;
-    }
-
-    pub fn shouldEvaluateScope(this: *const DescribeScope) bool {
+    pub fn shouldEvaluateScope(this: *const DescribeScope, is_only_set: bool) bool {
         return switch (this.tag) {
-            .skip, .todo => false,
-            .only => Jest.runner.?.only,
+            .skip => false,
+            .todo => Jest.runner.?.test_options.run_todo,
+            .only => is_only_set,
             else => if (this.parent) |parent|
-                parent.shouldEvaluateScope()
+                parent.shouldEvaluateScope(is_only_set)
             else
-                !Jest.runner.?.only,
+                !is_only_set,
         };
     }
 
@@ -1024,7 +1028,7 @@ pub const DescribeScope = struct {
                     _ = ctx.bunVM().uncaughtException(ctx.bunVM().global, err, true);
                 }
             }
-            scope.done = true;
+            scope.flags.done = true;
         }
 
         return JSValue.jsUndefined();
@@ -1060,7 +1064,7 @@ pub const DescribeScope = struct {
             var result: JSValue = switch (cb.getLength(globalObject)) {
                 0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
                 else => brk: {
-                    this.done = false;
+                    this.flags.done = false;
                     const done_func = JSC.NewFunctionWithData(
                         globalObject,
                         ZigString.static("done"),
@@ -1073,7 +1077,7 @@ pub const DescribeScope = struct {
                     if (result.toError()) |err| {
                         return err;
                     }
-                    vm.waitFor(&this.done);
+                    vm.waitFor(&this.flags.done);
                     break :brk result;
                 },
             };
@@ -1160,6 +1164,8 @@ pub const DescribeScope = struct {
             if (hook == .afterAll) {
                 while (parent) |scope| {
                     if (scope.remaining_child_describe_count > 0 or scope.pending_tests.findFirstSet() != null) break;
+                    if (!scope.flags.any_tests_ran) continue;
+
                     if (scope.execCallback(globalObject, ran_any_callbacks, hook)) |err| {
                         return err;
                     }
@@ -1297,7 +1303,7 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        if (this.shouldEvaluateScope()) {
+        if (this.shouldEvaluateScope(Jest.runner.?.only)) {
             if (end == 0) {
                 var runner = allocator.create(TestRunnerTask) catch unreachable;
                 runner.* = .{
@@ -1334,6 +1340,7 @@ pub const DescribeScope = struct {
         globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
+            this.setAnyTestsRan();
             this.runCallbacksAndHandleRejections(globalThis, .afterEach);
         }
 
@@ -1347,7 +1354,7 @@ pub const DescribeScope = struct {
             }
         }
 
-        if (this.shouldEvaluateScope() and this.remaining_child_describe_count == 0) {
+        if (this.shouldEvaluateScope(Jest.runner.?.only) and this.remaining_child_describe_count == 0 and this.flags.any_tests_ran) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             this.runCallbacksAndHandleRejections(globalThis, .afterAll);
@@ -1506,6 +1513,7 @@ pub const TestRunnerTask = struct {
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
+        const is_only_set = Jest.runner.?.only;
 
         if (test_id == std.math.maxInt(TestRunner.Test.ID)) {
             jsc_vm.onUnhandledRejectionCtx = null;
@@ -1514,7 +1522,7 @@ pub const TestRunnerTask = struct {
             if (describe.remaining_child_describe_count == 0 and
                 describe.pending_tests.findFirstSet() == null and
                 // jk maybe not
-                describe.shouldEvaluateScope())
+                describe.shouldEvaluateScope(is_only_set))
             {
                 describe.runCallbacksAndHandleRejections(globalThis, .beforeAll);
             }
@@ -1527,9 +1535,9 @@ pub const TestRunnerTask = struct {
 
         var test_: TestScope = describe.tests.items[test_id];
 
-        if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
+        if (test_.func == .zero or !test_.shouldEvaluateScope(is_only_set)) {
             describe.current_test_id = test_id;
-            const tag = if (!describe.shouldEvaluateScope()) describe.tag else test_.tag;
+            const tag = if (!describe.shouldEvaluateScope(is_only_set)) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
                     this.processTestResult(globalThis, .{ .todo = {} }, test_, test_id, describe);
@@ -1938,7 +1946,6 @@ inline fn createScope(
         }
 
         if (is_skip) {
-            parent.skip_count += 1;
             function.unprotect();
         } else {
             function.protect();
@@ -2224,7 +2231,7 @@ fn eachBind(
 
             var is_skip = tag == .skip or
                 (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
-                (tag != .only and Jest.runner.?.only and parent.tag != .only);
+                (tag != .only and parent.shouldEvaluateScope(Jest.runner.?.only));
 
             if (Jest.runner.?.filter_regex) |regex| {
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
@@ -2236,7 +2243,6 @@ fn eachBind(
             }
 
             if (is_skip) {
-                parent.skip_count += 1;
                 function.unprotect();
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {

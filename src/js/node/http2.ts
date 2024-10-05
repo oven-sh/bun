@@ -1633,17 +1633,20 @@ class Http2Stream extends Duplex {
       if (native) {
         const allBuffers = data.allBuffers;
         let chunks;
+        chunks = data;
         if (allBuffers) {
-          chunks = data;
-          for (let i = 0; i < data.length; i++) data[i] = data[i].chunk;
+          for (let i = 0; i < data.length; i++) {
+            data[i] = data[i].chunk;
+          }
         } else {
-          chunks = new Array(data.length << 1);
           for (let i = 0; i < data.length; i++) {
             const { chunk, encoding } = data[i];
+
+            data[i] = data[i].chunk;
             if (typeof chunk == "string" && encoding !== "ascii" && encoding !== "buffer") {
-              chunks[i * 2] = Buffer.from(chunk, encoding);
+              data[i] = Buffer.from(chunk, encoding);
             } else {
-              chunks[i * 2] = chunk;
+              data[i] = chunk;
             }
           }
         }
@@ -2068,7 +2071,7 @@ class ServerHttp2Session extends Http2Session {
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
-          // self.destroy();
+          self.destroy();
         }
       }
     },
@@ -2488,7 +2491,7 @@ class ClientHttp2Session extends Http2Session {
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
-          // self.destroy();
+          self.destroy();
         }
       }
     },
@@ -2865,12 +2868,12 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     this.#closed = true;
     this.#connected = false;
-    // if (socket) {
-    //   this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-    //   socket.end();
-    // } else {
-    //   this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
-    // }
+    if (socket) {
+      this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      socket.end();
+    } else {
+      this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+    }
     this[bunHTTP2Socket] = null;
 
     if (error) {

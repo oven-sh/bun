@@ -20,12 +20,16 @@ const BunSocket = union(enum) {
     tcp: *TCPSocket,
     tcp_writeonly: *TCPSocket,
 };
-extern fn JSC__JSGlobalObject__getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, wyHash: u64) JSC.JSValue;
+pub const StringPair = extern struct {
+    key: JSC.JSValue,
+    value: JSC.JSValue,
+};
+extern fn JSC__JSGlobalObject__getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) StringPair;
 
-pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, str: []const u8) ?JSC.JSValue {
-    const hash = bun.hash(str);
-    const value = JSC__JSGlobalObject__getHTTP2CommonString(globalObject, hash);
-    if (value.isEmptyOrUndefinedOrNull()) return null;
+pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) ?StringPair {
+    if (hpack_index == 255) return null;
+    const value = JSC__JSGlobalObject__getHTTP2CommonString(globalObject, hpack_index);
+    if (value.key.isEmptyOrUndefinedOrNull()) return null;
     return value;
 }
 const JSValue = JSC.JSValue;
@@ -1131,6 +1135,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn setSettings(this: *H2FrameParser, settings: FullSettingsPayload) void {
+        log("HTTP_FRAME_SETTINGS ack false", .{});
+
         var buffer: [FrameHeader.byteSize + FullSettingsPayload.byteSize]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1149,6 +1155,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn abortStream(this: *H2FrameParser, stream: *Stream, abortReason: JSC.JSValue) void {
+        log("HTTP_FRAME_RST_STREAM id: {} code: CANCEL", .{stream.id});
+
         abortReason.ensureStillAlive();
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
@@ -1174,6 +1182,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn endStream(this: *H2FrameParser, stream: *Stream, rstCode: ErrorCode) void {
+        log("HTTP_FRAME_RST_STREAM id: {} code: {}", .{ stream.id, @intFromEnum(rstCode) });
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var writerStream = std.io.fixedBufferStream(&buffer);
@@ -1203,6 +1212,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32, emitError: bool) void {
+        log("HTTP_FRAME_GOAWAY {} code {} debug_data {s}", .{ streamIdentifier, rstCode, debug_data });
         var buffer: [FrameHeader.byteSize + 8]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1235,6 +1245,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendPing(this: *H2FrameParser, ack: bool, payload: []const u8) void {
+        log("HTTP_FRAME_PING ack {} payload {s}", .{ ack, payload });
+
         var buffer: [FrameHeader.byteSize + 8]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1273,7 +1285,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendSettingsACK(this: *H2FrameParser) void {
-        log("sendSettingsACK", .{});
+        log("HTTP_FRAME_SETTINGS ack true", .{});
         var buffer: [FrameHeader.byteSize]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1292,7 +1304,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
-        log("sendWindowUpdate stream {} size {}", .{ streamIdentifier, windowSize.uint31 });
+        log("HTTP_FRAME_WINDOW_UPDATE stream {} size {}", .{ streamIdentifier, windowSize.uint31 });
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1663,14 +1675,21 @@ pub const H2FrameParser = struct {
                 } else break :brk headers;
             };
 
-            if (getHTTP2CommonString(globalObject, header.name)) |header_name| {
-                output.push(globalObject, header_name);
+            if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
+                output.push(globalObject, header_info.key);
+                if (header.well_know_value) {
+                    output.push(globalObject, header_info.value);
+                } else {
+                    var header_value = bun.String.fromUTF8(header.value);
+                    output.push(globalObject, header_value.transferToJS(globalObject));
+                }
             } else {
                 var header_name = bun.String.fromUTF8(header.name);
                 output.push(globalObject, header_name.transferToJS(globalObject));
+                var header_value = bun.String.fromUTF8(header.value);
+                output.push(globalObject, header_value.transferToJS(globalObject));
             }
-            var header_value = bun.String.fromUTF8(header.value);
-            output.push(globalObject, header_value.transferToJS(globalObject));
+
             if (offset >= payload.len) {
                 break;
             }
@@ -2676,7 +2695,7 @@ pub const H2FrameParser = struct {
     }
 
     fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
-        log("{s} sendData({}, {}, {})", .{ if (stream.client.isServer) "server" else "client", stream.id, payload.len, close });
+        log("HTTP_FRAME_DATA {s} sendData({}, {}, {})", .{ if (stream.client.isServer) "server" else "client", stream.id, payload.len, close });
 
         const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
         const stream_id = stream.id;

@@ -654,7 +654,7 @@ pub const HotUpdateContext = struct {
     /// bundle_v2.Graph.server_component_boundaries.slice()
     scbs: bun.JSAst.ServerComponentBoundary.List.Slice,
     /// Which files have a server-component boundary.
-    scbs_bitset: DynamicBitSetUnmanaged,
+    server_to_client_bitset: DynamicBitSetUnmanaged,
 
     /// Used to reduce calls to the IncrementalGraph hash table.
     ///
@@ -715,7 +715,8 @@ pub fn finalizeBundle(
         .server_seen_bit_set = undefined,
     };
 
-    // Pass 1, update the graph with all rebundle files
+    // Pass 1, update the graph's nodes, resolving every bundler source
+    // index into it's `IncrementalGraph(...).FileIndex`
     for (
         chunk.content.javascript.parts_in_chunk_in_order,
         chunk.compile_results_for_chunk,
@@ -735,7 +736,9 @@ pub fn finalizeBundle(
 
     ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(linker.allocator, dev.server_graph.bundled_files.count());
 
-    // Pass 2, resolve all imports
+    // Pass 2, update the graph's edges by performing import diffing on each
+    // changed file, removing dependencies. This pass also flags what routes
+    // have been modified.
     for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
         try dev.processChunkDependencies(
             &ctx,
@@ -965,8 +968,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// list nodes; each file stores the first imports and dependency.
         edges: ArrayListUnmanaged(Edge),
         /// HMR Dependencies are added and removed very frequently, but indexes
-        /// must remain stable. This free list is used to re-use freed indexes,
-        /// allowing garbage collection to run less often.
+        /// must remain stable. This free list allows re-use of freed indexes,
+        /// so garbage collection can run less often.
         edges_free_list: ArrayListUnmanaged(EdgeIndex),
 
         /// Used during an incremental update to determine what "HMR roots"
@@ -1144,7 +1147,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_rsc = !is_ssr_graph,
                             .is_ssr = is_ssr_graph,
                             .is_route = false,
-                            .is_client_to_server_component_boundary = ctx.scbs_bitset.isSet(index.get()),
+                            .is_client_to_server_component_boundary = ctx.server_to_client_bitset.isSet(index.get()),
                             .is_special_framework_file = false, // TODO: set later
                         };
                     } else {
@@ -1153,7 +1156,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         } else {
                             gop.value_ptr.is_rsc = true;
                         }
-                        if (ctx.scbs_bitset.isSet(index.get())) {
+                        if (ctx.server_to_client_bitset.isSet(index.get())) {
                             gop.value_ptr.is_client_to_server_component_boundary = true;
                         }
                     }
@@ -1335,8 +1338,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     if (file.is_route) {
                         const route_index = g.owner().route_lookup.get(file_index) orelse
                             Output.panic("Route not in lookup index: {d} {}", .{ file_index.get(), bun.fmt.quote(g.bundled_files.keys()[file_index.get()]) });
-
-                        igLog("\\<- mark the route my friend", .{});
+                        igLog("\\<- Route", .{});
                         try g.owner().incremental_result.routes_affected.append(g.owner().allocator, route_index);
                     }
                 },

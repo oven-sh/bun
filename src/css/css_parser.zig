@@ -2992,6 +2992,7 @@ pub const Parser = struct {
     stop_before: Delimiters = Delimiters.NONE,
     import_records: ?*bun.BabyList(ImportRecord),
 
+    // TODO: dedupe import records??
     pub fn addImportRecordForUrl(this: *Parser, url: []const u8, start_position: usize) Result(u32) {
         if (this.import_records) |import_records| {
             const idx = import_records.len;
@@ -5973,6 +5974,52 @@ pub const serializer = struct {
     }
 };
 
+pub inline fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
+    const tyinfo = @typeInfo(T);
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        return this.* == other.*;
+    }
+    if (comptime @typeInfo(T) == .Pointer) {
+        const TT = std.meta.Child(T);
+        return implementEql(TT, this.*, other.*);
+    }
+    if (comptime @typeInfo(T) == .Optional) {
+        const TT = std.meta.Child(T);
+        if (this.* != null and other.* != null) return implementEql(TT, &this.*.?, &other.*.?);
+        return false;
+    }
+    return switch (tyinfo) {
+        .Optional => unreachable,
+        .Pointer => unreachable,
+        .Array => {
+            const Child = std.meta.Child(T);
+            if (comptime bun.meta.isSimpleEqlType(Child)) {
+                return std.mem.eql(Child, &this.*, &other.*);
+            }
+            if (this.len != other.len) return false;
+            for (this.*, other.*) |a, b| {
+                if (!generic.eql(Child, &a, &b)) return false;
+            }
+            return true;
+        },
+        .Struct => {
+            inline for (tyinfo.Struct.fields) |field| {
+                if (!generic.eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
+            }
+            return true;
+        },
+        .Union => {
+            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+            if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
+            inline for (tyinfo.Union.fields) |field| {
+                if (!generic.eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
+            }
+            return true;
+        },
+        else => @compileError("Unsupported type: " ++ @tagName(tyinfo)),
+    };
+}
+
 pub const generic = struct {
     pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
         if (@hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
@@ -5987,6 +6034,13 @@ pub const generic = struct {
     }
 
     pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
+        if (comptime @typeInfo(T) == .Pointer) {
+            const TT = std.meta.Child(T);
+            return switch (parse(TT, input)) {
+                .result => |v| .{ .result = bun.create(input.allocator(), TT, v) },
+                .err => |e| .{ .err = e },
+            };
+        }
         return switch (T) {
             f32 => CSSNumberFns.parse(input),
             CSSInteger => CSSIntegerFns.parse(input),
@@ -6039,7 +6093,42 @@ pub const generic = struct {
         return true;
     }
 
+    fn looksLikeListContainerType(comptime T: type) ?type {
+        const tyinfo = @typeInfo(T);
+        if (tyinfo == .Struct) {
+            // Looks like array list
+            if (tyinfo.Struct.fields.len == 2 and
+                std.mem.eql(u8, tyinfo.Struct.fields[0].name, "items") and
+                std.mem.eql(u8, tyinfo.Struct.fields[0].name, "capacity"))
+                return std.meta.Child(tyinfo.Struct.fields[0].items);
+
+            // Looks like babylist
+            if (tyinfo.Struct.fields.len == 3 and
+                std.mem.eql(u8, tyinfo.Struct.fields[0].name, "ptr") and
+                std.mem.eql(u8, tyinfo.Struct.fields[1].name, "len") and
+                std.mem.eql(u8, tyinfo.Struct.fields[2].name, "cap"))
+                return std.meta.Child(tyinfo.Struct.fields[0].type);
+        }
+
+        return null;
+    }
+
     pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
+        if (comptime @typeInfo(T) == .Pointer) {
+            const TT = std.meta.Child(T);
+            return eql(TT, lhs.*, rhs.*);
+        }
+        if (comptime @typeInfo(T) == .Optional) {
+            const TT = std.meta.Child(T);
+            if (lhs.* != null and rhs.* != null) return eql(TT, &lhs.*.?, &rhs.*.?);
+            return false;
+        }
+        if (comptime bun.meta.isSimpleEqlType(T)) {
+            return lhs.* == rhs.*;
+        }
+        if (comptime looksLikeListContainerType(T)) |Child| {
+            return eqlList(Child, lhs, rhs);
+        }
         return switch (T) {
             f32 => lhs.* == rhs.*,
             CSSInteger => lhs.* == rhs.*,

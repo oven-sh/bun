@@ -144,4 +144,10 @@ pub const Url = struct {
             try dest.writeChar(')');
         }
     }
+
+    // TODO: dedupe import records??
+    // This might not fucking work
+    pub fn eql(this: *const Url, other: *const Url) bool {
+        return this.import_record_idx == other.import_record_idx;
+    }
 };

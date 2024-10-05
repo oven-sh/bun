@@ -259,6 +259,8 @@ pub const Property = union(PropertyIdTag) {
     @"border-right-style": border.LineStyle,
     @"border-block-start-style": border.LineStyle,
     @"border-block-end-style": border.LineStyle,
+    @"border-inline-start-style": border.LineStyle,
+    @"border-inline-end-style": border.LineStyle,
     @"border-top-width": BorderSideWidth,
     @"border-bottom-width": BorderSideWidth,
     @"border-left-width": BorderSideWidth,
@@ -275,6 +277,23 @@ pub const Property = union(PropertyIdTag) {
     @"border-start-end-radius": Size2D(LengthPercentage),
     @"border-end-start-radius": Size2D(LengthPercentage),
     @"border-end-end-radius": Size2D(LengthPercentage),
+    @"border-radius": struct { BorderRadius, VendorPrefix },
+    @"border-image-source": Image,
+    @"border-image-outset": Rect(LengthOrNumber),
+    @"border-image-repeat": BorderImageRepeat,
+    @"border-image-width": Rect(BorderImageSideWidth),
+    @"border-image-slice": BorderImageSlice,
+    @"border-image": struct { BorderImage, VendorPrefix },
+    @"border-color": BorderColor,
+    @"border-style": BorderStyle,
+    @"border-width": BorderWidth,
+    @"border-block-color": BorderBlockColor,
+    @"border-block-style": BorderBlockStyle,
+    @"border-block-width": BorderBlockWidth,
+    @"border-inline-color": BorderInlineColor,
+    @"border-inline-style": BorderInlineStyle,
+    @"border-inline-width": BorderInlineWidth,
+    border: Border,
     @"border-top": BorderTop,
     @"border-bottom": BorderBottom,
     @"border-left": BorderLeft,
@@ -409,6 +428,20 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"border-inline-start-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-start-style" = c } };
+                    }
+                }
+            },
+            .@"border-inline-end-style" => {
+                if (css.generic.parseWithOptions(border.LineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-end-style" = c } };
+                    }
+                }
+            },
             .@"border-top-width" => {
                 if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -521,6 +554,125 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"border-radius" => |pre| {
+                if (css.generic.parseWithOptions(BorderRadius, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-radius" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"border-image-source" => {
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-source" = c } };
+                    }
+                }
+            },
+            .@"border-image-outset" => {
+                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-outset" = c } };
+                    }
+                }
+            },
+            .@"border-image-repeat" => {
+                if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-repeat" = c } };
+                    }
+                }
+            },
+            .@"border-image-width" => {
+                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-width" = c } };
+                    }
+                }
+            },
+            .@"border-image-slice" => {
+                if (css.generic.parseWithOptions(BorderImageSlice, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image-slice" = c } };
+                    }
+                }
+            },
+            .@"border-image" => |pre| {
+                if (css.generic.parseWithOptions(BorderImage, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-image" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"border-color" => {
+                if (css.generic.parseWithOptions(BorderColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-color" = c } };
+                    }
+                }
+            },
+            .@"border-style" => {
+                if (css.generic.parseWithOptions(BorderStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-style" = c } };
+                    }
+                }
+            },
+            .@"border-width" => {
+                if (css.generic.parseWithOptions(BorderWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-width" = c } };
+                    }
+                }
+            },
+            .@"border-block-color" => {
+                if (css.generic.parseWithOptions(BorderBlockColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-color" = c } };
+                    }
+                }
+            },
+            .@"border-block-style" => {
+                if (css.generic.parseWithOptions(BorderBlockStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-style" = c } };
+                    }
+                }
+            },
+            .@"border-block-width" => {
+                if (css.generic.parseWithOptions(BorderBlockWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-block-width" = c } };
+                    }
+                }
+            },
+            .@"border-inline-color" => {
+                if (css.generic.parseWithOptions(BorderInlineColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-color" = c } };
+                    }
+                }
+            },
+            .@"border-inline-style" => {
+                if (css.generic.parseWithOptions(BorderInlineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-style" = c } };
+                    }
+                }
+            },
+            .@"border-inline-width" => {
+                if (css.generic.parseWithOptions(BorderInlineWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-inline-width" = c } };
+                    }
+                }
+            },
+            .border => {
+                if (css.generic.parseWithOptions(Border, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .border = c } };
+                    }
+                }
+            },
             .@"border-top" => {
                 if (css.generic.parseWithOptions(BorderTop, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -597,6 +749,8 @@ pub const Property = union(PropertyIdTag) {
             .@"border-right-style" => .{ "border-right-style", VendorPrefix{ .none = true } },
             .@"border-block-start-style" => .{ "border-block-start-style", VendorPrefix{ .none = true } },
             .@"border-block-end-style" => .{ "border-block-end-style", VendorPrefix{ .none = true } },
+            .@"border-inline-start-style" => .{ "border-inline-start-style", VendorPrefix{ .none = true } },
+            .@"border-inline-end-style" => .{ "border-inline-end-style", VendorPrefix{ .none = true } },
             .@"border-top-width" => .{ "border-top-width", VendorPrefix{ .none = true } },
             .@"border-bottom-width" => .{ "border-bottom-width", VendorPrefix{ .none = true } },
             .@"border-left-width" => .{ "border-left-width", VendorPrefix{ .none = true } },
@@ -613,6 +767,23 @@ pub const Property = union(PropertyIdTag) {
             .@"border-start-end-radius" => .{ "border-start-end-radius", VendorPrefix{ .none = true } },
             .@"border-end-start-radius" => .{ "border-end-start-radius", VendorPrefix{ .none = true } },
             .@"border-end-end-radius" => .{ "border-end-end-radius", VendorPrefix{ .none = true } },
+            .@"border-radius" => |*x| .{ "border-radius", x.@"1" },
+            .@"border-image-source" => .{ "border-image-source", VendorPrefix{ .none = true } },
+            .@"border-image-outset" => .{ "border-image-outset", VendorPrefix{ .none = true } },
+            .@"border-image-repeat" => .{ "border-image-repeat", VendorPrefix{ .none = true } },
+            .@"border-image-width" => .{ "border-image-width", VendorPrefix{ .none = true } },
+            .@"border-image-slice" => .{ "border-image-slice", VendorPrefix{ .none = true } },
+            .@"border-image" => |*x| .{ "border-image", x.@"1" },
+            .@"border-color" => .{ "border-color", VendorPrefix{ .none = true } },
+            .@"border-style" => .{ "border-style", VendorPrefix{ .none = true } },
+            .@"border-width" => .{ "border-width", VendorPrefix{ .none = true } },
+            .@"border-block-color" => .{ "border-block-color", VendorPrefix{ .none = true } },
+            .@"border-block-style" => .{ "border-block-style", VendorPrefix{ .none = true } },
+            .@"border-block-width" => .{ "border-block-width", VendorPrefix{ .none = true } },
+            .@"border-inline-color" => .{ "border-inline-color", VendorPrefix{ .none = true } },
+            .@"border-inline-style" => .{ "border-inline-style", VendorPrefix{ .none = true } },
+            .@"border-inline-width" => .{ "border-inline-width", VendorPrefix{ .none = true } },
+            .border => .{ "border", VendorPrefix{ .none = true } },
             .@"border-top" => .{ "border-top", VendorPrefix{ .none = true } },
             .@"border-bottom" => .{ "border-bottom", VendorPrefix{ .none = true } },
             .@"border-left" => .{ "border-left", VendorPrefix{ .none = true } },
@@ -650,6 +821,8 @@ pub const Property = union(PropertyIdTag) {
             .@"border-right-style" => |*value| value.toCss(W, dest),
             .@"border-block-start-style" => |*value| value.toCss(W, dest),
             .@"border-block-end-style" => |*value| value.toCss(W, dest),
+            .@"border-inline-start-style" => |*value| value.toCss(W, dest),
+            .@"border-inline-end-style" => |*value| value.toCss(W, dest),
             .@"border-top-width" => |*value| value.toCss(W, dest),
             .@"border-bottom-width" => |*value| value.toCss(W, dest),
             .@"border-left-width" => |*value| value.toCss(W, dest),
@@ -666,6 +839,23 @@ pub const Property = union(PropertyIdTag) {
             .@"border-start-end-radius" => |*value| value.toCss(W, dest),
             .@"border-end-start-radius" => |*value| value.toCss(W, dest),
             .@"border-end-end-radius" => |*value| value.toCss(W, dest),
+            .@"border-radius" => |*value| value[0].toCss(W, dest),
+            .@"border-image-source" => |*value| value.toCss(W, dest),
+            .@"border-image-outset" => |*value| value.toCss(W, dest),
+            .@"border-image-repeat" => |*value| value.toCss(W, dest),
+            .@"border-image-width" => |*value| value.toCss(W, dest),
+            .@"border-image-slice" => |*value| value.toCss(W, dest),
+            .@"border-image" => |*value| value[0].toCss(W, dest),
+            .@"border-color" => |*value| value.toCss(W, dest),
+            .@"border-style" => |*value| value.toCss(W, dest),
+            .@"border-width" => |*value| value.toCss(W, dest),
+            .@"border-block-color" => |*value| value.toCss(W, dest),
+            .@"border-block-style" => |*value| value.toCss(W, dest),
+            .@"border-block-width" => |*value| value.toCss(W, dest),
+            .@"border-inline-color" => |*value| value.toCss(W, dest),
+            .@"border-inline-style" => |*value| value.toCss(W, dest),
+            .@"border-inline-width" => |*value| value.toCss(W, dest),
+            .border => |*value| value.toCss(W, dest),
             .@"border-top" => |*value| value.toCss(W, dest),
             .@"border-bottom" => |*value| value.toCss(W, dest),
             .@"border-left" => |*value| value.toCss(W, dest),
@@ -680,6 +870,24 @@ pub const Property = union(PropertyIdTag) {
     /// Returns the given longhand property for a shorthand.
     pub fn longhand(this: *const Property, property_id: *const PropertyId) ?Property {
         switch (this.*) {
+            .@"border-radius" => |*v| {
+                if (!v[1].eq(property_id.prefix())) return null;
+                return v[0].longhand(property_id);
+            },
+            .@"border-image" => |*v| {
+                if (!v[1].eq(property_id.prefix())) return null;
+                return v[0].longhand(property_id);
+            },
+            .@"border-color" => |*v| return v.longhand(property_id),
+            .@"border-style" => |*v| return v.longhand(property_id),
+            .@"border-width" => |*v| return v.longhand(property_id),
+            .@"border-block-color" => |*v| return v.longhand(property_id),
+            .@"border-block-style" => |*v| return v.longhand(property_id),
+            .@"border-block-width" => |*v| return v.longhand(property_id),
+            .@"border-inline-color" => |*v| return v.longhand(property_id),
+            .@"border-inline-style" => |*v| return v.longhand(property_id),
+            .@"border-inline-width" => |*v| return v.longhand(property_id),
+            .border => |*v| return v.longhand(property_id),
             .@"border-top" => |*v| return v.longhand(property_id),
             .@"border-bottom" => |*v| return v.longhand(property_id),
             .@"border-left" => |*v| return v.longhand(property_id),
@@ -707,6 +915,8 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-right-style",
     @"border-block-start-style",
     @"border-block-end-style",
+    @"border-inline-start-style",
+    @"border-inline-end-style",
     @"border-top-width",
     @"border-bottom-width",
     @"border-left-width",
@@ -723,6 +933,23 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-start-end-radius",
     @"border-end-start-radius",
     @"border-end-end-radius",
+    @"border-radius": VendorPrefix,
+    @"border-image-source",
+    @"border-image-outset",
+    @"border-image-repeat",
+    @"border-image-width",
+    @"border-image-slice",
+    @"border-image": VendorPrefix,
+    @"border-color",
+    @"border-style",
+    @"border-width",
+    @"border-block-color",
+    @"border-block-style",
+    @"border-block-width",
+    @"border-inline-color",
+    @"border-inline-style",
+    @"border-inline-width",
+    border,
     @"border-top",
     @"border-bottom",
     @"border-left",
@@ -759,6 +986,8 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => VendorPrefix.empty(),
             .@"border-block-start-style" => VendorPrefix.empty(),
             .@"border-block-end-style" => VendorPrefix.empty(),
+            .@"border-inline-start-style" => VendorPrefix.empty(),
+            .@"border-inline-end-style" => VendorPrefix.empty(),
             .@"border-top-width" => VendorPrefix.empty(),
             .@"border-bottom-width" => VendorPrefix.empty(),
             .@"border-left-width" => VendorPrefix.empty(),
@@ -775,6 +1004,23 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-start-end-radius" => VendorPrefix.empty(),
             .@"border-end-start-radius" => VendorPrefix.empty(),
             .@"border-end-end-radius" => VendorPrefix.empty(),
+            .@"border-radius" => |p| p,
+            .@"border-image-source" => VendorPrefix.empty(),
+            .@"border-image-outset" => VendorPrefix.empty(),
+            .@"border-image-repeat" => VendorPrefix.empty(),
+            .@"border-image-width" => VendorPrefix.empty(),
+            .@"border-image-slice" => VendorPrefix.empty(),
+            .@"border-image" => |p| p,
+            .@"border-color" => VendorPrefix.empty(),
+            .@"border-style" => VendorPrefix.empty(),
+            .@"border-width" => VendorPrefix.empty(),
+            .@"border-block-color" => VendorPrefix.empty(),
+            .@"border-block-style" => VendorPrefix.empty(),
+            .@"border-block-width" => VendorPrefix.empty(),
+            .@"border-inline-color" => VendorPrefix.empty(),
+            .@"border-inline-style" => VendorPrefix.empty(),
+            .@"border-inline-width" => VendorPrefix.empty(),
+            .border => VendorPrefix.empty(),
             .@"border-top" => VendorPrefix.empty(),
             .@"border-bottom" => VendorPrefix.empty(),
             .@"border-left" => VendorPrefix.empty(),
@@ -837,6 +1083,12 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-style")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-start-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-start-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-end-style";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-width")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-top-width";
@@ -885,6 +1137,57 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-end-end-radius")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-end-end-radius";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-radius")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"border-radius" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-source")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-image-source";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-outset")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-image-outset";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-repeat")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-image-repeat";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-image-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-slice")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-image-slice";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true, .o = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"border-image" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-block-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-inline-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .border;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-top";
@@ -926,6 +1229,8 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => .@"border-right-style",
             .@"border-block-start-style" => .@"border-block-start-style",
             .@"border-block-end-style" => .@"border-block-end-style",
+            .@"border-inline-start-style" => .@"border-inline-start-style",
+            .@"border-inline-end-style" => .@"border-inline-end-style",
             .@"border-top-width" => .@"border-top-width",
             .@"border-bottom-width" => .@"border-bottom-width",
             .@"border-left-width" => .@"border-left-width",
@@ -942,6 +1247,23 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-start-end-radius" => .@"border-start-end-radius",
             .@"border-end-start-radius" => .@"border-end-start-radius",
             .@"border-end-end-radius" => .@"border-end-end-radius",
+            .@"border-radius" => .{ .@"border-radius" = pre },
+            .@"border-image-source" => .@"border-image-source",
+            .@"border-image-outset" => .@"border-image-outset",
+            .@"border-image-repeat" => .@"border-image-repeat",
+            .@"border-image-width" => .@"border-image-width",
+            .@"border-image-slice" => .@"border-image-slice",
+            .@"border-image" => .{ .@"border-image" = pre },
+            .@"border-color" => .@"border-color",
+            .@"border-style" => .@"border-style",
+            .@"border-width" => .@"border-width",
+            .@"border-block-color" => .@"border-block-color",
+            .@"border-block-style" => .@"border-block-style",
+            .@"border-block-width" => .@"border-block-width",
+            .@"border-inline-color" => .@"border-inline-color",
+            .@"border-inline-style" => .@"border-inline-style",
+            .@"border-inline-width" => .@"border-inline-width",
+            .border => .border,
             .@"border-top" => .@"border-top",
             .@"border-bottom" => .@"border-bottom",
             .@"border-left" => .@"border-left",
@@ -970,6 +1292,8 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => {},
             .@"border-block-start-style" => {},
             .@"border-block-end-style" => {},
+            .@"border-inline-start-style" => {},
+            .@"border-inline-end-style" => {},
             .@"border-top-width" => {},
             .@"border-bottom-width" => {},
             .@"border-left-width" => {},
@@ -994,6 +1318,27 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-start-end-radius" => {},
             .@"border-end-start-radius" => {},
             .@"border-end-end-radius" => {},
+            .@"border-radius" => |*p| {
+                p.insert(pre);
+            },
+            .@"border-image-source" => {},
+            .@"border-image-outset" => {},
+            .@"border-image-repeat" => {},
+            .@"border-image-width" => {},
+            .@"border-image-slice" => {},
+            .@"border-image" => |*p| {
+                p.insert(pre);
+            },
+            .@"border-color" => {},
+            .@"border-style" => {},
+            .@"border-width" => {},
+            .@"border-block-color" => {},
+            .@"border-block-style" => {},
+            .@"border-block-width" => {},
+            .@"border-inline-color" => {},
+            .@"border-inline-style" => {},
+            .@"border-inline-width" => {},
+            .border => {},
             .@"border-top" => {},
             .@"border-bottom" => {},
             .@"border-left" => {},
@@ -1021,6 +1366,8 @@ pub const PropertyIdTag = enum(u16) {
     @"border-right-style",
     @"border-block-start-style",
     @"border-block-end-style",
+    @"border-inline-start-style",
+    @"border-inline-end-style",
     @"border-top-width",
     @"border-bottom-width",
     @"border-left-width",
@@ -1037,6 +1384,23 @@ pub const PropertyIdTag = enum(u16) {
     @"border-start-end-radius",
     @"border-end-start-radius",
     @"border-end-end-radius",
+    @"border-radius",
+    @"border-image-source",
+    @"border-image-outset",
+    @"border-image-repeat",
+    @"border-image-width",
+    @"border-image-slice",
+    @"border-image",
+    @"border-color",
+    @"border-style",
+    @"border-width",
+    @"border-block-color",
+    @"border-block-style",
+    @"border-block-width",
+    @"border-inline-color",
+    @"border-inline-style",
+    @"border-inline-width",
+    border,
     @"border-top",
     @"border-bottom",
     @"border-left",

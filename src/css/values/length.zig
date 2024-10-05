@@ -21,6 +21,10 @@ pub const LengthOrNumber = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn default() LengthOrNumber {
+        return .{ .number = 0.0 };
+    }
+
     pub fn eql(this: *const @This(), other: *const @This()) bool {
         return switch (this.*) {
             .number => |*n| n.* == other.number,
@@ -196,6 +200,19 @@ pub const LengthValue = union(enum) {
         }
 
         return css.serializer.serializeDimension(value, unit, W, dest);
+    }
+
+    pub fn isZero(this: *const LengthValue) bool {
+        inline for (bun.meta.EnumFields(@This())) |field| {
+            if (@intFromEnum(this.*) == field.value) {
+                return @field(this, field.name) == 0.0;
+            }
+        }
+        unreachable;
+    }
+
+    pub fn zero() LengthValue {
+        return .{ .px = 0.0 };
     }
 
     /// Attempts to convert the value to pixels.

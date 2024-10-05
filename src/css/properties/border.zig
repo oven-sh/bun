@@ -19,7 +19,7 @@ const DashedIdent = css.css_values.ident.DashedIdent;
 const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
 const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
+const Length = css.css_values.length.Length;
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
 pub const BorderTop = GenericBorder(LineStyle, 0);
@@ -125,7 +125,7 @@ pub fn GenericBorder(comptime S: type, comptime P: u8) type {
                 if (needs_space) {
                     try dest.writeStr(" ");
                 }
-                try this.style.toCss(W, dest);
+                try this.color.toCss(W, dest);
                 needs_space = true;
             }
             return;

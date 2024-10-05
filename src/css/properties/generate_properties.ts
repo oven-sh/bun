@@ -532,14 +532,14 @@ generateCode({
     ty: "border.LineStyle",
     logical_group: { ty: "border_style", category: "logical" },
   },
-  // "border-inline-start-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "logical" },
-  // },
-  // "border-inline-end-style": {
-  //   ty: "border.LineStyle",
-  //   logical_group: { ty: "border_style", category: "logical" },
-  // },
+  "border-inline-start-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "logical" },
+  },
+  "border-inline-end-style": {
+    ty: "border.LineStyle",
+    logical_group: { ty: "border_style", category: "logical" },
+  },
   "border-top-width": {
     ty: "BorderSideWidth",
     logical_group: { ty: "border_width", category: "physical" },
@@ -608,71 +608,71 @@ generateCode({
     ty: "Size2D(LengthPercentage)",
     logical_group: { ty: "border_radius", category: "logical" },
   },
-  // "border-radius": {
-  //   ty: "BorderRadius",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   shorthand: true,
-  // },
-  // "border-image-source": {
-  //   ty: "Image",
-  // },
-  // "border-image-outset": {
-  //   ty: "Rect(LengthOrNumber)",
-  // },
-  // "border-image-repeat": {
-  //   ty: "BorderImageRepeat",
-  // },
-  // "border-image-width": {
-  //   ty: "Rect(BorderImageSideWidth)",
-  // },
-  // "border-image-slice": {
-  //   ty: "BorderImageSlice",
-  // },
-  // "border-image": {
-  //   ty: "BorderImage",
-  //   valid_prefixes: ["webkit", "moz", "o"],
-  //   shorthand: true,
-  // },
-  // "border-color": {
-  //   ty: "BorderColor",
-  //   shorthand: true,
-  // },
-  // "border-style": {
-  //   ty: "BorderStyle",
-  //   shorthand: true,
-  // },
-  // "border-width": {
-  //   ty: "BorderWidth",
-  //   shorthand: true,
-  // },
-  // "border-block-color": {
-  //   ty: "BorderBlockColor",
-  //   shorthand: true,
-  // },
-  // "border-block-style": {
-  //   ty: "BorderBlockStyle",
-  //   shorthand: true,
-  // },
-  // "border-block-width": {
-  //   ty: "BorderBlockWidth",
-  //   shorthand: true,
-  // },
-  // "border-inline-color": {
-  //   ty: "BorderInlineColor",
-  //   shorthand: true,
-  // },
-  // "border-inline-style": {
-  //   ty: "BorderInlineStyle",
-  //   shorthand: true,
-  // },
-  // "border-inline-width": {
-  //   ty: "BorderInlineWidth",
-  //   shorthand: true,
-  // },
-  // border: {
-  //   ty: "Border",
-  //   shorthand: true,
-  // },
+  "border-radius": {
+    ty: "BorderRadius",
+    valid_prefixes: ["webkit", "moz"],
+    shorthand: true,
+  },
+  "border-image-source": {
+    ty: "Image",
+  },
+  "border-image-outset": {
+    ty: "Rect(LengthOrNumber)",
+  },
+  "border-image-repeat": {
+    ty: "BorderImageRepeat",
+  },
+  "border-image-width": {
+    ty: "Rect(BorderImageSideWidth)",
+  },
+  "border-image-slice": {
+    ty: "BorderImageSlice",
+  },
+  "border-image": {
+    ty: "BorderImage",
+    valid_prefixes: ["webkit", "moz", "o"],
+    shorthand: true,
+  },
+  "border-color": {
+    ty: "BorderColor",
+    shorthand: true,
+  },
+  "border-style": {
+    ty: "BorderStyle",
+    shorthand: true,
+  },
+  "border-width": {
+    ty: "BorderWidth",
+    shorthand: true,
+  },
+  "border-block-color": {
+    ty: "BorderBlockColor",
+    shorthand: true,
+  },
+  "border-block-style": {
+    ty: "BorderBlockStyle",
+    shorthand: true,
+  },
+  "border-block-width": {
+    ty: "BorderBlockWidth",
+    shorthand: true,
+  },
+  "border-inline-color": {
+    ty: "BorderInlineColor",
+    shorthand: true,
+  },
+  "border-inline-style": {
+    ty: "BorderInlineStyle",
+    shorthand: true,
+  },
+  "border-inline-width": {
+    ty: "BorderInlineWidth",
+    shorthand: true,
+  },
+  border: {
+    ty: "Border",
+    shorthand: true,
+  },
   "border-top": {
     ty: "BorderTop",
     shorthand: true,

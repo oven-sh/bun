@@ -55,6 +55,10 @@ pub fn Bitflags(comptime T: type) type {
             return asBits(lhs) == asBits(rhs);
         }
 
+        pub fn eql(lhs: T, rhs: T) bool {
+            return eq(lhs, rhs);
+        }
+
         pub fn neq(lhs: T, rhs: T) bool {
             return asBits(lhs) != asBits(rhs);
         }

@@ -190,3 +190,56 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
         },
     });
 }
+
+pub fn hasStableMemoryLayout(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Type => true,
+        .Void => true,
+        .Bool => true,
+        .Int => true,
+        .Float => true,
+        .Enum => {
+            // not supporting this rn
+            if (tyinfo.Enum.is_exhaustive) return false;
+            return hasStableMemoryLayout(tyinfo.Enum.tag_type);
+        },
+        .Struct => switch (tyinfo.Struct.layout) {
+            .auto => {
+                inline for (tyinfo.Struct.fields) |field| {
+                    if (!hasStableMemoryLayout(field.field_type)) return false;
+                }
+                return true;
+            },
+            .@"extern" => true,
+            .@"packed" => false,
+        },
+        .Union => switch (tyinfo.Union.layout) {
+            .auto => {
+                if (tyinfo.Union.tag_type == null or !hasStableMemoryLayout(tyinfo.Union.tag_type.?)) return false;
+
+                inline for (tyinfo.Union.fields) |field| {
+                    if (!hasStableMemoryLayout(field.type)) return false;
+                }
+
+                return true;
+            },
+            .@"extern" => true,
+            .@"packed" => false,
+        },
+        else => true,
+    };
+}
+
+pub fn isSimpleEqlType(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Type => true,
+        .Void => true,
+        .Bool => true,
+        .Int => true,
+        .Float => true,
+        .Enum => !@hasDecl(T, "eql") and hasStableMemoryLayout(T),
+        else => false,
+    };
+}

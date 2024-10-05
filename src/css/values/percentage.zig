@@ -195,21 +195,17 @@ pub fn DimensionPercentage(comptime D: type) type {
         }
 
         pub fn zero() This {
-            return .{
-                .percentage = .{
-                    .value = switch (D) {
-                        f32 => 0.0,
-                        else => @compileError("TODO implement .zero() for " + @typeName(D)),
-                    },
-                },
-            };
+            return This{ .dimension = switch (D) {
+                f32 => 0.0,
+                else => D.zero(),
+            } };
         }
 
         pub fn isZero(this: *const This) bool {
             return switch (this.*) {
                 .dimension => |*d| switch (D) {
                     f32 => d == 0.0,
-                    else => @compileError("TODO implement .isZero() for " + @typeName(D)),
+                    else => d.isZero(),
                 },
                 .percentage => |*p| p.isZero(),
                 else => false,
@@ -242,11 +238,11 @@ pub fn DimensionPercentage(comptime D: type) type {
             _ = this; // autofix
             _ = other; // autofix
             @panic(css.todo_stuff.depth);
-        }
+        } // 128kb
 
         pub fn trySign(this: *const This) ?f32 {
             return switch (this.*) {
-                .dimension => |d| d.trySign(),
+                .dimension => |*d| css.generic.trySign(@TypeOf(d.*), d),
                 .percentage => |p| p.trySign(),
                 .calc => |c| c.trySign(),
             };
@@ -286,24 +282,37 @@ pub const NumberOrPercentage = union(enum) {
     percentage: Percentage,
 
     // TODO: implement this
-    // pub usingnamespace css.DeriveParse(@This());
-    // pub usingnamespace css.DeriveToCss(@This());
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
-        _ = input; // autofix
-        @panic(css.todo_stuff.depth);
-    }
+    // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {
+    //     _ = input; // autofix
+    //     @panic(css.todo_stuff.depth);
+    // }
 
-    pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @panic(css.todo_stuff.depth);
+    // pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    //     _ = this; // autofix
+    //     _ = dest; // autofix
+    //     @panic(css.todo_stuff.depth);
+    // }
+
+    pub fn eql(this: *const NumberOrPercentage, other: *const NumberOrPercentage) bool {
+        return switch (this.*) {
+            .number => |*a| switch (other.*) {
+                .number => a.* == other.number,
+                .percentage => false,
+            },
+            .percentage => |*a| switch (other.*) {
+                .number => false,
+                .percentage => a.eql(&other.percentage),
+            },
+        };
     }
 
     pub fn intoF32(this: *const @This()) f32 {
         return switch (this.*) {
             .number => this.number,
-            .percentage => this.percentage.v(),
+            .percentage => this.percentage.v,
         };
     }
 };

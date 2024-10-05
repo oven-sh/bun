@@ -461,6 +461,8 @@ fn theRealBundlingFunction(
         }
     };
 
+    defer dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
+
     assert(files.len > 0);
 
     var heap = try ThreadlocalArena.init();
@@ -644,11 +646,16 @@ fn theRealBundlingFunction(
     return .{ .client_bundle = client_bundle };
 }
 
-pub const ReceiveContext = struct {
+pub const HotUpdateContext = struct {
     /// bundle_v2.Graph.input_files.items(.source)
     sources: []bun.logger.Source,
     /// bundle_v2.Graph.ast.items(.import_records)
     import_records: []bun.ImportRecord.List,
+    /// bundle_v2.Graph.server_component_boundaries.slice()
+    scbs: bun.JSAst.ServerComponentBoundary.List.Slice,
+    /// Which files have a server-component boundary.
+    scbs_bitset: DynamicBitSetUnmanaged,
+
     /// Used to reduce calls to the IncrementalGraph hash table.
     ///
     /// Caller initializes a slice with `sources.len * 2` items
@@ -659,12 +666,10 @@ pub const ReceiveContext = struct {
     /// `getCachedIndex`
     resolved_index_cache: []u32,
     /// Used to tell if the server should replace or append import records.
-    ///
-    /// Caller initializes with `sources.len` items to `false`
     server_seen_bit_set: DynamicBitSetUnmanaged,
 
     pub fn getCachedIndex(
-        rc: *const ReceiveContext,
+        rc: *const HotUpdateContext,
         comptime side: bake.Side,
         i: bun.JSAst.Index,
     ) *IncrementalGraph(side).FileIndex {
@@ -690,15 +695,24 @@ pub fn finalizeBundle(
     const input_file_sources = linker.parse_graph.input_files.items(.source);
     const import_records = linker.parse_graph.ast.items(.import_records);
     const targets = linker.parse_graph.ast.items(.target);
+    const scbs = linker.parse_graph.server_component_boundaries.slice();
+
+    var sfa = std.heap.stackFallback(4096, linker.allocator);
+    const stack_alloc = sfa.get();
+    var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, input_file_sources.len);
+    for (scbs.list.items(.ssr_source_index)) |ssr_index| {
+        scb_bitset.set(ssr_index);
+    }
 
     const resolved_index_cache = try linker.allocator.alloc(u32, input_file_sources.len * 2);
-    const server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(linker.allocator, input_file_sources.len);
 
-    var ctx: bun.bake.DevServer.ReceiveContext = .{
+    var ctx: bun.bake.DevServer.HotUpdateContext = .{
         .import_records = import_records,
         .sources = input_file_sources,
+        .scbs = scbs,
+        .scbs_bitset = scb_bitset,
         .resolved_index_cache = resolved_index_cache,
-        .server_seen_bit_set = server_seen_bit_set,
+        .server_seen_bit_set = undefined,
     };
 
     // Pass 1, update the graph with all rebundle files
@@ -719,6 +733,8 @@ pub fn finalizeBundle(
     dev.server_graph.affected_by_update = try DynamicBitSetUnmanaged.initEmpty(linker.allocator, dev.server_graph.bundled_files.count());
     defer dev.client_graph.affected_by_update = .{};
 
+    ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(linker.allocator, dev.server_graph.bundled_files.count());
+
     // Pass 2, resolve all imports
     for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
         try dev.processChunkDependencies(
@@ -732,7 +748,7 @@ pub fn finalizeBundle(
 
 pub fn receiveChunk(
     dev: *DevServer,
-    ctx: *ReceiveContext,
+    ctx: *HotUpdateContext,
     index: bun.JSAst.Index,
     side: bake.Renderer,
     chunk: bun.bundle_v2.CompileResult,
@@ -746,7 +762,7 @@ pub fn receiveChunk(
 
 pub fn processChunkDependencies(
     dev: *DevServer,
-    ctx: *ReceiveContext,
+    ctx: *HotUpdateContext,
     index: bun.JSAst.Index,
     side: bake.Renderer,
     temp_alloc: Allocator,
@@ -1056,7 +1072,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// takeChunk is called. Then it can be freed.
         pub fn receiveChunk(
             g: *@This(),
-            ctx: *const ReceiveContext,
+            ctx: *const HotUpdateContext,
             index: bun.JSAst.Index,
             chunk: bun.bundle_v2.CompileResult,
             is_ssr_graph: bool,
@@ -1128,22 +1144,29 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_rsc = !is_ssr_graph,
                             .is_ssr = is_ssr_graph,
                             .is_route = false,
-                            .is_client_to_server_component_boundary = false, // TODO
+                            .is_client_to_server_component_boundary = ctx.scbs_bitset.isSet(index.get()),
                             .is_special_framework_file = false, // TODO: set later
                         };
-                    } else if (is_ssr_graph) {
-                        gop.value_ptr.is_ssr = true;
                     } else {
-                        gop.value_ptr.is_rsc = true;
+                        if (is_ssr_graph) {
+                            gop.value_ptr.is_ssr = true;
+                        } else {
+                            gop.value_ptr.is_rsc = true;
+                        }
+                        if (ctx.scbs_bitset.isSet(index.get())) {
+                            gop.value_ptr.is_client_to_server_component_boundary = true;
+                        }
                     }
                     try g.current_chunk_parts.append(g.owner().allocator, chunk.code());
                 },
             }
         }
 
-        const TempLookup = struct {
+        const TempLookup = extern struct {
             edge_index: EdgeIndex,
             seen: bool,
+
+            const HashTable = AutoArrayHashMapUnmanaged(FileIndex, TempLookup);
         };
 
         /// Second pass of IncrementalGraph indexing
@@ -1151,20 +1174,20 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// - Resolves what the HMR roots are
         pub fn processChunkDependencies(
             g: *@This(),
-            ctx: *ReceiveContext,
-            index: bun.JSAst.Index,
+            ctx: *HotUpdateContext,
+            bundle_graph_index: bun.JSAst.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
-            const file_index: FileIndex = ctx.getCachedIndex(side, index).*;
+            const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*;
             log("index id={d} {}:", .{
                 file_index.get(),
                 bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
             });
 
-            // TODO: put this on receive context so we can REUSE memory
-            var quick_lookup: AutoArrayHashMapUnmanaged(FileIndex, TempLookup) = .{};
+            var quick_lookup: TempLookup.HashTable = .{};
             defer quick_lookup.deinit(temp_alloc);
+
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
                 while (it) |edge_index| {
@@ -1178,71 +1201,33 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            if (side == .server) {
-                //
-            }
-            // TODO: handle when side=.server
-
             var new_imports: EdgeIndex.Optional = .none;
             defer g.first_import.items[file_index.get()] = new_imports;
 
             if (side == .server) {
-                // ctx.server_seen_bit_set.set(file_index.get());
-            }
+                if (ctx.server_seen_bit_set.isSet(file_index.get())) return;
 
-            for (ctx.import_records[index.get()].slice()) |import_record| {
-                if (!import_record.source_index.isRuntime()) try_index_record: {
-                    const imported_file_index = if (import_record.source_index.isInvalid())
-                        if (std.fs.path.isAbsolute(import_record.path.text))
-                            FileIndex.init(@intCast(
-                                g.bundled_files.getIndex(import_record.path.text) orelse break :try_index_record,
-                            ))
-                        else
-                            break :try_index_record
-                    else
-                        ctx.getCachedIndex(side, import_record.source_index).*;
+                const file = &g.bundled_files.values()[file_index.get()];
 
-                    if (quick_lookup.getPtr(imported_file_index)) |lookup| {
-                        // if already has been seen, we can pretend this entry
-                        // doesn't exist. this eliminates duplicate dependencies
-                        // in IncrementalGraph's dependency list
-                        if (lookup.seen) continue;
-                        lookup.seen = true;
-
-                        const dep = &g.edges.items[lookup.edge_index.get()];
-                        dep.next_import = new_imports;
-                        new_imports = lookup.edge_index.toOptional();
-                    } else {
-                        // A new `Dep` is needed to represent the dependency and import.
-                        const first_dep = &g.first_dep.items[imported_file_index.get()];
-                        const edge = try g.newEdge(.{
-                            .next_import = new_imports,
-                            .next_dependency = first_dep.*,
-                            .prev_dependency = .none,
-                            .imported = imported_file_index,
-                            .dependency = file_index,
-                        });
-                        if (first_dep.*.unwrap()) |dep| {
-                            g.edges.items[dep.get()].prev_dependency = edge.toOptional();
-                        }
-                        new_imports = edge.toOptional();
-                        first_dep.* = edge.toOptional();
-
-                        log("attach edge={d} | id={d} {} -> id={d} {}", .{
-                            edge.get(),
-                            file_index.get(),
-                            bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
-                            imported_file_index.get(),
-                            bun.fmt.quote(g.bundled_files.keys()[imported_file_index.get()]),
-                        });
-                    }
+                // Process both files in the server-components graph at the same
+                // time. If they were done separately, the second would detach
+                // the edges the first added.
+                if (file.is_rsc and file.is_ssr) {
+                    // The non-ssr file is always first.
+                    // const ssr_index = ctx.scbs.getSSRIndex(bundle_graph_index.get()) orelse {
+                    //     @panic("Unexpected missing server-component-boundary entry");
+                    // };
+                    // try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bun.JSAst.Index.init(ssr_index));
                 }
             }
+
+            try g.processChunkImportRecords(ctx, &quick_lookup, &new_imports, file_index, bundle_graph_index);
 
             // '.seen = false' means an import was removed and should be freed
             for (quick_lookup.values()) |val| {
                 if (!val.seen) {
-                    // Unlink from dependency list. At this point
+                    // Unlink from dependency list. At this point the edge is
+                    // already detached from the import list.
                     const edge = &g.edges.items[val.edge_index.get()];
                     log("detach edge={d} | id={d} {} -> id={d} {}", .{
                         val.edge_index.get(),
@@ -1270,6 +1255,64 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Follow this node to it's HMR root
             try g.propagateHotUpdate(file_index);
+        }
+
+        fn processChunkImportRecords(
+            g: *@This(),
+            ctx: *HotUpdateContext,
+            quick_lookup: *TempLookup.HashTable,
+            new_imports: *EdgeIndex.Optional,
+            file_index: FileIndex,
+            index: bun.JSAst.Index,
+        ) !void {
+            const log = bun.Output.scoped(.processChunkDependencies, false);
+            for (ctx.import_records[index.get()].slice()) |import_record| {
+                if (!import_record.source_index.isRuntime()) try_index_record: {
+                    const imported_file_index = if (import_record.source_index.isInvalid())
+                        if (std.fs.path.isAbsolute(import_record.path.text))
+                            FileIndex.init(@intCast(
+                                g.bundled_files.getIndex(import_record.path.text) orelse break :try_index_record,
+                            ))
+                        else
+                            break :try_index_record
+                    else
+                        ctx.getCachedIndex(side, import_record.source_index).*;
+
+                    if (quick_lookup.getPtr(imported_file_index)) |lookup| {
+                        // If the edge has already been seen, it will be skipped
+                        // to ensure duplicate edges never exist.
+                        if (lookup.seen) continue;
+                        lookup.seen = true;
+
+                        const dep = &g.edges.items[lookup.edge_index.get()];
+                        dep.next_import = new_imports.*;
+                        new_imports.* = lookup.edge_index.toOptional();
+                    } else {
+                        // A new edge is needed to represent the dependency and import.
+                        const first_dep = &g.first_dep.items[imported_file_index.get()];
+                        const edge = try g.newEdge(.{
+                            .next_import = new_imports.*,
+                            .next_dependency = first_dep.*,
+                            .prev_dependency = .none,
+                            .imported = imported_file_index,
+                            .dependency = file_index,
+                        });
+                        if (first_dep.*.unwrap()) |dep| {
+                            g.edges.items[dep.get()].prev_dependency = edge.toOptional();
+                        }
+                        new_imports.* = edge.toOptional();
+                        first_dep.* = edge.toOptional();
+
+                        log("attach edge={d} | id={d} {} -> id={d} {}", .{
+                            edge.get(),
+                            file_index.get(),
+                            bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
+                            imported_file_index.get(),
+                            bun.fmt.quote(g.bundled_files.keys()[imported_file_index.get()]),
+                        });
+                    }
+                }
+            }
         }
 
         fn propagateHotUpdate(g: *@This(), file_index: FileIndex) !void {
@@ -1365,8 +1408,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_rsc = !is_ssr_graph,
                             .is_ssr = is_ssr_graph,
                             .is_route = is_route,
-                            .is_client_to_server_component_boundary = false, // TODO
-                            .is_special_framework_file = false, // TODO:
+                            .is_client_to_server_component_boundary = false,
+                            .is_special_framework_file = false,
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -1518,7 +1561,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             return index;
         }
 
-        /// Does nothing besides release the `Dep` at `dep_index` for reallocation by `newDep`
+        /// Does nothing besides release the `Edge` for reallocation by `newEdge`
         /// Caller must detach the dependency from the linked list it is in.
         fn freeEdge(g: *@This(), dep_index: EdgeIndex) !void {
             if (Environment.isDebug) {
@@ -1544,6 +1587,10 @@ const IncrementalResult = struct {
     const empty: IncrementalResult = .{
         .routes_affected = .{},
     };
+
+    fn reset(result: *IncrementalResult) void {
+        result.routes_affected.clearRetainingCapacity();
+    }
 };
 
 /// When a file fails to import a relative path, directory watchers are added so
@@ -2147,6 +2194,8 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         return;
     }
 
+    dev.incremental_result.reset();
+
     var fail: Failure = undefined;
     const bundle = dev.theRealBundlingFunction(
         files.items,
@@ -2158,8 +2207,6 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         fail.printToConsole(&dev.routes[0]);
         return;
     };
-
-    dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
 
     if (dev.incremental_result.routes_affected.items.len > 0) {
         var sfb2 = std.heap.stackFallback(4096, bun.default_allocator);

@@ -15,6 +15,9 @@
     }
 
     #network {
+      position: fixed;
+      top: 0;
+      left: 0;
       width: 100vw;
       height: 100vh;
     }
@@ -25,6 +28,7 @@
       left: 1rem;
       pointer-events: none;
       font-size: 1rem;
+      margin: 0;
     }
   </style>
 </head>
@@ -35,10 +39,15 @@
 
   <script>
     const c = {
+      // derived from mocha theme on https://catppuccin.com/palette
       red: '#f38ba8',
       green: '#a6e3a1',
       mauve: '#cba6f7',
       gray: '#7f849c',
+      orange: '#fab387',
+      sky: '#89dceb',
+      blue: '#89b4fa',
+      yellow: '#f9e2af',
     };
     const ws = new WebSocket(location.origin + "/_bun/hmr");
 
@@ -177,18 +186,26 @@
     // Helper function to add or update nodes in the graph
     function updateNode(id, file, group) {
       const label = basename(file.name);
+      const color = file.name.includes('/node_modules/')
+        ? c.gray
+        : file.isStale
+          ? c.red
+          : file.isBoundary
+            ? c.orange
+            : group === 'client'
+              ? c.mauve
+              : file.isRoute
+                ? c.blue
+                : file.isSSR ? file.isServer ? c.yellow : c.green : c.sky;
       const props = {
         id,
         label,
         shape: 'dot',
-        color: file.name.includes('/node_modules/')
-          ? c.gray
-          : file.isStale
-            ? c.red
-            : group === 'client' ? c.mauve : c.green,
+        color: color,
+        borderWidth: file.isRoute ? 3 : 1,
         group,
         font: file.name.includes('/node_modules/')
-          ? '10px sans-serif #a6adc8' : '20px sans-serif #cdd6f4',
+          ? '10px sans-serif #cdd6f488' : '20px sans-serif #cdd6f4',
       }
       if (nodes.get(id)) {
         nodes.update(props);
@@ -204,11 +221,16 @@
 
     // Helper function to add or update edges in the graph
     const edgeProps = { arrows: 'to' };
-    function updateEdge(id, from, to) {
+    function updateEdge(id, from, to, variant) {
+      const prop = variant === 'normal'
+        ? { id, from, to, arrows: 'to' }
+        : variant === 'client'
+          ? { id, from, to, arrows: 'to,from', color: '#ffffff99', width: 2, label: '[use client]' }
+          : { id, from, to };
       if (edges.get(id)) {
-        edges.update({ id, from, to, ...edgeProps });
+        edges.update(prop);
       } else {
-        edges.add({ id, from, to, ...edgeProps });
+        edges.add(prop);
       }
     }
 
@@ -224,16 +246,7 @@
     function updateGraph() {
       const newEdgeIds = new Set();  // Track new edges
 
-      // Update client files
-      clientFiles.forEach((file, index) => {
-        const id = `C_${index}`;
-        if (file.deleted) {
-          removeNode(id);
-          removeEdges(id);
-        } else {
-          updateNode(id, file, 'client');
-        }
-      });
+      const boundaries = new Map();
 
       // Update server files
       serverFiles.forEach((file, index) => {
@@ -244,19 +257,45 @@
         } else {
           updateNode(id, file, 'server');
         }
+
+        if (file.isBoundary) {
+          boundaries.set(file.name, { server: index, client: -1 });
+        }
+      });
+
+      // Update client files
+      clientFiles.forEach((file, index) => {
+        const id = `C_${index}`;
+        if (file.deleted) {
+          removeNode(id);
+          removeEdges(id);
+          return;
+        }
+        updateNode(id, file, 'client');
+        const b = boundaries.get(file.name);
+        if (b) {
+          b.client = index;
+        }
       });
 
       // Update client edges
       clientEdges.forEach((edge, index) => {
         const id = `C_edge_${index}`;
-        updateEdge(id, `C_${edge.from}`, `C_${edge.to}`);
+        updateEdge(id, `C_${edge.from}`, `C_${edge.to}`, 'normal');
         newEdgeIds.add(id);  // Track this edge
       });
 
       // Update server edges
       serverEdges.forEach((edge, index) => {
         const id = `S_edge_${index}`;
-        updateEdge(id, `S_${edge.from}`, `S_${edge.to}`);
+        updateEdge(id, `S_${edge.from}`, `S_${edge.to}`, 'normal');
+        newEdgeIds.add(id);  // Track this edge
+      });
+
+      boundaries.forEach(({ server, client }) => {
+        if (client === -1) return;
+        const id = `S_edge_bound_${server}_${client}`;
+        updateEdge(id, `S_${server}`, `C_${client}`, 'client');
         newEdgeIds.add(id);  // Track this edge
       });
 

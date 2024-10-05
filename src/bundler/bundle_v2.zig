@@ -505,14 +505,10 @@ pub const BundleV2 = struct {
         // We need to mark the generated files as reachable, or else many files will appear missing.
         var sfa = std.heap.stackFallback(4096, this.graph.allocator);
         const stack_alloc = sfa.get();
-        var scb_bitset = if (this.graph.server_component_boundaries.list.len > 0) brk: {
-            var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
-            const scbs = this.graph.server_component_boundaries.list.slice();
-            for (scbs.items(.source_index)) |source_index| {
-                scb_bitset.set(source_index);
-            }
-            break :brk scb_bitset;
-        } else null;
+        var scb_bitset = if (this.graph.server_component_boundaries.list.len > 0)
+            try this.graph.server_component_boundaries.slice().bitSet(stack_alloc, this.graph.input_files.len)
+        else
+            null;
         defer if (scb_bitset) |*b| b.deinit(stack_alloc);
 
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
@@ -3857,6 +3853,7 @@ pub const JSMeta = struct {
 };
 
 pub const Graph = struct {
+    // TODO: move to LinkerGraph. it is not used by the scan and parse stage
     generate_bytecode_cache: bool = false,
 
     // TODO: consider removing references to this in favor of bundler.options.code_splitting

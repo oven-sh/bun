@@ -5549,13 +5549,13 @@ pub const LinkerContext = struct {
                 // TODO: composes?
 
                 if (comptime bun.Environment.isDebug) {
-                    std.debug.print(
-                        "Lookin' at file: {d}={s}\n",
+                    debug(
+                        "Lookin' at file: {d}={s}",
                         .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
                     );
                     for (visitor.visited.slice()) |idx| {
-                        std.debug.print(
-                            "  Visit: {d}\n",
+                        debug(
+                            "Visit: {d}",
                             .{idx.get()},
                         );
                     }
@@ -5681,9 +5681,9 @@ pub const LinkerContext = struct {
         // Finally, merge adjacent "@layer" rules with identical conditions together.
 
         if (bun.Environment.isDebug) {
-            std.debug.print("CSS order:\n", .{});
+            debug("CSS order:\n", .{});
             for (order.slice(), 0..) |entry, i| {
-                std.debug.print("  {d}: {}\n", .{ i, entry });
+                debug("  {d}: {}\n", .{ i, entry });
             }
         }
 

@@ -96,9 +96,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
                  JSC::jsDynamicCast<JSC::JSArrayBuffer *>(buffer)) {
     auto *impl = arrayBuffer->impl();
     if (UNLIKELY(impl->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBuffer is detached"_s);
-      return {};
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     if (!impl) {

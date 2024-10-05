@@ -1595,6 +1595,13 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
+    /**
+     * **Experimental**
+     *
+     * Enable CSS support.
+     */
+    experimentalCss?: boolean;
   }
 
   namespace Password {

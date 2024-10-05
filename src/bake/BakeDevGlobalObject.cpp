@@ -75,7 +75,7 @@ extern "C" BunVirtualMachine *Bun__getVM();
 
 // A lot of this function is taken from 'Zig__GlobalObject__create'
 extern "C" DevGlobalObject *BakeCreateDevGlobal(DevServer *owner,
-                                               void *console) {
+                                                void *console) {
   JSC::VM &vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
   vm.heap.acquireAccess();
   JSC::JSLockHolder locker(vm);

@@ -934,11 +934,8 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (comptime bun.FeatureFlags.css) {
-                    const Arena = @import("../src/mimalloc_arena.zig").Arena;
-
-                    var arena = Arena.init() catch @panic("oopsie arena no good");
-                    const alloc = arena.allocator();
+                if (bundler.options.experimental_css) {
+                    const alloc = bundler.allocator;
 
                     const entry = bundler.resolver.caches.fs.readFileWithAllocator(
                         bundler.allocator,
@@ -953,11 +950,11 @@ pub const Bundler = struct {
                     };
                     const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                     _ = source; //
-                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log))) {
+                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| {
                             const result = v.toCss(alloc, bun.css.PrinterOptions{
                                 .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
-                            }) catch |e| {
+                            }, null) catch |e| {
                                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                                 return null;
                             };

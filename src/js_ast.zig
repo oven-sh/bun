@@ -6967,6 +6967,7 @@ pub const Ast = struct {
     }
 };
 
+/// TLA => Top Level Await
 pub const TlaCheck = struct {
     depth: u32 = 0,
     parent: Index.Int = Index.invalid.get(),
@@ -6992,6 +6993,8 @@ pub const BundledAst = struct {
 
     hashbang: string = "",
     parts: Part.List = .{},
+    css: ?*bun.css.BundlerStyleSheet = null,
+    url_for_css: []const u8 = "",
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7150,6 +7153,24 @@ pub const BundledAst = struct {
                 .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
             },
         };
+    }
+
+    /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
+    pub fn addUrlForCss(this: *BundledAst, allocator: std.mem.Allocator, css_enabled: bool, source: *const logger.Source, mime_type_: ?[]const u8) void {
+        if (css_enabled) {
+            const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
+            const contents = source.contents;
+            this.url_for_css = url_for_css: {
+                const encode_len = bun.base64.encodeLen(contents);
+                if (encode_len == 0) return;
+                const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
+                const total_buffer_len = data_url_prefix_len + encode_len;
+                var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
+                _ = std.fmt.bufPrint(encoded[0..data_url_prefix_len], "data:{s};base64,", .{mime_type}) catch unreachable;
+                const len = bun.base64.encode(encoded[data_url_prefix_len..], contents);
+                break :url_for_css encoded[0 .. data_url_prefix_len + len];
+            };
+        }
     }
 };
 

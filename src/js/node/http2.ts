@@ -1407,6 +1407,15 @@ function assertSession(session) {
   }
 }
 hideFromStack(assertSession);
+
+function pushToStream(stream, data) {
+  if (stream.writableEnded) return;
+  const queue = stream[bunHTTP2StreamReadQueue];
+  if (queue.isEmpty()) {
+    if (stream.push(data)) return;
+  }
+  queue.push(data);
+}
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
@@ -1604,9 +1613,11 @@ class Http2Stream extends Duplex {
       queue.shift();
     }
   }
+
   end(chunk, encoding, callback) {
     if (this[bunHTTP2StreamEnded]) {
       typeof callback == "function" && callback();
+      return;
     }
     if (!chunk) {
       chunk = Buffer.alloc(0);
@@ -1629,7 +1640,7 @@ class Http2Stream extends Duplex {
           chunks = new Array(data.length << 1);
           for (let i = 0; i < data.length; i++) {
             const { chunk, encoding } = data[i];
-            if (typeof chunk == "string" && encoding !== "ascii") {
+            if (typeof chunk == "string" && encoding !== "ascii" && encoding !== "buffer") {
               chunks[i * 2] = Buffer.from(chunk, encoding);
             } else {
               chunks[i * 2] = chunk;
@@ -1928,7 +1939,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     stream[bunHTTP2Closed] = true;
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
-      stream.push(null);
+      pushToStream(stream, null);
     }
 
     if (destroy) stream.destroy(error_instance, stream.rstCode);
@@ -2049,7 +2060,7 @@ class ServerHttp2Session extends Http2Session {
         if (stream.readableFlowing === null) {
           stream.resume();
         }
-        stream.push(null);
+        pushToStream(stream, null);
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
@@ -2057,17 +2068,13 @@ class ServerHttp2Session extends Http2Session {
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
-          self.destroy();
+          // self.destroy();
         }
       }
     },
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
-      const queue = stream[bunHTTP2StreamReadQueue];
-      if (queue.isEmpty()) {
-        if (stream.push(data)) return;
-      }
-      queue.push(data);
+      pushToStream(stream, data);
     },
     streamHeaders(
       self: ServerHttp2Session,
@@ -2155,7 +2162,7 @@ class ServerHttp2Session extends Http2Session {
     write(self: ServerHttp2Session, buffer: Buffer) {
       if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (!socket) return false;
+      if (!socket || socket.writableEnded) return false;
       if (self.#connected) {
         // redirect writes to socket
         return socket.write(buffer);
@@ -2390,6 +2397,7 @@ class ServerHttp2Session extends Http2Session {
 
     this.#closed = true;
     this.#connected = false;
+    this.destroyed;
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
@@ -2466,12 +2474,11 @@ class ClientHttp2Session extends Http2Session {
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
-
       if (stream.readable) {
         stream.rstCode = 0;
         // Push a null so the stream can end whenever the client consumes
         // it completely.
-        stream.push(null);
+        pushToStream(stream, null);
         stream.read(0);
       }
 
@@ -2481,17 +2488,13 @@ class ClientHttp2Session extends Http2Session {
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
-          self.destroy();
+          // self.destroy();
         }
       }
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
-      const queue = stream[bunHTTP2StreamReadQueue];
-      if (queue.isEmpty()) {
-        if (stream.push(data)) return;
-      }
-      queue.push(data);
+      pushToStream(stream, data);
     },
     streamHeaders(
       self: ClientHttp2Session,
@@ -2574,10 +2577,11 @@ class ClientHttp2Session extends Http2Session {
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (!socket) return false;
+      if (!socket || socket.writableEnded) return false;
       if (self.#connected) {
-        // redirect writes to socket
-        return socket.write(buffer);
+        if (socket.write)
+          // redirect writes to socket
+          return socket.write(buffer);
       }
       //queue
       self.#queue.push(buffer);
@@ -2861,12 +2865,12 @@ class ClientHttp2Session extends Http2Session {
     const socket = this[bunHTTP2Socket];
     this.#closed = true;
     this.#connected = false;
-    if (socket) {
-      this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-      socket.end();
-    } else {
-      this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
-    }
+    // if (socket) {
+    //   this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+    //   socket.end();
+    // } else {
+    //   this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+    // }
     this[bunHTTP2Socket] = null;
 
     if (error) {

@@ -1628,9 +1628,12 @@ class Http2Stream extends Duplex {
         } else {
           chunks = new Array(data.length << 1);
           for (let i = 0; i < data.length; i++) {
-            const entry = data[i];
-            chunks[i * 2] = entry.chunk;
-            chunks[i * 2 + 1] = entry.encoding;
+            const { chunk, encoding } = data[i];
+            if (typeof chunk == "string" && encoding !== "ascii") {
+              chunks[i * 2] = Buffer.from(chunk, encoding);
+            } else {
+              chunks[i * 2] = chunk;
+            }
           }
         }
         const chunk = Buffer.concat(chunks || []);

@@ -1316,6 +1316,48 @@ const kValidPseudoHeaders = new SafeSet([
   constants.HTTP2_HEADER_PATH,
   constants.HTTP2_HEADER_PROTOCOL,
 ]);
+const kSingleValueHeaders = new SafeSet([
+  constants.HTTP2_HEADER_STATUS,
+  constants.HTTP2_HEADER_METHOD,
+  constants.HTTP2_HEADER_AUTHORITY,
+  constants.HTTP2_HEADER_SCHEME,
+  constants.HTTP2_HEADER_PATH,
+  constants.HTTP2_HEADER_PROTOCOL,
+  constants.HTTP2_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
+  constants.HTTP2_HEADER_ACCESS_CONTROL_MAX_AGE,
+  constants.HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
+  constants.HTTP2_HEADER_AGE,
+  constants.HTTP2_HEADER_AUTHORIZATION,
+  constants.HTTP2_HEADER_CONTENT_ENCODING,
+  constants.HTTP2_HEADER_CONTENT_LANGUAGE,
+  constants.HTTP2_HEADER_CONTENT_LENGTH,
+  constants.HTTP2_HEADER_CONTENT_LOCATION,
+  constants.HTTP2_HEADER_CONTENT_MD5,
+  constants.HTTP2_HEADER_CONTENT_RANGE,
+  constants.HTTP2_HEADER_CONTENT_TYPE,
+  constants.HTTP2_HEADER_DATE,
+  constants.HTTP2_HEADER_DNT,
+  constants.HTTP2_HEADER_ETAG,
+  constants.HTTP2_HEADER_EXPIRES,
+  constants.HTTP2_HEADER_FROM,
+  constants.HTTP2_HEADER_HOST,
+  constants.HTTP2_HEADER_IF_MATCH,
+  constants.HTTP2_HEADER_IF_MODIFIED_SINCE,
+  constants.HTTP2_HEADER_IF_NONE_MATCH,
+  constants.HTTP2_HEADER_IF_RANGE,
+  constants.HTTP2_HEADER_IF_UNMODIFIED_SINCE,
+  constants.HTTP2_HEADER_LAST_MODIFIED,
+  constants.HTTP2_HEADER_LOCATION,
+  constants.HTTP2_HEADER_MAX_FORWARDS,
+  constants.HTTP2_HEADER_PROXY_AUTHORIZATION,
+  constants.HTTP2_HEADER_RANGE,
+  constants.HTTP2_HEADER_REFERER,
+  constants.HTTP2_HEADER_RETRY_AFTER,
+  constants.HTTP2_HEADER_TK,
+  constants.HTTP2_HEADER_UPGRADE_INSECURE_REQUESTS,
+  constants.HTTP2_HEADER_USER_AGENT,
+  constants.HTTP2_HEADER_X_CONTENT_TYPE_OPTIONS,
+]);
 
 function assertValidPseudoHeader(key) {
   if (!kValidPseudoHeaders.has(key)) {
@@ -1863,6 +1905,48 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   }
 }
 
+function toHeaderObject(headers, sensitiveHeadersValue) {
+  const obj = { __proto__: null, [sensitiveHeaders]: sensitiveHeadersValue };
+  for (let n = 0; n < headers.length; n += 2) {
+    const name = headers[n];
+    let value = headers[n + 1] || "";
+    if (name === constants.HTTP2_HEADER_STATUS) value |= 0;
+    const existing = obj[name];
+    if (existing === undefined) {
+      obj[name] = name === constants.HTTP2_HEADER_SET_COOKIE ? [value] : value;
+    } else if (!kSingleValueHeaders.has(name)) {
+      switch (name) {
+        case constants.HTTP2_HEADER_COOKIE:
+          // https://tools.ietf.org/html/rfc7540#section-8.1.2.5
+          // "...If there are multiple Cookie header fields after decompression,
+          //  these MUST be concatenated into a single octet string using the
+          //  two-octet delimiter of 0x3B, 0x20 (the ASCII string "; ") before
+          //  being passed into a non-HTTP/2 context."
+          obj[name] = `${existing}; ${value}`;
+          break;
+        case constants.HTTP2_HEADER_SET_COOKIE:
+          // https://tools.ietf.org/html/rfc7230#section-3.2.2
+          // "Note: In practice, the "Set-Cookie" header field ([RFC6265]) often
+          // appears multiple times in a response message and does not use the
+          // list syntax, violating the above requirements on multiple header
+          // fields with the same name.  Since it cannot be combined into a
+          // single field-value, recipients ought to handle "Set-Cookie" as a
+          // special case while processing header fields."
+          ArrayPrototypePush(existing, value);
+          break;
+        default:
+          // https://tools.ietf.org/html/rfc7230#section-3.2.2
+          // "A recipient MAY combine multiple header fields with the same field
+          // name into one "field-name: field-value" pair, without changing the
+          // semantics of the message, by appending each subsequent field value
+          // to the combined field value in order, separated by a comma."
+          obj[name] = `${existing}, ${value}`;
+          break;
+      }
+    }
+  }
+  return obj;
+}
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that we called closed
@@ -1954,21 +2038,13 @@ class ServerHttp2Session extends Http2Session {
     streamHeaders(
       self: ServerHttp2Session,
       stream: ServerHttp2Stream,
-      headers: Record<string, string | string[]>,
+      rawheaders: string[],
+      sensitiveHeadersValue: string[] | undefined,
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
-      const rawheaders = { ...headers };
-      let cookie = headers["cookie"];
-      if ($isArray(cookie)) {
-        headers["cookie"] = (headers["cookie"] as string[]).join("; ");
-      }
-      for (let key in headers) {
-        const value = headers[key];
-        if ($isArray(value)) {
-          headers[key] = value.join(", ");
-        }
-      }
+      const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
+
       if (headers[":status"] === constants.HTTP_STATUS_CONTINUE) {
         stream.emit("continue");
         return;
@@ -2385,43 +2461,22 @@ class ClientHttp2Session extends Http2Session {
     streamHeaders(
       self: ClientHttp2Session,
       stream: ClientHttp2Stream,
-      headers: Record<string, string | string[]>,
+      rawheaders: string[],
+      sensitiveHeadersValue: string[] | undefined,
       flags: number,
     ) {
       if (!self || typeof stream !== "object") return;
-
-      let status: string | number = headers[":status"] as string;
-      if (status) {
-        // client status is always number
-        status = parseInt(status as string, 10);
-        (headers as Record<string, string | number>)[":status"] = status;
-      }
-
-      let set_cookies = headers["set-cookie"];
-      if (typeof set_cookies === "string") {
-        (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
-      }
-
-      let cookie = headers["cookie"];
-      if ($isArray(cookie)) {
-        headers["cookie"] = (headers["cookie"] as string[]).join("; ");
-      }
-      for (let key in headers) {
-        const value = headers[key];
-        if ($isArray(value)) {
-          headers[key] = value.join(", ");
-        }
-      }
+      const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       if (stream[bunHTTP2StreamResponded]) {
         try {
-          stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags);
+          stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags, rawheaders);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
         stream[bunHTTP2StreamResponded] = true;
-        self.emit("stream", stream, headers, flags);
-        stream.emit("response", headers, flags);
+        self.emit("stream", stream, headers, flags, rawheaders);
+        stream.emit("response", headers, flags, rawheaders);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {

@@ -1603,3 +1603,31 @@ pub const OutOfRangeOptions = struct {
 pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
     return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
 }
+
+pub fn hash(int: u64) std.fmt.Formatter(hashImpl) {
+    return .{ .data = int };
+}
+
+fn hashImpl(int: u64, comptime fmt_str: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    _ = fmt_str; // autofix
+    // esbuild has an 8 character truncation of a base32 encoded bytes. this
+    // is not exactly that, but it will appear as such. the character list
+    // chosen omits similar characters in the unlikely case someone is
+    // trying to memorize a hash.
+    //
+    // reminder: this cannot be base64 or any encoding which is case
+    // sensitive as these hashes are often used in file paths, in which
+    // Windows and some macOS systems treat as case-insensitive.
+    const in_bytes = std.mem.asBytes(&int);
+    const chars = "0123456789abcdefghjkmnpqrstvwxyz";
+    try writer.writeAll(&.{
+        chars[in_bytes[0] & 31],
+        chars[in_bytes[1] & 31],
+        chars[in_bytes[2] & 31],
+        chars[in_bytes[3] & 31],
+        chars[in_bytes[4] & 31],
+        chars[in_bytes[5] & 31],
+        chars[in_bytes[6] & 31],
+        chars[in_bytes[7] & 31],
+    });
+}

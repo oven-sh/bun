@@ -1144,7 +1144,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.hash(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1228,7 +1228,7 @@ pub const BuildArtifact = struct {
                         "<r>hash<r>: <green>\"{any}\"<r>",
                         enable_ansi_colors,
                     ),
-                    .{options.PathTemplate.hashFormatter(this.hash)},
+                    .{bun.fmt.hash(this.hash)},
                 );
             }
 

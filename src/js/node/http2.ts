@@ -1855,7 +1855,8 @@ class ServerHttp2Stream extends Http2Stream {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
       if (options.sendDate == null || options.sendDate) {
-        if (headers["date"] === null || headers["date"] === undefined) {
+        const current_date = headers["date"];
+        if (current_date === null || current_date === undefined) {
           headers["date"] = utcDate();
         }
       }
@@ -1904,7 +1905,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     if (destroy_self) self.destroy();
   }
 }
-
+//TODO: do this in C++
 function toHeaderObject(headers, sensitiveHeadersValue) {
   const obj = { __proto__: null, [sensitiveHeaders]: sensitiveHeadersValue };
   for (let n = 0; n < headers.length; n += 2) {

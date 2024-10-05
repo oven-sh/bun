@@ -225,8 +225,8 @@ function getAuthority(headers) {
   // or Host to be used equivalently. The first is preferred
   // when making HTTP/2 requests, and the latter is preferred
   // when converting from an HTTP/1 message.
-  if (headers[constants.HTTP2_HEADER_AUTHORITY] !== undefined) return headers[constants.HTTP2_HEADER_AUTHORITY];
-  if (headers[constants.HTTP2_HEADER_HOST] !== undefined) return headers[constants.HTTP2_HEADER_HOST];
+  if (headers[HTTP2_HEADER_AUTHORITY] !== undefined) return headers[HTTP2_HEADER_AUTHORITY];
+  if (headers[HTTP2_HEADER_HOST] !== undefined) return headers[HTTP2_HEADER_HOST];
 }
 function onStreamData(chunk) {
   const request = this[kRequest];
@@ -325,11 +325,11 @@ function onStreamTimeout() {
 
 function isPseudoHeader(name) {
   switch (name) {
-    case constants.HTTP2_HEADER_STATUS: // :status
-    case constants.HTTP2_HEADER_METHOD: // :method
-    case constants.HTTP2_HEADER_PATH: // :path
-    case constants.HTTP2_HEADER_AUTHORITY: // :authority
-    case constants.HTTP2_HEADER_SCHEME: // :scheme
+    case HTTP2_HEADER_STATUS: // :status
+    case HTTP2_HEADER_METHOD: // :method
+    case HTTP2_HEADER_PATH: // :path
+    case HTTP2_HEADER_AUTHORITY: // :authority
+    case HTTP2_HEADER_SCHEME: // :scheme
       return true;
     default:
       return false;
@@ -337,7 +337,7 @@ function isPseudoHeader(name) {
 }
 
 function isConnectionHeaderAllowed(name, value) {
-  return name !== constants.HTTP2_HEADER_CONNECTION || value === "trailers";
+  return name !== HTTP2_HEADER_CONNECTION || value === "trailers";
 }
 let statusConnectionHeaderWarned = false;
 let statusMessageWarned = false;
@@ -466,14 +466,14 @@ class Http2ServerRequest extends Readable {
   }
 
   get method() {
-    return this[kHeaders][constants.HTTP2_HEADER_METHOD];
+    return this[kHeaders][HTTP2_HEADER_METHOD];
   }
 
   set method(method) {
     validateString(method, "method");
     if (StringPrototypeTrim(method) === "") throw new ERR_INVALID_ARG_VALUE("method", method);
 
-    this[kHeaders][constants.HTTP2_HEADER_METHOD] = method;
+    this[kHeaders][HTTP2_HEADER_METHOD] = method;
   }
 
   get authority() {
@@ -481,15 +481,15 @@ class Http2ServerRequest extends Readable {
   }
 
   get scheme() {
-    return this[kHeaders][constants.HTTP2_HEADER_SCHEME];
+    return this[kHeaders][HTTP2_HEADER_SCHEME];
   }
 
   get url() {
-    return this[kHeaders][constants.HTTP2_HEADER_PATH];
+    return this[kHeaders][HTTP2_HEADER_PATH];
   }
 
   set url(url) {
-    this[kHeaders][constants.HTTP2_HEADER_PATH] = url;
+    this[kHeaders][HTTP2_HEADER_PATH] = url;
   }
 
   setTimeout(msecs, callback) {
@@ -506,7 +506,7 @@ class Http2ServerResponse extends Stream {
       destroyed: false,
       headRequest: false,
       sendDate: true,
-      statusCode: constants.HTTP_STATUS_OK,
+      statusCode: HTTP_STATUS_OK,
     };
     this[kHeaders] = { __proto__: null };
     this[kTrailers] = { __proto__: null };
@@ -889,7 +889,7 @@ class Http2ServerResponse extends Stream {
   [kBeginSend]() {
     const state = this[kState];
     const headers = this[kHeaders];
-    headers[constants.HTTP2_HEADER_STATUS] = state.statusCode;
+    headers[HTTP2_HEADER_STATUS] = state.statusCode;
     const options = {
       endStream: state.ending,
       waitForTrailers: true,
@@ -903,7 +903,7 @@ class Http2ServerResponse extends Stream {
     const stream = this[kStream];
     if (stream.headersSent || this[kState].closed) return false;
     stream.additionalHeaders({
-      [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_CONTINUE,
+      [HTTP2_HEADER_STATUS]: HTTP_STATUS_CONTINUE,
     });
     return true;
   }
@@ -924,7 +924,7 @@ class Http2ServerResponse extends Stream {
     if (stream.headersSent || this[kState].closed) return false;
     stream.additionalHeaders({
       ...headers,
-      [constants.HTTP2_HEADER_STATUS]: constants.HTTP_STATUS_EARLY_HINTS,
+      [HTTP2_HEADER_STATUS]: HTTP_STATUS_EARLY_HINTS,
       "Link": linkHeaderValue,
     });
     return true;
@@ -937,10 +937,10 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
   const response = new Http2ServerResponse(stream);
 
   // Check for the CONNECT method
-  const method = headers[constants.HTTP2_HEADER_METHOD];
+  const method = headers[HTTP2_HEADER_METHOD];
   if (method === "CONNECT") {
     if (!server.emit("connect", request, response)) {
-      response.statusCode = constants.HTTP_STATUS_METHOD_NOT_ALLOWED;
+      response.statusCode = HTTP_STATUS_METHOD_NOT_ALLOWED;
       response.end();
     }
     return;
@@ -958,7 +958,7 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
     } else if (server.listenerCount("checkExpectation")) {
       server.emit("checkExpectation", request, response);
     } else {
-      response.statusCode = constants.HTTP_STATUS_EXPECTATION_FAILED;
+      response.statusCode = HTTP_STATUS_EXPECTATION_FAILED;
       response.end();
     }
     return;
@@ -1303,60 +1303,303 @@ const constants = {
   HTTP_STATUS_NOT_EXTENDED: 510,
   HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED: 511,
 };
+const {
+  NGHTTP2_ERR_FRAME_SIZE_ERROR,
+  NGHTTP2_SESSION_SERVER,
+  NGHTTP2_SESSION_CLIENT,
+  NGHTTP2_STREAM_STATE_IDLE,
+  NGHTTP2_STREAM_STATE_OPEN,
+  NGHTTP2_STREAM_STATE_RESERVED_LOCAL,
+  NGHTTP2_STREAM_STATE_RESERVED_REMOTE,
+  NGHTTP2_STREAM_STATE_HALF_CLOSED_LOCAL,
+  NGHTTP2_STREAM_STATE_HALF_CLOSED_REMOTE,
+  NGHTTP2_STREAM_STATE_CLOSED,
+  NGHTTP2_FLAG_NONE,
+  NGHTTP2_FLAG_END_STREAM,
+  NGHTTP2_FLAG_END_HEADERS,
+  NGHTTP2_FLAG_ACK,
+  NGHTTP2_FLAG_PADDED,
+  NGHTTP2_FLAG_PRIORITY,
+  DEFAULT_SETTINGS_HEADER_TABLE_SIZE,
+  DEFAULT_SETTINGS_ENABLE_PUSH,
+  DEFAULT_SETTINGS_MAX_CONCURRENT_STREAMS,
+  DEFAULT_SETTINGS_INITIAL_WINDOW_SIZE,
+  DEFAULT_SETTINGS_MAX_FRAME_SIZE,
+  DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE,
+  DEFAULT_SETTINGS_ENABLE_CONNECT_PROTOCOL,
+  MAX_MAX_FRAME_SIZE,
+  MIN_MAX_FRAME_SIZE,
+  MAX_INITIAL_WINDOW_SIZE,
+  NGHTTP2_SETTINGS_HEADER_TABLE_SIZE,
+  NGHTTP2_SETTINGS_ENABLE_PUSH,
+  NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,
+  NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
+  NGHTTP2_SETTINGS_MAX_FRAME_SIZE,
+  NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,
+  NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL,
+  PADDING_STRATEGY_NONE,
+  PADDING_STRATEGY_ALIGNED,
+  PADDING_STRATEGY_MAX,
+  PADDING_STRATEGY_CALLBACK,
+  NGHTTP2_NO_ERROR,
+  NGHTTP2_PROTOCOL_ERROR,
+  NGHTTP2_INTERNAL_ERROR,
+  NGHTTP2_FLOW_CONTROL_ERROR,
+  NGHTTP2_SETTINGS_TIMEOUT,
+  NGHTTP2_STREAM_CLOSED,
+  NGHTTP2_FRAME_SIZE_ERROR,
+  NGHTTP2_REFUSED_STREAM,
+  NGHTTP2_CANCEL,
+  NGHTTP2_COMPRESSION_ERROR,
+  NGHTTP2_CONNECT_ERROR,
+  NGHTTP2_ENHANCE_YOUR_CALM,
+  NGHTTP2_INADEQUATE_SECURITY,
+  NGHTTP2_HTTP_1_1_REQUIRED,
+  NGHTTP2_DEFAULT_WEIGHT,
+  HTTP2_HEADER_STATUS,
+  HTTP2_HEADER_METHOD,
+  HTTP2_HEADER_AUTHORITY,
+  HTTP2_HEADER_SCHEME,
+  HTTP2_HEADER_PATH,
+  HTTP2_HEADER_PROTOCOL,
+  HTTP2_HEADER_ACCEPT_ENCODING,
+  HTTP2_HEADER_ACCEPT_LANGUAGE,
+  HTTP2_HEADER_ACCEPT_RANGES,
+  HTTP2_HEADER_ACCEPT,
+  HTTP2_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
+  HTTP2_HEADER_ACCESS_CONTROL_ALLOW_HEADERS,
+  HTTP2_HEADER_ACCESS_CONTROL_ALLOW_METHODS,
+  HTTP2_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN,
+  HTTP2_HEADER_ACCESS_CONTROL_EXPOSE_HEADERS,
+  HTTP2_HEADER_ACCESS_CONTROL_REQUEST_HEADERS,
+  HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
+  HTTP2_HEADER_AGE,
+  HTTP2_HEADER_AUTHORIZATION,
+  HTTP2_HEADER_CACHE_CONTROL,
+  HTTP2_HEADER_CONNECTION,
+  HTTP2_HEADER_CONTENT_DISPOSITION,
+  HTTP2_HEADER_CONTENT_ENCODING,
+  HTTP2_HEADER_CONTENT_LENGTH,
+  HTTP2_HEADER_CONTENT_TYPE,
+  HTTP2_HEADER_COOKIE,
+  HTTP2_HEADER_DATE,
+  HTTP2_HEADER_ETAG,
+  HTTP2_HEADER_FORWARDED,
+  HTTP2_HEADER_HOST,
+  HTTP2_HEADER_IF_MODIFIED_SINCE,
+  HTTP2_HEADER_IF_NONE_MATCH,
+  HTTP2_HEADER_IF_RANGE,
+  HTTP2_HEADER_LAST_MODIFIED,
+  HTTP2_HEADER_LINK,
+  HTTP2_HEADER_LOCATION,
+  HTTP2_HEADER_RANGE,
+  HTTP2_HEADER_REFERER,
+  HTTP2_HEADER_SERVER,
+  HTTP2_HEADER_SET_COOKIE,
+  HTTP2_HEADER_STRICT_TRANSPORT_SECURITY,
+  HTTP2_HEADER_TRANSFER_ENCODING,
+  HTTP2_HEADER_TE,
+  HTTP2_HEADER_UPGRADE_INSECURE_REQUESTS,
+  HTTP2_HEADER_UPGRADE,
+  HTTP2_HEADER_USER_AGENT,
+  HTTP2_HEADER_VARY,
+  HTTP2_HEADER_X_CONTENT_TYPE_OPTIONS,
+  HTTP2_HEADER_X_FRAME_OPTIONS,
+  HTTP2_HEADER_KEEP_ALIVE,
+  HTTP2_HEADER_PROXY_CONNECTION,
+  HTTP2_HEADER_X_XSS_PROTECTION,
+  HTTP2_HEADER_ALT_SVC,
+  HTTP2_HEADER_CONTENT_SECURITY_POLICY,
+  HTTP2_HEADER_EARLY_DATA,
+  HTTP2_HEADER_EXPECT_CT,
+  HTTP2_HEADER_ORIGIN,
+  HTTP2_HEADER_PURPOSE,
+  HTTP2_HEADER_TIMING_ALLOW_ORIGIN,
+  HTTP2_HEADER_X_FORWARDED_FOR,
+  HTTP2_HEADER_PRIORITY,
+  HTTP2_HEADER_ACCEPT_CHARSET,
+  HTTP2_HEADER_ACCESS_CONTROL_MAX_AGE,
+  HTTP2_HEADER_ALLOW,
+  HTTP2_HEADER_CONTENT_LANGUAGE,
+  HTTP2_HEADER_CONTENT_LOCATION,
+  HTTP2_HEADER_CONTENT_MD5,
+  HTTP2_HEADER_CONTENT_RANGE,
+  HTTP2_HEADER_DNT,
+  HTTP2_HEADER_EXPECT,
+  HTTP2_HEADER_EXPIRES,
+  HTTP2_HEADER_FROM,
+  HTTP2_HEADER_IF_MATCH,
+  HTTP2_HEADER_IF_UNMODIFIED_SINCE,
+  HTTP2_HEADER_MAX_FORWARDS,
+  HTTP2_HEADER_PREFER,
+  HTTP2_HEADER_PROXY_AUTHENTICATE,
+  HTTP2_HEADER_PROXY_AUTHORIZATION,
+  HTTP2_HEADER_REFRESH,
+  HTTP2_HEADER_RETRY_AFTER,
+  HTTP2_HEADER_TRAILER,
+  HTTP2_HEADER_TK,
+  HTTP2_HEADER_VIA,
+  HTTP2_HEADER_WARNING,
+  HTTP2_HEADER_WWW_AUTHENTICATE,
+  HTTP2_HEADER_HTTP2_SETTINGS,
+  HTTP2_METHOD_ACL,
+  HTTP2_METHOD_BASELINE_CONTROL,
+  HTTP2_METHOD_BIND,
+  HTTP2_METHOD_CHECKIN,
+  HTTP2_METHOD_CHECKOUT,
+  HTTP2_METHOD_CONNECT,
+  HTTP2_METHOD_COPY,
+  HTTP2_METHOD_DELETE,
+  HTTP2_METHOD_GET,
+  HTTP2_METHOD_HEAD,
+  HTTP2_METHOD_LABEL,
+  HTTP2_METHOD_LINK,
+  HTTP2_METHOD_LOCK,
+  HTTP2_METHOD_MERGE,
+  HTTP2_METHOD_MKACTIVITY,
+  HTTP2_METHOD_MKCALENDAR,
+  HTTP2_METHOD_MKCOL,
+  HTTP2_METHOD_MKREDIRECTREF,
+  HTTP2_METHOD_MKWORKSPACE,
+  HTTP2_METHOD_MOVE,
+  HTTP2_METHOD_OPTIONS,
+  HTTP2_METHOD_ORDERPATCH,
+  HTTP2_METHOD_PATCH,
+  HTTP2_METHOD_POST,
+  HTTP2_METHOD_PRI,
+  HTTP2_METHOD_PROPFIND,
+  HTTP2_METHOD_PROPPATCH,
+  HTTP2_METHOD_PUT,
+  HTTP2_METHOD_REBIND,
+  HTTP2_METHOD_REPORT,
+  HTTP2_METHOD_SEARCH,
+  HTTP2_METHOD_TRACE,
+  HTTP2_METHOD_UNBIND,
+  HTTP2_METHOD_UNCHECKOUT,
+  HTTP2_METHOD_UNLINK,
+  HTTP2_METHOD_UNLOCK,
+  HTTP2_METHOD_UPDATE,
+  HTTP2_METHOD_UPDATEREDIRECTREF,
+  HTTP2_METHOD_VERSION_CONTROL,
+  HTTP_STATUS_CONTINUE,
+  HTTP_STATUS_SWITCHING_PROTOCOLS,
+  HTTP_STATUS_PROCESSING,
+  HTTP_STATUS_EARLY_HINTS,
+  HTTP_STATUS_OK,
+  HTTP_STATUS_CREATED,
+  HTTP_STATUS_ACCEPTED,
+  HTTP_STATUS_NON_AUTHORITATIVE_INFORMATION,
+  HTTP_STATUS_NO_CONTENT,
+  HTTP_STATUS_RESET_CONTENT,
+  HTTP_STATUS_PARTIAL_CONTENT,
+  HTTP_STATUS_MULTI_STATUS,
+  HTTP_STATUS_ALREADY_REPORTED,
+  HTTP_STATUS_IM_USED,
+  HTTP_STATUS_MULTIPLE_CHOICES,
+  HTTP_STATUS_MOVED_PERMANENTLY,
+  HTTP_STATUS_FOUND,
+  HTTP_STATUS_SEE_OTHER,
+  HTTP_STATUS_NOT_MODIFIED,
+  HTTP_STATUS_USE_PROXY,
+  HTTP_STATUS_TEMPORARY_REDIRECT,
+  HTTP_STATUS_PERMANENT_REDIRECT,
+  HTTP_STATUS_BAD_REQUEST,
+  HTTP_STATUS_UNAUTHORIZED,
+  HTTP_STATUS_PAYMENT_REQUIRED,
+  HTTP_STATUS_FORBIDDEN,
+  HTTP_STATUS_NOT_FOUND,
+  HTTP_STATUS_METHOD_NOT_ALLOWED,
+  HTTP_STATUS_NOT_ACCEPTABLE,
+  HTTP_STATUS_PROXY_AUTHENTICATION_REQUIRED,
+  HTTP_STATUS_REQUEST_TIMEOUT,
+  HTTP_STATUS_CONFLICT,
+  HTTP_STATUS_GONE,
+  HTTP_STATUS_LENGTH_REQUIRED,
+  HTTP_STATUS_PRECONDITION_FAILED,
+  HTTP_STATUS_PAYLOAD_TOO_LARGE,
+  HTTP_STATUS_URI_TOO_LONG,
+  HTTP_STATUS_UNSUPPORTED_MEDIA_TYPE,
+  HTTP_STATUS_RANGE_NOT_SATISFIABLE,
+  HTTP_STATUS_EXPECTATION_FAILED,
+  HTTP_STATUS_TEAPOT,
+  HTTP_STATUS_MISDIRECTED_REQUEST,
+  HTTP_STATUS_UNPROCESSABLE_ENTITY,
+  HTTP_STATUS_LOCKED,
+  HTTP_STATUS_FAILED_DEPENDENCY,
+  HTTP_STATUS_TOO_EARLY,
+  HTTP_STATUS_UPGRADE_REQUIRED,
+  HTTP_STATUS_PRECONDITION_REQUIRED,
+  HTTP_STATUS_TOO_MANY_REQUESTS,
+  HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE,
+  HTTP_STATUS_UNAVAILABLE_FOR_LEGAL_REASONS,
+  HTTP_STATUS_INTERNAL_SERVER_ERROR,
+  HTTP_STATUS_NOT_IMPLEMENTED,
+  HTTP_STATUS_BAD_GATEWAY,
+  HTTP_STATUS_SERVICE_UNAVAILABLE,
+  HTTP_STATUS_GATEWAY_TIMEOUT,
+  HTTP_STATUS_HTTP_VERSION_NOT_SUPPORTED,
+  HTTP_STATUS_VARIANT_ALSO_NEGOTIATES,
+  HTTP_STATUS_INSUFFICIENT_STORAGE,
+  HTTP_STATUS_LOOP_DETECTED,
+  HTTP_STATUS_BANDWIDTH_LIMIT_EXCEEDED,
+  HTTP_STATUS_NOT_EXTENDED,
+  HTTP_STATUS_NETWORK_AUTHENTICATION_REQUIRED,
+} = constants;
+
 //TODO: desconstruct used constants.
 
 // This set is defined strictly by the HTTP/2 specification. Only
 // :-prefixed headers defined by that specification may be added to
 // this set.
 const kValidPseudoHeaders = new SafeSet([
-  constants.HTTP2_HEADER_STATUS,
-  constants.HTTP2_HEADER_METHOD,
-  constants.HTTP2_HEADER_AUTHORITY,
-  constants.HTTP2_HEADER_SCHEME,
-  constants.HTTP2_HEADER_PATH,
-  constants.HTTP2_HEADER_PROTOCOL,
+  HTTP2_HEADER_STATUS,
+  HTTP2_HEADER_METHOD,
+  HTTP2_HEADER_AUTHORITY,
+  HTTP2_HEADER_SCHEME,
+  HTTP2_HEADER_PATH,
+  HTTP2_HEADER_PROTOCOL,
 ]);
 const kSingleValueHeaders = new SafeSet([
-  constants.HTTP2_HEADER_STATUS,
-  constants.HTTP2_HEADER_METHOD,
-  constants.HTTP2_HEADER_AUTHORITY,
-  constants.HTTP2_HEADER_SCHEME,
-  constants.HTTP2_HEADER_PATH,
-  constants.HTTP2_HEADER_PROTOCOL,
-  constants.HTTP2_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
-  constants.HTTP2_HEADER_ACCESS_CONTROL_MAX_AGE,
-  constants.HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
-  constants.HTTP2_HEADER_AGE,
-  constants.HTTP2_HEADER_AUTHORIZATION,
-  constants.HTTP2_HEADER_CONTENT_ENCODING,
-  constants.HTTP2_HEADER_CONTENT_LANGUAGE,
-  constants.HTTP2_HEADER_CONTENT_LENGTH,
-  constants.HTTP2_HEADER_CONTENT_LOCATION,
-  constants.HTTP2_HEADER_CONTENT_MD5,
-  constants.HTTP2_HEADER_CONTENT_RANGE,
-  constants.HTTP2_HEADER_CONTENT_TYPE,
-  constants.HTTP2_HEADER_DATE,
-  constants.HTTP2_HEADER_DNT,
-  constants.HTTP2_HEADER_ETAG,
-  constants.HTTP2_HEADER_EXPIRES,
-  constants.HTTP2_HEADER_FROM,
-  constants.HTTP2_HEADER_HOST,
-  constants.HTTP2_HEADER_IF_MATCH,
-  constants.HTTP2_HEADER_IF_MODIFIED_SINCE,
-  constants.HTTP2_HEADER_IF_NONE_MATCH,
-  constants.HTTP2_HEADER_IF_RANGE,
-  constants.HTTP2_HEADER_IF_UNMODIFIED_SINCE,
-  constants.HTTP2_HEADER_LAST_MODIFIED,
-  constants.HTTP2_HEADER_LOCATION,
-  constants.HTTP2_HEADER_MAX_FORWARDS,
-  constants.HTTP2_HEADER_PROXY_AUTHORIZATION,
-  constants.HTTP2_HEADER_RANGE,
-  constants.HTTP2_HEADER_REFERER,
-  constants.HTTP2_HEADER_RETRY_AFTER,
-  constants.HTTP2_HEADER_TK,
-  constants.HTTP2_HEADER_UPGRADE_INSECURE_REQUESTS,
-  constants.HTTP2_HEADER_USER_AGENT,
-  constants.HTTP2_HEADER_X_CONTENT_TYPE_OPTIONS,
+  HTTP2_HEADER_STATUS,
+  HTTP2_HEADER_METHOD,
+  HTTP2_HEADER_AUTHORITY,
+  HTTP2_HEADER_SCHEME,
+  HTTP2_HEADER_PATH,
+  HTTP2_HEADER_PROTOCOL,
+  HTTP2_HEADER_ACCESS_CONTROL_ALLOW_CREDENTIALS,
+  HTTP2_HEADER_ACCESS_CONTROL_MAX_AGE,
+  HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
+  HTTP2_HEADER_AGE,
+  HTTP2_HEADER_AUTHORIZATION,
+  HTTP2_HEADER_CONTENT_ENCODING,
+  HTTP2_HEADER_CONTENT_LANGUAGE,
+  HTTP2_HEADER_CONTENT_LENGTH,
+  HTTP2_HEADER_CONTENT_LOCATION,
+  HTTP2_HEADER_CONTENT_MD5,
+  HTTP2_HEADER_CONTENT_RANGE,
+  HTTP2_HEADER_CONTENT_TYPE,
+  HTTP2_HEADER_DATE,
+  HTTP2_HEADER_DNT,
+  HTTP2_HEADER_ETAG,
+  HTTP2_HEADER_EXPIRES,
+  HTTP2_HEADER_FROM,
+  HTTP2_HEADER_HOST,
+  HTTP2_HEADER_IF_MATCH,
+  HTTP2_HEADER_IF_MODIFIED_SINCE,
+  HTTP2_HEADER_IF_NONE_MATCH,
+  HTTP2_HEADER_IF_RANGE,
+  HTTP2_HEADER_IF_UNMODIFIED_SINCE,
+  HTTP2_HEADER_LAST_MODIFIED,
+  HTTP2_HEADER_LOCATION,
+  HTTP2_HEADER_MAX_FORWARDS,
+  HTTP2_HEADER_PROXY_AUTHORIZATION,
+  HTTP2_HEADER_RANGE,
+  HTTP2_HEADER_REFERER,
+  HTTP2_HEADER_RETRY_AFTER,
+  HTTP2_HEADER_TK,
+  HTTP2_HEADER_UPGRADE_INSECURE_REQUESTS,
+  HTTP2_HEADER_USER_AGENT,
+  HTTP2_HEADER_X_CONTENT_TYPE_OPTIONS,
 ]);
 
 function assertValidPseudoHeader(key) {
@@ -1366,11 +1609,7 @@ function assertValidPseudoHeader(key) {
 }
 hideFromStack(assertValidPseudoHeader);
 
-const NoPayloadMethods = new Set([
-  constants.HTTP2_METHOD_DELETE,
-  constants.HTTP2_METHOD_GET,
-  constants.HTTP2_METHOD_HEAD,
-]);
+const NoPayloadMethods = new Set([HTTP2_METHOD_DELETE, HTTP2_METHOD_GET, HTTP2_METHOD_HEAD]);
 
 type Settings = {
   headerTableSize: number;
@@ -1641,8 +1880,6 @@ class Http2Stream extends Duplex {
         } else {
           for (let i = 0; i < data.length; i++) {
             const { chunk, encoding } = data[i];
-
-            data[i] = data[i].chunk;
             if (typeof chunk == "string" && encoding !== "ascii" && encoding !== "buffer") {
               data[i] = Buffer.from(chunk, encoding);
             } else {
@@ -1709,7 +1946,7 @@ class ServerHttp2Stream extends Http2Stream {
       const stat = fs.fstatSync(fd);
       if (typeof statCheck === "function") {
         if (stat.isFile()) {
-          headers[constants.HTTP2_HEADER_CONTENT_LENGTH] =
+          headers[HTTP2_HEADER_CONTENT_LENGTH] =
             length !== undefined || length < 0 ? stat.size : Math.min(length, stat.size);
         } else {
           const isDirectory = stat.isDirectory();
@@ -1728,9 +1965,9 @@ class ServerHttp2Stream extends Http2Stream {
 
       // Payload/DATA frames are not permitted in these cases
       if (
-        statusCode === constants.HTTP_STATUS_NO_CONTENT ||
-        statusCode === constants.HTTP_STATUS_RESET_CONTENT ||
-        statusCode === constants.HTTP_STATUS_NOT_MODIFIED ||
+        statusCode === HTTP_STATUS_NO_CONTENT ||
+        statusCode === HTTP_STATUS_RESET_CONTENT ||
+        statusCode === HTTP_STATUS_NOT_MODIFIED ||
         this.headRequest
       ) {
         const error = new Error(
@@ -1786,9 +2023,9 @@ class ServerHttp2Stream extends Http2Stream {
 
     // Payload/DATA frames are not permitted in these cases
     if (
-      statusCode === constants.HTTP_STATUS_NO_CONTENT ||
-      statusCode === constants.HTTP_STATUS_RESET_CONTENT ||
-      statusCode === constants.HTTP_STATUS_NOT_MODIFIED ||
+      statusCode === HTTP_STATUS_NO_CONTENT ||
+      statusCode === HTTP_STATUS_RESET_CONTENT ||
+      statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
       const error = new Error(
@@ -1840,9 +2077,9 @@ class ServerHttp2Stream extends Http2Stream {
 
     // Payload/DATA frames are not permitted in these cases
     if (
-      statusCode === constants.HTTP_STATUS_NO_CONTENT ||
-      statusCode === constants.HTTP_STATUS_RESET_CONTENT ||
-      statusCode === constants.HTTP_STATUS_NOT_MODIFIED ||
+      statusCode === HTTP_STATUS_NO_CONTENT ||
+      statusCode === HTTP_STATUS_RESET_CONTENT ||
+      statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
       const error = new Error(
@@ -1958,13 +2195,13 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   for (let n = 0; n < headers.length; n += 2) {
     const name = headers[n];
     let value = headers[n + 1] || "";
-    if (name === constants.HTTP2_HEADER_STATUS) value |= 0;
+    if (name === HTTP2_HEADER_STATUS) value |= 0;
     const existing = obj[name];
     if (existing === undefined) {
-      obj[name] = name === constants.HTTP2_HEADER_SET_COOKIE ? [value] : value;
+      obj[name] = name === HTTP2_HEADER_SET_COOKIE ? [value] : value;
     } else if (!kSingleValueHeaders.has(name)) {
       switch (name) {
-        case constants.HTTP2_HEADER_COOKIE:
+        case HTTP2_HEADER_COOKIE:
           // https://tools.ietf.org/html/rfc7540#section-8.1.2.5
           // "...If there are multiple Cookie header fields after decompression,
           //  these MUST be concatenated into a single octet string using the
@@ -1972,7 +2209,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
           //  being passed into a non-HTTP/2 context."
           obj[name] = `${existing}; ${value}`;
           break;
-        case constants.HTTP2_HEADER_SET_COOKIE:
+        case HTTP2_HEADER_SET_COOKIE:
           // https://tools.ietf.org/html/rfc7230#section-3.2.2
           // "Note: In practice, the "Set-Cookie" header field ([RFC6265]) often
           // appears multiple times in a response message and does not use the
@@ -2089,7 +2326,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
 
-      if (headers[":status"] === constants.HTTP_STATUS_CONTINUE) {
+      if (headers[":status"] === HTTP_STATUS_CONTINUE) {
         stream.emit("continue");
         return;
       }

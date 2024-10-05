@@ -2,7 +2,7 @@ import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
-  itBundled("compile/CommentBanner", {
+  itBundled("banner/CommentBanner", {
     banner: "// developed with love in SF",
     files: {
       "/a.js": `console.log("Hello, world!")`,
@@ -11,7 +11,7 @@ describe("bundler", () => {
       api.expectFile("out.js").toContain("// developed with love in SF");
     },
   });
-  itBundled("compile/MultilineBanner", {
+  itBundled("banner/MultilineBanner", {
     banner: `"use client";
 // This is a multiline banner
 // It can contain multiple lines of comments or code`,
@@ -24,7 +24,7 @@ describe("bundler", () => {
 // It can contain multiple lines of comments or code`);
     },
   });
-  itBundled("compile/UseClientBanner", {
+  itBundled("banner/UseClientBanner", {
     banner: '"use client";',
     files: {
       /* js*/ "index.js": `console.log("Hello, world!")`,

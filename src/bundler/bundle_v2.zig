@@ -8735,14 +8735,16 @@ pub const LinkerContext = struct {
             }
         }
 
-        if (newline_before_comment) {
+        if (c.options.banner.len > 0) {
+            if (newline_before_comment) {
+                j.pushStatic("\n");
+                line_offset.advance("\n");
+            }
+            j.pushStatic(ctx.c.options.banner);
+            line_offset.advance(ctx.c.options.banner);
             j.pushStatic("\n");
             line_offset.advance("\n");
         }
-        j.pushStatic(ctx.c.options.banner);
-        line_offset.advance(ctx.c.options.banner);
-        j.pushStatic("\n");
-        line_offset.advance("\n");
 
         // Add the top-level directive if present (but omit "use strict" in ES
         // modules because all ES modules are automatically in strict mode)

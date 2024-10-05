@@ -266,16 +266,16 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
 {
-    auto arg_s = arg.toStringOrNull(lexicalGlobalObject);
+    auto arg_s = arg.getString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (UNLIKELY(!arg_s)) {
-        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg);
+        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg_s);
         return WebCore::BufferEncodingType::utf8;
     }
 
-    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg_s);
+    std::optional<BufferEncodingType> encoded = parseEnumeration2(*lexicalGlobalObject, arg_s);
     if (UNLIKELY(!encoded)) {
-        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg);
+        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg_s);
         return WebCore::BufferEncodingType::utf8;
     }
 
@@ -549,7 +549,7 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
-            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg1);
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg1.getString(lexicalGlobalObject));
         }
 
         encoding = encoded.value();
@@ -1158,17 +1158,20 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         lengthValue = jsUndefined();
     }
 
-    if (!encodingValue.isUndefined()) {
+    if (!encodingValue.isUndefined() && value.isString()) {
+        if (!encodingValue.isString()) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "encoding"_s, "string"_s, encodingValue);
         encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!offsetValue.isUndefined()) {
+        if (!offsetValue.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetValue);
         start = parseIndex(lexicalGlobalObject, scope, "start"_s, offsetValue, limit);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!lengthValue.isUndefined()) {
+        if (!lengthValue.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "end"_s, "number"_s, lengthValue);
         end = parseIndex(lexicalGlobalObject, scope, "end"_s, lengthValue, limit - start);
         RETURN_IF_EXCEPTION(scope, {});
     }

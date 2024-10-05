@@ -443,12 +443,9 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue encoding)
+JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String encoding)
 {
-    auto encoding_string = JSValueToStringSafe(globalObject, encoding);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto message = makeString("Unknown encoding: "_s, encoding_string);
+    auto message = makeString("Unknown encoding: "_s, encoding);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message));
     return {};
 }

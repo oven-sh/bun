@@ -58,13 +58,12 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     if (UNLIKELY(!arg.isString())) {
         return std::nullopt;
     }
-    return parseEnumeration2(lexicalGlobalObject, asString(arg));
+    return parseEnumeration2(lexicalGlobalObject, asString(arg)->getString(&lexicalGlobalObject));
 }
 
-std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, JSString* str)
+std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, WTF::String encoding)
 {
     // caller must check if value is a string
-    String encoding = str->value(&lexicalGlobalObject);
     switch (encoding.length()) {
     case 0: {
         return BufferEncodingType::utf8;

@@ -29,6 +29,7 @@
       pointer-events: none;
       font-size: 1rem;
       margin: 0;
+      z-index: 100;
     }
 
     #stat {
@@ -42,8 +43,14 @@
   <div id="network"></div>
 
   <script>
+    // Connect to HMR WebSocket and enable visualization packets. This
+    // serializes the both `IncrementalGraph`s in full and sends them
+    // over the wire. A visualization is provided by `vis.js`. Support
+    //
+    // Script written partially by ChatGPT
+
     const c = {
-      // derived from mocha theme on https://catppuccin.com/palette
+      // Derived from mocha theme on https://catppuccin.com/palette
       red: '#f38ba8',
       green: '#a6e3a1',
       mauve: '#cba6f7',
@@ -67,6 +74,7 @@
     let clientEdges = [];
     let serverEdges = [];
     let currentEdgeIds = new Set();
+    let currentNodeIds = new Set();
     let isFirst = true;
 
     // When a message is received
@@ -248,13 +256,14 @@
 
     // Function to update the entire graph when new data is received
     function updateGraph() {
-      const newEdgeIds = new Set();  // Track new edges
+      const newEdgeIds = new Set(); // Track new edges
+      const newNodeIds = new Set(); // Track new nodes
 
       const boundaries = new Map();
 
       // Update server files
       serverFiles.forEach((file, index) => {
-        const id = `S_${index}`;
+        const id = `S_${file.name}`;
         if (file.deleted) {
           removeNode(id);
           removeEdges(id);
@@ -265,11 +274,12 @@
         if (file.isBoundary) {
           boundaries.set(file.name, { server: index, client: -1 });
         }
+        newNodeIds.add(id);  // Track this node
       });
 
       // Update client files
       clientFiles.forEach((file, index) => {
-        const id = `C_${index}`;
+        const id = `C_${file.name}`;
         if (file.deleted) {
           removeNode(id);
           removeEdges(id);
@@ -280,26 +290,27 @@
         if (b) {
           b.client = index;
         }
+        newNodeIds.add(id);  // Track this node
       });
 
       // Update client edges
       clientEdges.forEach((edge, index) => {
         const id = `C_edge_${index}`;
-        updateEdge(id, `C_${edge.from}`, `C_${edge.to}`, 'normal');
+        updateEdge(id, `C_${clientFiles[edge.from].name}`, `C_${clientFiles[edge.to].name}`, 'normal');
         newEdgeIds.add(id);  // Track this edge
       });
 
       // Update server edges
       serverEdges.forEach((edge, index) => {
         const id = `S_edge_${index}`;
-        updateEdge(id, `S_${edge.from}`, `S_${edge.to}`, 'normal');
+        updateEdge(id, `S_${serverFiles[edge.from].name}`, `S_${serverFiles[edge.to].name}`, 'normal');
         newEdgeIds.add(id);  // Track this edge
       });
 
       boundaries.forEach(({ server, client }) => {
         if (client === -1) return;
         const id = `S_edge_bound_${server}_${client}`;
-        updateEdge(id, `S_${server}`, `C_${client}`, 'client');
+        updateEdge(id, `S_${serverFiles[server].name}`, `C_${clientFiles[client].name}`, 'client');
         newEdgeIds.add(id);  // Track this edge
       });
 
@@ -310,8 +321,16 @@
         }
       });
 
+      // Remove nodes that are no longer present
+      currentNodeIds.forEach((id) => {
+        if (!newNodeIds.has(id)) {
+          nodes.remove(id);
+        }
+      });
+
       // Update the currentEdgeIds set to the new one
       currentEdgeIds = newEdgeIds;
+      currentNodeIds = newNodeIds;
 
       if (isFirst) {
         network.stabilize();

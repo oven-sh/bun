@@ -1065,6 +1065,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// An index into `edges`
         const EdgeIndex = bun.GenericIndex(u32, Edge);
 
+        fn getFileIndex(g: *@This(), path: []const u8) ?FileIndex {
+            return if (g.bundled_files.getIndex(path)) |i| FileIndex.init(@intCast(i)) else null;
+        }
+
         /// Tracks a bundled code chunk for cross-bundle chunks,
         /// ensuring it has an entry in `bundled_files`.
         ///
@@ -1159,7 +1163,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (ctx.server_to_client_bitset.isSet(index.get())) {
                             gop.value_ptr.is_client_to_server_component_boundary = true;
                         } else if (gop.value_ptr.is_client_to_server_component_boundary) {
-                            // TODO: free the other graph's file
+                            const client_graph = &g.owner().client_graph;
+                            const client_index = client_graph.getFileIndex(gop.key_ptr.*) orelse
+                                Output.panic("Client graph's SCB was already deleted", .{});
+                            try client_graph.disconnectAndDeleteFile(client_index);
                             gop.value_ptr.is_client_to_server_component_boundary = false;
                         }
                     }
@@ -1234,25 +1241,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 if (!val.seen) {
                     // Unlink from dependency list. At this point the edge is
                     // already detached from the import list.
-                    const edge = &g.edges.items[val.edge_index.get()];
-                    log("detach edge={d} | id={d} {} -> id={d} {}", .{
-                        val.edge_index.get(),
-                        edge.dependency.get(),
-                        bun.fmt.quote(g.bundled_files.keys()[edge.dependency.get()]),
-                        edge.imported.get(),
-                        bun.fmt.quote(g.bundled_files.keys()[edge.imported.get()]),
-                    });
-                    if (edge.prev_dependency.unwrap()) |prev| {
-                        const prev_dependency = &g.edges.items[prev.get()];
-                        prev_dependency.next_dependency = edge.next_dependency;
-                    } else {
-                        assert(g.first_dep.items[edge.imported.get()].unwrap() == val.edge_index);
-                        g.first_dep.items[edge.imported.get()] = .none;
-                    }
-                    if (edge.next_dependency.unwrap()) |next| {
-                        const next_dependency = &g.edges.items[next.get()];
-                        next_dependency.prev_dependency = edge.prev_dependency;
-                    }
+                    g.disconnectEdgeFromDependencyList(val.edge_index);
 
                     // With no references to this edge, it can be freed
                     try g.freeEdge(val.edge_index);
@@ -1261,6 +1250,28 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Follow this node to it's HMR root
             try g.propagateHotUpdate(file_index);
+        }
+
+        fn disconnectEdgeFromDependencyList(g: *@This(), edge_index: EdgeIndex) void {
+            const edge = &g.edges.items[edge_index.get()];
+            // igLog("detach edge={d} | id={d} {} -> id={d} {}", .{
+            //     edge_index.get(),
+            //     edge.dependency.get(),
+            //     bun.fmt.quote(g.bundled_files.keys()[edge.dependency.get()]),
+            //     edge.imported.get(),
+            //     bun.fmt.quote(g.bundled_files.keys()[edge.imported.get()]),
+            // });
+            if (edge.prev_dependency.unwrap()) |prev| {
+                const prev_dependency = &g.edges.items[prev.get()];
+                prev_dependency.next_dependency = edge.next_dependency;
+            } else {
+                assert(g.first_dep.items[edge.imported.get()].unwrap() == edge_index);
+                g.first_dep.items[edge.imported.get()] = .none;
+            }
+            if (edge.next_dependency.unwrap()) |next| {
+                const next_dependency = &g.edges.items[next.get()];
+                next_dependency.prev_dependency = edge.prev_dependency;
+            }
         }
 
         fn processChunkImportRecords(
@@ -1555,6 +1566,62 @@ pub fn IncrementalGraph(side: bake.Side) type {
             return chunk.items;
         }
 
+        fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) !void {
+            const last = FileIndex.init(@intCast(g.bundled_files.count() - 1));
+
+            bun.assert(g.bundled_files.count() > 1); // never remove all files
+
+            bun.assert(g.first_dep.items[file_index.get()] == .none); // must have no dependencies
+
+            // Disconnect all imports
+            {
+                var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
+                while (it) |edge_index| {
+                    const dep = g.edges.items[edge_index.get()];
+                    it = dep.next_import.unwrap();
+                    assert(dep.dependency == file_index);
+
+                    g.disconnectEdgeFromDependencyList(edge_index);
+                    try g.freeEdge(edge_index);
+                }
+            }
+
+            g.bundled_files.swapRemoveAt(file_index.get());
+
+            // Move out-of-line data from `last` to replace `file_index`
+            _ = g.first_dep.swapRemove(file_index.get());
+            _ = g.first_import.swapRemove(file_index.get());
+
+            if (file_index != last) {
+                g.stale_files.setValue(file_index.get(), g.stale_files.isSet(last.get()));
+
+                // This set is not always initialized, so ignore if it's empty
+                if (g.affected_by_update.bit_length > 0) {
+                    g.affected_by_update.setValue(file_index.get(), g.affected_by_update.isSet(last.get()));
+                }
+
+                // Adjust all referenced edges to point to the new file
+                {
+                    var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
+                    while (it) |edge_index| {
+                        const dep = &g.edges.items[edge_index.get()];
+                        it = dep.next_import.unwrap();
+                        assert(dep.dependency == last);
+                        dep.dependency = file_index;
+                    }
+                }
+                {
+                    var it: ?EdgeIndex = g.first_dep.items[file_index.get()].unwrap();
+                    while (it) |edge_index| {
+                        const dep = &g.edges.items[edge_index.get()];
+                        it = dep.next_dependency.unwrap();
+                        assert(dep.imported == last);
+                        dep.imported = file_index;
+                    }
+                }
+            }
+        }
+
         fn newEdge(g: *@This(), edge: Edge) !EdgeIndex {
             if (g.edges_free_list.popOrNull()) |index| {
                 g.edges.items[index.get()] = edge;
@@ -1568,15 +1635,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Does nothing besides release the `Edge` for reallocation by `newEdge`
         /// Caller must detach the dependency from the linked list it is in.
-        fn freeEdge(g: *@This(), dep_index: EdgeIndex) !void {
+        fn freeEdge(g: *@This(), edge_index: EdgeIndex) !void {
             if (Environment.isDebug) {
-                g.edges.items[dep_index.get()] = undefined;
+                g.edges.items[edge_index.get()] = undefined;
             }
 
-            if (dep_index.get() == (g.edges.items.len - 1)) {
+            if (edge_index.get() == (g.edges.items.len - 1)) {
                 g.edges.items.len -= 1;
             } else {
-                try g.edges_free_list.append(g.owner().allocator, dep_index);
+                try g.edges_free_list.append(g.owner().allocator, edge_index);
             }
         }
 
@@ -2039,8 +2106,13 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
         }
     }
     inline for (.{ &dev.client_graph, &dev.server_graph }) |g| {
-        try w.writeInt(u32, @intCast(g.edges.items.len), .little);
-        for (g.edges.items) |edge| {
+        const G = @TypeOf(g.*);
+
+        try w.writeInt(u32, @intCast(g.edges.items.len - g.edges_free_list.items.len), .little);
+        for (g.edges.items, 0..) |edge, i| {
+            if (std.mem.indexOfScalar(G.EdgeIndex, g.edges_free_list.items, G.EdgeIndex.init(@intCast(i))) != null)
+                continue;
+
             try w.writeInt(u32, @intCast(edge.dependency.get()), .little);
             try w.writeInt(u32, @intCast(edge.imported.get()), .little);
         }

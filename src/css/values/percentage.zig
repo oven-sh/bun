@@ -58,6 +58,10 @@ pub const Percentage = struct {
         }
     }
 
+    pub inline fn eql(this: *const Percentage, other: *const Percentage) bool {
+        return this.v == other.v;
+    }
+
     pub fn add(lhs: Percentage, _: std.mem.Allocator, rhs: Percentage) Percentage {
         return Percentage{ .v = lhs.v + rhs.v };
     }
@@ -138,6 +142,14 @@ pub fn DimensionPercentage(comptime D: type) type {
         calc: *Calc(DimensionPercentage(D)),
 
         const This = @This();
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return switch (this.*) {
+                .dimension => |*d| css.generic.eql(D, d, &other.dimension),
+                .percentage => |*p| p.eql(&other.percentage),
+                .calc => |calc| calc.eql(other.calc),
+            };
+        }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
             return switch (this.*) {

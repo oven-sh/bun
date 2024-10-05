@@ -1090,6 +1090,24 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 {% /codetabs %}
 
+### `experimentalCss`
+
+Whether to enable *experimental* support for bundling CSS files. Defaults to `false`.
+
+This supports bundling CSS files imported from JS, as well as CSS entrypoints.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+const result = await Bun.build({
+  entrypoints: ["./index.ts"],
+  experimentalCss: true,
+});
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
+```
+
+{% /codetabs %}
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

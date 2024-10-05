@@ -16,7 +16,7 @@ const len = MAX_STRING_LENGTH + 1;
 const errorMatcher = expect.objectContaining({
   code: "ERR_STRING_TOO_LONG",
   name: "Error",
-  message: expect.any(String),
+  message: `Cannot create a string longer than 2147483647 characters`,
 });
 
 test("Buffer toString with large buffer throws RangeError", () => {

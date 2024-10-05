@@ -53,6 +53,7 @@
 
 #include "JSBufferEncodingType.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSBase.h>
@@ -268,12 +269,9 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)
 {
-    auto arg_s = arg.getString(lexicalGlobalObject);
+    auto arg_ = arg.toStringOrNull(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (UNLIKELY(!arg_s)) {
-        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg_s);
-        return WebCore::BufferEncodingType::utf8;
-    }
+    auto arg_s = arg_->getString(lexicalGlobalObject);
 
     std::optional<BufferEncodingType> encoded = parseEnumeration2(*lexicalGlobalObject, arg_s);
     if (UNLIKELY(!encoded)) {
@@ -424,8 +422,8 @@ static inline JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobal
         throwNodeRangeError(lexicalGlobalObject, throwScope, "Invalid array length"_s);
         return nullptr;
     }
-    if (length > WTF::String::MaxLength) {
-        Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, WTF::String::MaxLength, jsNumber(length));
+    if (length > MAX_ARRAY_BUFFER_SIZE) {
+        Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, MAX_ARRAY_BUFFER_SIZE, jsNumber(length));
         return nullptr;
     }
 
@@ -1027,26 +1025,38 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
     switch (callFrame->argumentCount()) {
     default:
         sourceEndValue = callFrame->uncheckedArgument(4);
-        if (sourceEndValue != jsUndefined())
-            sourceEnd = parseIndex(lexicalGlobalObject, throwScope, "sourceEnd"_s, sourceEndValue, sourceEndInit);
+        if (sourceEndValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, jsString(vm, String("sourceEnd"_s)), jsNumber(0), jsNumber(MAX_ARRAY_BUFFER_SIZE));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            sourceEnd = sourceEndValue.asNumber();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
-        if (sourceStartValue != jsUndefined())
-            sourceStart = parseIndex(lexicalGlobalObject, throwScope, "sourceStart"_s, sourceStartValue, sourceEndInit);
+        if (sourceStartValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, jsString(vm, String("sourceStart"_s)), jsNumber(0), jsNumber(MAX_ARRAY_BUFFER_SIZE));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            sourceStart = sourceStartValue.asNumber();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
-        if (targetEndValue != jsUndefined())
-            targetEnd = parseIndex(lexicalGlobalObject, throwScope, "targetEnd"_s, targetEndValue, targetEndInit);
+        if (targetEndValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, jsString(vm, String("targetEnd"_s)), jsNumber(0), jsNumber(MAX_ARRAY_BUFFER_SIZE));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            targetEnd = targetEndValue.asNumber();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
         FALLTHROUGH;
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
-        if (targetStartValue != jsUndefined())
-            targetStart = parseIndex(lexicalGlobalObject, throwScope, "targetStart"_s, targetStartValue, targetEndInit);
+        if (targetStartValue != jsUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, jsString(vm, String("targetStart"_s)), jsNumber(0), jsNumber(MAX_ARRAY_BUFFER_SIZE));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            targetStart = targetStartValue.asNumber();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
         break;
     case 1:

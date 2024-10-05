@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vis.js Network Example</title>
+  <title>IncrementalGraph Visualization</title>
   <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <style>
     html,
@@ -30,11 +30,15 @@
       font-size: 1rem;
       margin: 0;
     }
+
+    #stat {
+      font-weight: normal;
+    }
   </style>
 </head>
 
 <body>
-  <h1>IncrementalGraph Visualization</h1>
+  <h1>IncrementalGraph Visualization <span id="stat"></span></h1>
   <div id="network"></div>
 
   <script>
@@ -313,6 +317,8 @@
         network.stabilize();
         isFirst = false;
       }
+
+      document.getElementById('stat').innerText = `(server: ${serverFiles.length} files, ${serverEdges.length} edges; client: ${clientFiles.length} files, ${clientEdges.length} edges; ${boundaries.size} boundaries)`;
     }
   </script>
 </body>

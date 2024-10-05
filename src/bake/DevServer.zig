@@ -710,7 +710,7 @@ pub fn finalizeBundle(
         .import_records = import_records,
         .sources = input_file_sources,
         .scbs = scbs,
-        .scbs_bitset = scb_bitset,
+        .server_to_client_bitset = scb_bitset,
         .resolved_index_cache = resolved_index_cache,
         .server_seen_bit_set = undefined,
     };
@@ -1158,6 +1158,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         }
                         if (ctx.server_to_client_bitset.isSet(index.get())) {
                             gop.value_ptr.is_client_to_server_component_boundary = true;
+                        } else if (gop.value_ptr.is_client_to_server_component_boundary) {
+                            // TODO: free the other graph's file
+                            gop.value_ptr.is_client_to_server_component_boundary = false;
                         }
                     }
                     try g.current_chunk_parts.append(g.owner().allocator, chunk.code());

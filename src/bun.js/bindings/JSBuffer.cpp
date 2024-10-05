@@ -2380,6 +2380,9 @@ static inline JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexi
 
     if (distinguishingArg.isAnyInt()) {
         throwScope.release();
+        if (args.at(1).isString()) {
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "string"_s, "string"_s, distinguishingArg);
+        }
         return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
     } else if (distinguishingArg.isNumber()) {
         double lengthDouble = distinguishingArg.toIntegerWithTruncation(lexicalGlobalObject);

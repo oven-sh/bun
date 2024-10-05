@@ -589,6 +589,8 @@ pub const PublishCommand = struct {
                     return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, otp_response);
                 }
 
+                // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
+                // ignore if x-local-cache exists
                 if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                     Output.printError("\n", .{});
                     Output.note("{s}", .{notice});
@@ -638,6 +640,8 @@ pub const PublishCommand = struct {
                         return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, otp_response);
                     },
                     else => {
+                        // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
+                        // ignore if x-local-cache exists
                         if (otp_res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                             Output.printError("\n", .{});
                             Output.note("{s}", .{notice});
@@ -858,6 +862,8 @@ pub const PublishCommand = struct {
                             Global.crash();
                         };
 
+                        // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
+                        // ignore if x-local-cache exists
                         if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                             Output.printError("\n", .{});
                             Output.note("{s}", .{notice});

@@ -949,11 +949,12 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto* encoding_ = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
-    if (!encoding_)
+    auto encodingValue = callFrame->argument(0);
+    if (!encodingValue.isString()) {
         return JSValue::encode(jsBoolean(false));
-
-    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+    }
+    auto* encoding = callFrame->argument(0).toString(lexicalGlobalObject);
+    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding);
     return JSValue::encode(jsBoolean(!!encoded));
 }
 

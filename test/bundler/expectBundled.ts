@@ -120,7 +120,6 @@ export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
   todo?: boolean;
 
-
   // file options
   files: Record<string, string | Buffer | Blob>;
   /** Files to be written only after the bundle is done. */
@@ -515,9 +514,6 @@ function expectBundled(
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
   }
-  if (!ESBUILD && banner) {
-    throw new Error("banner not implemented in bun build");
-  }
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
   }
@@ -635,6 +631,8 @@ function expectBundled(
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
       }
+      console.log(banner && `--banner="${banner}"`);
+      console.log("exe", BUN_EXE);
       const cmd = (
         !ESBUILD
           ? [
@@ -669,6 +667,7 @@ function expectBundled(
               splitting && `--splitting`,
               serverComponents && "--server-components",
               outbase && `--root=${outbase}`,
+              banner && `--banner="${banner}"`, // TODO: --banner-css=*
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
@@ -1532,7 +1531,7 @@ for (const [key, blob] of build.outputs) {
           let result = out!.toUnixString().trim();
 
           // no idea why this logs. ¯\_(ツ)_/¯
-          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, '');
+          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, "");
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1607,10 +1606,8 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      (opts.snapshotSourceMap
-        ? isDebug ? Infinity : 30_000
-        : isDebug ? 15_000 : 5_000)
-      * ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+      (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
+        ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
     );
   }
   return ref;
@@ -1622,10 +1619,8 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    (opts.snapshotSourceMap
-      ? isDebug ? Infinity : 30_000
-      : isDebug ? 15_000 : 5_000)
-    * ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+    (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
+      ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
   );
 };
 

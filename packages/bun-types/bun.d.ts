@@ -1595,6 +1595,10 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+    /**
+     * Add a banner to the bundled code such as "use client";
+     */
+    banner?: string;
 
     /**
      * **Experimental**

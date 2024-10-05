@@ -860,6 +860,8 @@ pub const BundleV2 = struct {
         this.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
         this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
+        this.linker.options.banner = bundler.options.banner;
+
         this.linker.options.experimental_css = bundler.options.experimental_css;
 
         this.linker.options.source_maps = bundler.options.source_map;
@@ -1455,6 +1457,7 @@ pub const BundleV2 = struct {
             bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             bundler.options.experimental_css = config.experimental_css;
+            bundler.options.banner = config.banner.toOwnedSlice();
 
             bundler.configureLinker();
             try bundler.configureDefines();
@@ -4578,6 +4581,7 @@ pub const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        banner: []const u8 = "",
         experimental_css: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
@@ -8731,7 +8735,14 @@ pub const LinkerContext = struct {
             }
         }
 
-        // TODO: banner
+        if (newline_before_comment) {
+            j.pushStatic("\n");
+            line_offset.advance("\n");
+        }
+        j.pushStatic(ctx.c.options.banner);
+        line_offset.advance(ctx.c.options.banner);
+        j.pushStatic("\n");
+        line_offset.advance("\n");
 
         // Add the top-level directive if present (but omit "use strict" in ES
         // modules because all ES modules are automatically in strict mode)

@@ -1090,6 +1090,26 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 {% /codetabs %}
 
+### `banner`
+
+A banner to be added to the final bundle, this can be a directive like "use client" for react or a comment block such as a license for the code. 
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  banner: '"use client";'
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --banner "\"use client\";"
+```
+
+{% /codetabs %}
+
 ### `experimentalCss`
 
 Whether to enable *experimental* support for bundling CSS files. Defaults to `false`.

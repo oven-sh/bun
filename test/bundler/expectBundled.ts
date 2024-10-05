@@ -631,8 +631,6 @@ function expectBundled(
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
       }
-      console.log(banner && `--banner="${banner}"`);
-      console.log("exe", BUN_EXE);
       const cmd = (
         !ESBUILD
           ? [

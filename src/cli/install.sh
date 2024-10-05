@@ -53,11 +53,11 @@ success() {
     echo -e "${Green}$@ ${Color_Off}"
 }
 
-uzip=
+unzip_cmd=
 if command -v unzip >/dev/null; then
-    uzip=unzip
+    unzip_cmd=unzip
 elif command -v busybox >/dev/null; then
-    unzip="busybox unzip"
+    unzip_cmd="busybox unzip"
 else
     error 'unzip is required to install bun'
 fi
@@ -140,7 +140,7 @@ fi
 curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
 
-$uzip -oqd "$bin_dir" "$exe.zip" ||
+$unzip_cmd -oqd "$bin_dir" "$exe.zip" ||
     error 'Failed to extract bun'
 
 mv "$bin_dir/bun-$target/$exe_name" "$exe" ||

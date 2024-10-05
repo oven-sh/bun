@@ -424,6 +424,10 @@ static inline JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobal
         throwNodeRangeError(lexicalGlobalObject, throwScope, "Invalid array length"_s);
         return nullptr;
     }
+    if (length > WTF::String::MaxLength) {
+        Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "size"_s, 0, WTF::String::MaxLength, jsNumber(length));
+        return nullptr;
+    }
 
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();

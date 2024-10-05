@@ -676,7 +676,7 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "windows-x64-test-bun"
-        label: ":windows: test-bun"
+        label: ":windows: x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
         soft_fail:
@@ -765,7 +765,7 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "windows-x64-baseline-test-bun"
-        label: ":windows: - test-bun"
+        label: ":windows: x64-baseline - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
         soft_fail:

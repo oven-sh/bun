@@ -411,6 +411,47 @@ it("close event", async () => {
   wss.close();
 });
 
+// https://github.com/oven-sh/bun/issues/14345
+it("WebSocket finishRequest mocked", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  using server = Bun.serve({
+    port: 0,
+    websocket: {
+      open() {},
+      close() {},
+      message() {},
+    },
+    fetch(req, server) {
+      expect(req.headers.get("X-Custom-Header")).toBe("CustomValue");
+      expect(req.headers.get("Another-Header")).toBe("AnotherValue");
+      return server.upgrade(req);
+    },
+  });
+
+  const customHeaders = {
+    "X-Custom-Header": "CustomValue",
+    "Another-Header": "AnotherValue",
+  };
+
+  const ws = new WebSocket(server.url, [], {
+    finishRequest: req => {
+      Object.entries(customHeaders).forEach(([key, value]) => {
+        req.setHeader(key, value);
+      });
+      req.end();
+    },
+  });
+
+  ws.once("open", () => {
+    ws.send("Hello");
+    ws.close();
+    resolve();
+  });
+
+  await promise;
+});
+
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
   it(
     label,

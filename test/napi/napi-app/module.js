@@ -56,6 +56,14 @@ nativeTests.test_get_property = () => {
     {
       set foo(newValue) {},
     },
+    new Proxy(
+      {},
+      {
+        get(_target, key) {
+          throw new Error(`proxy get ${key}`);
+        },
+      },
+    ),
   ];
   const keys = [
     "foo",

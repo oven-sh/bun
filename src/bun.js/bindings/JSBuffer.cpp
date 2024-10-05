@@ -72,6 +72,7 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+#include "NodeValidator.h"
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
@@ -90,6 +91,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_from);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
@@ -776,6 +778,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(normalizeCompareVal(result, sourceLength, targetLength))));
 }
+
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -881,6 +884,67 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     }
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::JSValue(outBuffer)));
+}
+
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto viewValue = callFrame->argument(0);
+    auto view = jsDynamicCast<JSArrayBufferView*>(viewValue);
+    if (!view) {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "view"_s, "TypedArray"_s, viewValue);
+    }
+
+    auto ty = JSC::typedArrayType(view->type());
+    if (!JSC::isTypedView(ty)) {
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "view"_s, "TypedArray"_s, viewValue);
+    }
+
+    auto viewLength = view->length();
+    if (viewLength == 0) {
+        return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
+    }
+
+    auto offsetValue = callFrame->argument(1);
+    double offset;
+
+    auto lengthValue = callFrame->argument(2);
+    double length;
+
+    if (!offsetValue.isUndefined() || !lengthValue.isUndefined()) {
+        if (!offsetValue.isUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, offsetValue, jsString(vm, String("offset"_s)), jsNumber(0), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
+            offset = offsetValue.asNumber();
+            if (offset >= viewLength) return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
+        } else {
+            offset = 0;
+        }
+
+        double end = 0;
+        if (!lengthValue.isUndefined()) {
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, lengthValue, jsString(vm, String("length"_s)), jsNumber(0), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
+            length = lengthValue.asNumber();
+            end = offset + length;
+        } else {
+            end = viewLength;
+        }
+        end = std::min(end, (double)viewLength);
+
+        auto elemSize = JSC::elementSize(ty);
+        auto offset_r = offset * elemSize;
+        auto end_r = end * elemSize;
+        auto span = view->span().subspan(offset_r, end_r - offset_r);
+        return JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size()));
+    }
+
+    auto boffset = view->byteOffset();
+    auto blength = view->byteLength();
+    auto span = view->span().subspan(boffset, blength - boffset);
+    return JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size()));
 }
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -1943,6 +2007,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_concat, (JSGlobalObject * l
     return jsBufferConstructorFunction_concatBody(lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return jsBufferConstructorFunction_copyBytesFromBody(lexicalGlobalObject, callFrame);
+}
+
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
@@ -2259,6 +2328,7 @@ const ClassInfo JSBufferPrototype::s_info = {
     byteLength      jsBufferConstructorFunction_byteLength         Function 2
     compare         jsBufferConstructorFunction_compare            Function 2
     concat          jsBufferConstructorFunction_concat             Function 2
+    copyBytesFrom   jsBufferConstructorFunction_copyBytesFrom      Function 1
     from            JSBuiltin                                      Builtin|Function 1
     isBuffer        JSBuiltin                                      Builtin|Function 1
     isEncoding      jsBufferConstructorFunction_isEncoding         Function 1

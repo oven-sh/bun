@@ -1,30 +1,30 @@
 #pragma once
 #include "root.h"
 #include "headers-handwritten.h"
-#include "KitDevGlobalObject.h"
+#include "BakeDevGlobalObject.h"
 #include "JavaScriptCore/SourceOrigin.h"
 
-namespace Kit {
+namespace Bake {
 
 struct LoadServerCodeResult {
   JSC::JSInternalPromise* promise;
   JSC::JSString* key;
 };
 
-class KitSourceProvider final : public JSC::StringSourceProvider {
+class DevSourceProvider final : public JSC::StringSourceProvider {
 public:
-    static Ref<KitSourceProvider> create(
+    static Ref<DevSourceProvider> create(
       const String& source,
       const JSC::SourceOrigin& sourceOrigin,
       String&& sourceURL,
       const TextPosition& startPosition,
       JSC::SourceProviderSourceType sourceType
     ) {
-        return adoptRef(*new KitSourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
+        return adoptRef(*new DevSourceProvider(source, sourceOrigin, WTFMove(sourceURL), startPosition, sourceType));
     }
 
 private:
-  KitSourceProvider(
+  DevSourceProvider(
     const String& source,
     const JSC::SourceOrigin& sourceOrigin,
     String&& sourceURL,
@@ -41,8 +41,8 @@ private:
 };
 
 // Zig API
-extern "C" LoadServerCodeResult KitLoadInitialServerCode(DevGlobalObject* global, BunString source);
-extern "C" JSC::EncodedJSValue KitLoadServerHmrPatch(DevGlobalObject* global, BunString source);
-extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(DevGlobalObject* global, JSC::JSString* encodedModule);
+extern "C" LoadServerCodeResult BakeLoadInitialServerCode(DevGlobalObject* global, BunString source);
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(DevGlobalObject* global, BunString source);
+extern "C" JSC::EncodedJSValue BakeGetRequestHandlerFromModule(DevGlobalObject* global, JSC::JSString* encodedModule);
 
-} // namespace Kit
+} // namespace Bake

@@ -298,6 +298,9 @@ pub const Property = union(PropertyIdTag) {
     @"border-bottom": BorderBottom,
     @"border-left": BorderLeft,
     @"border-right": BorderRight,
+    @"outline-color": CssColor,
+    @"text-decoration-color": struct { CssColor, VendorPrefix },
+    @"text-emphasis-color": struct { CssColor, VendorPrefix },
     composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
@@ -701,6 +704,27 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"outline-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-color" = c } };
+                    }
+                }
+            },
+            .@"text-decoration-color" => |pre| {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-color" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"text-emphasis-color" => |pre| {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-emphasis-color" = .{ c, pre } } };
+                    }
+                }
+            },
             .composes => {
                 if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -788,6 +812,9 @@ pub const Property = union(PropertyIdTag) {
             .@"border-bottom" => .{ "border-bottom", VendorPrefix{ .none = true } },
             .@"border-left" => .{ "border-left", VendorPrefix{ .none = true } },
             .@"border-right" => .{ "border-right", VendorPrefix{ .none = true } },
+            .@"outline-color" => .{ "outline-color", VendorPrefix{ .none = true } },
+            .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
+            .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
@@ -860,6 +887,9 @@ pub const Property = union(PropertyIdTag) {
             .@"border-bottom" => |*value| value.toCss(W, dest),
             .@"border-left" => |*value| value.toCss(W, dest),
             .@"border-right" => |*value| value.toCss(W, dest),
+            .@"outline-color" => |*value| value.toCss(W, dest),
+            .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
+            .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
@@ -954,6 +984,9 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-bottom",
     @"border-left",
     @"border-right",
+    @"outline-color",
+    @"text-decoration-color": VendorPrefix,
+    @"text-emphasis-color": VendorPrefix,
     composes,
     all,
     unparsed,
@@ -1025,6 +1058,9 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom" => VendorPrefix.empty(),
             .@"border-left" => VendorPrefix.empty(),
             .@"border-right" => VendorPrefix.empty(),
+            .@"outline-color" => VendorPrefix.empty(),
+            .@"text-decoration-color" => |p| p,
+            .@"text-emphasis-color" => |p| p,
             .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
@@ -1200,6 +1236,15 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-right";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"outline-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-decoration-color")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-emphasis-color")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
@@ -1268,6 +1313,9 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom" => .@"border-bottom",
             .@"border-left" => .@"border-left",
             .@"border-right" => .@"border-right",
+            .@"outline-color" => .@"outline-color",
+            .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
+            .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
             .composes => .composes,
             else => this.*,
         };
@@ -1343,6 +1391,13 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-bottom" => {},
             .@"border-left" => {},
             .@"border-right" => {},
+            .@"outline-color" => {},
+            .@"text-decoration-color" => |*p| {
+                p.insert(pre);
+            },
+            .@"text-emphasis-color" => |*p| {
+                p.insert(pre);
+            },
             .composes => {},
             else => {},
         };
@@ -1405,6 +1460,9 @@ pub const PropertyIdTag = enum(u16) {
     @"border-bottom",
     @"border-left",
     @"border-right",
+    @"outline-color",
+    @"text-decoration-color",
+    @"text-emphasis-color",
     composes,
     all,
     unparsed,

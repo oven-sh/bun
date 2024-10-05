@@ -3,14 +3,12 @@
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
 
-// TODO: rename all references from Kit to Bake
-
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-    if (!bun.FeatureFlags.kit) return .undefined;
+    if (!bun.FeatureFlags.bake) return .undefined;
 
-    KitInitProcessIdentifier();
+    BakeInitProcessIdentifier();
 
     bun.Output.warn(
         \\Be advised that Bun Bake is highly experimental, and its API
@@ -37,7 +35,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     }
 }
 
-extern fn KitInitProcessIdentifier() void;
+extern fn BakeInitProcessIdentifier() void;
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.
@@ -75,9 +73,9 @@ pub const Framework = struct {
                 .{ .code = @embedFile("./bun-framework-rsc/server.tsx") },
                 .{ .code = @embedFile("./bun-framework-rsc/ssr.tsx") },
             } else &.{
-                .{ .code = bun.runtimeEmbedFile(.src, "kit/bun-framework-rsc/client.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "kit/bun-framework-rsc/server.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "kit/bun-framework-rsc/ssr.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-rsc/client.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-rsc/server.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-rsc/ssr.tsx") },
             }) catch bun.outOfMemory(),
         };
     }
@@ -145,7 +143,7 @@ pub const Framework = struct {
 
     // TODO: This function always leaks memory.
     // `Framework` has no way to specify what is allocated, nor should it.
-    fn fromJS(opts: JSValue, global: JSC.JSGlobalObject) !Framework {
+    fn fromJS(opts: JSValue, global: *JSC.JSGlobalObject) !Framework {
         if (opts.isString()) {
             const str = opts.toBunString(global);
             defer str.deref();
@@ -165,7 +163,7 @@ pub const Framework = struct {
                         global.throwInvalidArguments("Missing 'framework.serverEntryPoint'", .{});
                     return error.JSError;
                 };
-                const str = prop.toBunString();
+                const str = prop.toBunString(global);
                 defer str.deref();
 
                 if (global.hasException())
@@ -180,7 +178,7 @@ pub const Framework = struct {
                         global.throwInvalidArguments("Missing 'framework.clientEntryPoint'", .{});
                     return error.JSError;
                 };
-                const str = prop.toBunString();
+                const str = prop.toBunString(global);
                 defer str.deref();
 
                 if (global.hasException())
@@ -213,6 +211,7 @@ pub const Framework = struct {
                 if (rfr == .null or rfr == .undefined) break :sc null;
 
                 break :sc .{
+                    .client_runtime_import = "",
                     .separate_ssr_graph = brk: {
                         const prop: JSValue = opts.get(global, "separateSSRGraph") orelse {
                             if (!global.hasException())
@@ -230,7 +229,7 @@ pub const Framework = struct {
                                 global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                             return error.JSError;
                         };
-                        const str = prop.toBunString();
+                        const str = prop.toBunString(global);
                         defer str.deref();
 
                         if (global.hasException())
@@ -245,7 +244,7 @@ pub const Framework = struct {
                                 global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
                             return error.JSError;
                         };
-                        const str = prop.toBunString();
+                        const str = prop.toBunString(global);
                         defer str.deref();
 
                         if (global.hasException())
@@ -291,15 +290,19 @@ fn devServerOptionsFromJs(global: *JSC.JSGlobalObject, options: JSValue) !DevSer
         };
     }
 
+    const framework_js = options.get(global, "framework") orelse {
+        return error.Invalid;
+    };
+    const framework = try Framework.fromJS(framework_js, global);
     return .{
         .cwd = bun.getcwdAlloc(bun.default_allocator) catch bun.outOfMemory(),
         .routes = routes,
-        .framework = Framework.react(),
+        .framework = framework,
     };
 }
 
 export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
-    if (!bun.FeatureFlags.kit) return .undefined;
+    if (!bun.FeatureFlags.bake) return .undefined;
     return JSC.JSFunction.create(global, "wipDevServer", bun.JSC.toJSHostFunction(jsWipDevServer), 0, .{});
 }
 
@@ -319,11 +322,11 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
 pub fn getHmrRuntime(mode: Side) []const u8 {
     return if (Environment.embed_code)
         switch (mode) {
-            .client => @embedFile("kit-codegen/kit.client.js"),
-            .server => @embedFile("kit-codegen/kit.server.js"),
+            .client => @embedFile("bake-codegen/bake.client.js"),
+            .server => @embedFile("bake-codegen/bake.server.js"),
         }
     else switch (mode) {
-        inline else => |m| bun.runtimeEmbedFile(.codegen, "kit." ++ @tagName(m) ++ ".js"),
+        inline else => |m| bun.runtimeEmbedFile(.codegen, "bake." ++ @tagName(m) ++ ".js"),
     };
 }
 
@@ -367,14 +370,14 @@ pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
-    .index = bun.JSAst.Index.kit_server_data,
+    .index = bun.JSAst.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .contents = "", // Virtual
-    .index = bun.JSAst.Index.kit_client_data,
+    .index = bun.JSAst.Index.bake_client_data,
 };
 
 pub const DevServer = @import("./DevServer.zig");

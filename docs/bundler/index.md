@@ -751,7 +751,7 @@ $ bun build ./index.tsx --outdir ./out --external '*'
 
 ### `packages`
 
-Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun threats any import which path do not start with `.`, `..` or `/` as package.
+Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun treats any import which path do not start with `.`, `..` or `/` as package.
 
 {% codetabs group="a" %}
 
@@ -1086,6 +1086,24 @@ await Bun.build({
 
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
+```
+
+{% /codetabs %}
+
+### `experimentalCss`
+
+Whether to enable *experimental* support for bundling CSS files. Defaults to `false`.
+
+This supports bundling CSS files imported from JS, as well as CSS entrypoints.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+const result = await Bun.build({
+  entrypoints: ["./index.ts"],
+  experimentalCss: true,
+});
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
 
 {% /codetabs %}

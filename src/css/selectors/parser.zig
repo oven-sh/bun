@@ -1663,6 +1663,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
                 .combinator => return try writer.print("combinator={}", .{this.combinator}),
+                .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -2103,6 +2104,10 @@ pub const PseudoElement = union(enum) {
         /// The arguments of the pseudo element function.
         arguments: css.TokenList,
     },
+
+    pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}", .{@tagName(this.*)});
+    }
 
     pub fn validAfterSlotted(this: *const PseudoElement) bool {
         return switch (this.*) {

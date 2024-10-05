@@ -1,13 +1,13 @@
-#include "KitDevGlobalObject.h"
+#include "BakeDevGlobalObject.h"
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "ProcessIdentifier.h"
 #include "headers-handwritten.h"
 
-namespace Kit {
+namespace Bake {
 
-extern "C" void KitInitProcessIdentifier() {
+extern "C" void BakeInitProcessIdentifier() {
   // assert is on main thread
   WebCore::Process::identifier();
 }
@@ -74,8 +74,8 @@ void DevGlobalObject::finishCreation(JSC::VM &vm) {
 extern "C" BunVirtualMachine *Bun__getVM();
 
 // A lot of this function is taken from 'Zig__GlobalObject__create'
-extern "C" DevGlobalObject *KitCreateDevGlobal(DevServer *owner,
-                                               void *console) {
+extern "C" DevGlobalObject *BakeCreateDevGlobal(DevServer *owner,
+                                                void *console) {
   JSC::VM &vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
   vm.heap.acquireAccess();
   JSC::JSLockHolder locker(vm);
@@ -111,4 +111,4 @@ extern "C" DevGlobalObject *KitCreateDevGlobal(DevServer *owner,
   return global;
 }
 
-}; // namespace Kit
+}; // namespace Bake

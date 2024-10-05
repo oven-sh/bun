@@ -880,25 +880,35 @@ fn parse_at_rule(
                     .result => |v| v,
                     .err => break :out,
                 };
-                if (tok.* != .open_curly and tok.* != .semicolon) unreachable;
+                if (tok.* != .open_curly and tok.* != .semicolon) bun.unreachablePanic("Should have consumed these delimiters", .{});
                 break :out;
             }
             return .{ .err = e };
         },
     };
     const next = switch (input.next()) {
-        .result => |v| v,
+        .result => |v| v.*,
         .err => {
             return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-                .result => |v| .{ .result = v },
-                .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
             };
         },
     };
-    switch (next.*) {
-        .semicolon => return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-            .result => |v| .{ .result = v },
-            .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+    switch (next) {
+        .semicolon => {
+            switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
+            }
         },
         .open_curly => {
             const AnotherClosure = struct {
@@ -2570,7 +2580,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
             for (this.license_comments.items) |comment| {
                 try printer.writeStr("/*");
                 try printer.writeStr(comment);
-                try printer.writeStr("*/\n");
+                try printer.writeStr("*/");
+                try printer.newline();
             }
 
             if (this.options.css_modules) |*config| {
@@ -3955,7 +3966,7 @@ const Tokenizer = struct {
     pub fn currentSourceLocation(this: *const Tokenizer) SourceLocation {
         return SourceLocation{
             .line = this.current_line_number,
-            .column = @intCast(this.position - this.current_line_start_position + 1),
+            .column = @intCast((this.position - this.current_line_start_position) + 1),
         };
     }
 
@@ -5247,6 +5258,38 @@ pub const Token = union(TokenKind) {
         return switch (this.*) {
             .bad_url, .bad_string, .close_paren, .close_square, .close_curly => true,
             else => false,
+        };
+    }
+
+    pub fn format(
+        this: *const Token,
+        comptime fmt: []const u8,
+        opts: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt; // autofix
+        _ = opts; // autofix
+        return switch (this.*) {
+            inline .ident,
+            .function,
+            .at_keyword,
+            .hash,
+            .idhash,
+            .quoted_string,
+            .bad_string,
+            .unquoted_url,
+            .bad_url,
+            .whitespace,
+            .comment,
+            => |str| {
+                try writer.print("{s} = {s}", .{ @tagName(this.*), str });
+            },
+            .delim => |d| {
+                try writer.print("'{c}'", .{@as(u8, @truncate(d))});
+            },
+            else => {
+                try writer.print("{s}", .{@tagName(this.*)});
+            },
         };
     }
 

@@ -162,7 +162,7 @@ export interface BundlerTestInput {
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
-  format?: "esm" | "cjs" | "iife" | "internal_kit_dev";
+  format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   emitDCEAnnotations?: boolean;
@@ -190,6 +190,7 @@ export interface BundlerTestInput {
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
+  experimentalCss?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -430,6 +431,7 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
+    experimentalCss,
     onAfterBundle,
     outdir,
     outfile,
@@ -653,6 +655,7 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              experimentalCss && "--experimental-css",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],

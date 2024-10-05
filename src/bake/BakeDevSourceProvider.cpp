@@ -1,5 +1,6 @@
 // clang-format off
-#include "KitSourceProvider.h"
+#include "BakeDevSourceProvider.h"
+#include "BakeDevGlobalObject.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -9,17 +10,16 @@
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
-#include "KitDevGlobalObject.h"
 
-namespace Kit {
+namespace Bake {
 
-extern "C" LoadServerCodeResult KitLoadInitialServerCode(DevGlobalObject* global, BunString source) {
-  JSC::VM&vm=global->vm();
+extern "C" LoadServerCodeResult BakeLoadInitialServerCode(DevGlobalObject* global, BunString source) {
+  JSC::VM& vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  String string = "kit://server.js"_s;
+  String string = "bake://server.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(KitSourceProvider::create(
+  JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -37,13 +37,13 @@ extern "C" LoadServerCodeResult KitLoadInitialServerCode(DevGlobalObject* global
   return { internalPromise, key };
 }
 
-extern "C" JSC::EncodedJSValue KitLoadServerHmrPatch(DevGlobalObject* global, BunString source) {
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(DevGlobalObject* global, BunString source) {
   JSC::VM&vm=global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
-  String string = "kit://server.patch.js"_s;
+  String string = "bake://server.patch.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
-  JSC::SourceCode sourceCode = JSC::SourceCode(KitSourceProvider::create(
+  JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -58,7 +58,7 @@ extern "C" JSC::EncodedJSValue KitLoadServerHmrPatch(DevGlobalObject* global, Bu
   return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(
+extern "C" JSC::EncodedJSValue BakeGetRequestHandlerFromModule(
   DevGlobalObject* global,
   JSC::JSString* key
 ) {
@@ -68,7 +68,7 @@ extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(
       vm, JSC::Identifier::fromString(global->vm(), "registry"_s)
     ));
   JSC::JSValue entry = map->get(global, key);
-  ASSERT(entry.isObject()); // should have called KitLoadServerCode and wait for that promise
+  ASSERT(entry.isObject()); // should have called BakeLoadServerCode and wait for that promise
   JSC::JSValue module = entry.getObject()->get(global, JSC::Identifier::fromString(global->vm(), "module"_s));
   ASSERT(module.isCell());
   JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
@@ -76,4 +76,4 @@ extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(
   return JSC::JSValue::encode(namespaceObject->get(global, vm.propertyNames->defaultKeyword));
 }
 
-} // namespace Kit
+} // namespace Bake

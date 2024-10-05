@@ -209,7 +209,7 @@ pub const MediaQuery = struct {
                 //
                 // Otherwise, we'd serialize media queries like "(min-width:
                 // 40px)" in "all (min-width: 40px)", which is unexpected.
-                if (this.qualifier != null or this.condition != null) {
+                if (this.qualifier != null or this.condition == null) {
                     try dest.writeStr("all");
                 }
             },
@@ -1070,12 +1070,28 @@ pub const MediaFeatureComparison = enum(u8) {
         return css.enum_property_util.asStr(@This(), this);
     }
 
-    pub fn parse(input: *css.Parser) Result(@This()) {
-        return css.enum_property_util.parse(@This(), input);
-    }
-
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+        switch (this.*) {
+            .equal => {
+                try dest.delim('-', true);
+            },
+            .@"greater-than" => {
+                try dest.delim('>', true);
+            },
+            .@"greater-than-equal" => {
+                try dest.whitespace();
+                try dest.writeStr(">=");
+                try dest.whitespace();
+            },
+            .@"less-than" => {
+                try dest.delim('<', true);
+            },
+            .@"less-than-equal" => {
+                try dest.whitespace();
+                try dest.writeStr("<=");
+                try dest.whitespace();
+            },
+        }
     }
 
     pub fn opposite(self: @This()) @This() {

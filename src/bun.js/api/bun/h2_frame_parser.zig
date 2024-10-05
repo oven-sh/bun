@@ -20,62 +20,14 @@ const BunSocket = union(enum) {
     tcp: *TCPSocket,
     tcp_writeonly: *TCPSocket,
 };
+extern fn JSC__JSGlobalObject__getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, wyHash: u64) JSC.JSValue;
 
-pub const WellKnowHeaders = bun.ComptimeStringMap(bun.String, .{
-    .{ ":authority", bun.String.static(":authority") },
-    .{ ":method", bun.String.static(":method") },
-    .{ ":path", bun.String.static(":path") },
-    .{ ":scheme", bun.String.static(":scheme") },
-    .{ ":status", bun.String.static(":status") },
-    .{ "accept-charset", bun.String.static("accept-charset") },
-    .{ "accept-encoding", bun.String.static("accept-encoding") },
-    .{ "accept-language", bun.String.static("accept-language") },
-    .{ "accept-ranges", bun.String.static("accept-ranges") },
-    .{ "accept", bun.String.static("accept") },
-    .{ "access-control-allow-origin", bun.String.static("access-control-allow-origin") },
-    .{ "age", bun.String.static("age") },
-    .{ "allow", bun.String.static("allow") },
-    .{ "authorization", bun.String.static("authorization") },
-    .{ "cache-control", bun.String.static("cache-control") },
-    .{ "content-disposition", bun.String.static("content-disposition") },
-    .{ "content-encoding", bun.String.static("content-encoding") },
-    .{ "content-language", bun.String.static("content-language") },
-    .{ "content-length", bun.String.static("content-length") },
-    .{ "content-location", bun.String.static("content-location") },
-    .{ "content-range", bun.String.static("content-range") },
-    .{ "content-type", bun.String.static("content-type") },
-    .{ "cookie", bun.String.static("cookie") },
-    .{ "date", bun.String.static("date") },
-    .{ "etag", bun.String.static("etag") },
-    .{ "expect", bun.String.static("expect") },
-    .{ "expires", bun.String.static("expires") },
-    .{ "from", bun.String.static("from") },
-    .{ "host", bun.String.static("host") },
-    .{ "if-match", bun.String.static("if-match") },
-    .{ "if-modified-since", bun.String.static("if-modified-since") },
-    .{ "if-none-match", bun.String.static("if-none-match") },
-    .{ "if-range", bun.String.static("if-range") },
-    .{ "if-unmodified-since", bun.String.static("if-unmodified-since") },
-    .{ "last-modified", bun.String.static("last-modified") },
-    .{ "link", bun.String.static("link") },
-    .{ "location", bun.String.static("location") },
-    .{ "max-forwards", bun.String.static("max-forwards") },
-    .{ "proxy-authenticate", bun.String.static("proxy-authenticate") },
-    .{ "proxy-authorization", bun.String.static("proxy-authorization") },
-    .{ "range", bun.String.static("range") },
-    .{ "referer", bun.String.static("referer") },
-    .{ "refresh", bun.String.static("refresh") },
-    .{ "retry-after", bun.String.static("retry-after") },
-    .{ "server", bun.String.static("server") },
-    .{ "set-cookie", bun.String.static("set-cookie") },
-    .{ "strict-transport-security", bun.String.static("strict-transport-security") },
-    .{ "transfer-encoding", bun.String.static("transfer-encoding") },
-    .{ "user-agent", bun.String.static("user-agent") },
-    .{ "vary", bun.String.static("vary") },
-    .{ "via", bun.String.static("via") },
-    .{ "www-authenticate", bun.String.static("www-authenticate") },
-});
-
+pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, str: []const u8) ?JSC.JSValue {
+    const hash = bun.hash(str);
+    const value = JSC__JSGlobalObject__getHTTP2CommonString(globalObject, hash);
+    if (value.isEmptyOrUndefinedOrNull()) return null;
+    return value;
+}
 const JSValue = JSC.JSValue;
 
 const BinaryType = JSC.BinaryType;
@@ -1399,7 +1351,16 @@ pub const H2FrameParser = struct {
         extra2.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra, extra2 });
     }
+    pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
+        JSC.markBinding(@src());
 
+        const ctx_value = this.strong_ctx.get() orelse return;
+        value.ensureStillAlive();
+        extra.ensureStillAlive();
+        extra2.ensureStillAlive();
+        extra3.ensureStillAlive();
+        _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra, extra2, extra3 });
+    }
     fn cork(this: *H2FrameParser) void {
         if (CORKED_H2) |corked| {
             if (@intFromPtr(corked) == @intFromPtr(this)) {
@@ -1664,13 +1625,15 @@ pub const H2FrameParser = struct {
         log("decodeHeaderBlock isSever: {}", .{this.isServer});
 
         var offset: usize = 0;
-
         const globalObject = this.handlers.globalObject;
 
-        const headers = JSC.JSValue.createEmptyObject(globalObject, 0);
-        headers.ensureStillAlive();
         const stream_id = stream.id;
-        var count: u32 = 0;
+        const headers = JSC.JSValue.createEmptyArray(globalObject, 0);
+        headers.ensureStillAlive();
+
+        var sensitiveHeaders = JSC.JSValue.jsUndefined();
+        var count: usize = 0;
+
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
@@ -1679,63 +1642,41 @@ pub const H2FrameParser = struct {
                 this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
                 return this.streams.getEntry(stream_id).?.value_ptr;
             }
-
-            if (headers.getTruthy(globalObject, header.name)) |current_value| {
-                // Duplicated of single value headers are discarded
-                if (SingleValueHeaders.has(header.name)) {
-                    continue;
-                }
-                count += 1;
-
-                if (this.maxHeaderListPairs < count) {
-                    this.rejectedStreams += 1;
-                    if (this.maxRejectedStreams <= this.rejectedStreams) {
-                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
-                    } else {
-                        this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
-                    }
-                    return this.streams.getEntry(stream_id).?.value_ptr;
-                }
-
-                var value_str = bun.String.fromUTF8(header.value);
-                const value = value_str.transferToJS(globalObject);
-
-                if (current_value.jsType().isArray()) {
-                    current_value.push(globalObject, value);
+            count += 1;
+            if (this.maxHeaderListPairs < count) {
+                this.rejectedStreams += 1;
+                if (this.maxRejectedStreams <= this.rejectedStreams) {
+                    this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
                 } else {
-                    const array = JSC.JSValue.createEmptyArray(globalObject, 2);
-                    array.putIndex(globalObject, 0, current_value);
-                    array.putIndex(globalObject, 1, value);
-                    const name = WellKnowHeaders.get(header.name) orelse bun.String.fromUTF8(header.name);
-                    defer name.deref();
-
-                    headers.put(globalObject, &name, array);
+                    this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                 }
-            } else {
-                count += 1;
-
-                if (this.maxHeaderListPairs < count) {
-                    this.rejectedStreams += 1;
-                    if (this.maxRejectedStreams <= this.rejectedStreams) {
-                        this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
-                    } else {
-                        this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
-                    }
-                    // callbacks can change the Stream ptr in this case we always return the new one
-                    return this.streams.getEntry(stream_id).?.value_ptr;
-                }
-                const name = WellKnowHeaders.get(header.name) orelse bun.String.fromUTF8(header.name);
-                defer name.deref();
-                var value_str = bun.String.fromUTF8(header.value);
-                const value = value_str.transferToJS(globalObject);
-                headers.put(globalObject, &name, value);
+                return this.streams.getEntry(stream_id).?.value_ptr;
             }
+
+            const output = brk: {
+                if (header.never_index) {
+                    if (sensitiveHeaders.isUndefined()) {
+                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders.ensureStillAlive();
+                    }
+                    break :brk sensitiveHeaders;
+                } else break :brk headers;
+            };
+
+            if (getHTTP2CommonString(globalObject, header.name)) |header_name| {
+                output.push(globalObject, header_name);
+            } else {
+                var header_name = bun.String.fromUTF8(header.name);
+                output.push(globalObject, header_name.transferToJS(globalObject));
+            }
+            var header_value = bun.String.fromUTF8(header.value);
+            output.push(globalObject, header_value.transferToJS(globalObject));
             if (offset >= payload.len) {
                 break;
             }
         }
 
-        this.dispatchWith2Extra(.onStreamHeaders, stream.getIdentifier(), headers, JSC.JSValue.jsNumber(flags));
+        this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, JSC.JSValue.jsNumber(flags));
         // callbacks can change the Stream ptr in this case we always return the new one
         return this.streams.getEntry(stream_id).?.value_ptr;
     }

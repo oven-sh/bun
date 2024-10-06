@@ -655,7 +655,10 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) JSC.JSValue {
-        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
+        const str, var bytes = bun.String.createUninitialized(.latin1, 36) catch {
+            globalThis.throwOutOfMemory();
+            return .zero;
+        };
         defer str.deref();
 
         const uuid = globalThis.bunVM().rareData().nextUUID();
@@ -668,7 +671,10 @@ pub const Crypto = struct {
         _: *Crypto,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
+        const str, var bytes = bun.String.createUninitialized(.latin1, 36) catch {
+            globalThis.throwOutOfMemory();
+            return .zero;
+        };
         defer str.deref();
 
         // randomUUID must have been called already many times before this kicks

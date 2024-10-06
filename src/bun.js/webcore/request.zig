@@ -473,7 +473,7 @@ pub const Request = struct {
                     }
 
                     if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
-                        this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
+                        this.url, const bytes = try bun.String.createUninitialized(.latin1, url_bytelength);
                         _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
@@ -483,13 +483,11 @@ pub const Request = struct {
                         };
                     } else {
                         // slow path
-                        const temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                        this.url = try bun.String.createFormat("{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
-                        }) catch bun.outOfMemory();
-                        defer bun.default_allocator.free(temp_url);
-                        this.url = bun.String.createUTF8(temp_url);
+                        });
                     }
 
                     const href = bun.JSC.URL.hrefFromString(this.url);

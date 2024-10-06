@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_HTTPPARSER_H
 #define UWS_HTTPPARSER_H
 
@@ -211,18 +211,18 @@ namespace uWS
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
-        /* Returns UINT_MAX on error. Maximum 999999999 is allowed. */
+        /* Returns UINT_MAX on error. Maximum 999999999999999999 is allowed. */
         static uint64_t toUnsignedInteger(std::string_view str) {
             /* We assume at least 64-bit integer giving us safely 999999999999999999 (18 number of 9s) */
             if (str.length() > 18) {
-                return UINT_MAX;
+                return UINT64_MAX;
             }
 
             uint64_t unsignedIntegerValue = 0;
             for (char c : str) {
                 /* As long as the letter is 0-9 we cannot overflow. */
                 if (c < '0' || c > '9') {
-                    return UINT_MAX;
+                    return UINT64_MAX;
                 }
                 unsignedIntegerValue = unsignedIntegerValue * 10ull + ((unsigned int) c - (unsigned int) '0');
             }
@@ -612,7 +612,7 @@ namespace uWS
                 else if (contentLengthString.length())
                 {
                     remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                    if (remainingStreamingBytes == UINT_MAX)
+                    if (remainingStreamingBytes == UINT64_MAX)
                     {
                         /* Parser error */
                         return {0, FULLPTR};

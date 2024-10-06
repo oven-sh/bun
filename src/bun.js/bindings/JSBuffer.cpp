@@ -73,7 +73,6 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
-#include "NodeValidator.h"
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>

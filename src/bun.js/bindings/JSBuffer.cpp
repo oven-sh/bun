@@ -893,6 +893,9 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto viewValue = callFrame->argument(0);
+    auto offsetValue = callFrame->argument(1);
+    auto lengthValue = callFrame->argument(2);
+
     auto view = jsDynamicCast<JSArrayBufferView*>(viewValue);
     if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "view"_s, "TypedArray"_s, viewValue);
@@ -905,10 +908,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
         return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));
     }
 
-    auto offsetValue = callFrame->argument(1);
     double offset;
-
-    auto lengthValue = callFrame->argument(2);
     double length;
 
     if (!offsetValue.isUndefined() || !lengthValue.isUndefined()) {

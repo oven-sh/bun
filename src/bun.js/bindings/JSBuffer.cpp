@@ -899,9 +899,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
     }
 
     auto ty = JSC::typedArrayType(view->type());
-    if (!JSC::isTypedView(ty)) {
-        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "view"_s, "TypedArray"_s, viewValue);
-    }
 
     auto viewLength = view->length();
     if (viewLength == 0) {

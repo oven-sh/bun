@@ -5875,7 +5875,7 @@ pub const NodeHTTPResponse = struct {
     }
 
     fn handleEndedIfNecessary(state: uws.State, globalObject: *JSC.JSGlobalObject) bool {
-        if (state.isHttpEndCalled()) {
+        if (!state.isResponsePending()) {
             globalObject.ERR_HTTP_HEADERS_SENT("Stream is already ended", .{}).throw();
             return true;
         }
@@ -6110,7 +6110,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         const state = this.response.state();
-        if (state.isHttpEndCalled()) {
+        if (!state.isResponsePending()) {
             globalObject.ERR_STREAM_WRITE_AFTER_END("Stream already ended", .{}).throw();
             return .zero;
         }
@@ -6118,7 +6118,7 @@ pub const NodeHTTPResponse = struct {
         const input_value = if (arguments.len > 0) arguments[0] else .undefined;
         var encoding_value = if (arguments.len > 1) arguments[1] else .undefined;
         const callback_value = brk: {
-            if (encoding_value != .undefined and encoding_value.isCallable(globalObject.vm())) {
+            if ((encoding_value != .null and encoding_value != .undefined) and encoding_value.isCallable(globalObject.vm())) {
                 encoding_value = .undefined;
                 break :brk arguments[1];
             }
@@ -6135,9 +6135,8 @@ pub const NodeHTTPResponse = struct {
         };
 
         const string_or_buffer: JSC.Node.StringOrBuffer = brk: {
-            if (input_value == .null) {
-                globalObject.ERR_STREAM_NULL_VALUES("Cannot write null value to stream", .{}).throw();
-                return .zero;
+            if (input_value == .null or input_value == .undefined) {
+                break :brk JSC.Node.StringOrBuffer.empty;
             }
 
             var encoding: JSC.Node.Encoding = .utf8;
@@ -6177,7 +6176,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         if (is_end and bytes.len == 0 and write_offset == 0) {
-            this.response.endWithoutBody(state.isHttpConnectionClose());
+            this.response.endStream(state.isHttpConnectionClose());
             this.onRequestComplete();
             return JSC.JSValue.jsNumberFromInt32(0);
         }

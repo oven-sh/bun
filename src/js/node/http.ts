@@ -1341,10 +1341,13 @@ const ServerResponsePrototype = {
       return this;
     }
 
+    if (!$isCallable(callback) && callback !== undefined) {
+      callback = undefined;
+    }
+
     const handle = this[kHandle];
     if (handle) {
       const headerState = this[headerStateSymbol];
-
       if (headerState !== NodeHTTPHeaderState.sent) {
         handle.cork(() => {
           handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -1354,11 +1357,12 @@ const ServerResponsePrototype = {
           this[headerStateSymbol] = NodeHTTPHeaderState.sent;
 
           // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-          this._contentLength = handle.end(chunk, encoding, callback);
+          this._contentLength = handle.end(chunk, encoding);
         });
       } else {
-        handle.end(chunk, encoding, callback);
+        handle.end(chunk, encoding);
       }
+      this.finished = true;
     }
 
     return this;
@@ -1384,6 +1388,10 @@ const ServerResponsePrototype = {
 
     let result = 0;
 
+    if (!$isCallable(callback)) {
+      callback = undefined;
+    }
+
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
         handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
@@ -1407,7 +1415,8 @@ const ServerResponsePrototype = {
       return false;
     }
 
-    this.emit("drain");
+    if (result > 0) this.emit("drain");
+
     return true;
   },
 

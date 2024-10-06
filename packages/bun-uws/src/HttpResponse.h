@@ -440,7 +440,7 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED))) {
             /* Write mark on first call to write */
             writeMark();
 
@@ -469,7 +469,7 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED))) {
             /* Write mark on first call to write */
             writeMark();
 
@@ -477,9 +477,14 @@ public:
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
+        
         Super::write("\r\n", 2);
-        writeUnsignedHex((unsigned int) data.length());
-        Super::write("\r\n", 2);
+        
+        // This happens if they call send, include a content-length header
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            writeUnsignedHex((unsigned int) data.length());
+            Super::write("\r\n", 2);
+        }
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());
         /* Reset timeout on each sended chunk */

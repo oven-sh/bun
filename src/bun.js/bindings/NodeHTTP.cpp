@@ -504,10 +504,42 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         }
     }
 
+    auto* data = res->getHttpResponseData();
+
     for (const auto& header : internalHeaders.commonHeaders()) {
+
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
 
+        // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
+        // Otherwise, you get this when using Fastify;
+        //
+        // ❯ curl http://localhost:3000 --verbose
+        // *   Trying [::1]:3000...
+        // * Connected to localhost (::1) port 3000
+        // > GET / HTTP/1.1
+        // > Host: localhost:3000
+        // > User-Agent: curl/8.4.0
+        // > Accept: */*
+        // >
+        // < HTTP/1.1 200 OK
+        // < Content-Type: application/json; charset=utf-8
+        // < Content-Length: 17
+        // < Date: Sun, 06 Oct 2024 13:37:01 GMT
+        // < Transfer-Encoding: chunked
+        // <
+        //
+        if (header.key == WebCore::HTTPHeaderName::ContentLength) {
+            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_END_CALLED)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_END_CALLED;
+                res->writeMark();
+            }
+        } else if (header.key == WebCore::HTTPHeaderName::TransferEncoding || header.key == WebCore::HTTPHeaderName::Date) {
+            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WRITE_CALLED)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WRITE_CALLED;
+                res->writeMark();
+            }
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 

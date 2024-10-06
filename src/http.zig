@@ -1400,6 +1400,7 @@ pub fn onClose(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Closed  {s}\n", .{client.url.href});
+    const was_connected = socket.socket == .done;
     // the socket is closed, we need to unregister the abort tracker
     client.unregisterAbortTracker();
 
@@ -1444,7 +1445,11 @@ pub fn onClose(
     }
 
     if (in_progress) {
-        client.fail(error.ConnectionClosed);
+        if (was_connected) {
+            client.fail(error.ConnectionClosed);
+        } else {
+            client.fail(error.ConnectionFailed);
+        }
     }
 }
 pub fn onTimeout(

@@ -110,11 +110,13 @@ test("Buffer copy operations", () => {
   expect(() => b.copy(c, 0, 100, 10)).not.toThrow();
 
   // Throw with invalid source type
-  expect(() => Buffer.prototype.copy.call(0)).toThrow({
-    code: "ERR_INVALID_THIS", //TODO:"ERR_INVALID_ARG_TYPE",
-    name: "TypeError",
-    message: expect.any(String),
-  });
+  expect(() => Buffer.prototype.copy.call(0)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_THIS", //TODO:"ERR_INVALID_ARG_TYPE",
+      name: "TypeError",
+      message: expect.any(String),
+    }),
+  );
 
   // Copy throws at negative targetStart
   expect(() => Buffer.allocUnsafe(10).copy(Buffer.allocUnsafe(5), -1, 0)).toThrow({

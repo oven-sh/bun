@@ -262,8 +262,8 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     if (num < 0) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
     if (std::isinf(num)) return 0;
     num = std::trunc(num);
-    if (num >= 0 && num <= U32_MAX) return num;
-    return 0;
+    if (num > U32_MAX) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
+    return num;
 }
 
 static inline WebCore::BufferEncodingType parseEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue arg)

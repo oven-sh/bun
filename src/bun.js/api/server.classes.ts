@@ -91,6 +91,58 @@ export default [
   generate(`DebugHTTPSServer`),
 
   define({
+    name: "NodeHTTPResponse",
+    JSType: "0b11101110",
+    proto: {
+      writeHead: {
+        fn: "writeHead",
+        length: 3,
+      },
+      write: {
+        fn: "write",
+        length: 2,
+      },
+      end: {
+        fn: "end",
+        length: 2,
+      },
+      cork: {
+        fn: "cork",
+        length: 1,
+      },
+      ref: {
+        fn: "jsRef",
+      },
+      unref: {
+        fn: "jsUnref",
+      },
+      abort: {
+        fn: "abort",
+        length: 0,
+      },
+      ondata: {
+        getter: "getOnData",
+        setter: "setOnData",
+      },
+      onabort: {
+        getter: "getOnAbort",
+        setter: "setOnAbort",
+      },
+      // ontimeout: {
+      //   getter: "getOnTimeout",
+      //   setter: "setOnTimeout",
+      // },
+      onwritable: {
+        getter: "getOnWritable",
+        setter: "setOnWritable",
+      },
+    },
+    klass: {},
+    finalize: true,
+    noConstructor: true,
+  }),
+
+  define({
     name: "ServerWebSocket",
     JSType: "0b11101110",
     proto: {

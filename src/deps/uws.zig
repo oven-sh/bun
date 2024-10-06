@@ -17,6 +17,10 @@ const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
 const JSC = bun.JSC;
 const EventLoopTimer = @import("../bun.js//api//Timer.zig").EventLoopTimer;
+const WriteResult = union(enum) {
+    want_more: usize,
+    backpressure: usize,
+};
 
 pub const CloseCode = enum(i32) {
     normal = 0,
@@ -3036,11 +3040,42 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn getWriteOffset(this: AnyResponse) u64 {
+        return switch (this) {
+            .SSL => |resp| resp.getWriteOffset(),
+            .TCP => |resp| resp.getWriteOffset(),
+        };
+    }
+
+    pub fn writeContinue(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeContinue(),
+            .TCP => |resp| resp.writeContinue(),
+        };
+    }
+
+    pub fn state(this: AnyResponse) State {
+        return switch (this) {
+            .SSL => |resp| resp.state(),
+            .TCP => |resp| resp.state(),
+        };
+    }
+
     pub fn timeout(this: AnyResponse, seconds: u8) void {
         switch (this) {
             .SSL => |resp| resp.timeout(seconds),
             .TCP => |resp| resp.timeout(seconds),
         }
+    }
+
+    pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, opcional_data: UserDataType) void {
+        return switch (this) {
+            inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
+                pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
+                    @call(.always_inline, handler, .{ user_data, data, last });
+                }
+            }.onDataCallback, opcional_data),
+        };
     }
 
     pub fn writeStatus(this: AnyResponse, status: []const u8) void {
@@ -3057,7 +3092,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn write(this: AnyResponse, data: []const u8) void {
+    pub fn write(this: AnyResponse, data: []const u8) WriteResult {
         return switch (this) {
             .SSL => |resp| resp.write(data),
             .TCP => |resp| resp.write(data),
@@ -3526,8 +3561,12 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn resetTimeout(res: *Response) void {
                 uws_res_reset_timeout(ssl_flag, res.downcast());
             }
-            pub fn write(res: *Response, data: []const u8) bool {
-                return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
+            pub fn write(res: *Response, data: []const u8) WriteResult {
+                var len: usize = data.len;
+                return switch (uws_res_write(ssl_flag, res.downcast(), data.ptr, &len)) {
+                    true => .{ .want_more = len },
+                    false => .{ .backpressure = len },
+                };
             }
             pub fn getWriteOffset(res: *Response) u64 {
                 return uws_res_get_write_offset(ssl_flag, res.downcast());
@@ -3952,7 +3991,7 @@ extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bo
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
 extern fn uws_res_reset_timeout(ssl: i32, res: *uws_res) void;
-extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
+extern fn uws_res_write(ssl: i32, res: *uws_res, data: ?[*]const u8, length: *usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;

@@ -94,6 +94,164 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
+static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::string_view fullURLStdStr = request->getFullUrl();
+    String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length() });
+
+    // Get the URL.
+    {
+        args.append(jsString(vm, fullURL));
+    }
+
+    // Get the method.
+    {
+        std::string_view methodView = request->getMethod();
+        WTF::String methodString;
+        switch (methodView.length()) {
+        case 3: {
+            if (methodView == std::string_view("get", 3)) {
+                methodString = "GET"_s;
+                break;
+            }
+            if (methodView == std::string_view("put", 3)) {
+                methodString = "PUT"_s;
+                break;
+            }
+
+            break;
+        }
+        case 4: {
+            if (methodView == std::string_view("post", 4)) {
+                methodString = "POST"_s;
+                break;
+            }
+            if (methodView == std::string_view("head", 4)) {
+                methodString = "HEAD"_s;
+                break;
+            }
+
+            if (methodView == std::string_view("copy", 4)) {
+                methodString = "COPY"_s;
+                break;
+            }
+        }
+
+        case 5: {
+            if (methodView == std::string_view("patch", 5)) {
+                methodString = "PATCH"_s;
+                break;
+            }
+            if (methodView == std::string_view("merge", 5)) {
+                methodString = "MERGE"_s;
+                break;
+            }
+            if (methodView == std::string_view("trace", 5)) {
+                methodString = "TRACE"_s;
+                break;
+            }
+            if (methodView == std::string_view("fetch", 5)) {
+                methodString = "FETCH"_s;
+                break;
+            }
+            if (methodView == std::string_view("purge", 5)) {
+                methodString = "PURGE"_s;
+                break;
+            }
+
+            break;
+        }
+
+        case 6: {
+            if (methodView == std::string_view("delete", 6)) {
+                methodString = "DELETE"_s;
+                break;
+            }
+
+            break;
+        }
+
+        case 7: {
+            if (methodView == std::string_view("connect", 7)) {
+                methodString = "CONNECT"_s;
+                break;
+            }
+            if (methodView == std::string_view("options", 7)) {
+                methodString = "OPTIONS"_s;
+                break;
+            }
+
+            break;
+        }
+        }
+
+        if (methodString.isNull()) {
+            methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(methodView.data()), methodView.length() });
+        }
+
+        args.append(jsString(vm, methodString));
+    }
+
+    size_t size = 0;
+    for (auto it = request->begin(); it != request->end(); ++it) {
+        size++;
+    }
+
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
+    RETURN_IF_EXCEPTION(scope, void());
+    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, size * 2);
+    JSC::JSArray* setCookiesHeaderArray = nullptr;
+    JSC::JSString* setCookiesHeaderString = nullptr;
+
+    args.append(headersObject);
+    args.append(array);
+
+    unsigned i = 0;
+
+    for (auto it = request->begin(); it != request->end(); ++it) {
+        auto pair = *it;
+        StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
+        LChar* data = nullptr;
+        auto value = String::createUninitialized(pair.second.length(), data);
+        if (pair.second.length() > 0)
+            memcpy(data, pair.second.data(), pair.second.length());
+
+        HTTPHeaderName name;
+        WTF::String nameString;
+        WTF::String lowercasedNameString;
+
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            nameString = WTF::httpHeaderNameStringImpl(name);
+            lowercasedNameString = nameString;
+        } else {
+            nameString = nameView.toString();
+            lowercasedNameString = nameString.convertToASCIILowercase();
+        }
+
+        JSString* jsValue = jsString(vm, value);
+
+        if (name == WebCore::HTTPHeaderName::SetCookie) {
+            if (!setCookiesHeaderArray) {
+                setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
+                setCookiesHeaderString = jsString(vm, nameString);
+                headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), setCookiesHeaderArray, 0);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            array->putDirectIndex(globalObject, i++, setCookiesHeaderString);
+            array->putDirectIndex(globalObject, i++, jsValue);
+            setCookiesHeaderArray->push(globalObject, jsValue);
+            RETURN_IF_EXCEPTION(scope, void());
+
+        } else {
+            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
+            array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
+            array->putDirectIndex(globalObject, i++, jsValue);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+}
+
 // This is an 8% speedup.
 static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -255,6 +413,219 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     tuple->putInternalField(vm, 1, array);
 
     return JSValue::encode(tuple);
+}
+
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void** nodeHttpResponsePtr);
+
+template<bool isSSL>
+static EncodedJSValue NodeHTTPServer__onRequest(
+    JSC::JSGlobalObject* globalObject,
+    JSValue thisValue,
+    JSValue callback,
+    uWS::HttpRequest* request,
+    uWS::HttpResponse<isSSL>* response,
+    void** nodeHttpResponsePtr)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* callbackObject = jsCast<JSObject*>(callback);
+    MarkedArgumentBuffer args;
+    args.append(thisValue);
+
+    assignHeadersFromUWebSocketsForCall(request, args, globalObject, vm);
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        response->endWithoutBody();
+        scope.clearException();
+        return JSValue::encode(exception);
+    }
+
+    int hasBody = 0;
+    EncodedJSValue nodehttpobjectValue = NodeHTTPResponse__createForJS(globalObject, &hasBody, request, isSSL, response, nodeHttpResponsePtr);
+
+    JSC::CallData callData = getCallData(callbackObject);
+    args.append(JSValue::decode(nodehttpobjectValue));
+    args.append(jsBoolean(hasBody));
+
+    WTF::NakedPtr<JSC::Exception> exception;
+    JSValue returnValue = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, jsUndefined(), args, exception);
+    if (exception) {
+        auto* ptr = exception.get();
+        exception.clear();
+        return JSValue::encode(ptr);
+    }
+
+    return JSValue::encode(returnValue);
+}
+
+template<bool isSSL>
+static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::StringView& name, const WTF::StringView& value)
+{
+    WTF::CString nameStr;
+    WTF::CString valueStr;
+
+    std::string_view nameView;
+    std::string_view valueView;
+
+    if (name.is8Bit()) {
+        const auto nameSpan = name.span8();
+        ASSERT(name.containsOnlyASCII());
+        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
+    } else {
+        nameStr = name.utf8();
+        nameView = std::string_view(nameStr.data(), nameStr.length());
+    }
+
+    if (value.is8Bit()) {
+        const auto valueSpan = value.span8();
+        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
+    } else {
+        valueStr = value.utf8();
+        valueView = std::string_view(valueStr.data(), valueStr.length());
+    }
+
+    res->writeHeader(nameView, valueView);
+}
+
+template<bool isSSL>
+static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
+{
+    auto& internalHeaders = headers.internalHeaders();
+
+    for (auto& value : internalHeaders.getSetCookieHeaders()) {
+
+        if (value.is8Bit()) {
+            const auto valueSpan = value.span8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
+        } else {
+            WTF::CString valueStr = value.utf8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
+        }
+    }
+
+    for (const auto& header : internalHeaders.commonHeaders()) {
+        const auto& name = WebCore::httpHeaderNameString(header.key);
+        const auto& value = header.value;
+
+        writeResponseHeader<isSSL>(res, name, value);
+    }
+
+    for (auto& header : internalHeaders.uncommonHeaders()) {
+        const auto& name = header.key;
+        const auto& value = header.value;
+
+        writeResponseHeader<isSSL>(res, name, value);
+    }
+}
+
+template<bool isSSL>
+static void NodeHTTPServer__writeHead(
+    JSC::JSGlobalObject* globalObject,
+    const char* statusMessage,
+    size_t statusMessageLength,
+    JSValue headersObjectValue,
+    uWS::HttpResponse<isSSL>* response)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* headersObject = headersObjectValue.getObject();
+    response->writeStatus(std::string_view(statusMessage, statusMessageLength));
+
+    if (headersObject) {
+        if (auto* fetchHeaders = jsDynamicCast<WebCore::JSFetchHeaders*>(headersObject)) {
+            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            return;
+        }
+
+        if (UNLIKELY(headersObject->hasNonReifiedStaticProperties())) {
+            headersObject->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+
+        auto* structure = headersObject->structure();
+
+        if (structure->canPerformFastPropertyEnumeration()) {
+            structure->forEachProperty(vm, [&](const auto& entry) {
+                JSValue headerValue = headersObject->getDirect(entry.offset());
+                if (!headerValue.isString()) {
+
+                    return true;
+                }
+
+                String key = entry.key();
+                String value = headerValue.toWTFString(globalObject);
+                if (scope.exception()) {
+                    return false;
+                }
+
+                writeResponseHeader<isSSL>(response, key, value);
+
+                return true;
+            });
+        } else {
+            PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            for (unsigned i = 0; i < propertyNames.size(); ++i) {
+                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
+                if (!headerValue.isString()) {
+                    continue;
+                }
+
+                String key = propertyNames[i].string();
+                String value = headerValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                writeResponseHeader<isSSL>(response, key, value);
+            }
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, void());
+}
+
+extern "C" void NodeHTTPServer__writeHead_http(
+    JSC::JSGlobalObject* globalObject,
+    const char* statusMessage,
+    size_t statusMessageLength,
+    JSValue headersObjectValue,
+    uWS::HttpResponse<false>* response)
+{
+    return NodeHTTPServer__writeHead<false>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
+}
+
+extern "C" void NodeHTTPServer__writeHead_https(
+    JSC::JSGlobalObject* globalObject,
+    const char* statusMessage,
+    size_t statusMessageLength,
+    JSValue headersObjectValue,
+    uWS::HttpResponse<true>* response)
+{
+    return NodeHTTPServer__writeHead<true>(globalObject, statusMessage, statusMessageLength, headersObjectValue, response);
+}
+
+extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
+    JSC::JSGlobalObject* globalObject,
+    EncodedJSValue thisValue,
+    EncodedJSValue callback,
+    uWS::HttpRequest* request,
+    uWS::HttpResponse<false>* response,
+    void** nodeHttpResponsePtr)
+{
+    return NodeHTTPServer__onRequest<false>(globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
+}
+
+extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
+    JSC::JSGlobalObject* globalObject,
+    EncodedJSValue thisValue,
+    EncodedJSValue callback,
+    uWS::HttpRequest* request,
+    uWS::HttpResponse<true>* response,
+    void** nodeHttpResponsePtr)
+{
+    return NodeHTTPServer__onRequest<true>(globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -498,6 +869,15 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "headersTuple"_s)),
         JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get()), 0);
     return obj;
+}
+
+extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, bool is_ssl, void* arg2)
+{
+    if (is_ssl) {
+        writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+    } else {
+        writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+    }
 }
 
 } // namespace Bun

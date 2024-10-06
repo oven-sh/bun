@@ -1241,17 +1241,17 @@ extern "C"
     }
   }
 
-  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t length) nonnull_fn_decl;
+  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;
   
-  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t length)
+  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      return uwsRes->write(std::string_view(data, length));
+      return uwsRes->write(std::string_view(data, *length), length);
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    return uwsRes->write(std::string_view(data, length));
+    return uwsRes->write(std::string_view(data, *length), length);
   }
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)

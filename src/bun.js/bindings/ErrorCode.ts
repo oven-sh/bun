@@ -48,7 +48,12 @@ export default [
   ["ERR_BUFFER_OUT_OF_BOUNDS", RangeError, "RangeError"],
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
-
+  ["ERR_HTTP_HEADERS_SENT", Error, "Error"],
+  ["ERR_HTTP_BODY_NOT_ALLOWED", Error, "Error"],
+  ["ERR_HTTP_INVALID_STATUS_CODE", RangeError, "RangeError"],
+  ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError, "TypeError"],
+  ["ERR_INVALID_CHAR", TypeError, "TypeError"],
+  ["ERR_METHOD_NOT_IMPLEMENTED", Error, "Error"],
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],

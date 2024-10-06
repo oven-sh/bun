@@ -455,11 +455,14 @@ public:
     }
 
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
-    bool write(std::string_view data) {
+    bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
         if (!data.length()) {
+            if (writtenPtr) {
+                *writtenPtr = 0;
+            }
             /* If you called us, then according to you it was fine to call us so it's fine to still call us */
             return true;
         }
@@ -481,6 +484,10 @@ public:
         auto [written, failed] = Super::write(data.data(), (int) data.length());
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
+
+        if (writtenPtr) {
+            *writtenPtr = written;
+        }
 
         /* If we did not fail the write, accept more */
         return !failed;

@@ -17,6 +17,7 @@ pub const completions = struct {
     pub const bash = @embedFile("./completions/bun.bash");
     pub const zsh = @embedFile("./completions/bun.zsh");
     pub const fish = @embedFile("./completions/bun.fish");
+    pub const pwsh = @embedFile("./completions/bun.ps1");
 };
 
 pub const JavaScriptCore = @import("./src/jsc.zig");

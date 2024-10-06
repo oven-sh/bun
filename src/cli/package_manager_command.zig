@@ -25,6 +25,7 @@ const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+const Npm = Install.Npm;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -151,6 +152,18 @@ pub const PackageManagerCommand = struct {
 
         if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "whoami")) {
+            const username = Npm.whoami(ctx.allocator, pm) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.NeedAuth => {
+                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                        Global.crash();
+                    },
+                }
+            };
+            Output.println("{s}", .{username});
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "bin")) {
             const output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));

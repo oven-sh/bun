@@ -159,9 +159,14 @@ pub const PackageManagerCommand = struct {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.NeedAuth => {
                         Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
-                        Global.crash();
+                    },
+                    error.ProbablyInvalidAuth => {
+                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                            bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
+                        });
                     },
                 }
+                Global.crash();
             };
             Output.println("{s}", .{username});
             Global.exit(0);

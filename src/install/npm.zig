@@ -40,6 +40,7 @@ const Npm = @This();
 
 const WhoamiError = OOM || error{
     NeedAuth,
+    ProbablyInvalidAuth,
 };
 
 pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiError!string {
@@ -183,8 +184,8 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     };
 
     const username, _ = try json.getString(allocator, "username") orelse {
-        Output.errGeneric("response JSON missing username string field", .{});
-        Global.crash();
+        // no username, invalid auth probably
+        return error.ProbablyInvalidAuth;
     };
     return username;
 }

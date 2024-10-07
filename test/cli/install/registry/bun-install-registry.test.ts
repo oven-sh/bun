@@ -542,6 +542,105 @@ async function authBunfig(user: string) {
         `;
 }
 
+describe("whoami", async () => {
+  test("can get username", async () => {
+    const bunfig = await authBunfig("whoami");
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "whoami-pkg",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toBe("whoami\n");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
+  test("username from .npmrc", async () => {
+    // It should report the username from npmrc, even without an account
+    const bunfig = `
+    [install]
+    cache = false
+    registry = "http://localhost:${port}/"`;
+    const npmrc = `
+    //localhost:${port}/:username=whoami-npmrc
+    //localhost:${port}/:_password=123456
+    `;
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(join(packageDir, ".npmrc"), npmrc),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toBe("whoami-npmrc\n");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
+  test("not logged in", async () => {
+    await write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toBeEmpty();
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(await exited).toBe(1);
+  });
+  test("invalid token", async () => {
+    // create the user and provide an invalid token
+    const token = await generateRegistryUser("invalid-token", "invalid-token");
+    const bunfig = `
+    [install]
+    cache = false
+    registry = { url = "http://localhost:${port}/", token = "1234567" }`;
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toBeEmpty();
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
+    expect(await exited).toBe(1);
+  });
+});
+
 describe("publish", async () => {
   describe("otp", async () => {
     const mockRegistryFetch = function (opts: {

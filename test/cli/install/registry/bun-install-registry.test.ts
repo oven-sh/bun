@@ -600,6 +600,28 @@ describe("whoami", async () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+  test("only .npmrc", async () => {
+    const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
+    const npmrc = `
+    //localhost:${port}/:_authToken=${token}
+    registry=http://localhost:${port}/`;
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, ".npmrc"), npmrc),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toBe("whoami-npmrc\n");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
   test("not logged in", async () => {
     await write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
     const { stdout, stderr, exited } = spawn({

@@ -702,7 +702,7 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureAlive2(keyProp);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = toNapi(target->get(globalObject, keyProp.toPropertyKey(globalObject)), globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;
@@ -887,7 +887,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = toNapi(target->get(globalObject, name), globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;

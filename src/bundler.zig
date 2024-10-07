@@ -401,7 +401,7 @@ pub const Bundler = struct {
     }
 
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
@@ -934,11 +934,8 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (comptime bun.FeatureFlags.css) {
-                    const Arena = @import("../src/mimalloc_arena.zig").Arena;
-
-                    var arena = Arena.init() catch @panic("oopsie arena no good");
-                    const alloc = arena.allocator();
+                if (bundler.options.experimental_css) {
+                    const alloc = bundler.allocator;
 
                     const entry = bundler.resolver.caches.fs.readFileWithAllocator(
                         bundler.allocator,
@@ -953,11 +950,11 @@ pub const Bundler = struct {
                     };
                     const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                     _ = source; //
-                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log))) {
+                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| {
                             const result = v.toCss(alloc, bun.css.PrinterOptions{
                                 .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
-                            }) catch |e| {
+                            }, null) catch |e| {
                                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                                 return null;
                             };
@@ -1455,9 +1452,9 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.ParseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.ParseJSON(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

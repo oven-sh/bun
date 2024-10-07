@@ -1800,7 +1800,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  void* handleScope = NapiHandleScope__push(JS_GLOBAL_OBJECT, false);
+                    \\  void* handleScope = NapiHandleScope__open(JS_GLOBAL_OBJECT, false);
                     \\
                 );
             }
@@ -1913,7 +1913,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  NapiHandleScope__pop(JS_GLOBAL_OBJECT, handleScope);
+                    \\  NapiHandleScope__close(JS_GLOBAL_OBJECT, handleScope);
                     \\
                 );
             }
@@ -2493,8 +2493,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.TCCState) void {
         _ = TCC.tcc_add_symbol(state, "memset", &memset);
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close);
         _ = TCC.tcc_add_symbol(state, "__builtin_debugtrap", &breakpoint);
 
         _ = TCC.tcc_add_symbol(

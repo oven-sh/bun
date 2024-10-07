@@ -1138,13 +1138,18 @@ pub const Formatter = struct {
                     .Symbol => .Symbol,
                     .BooleanObject => .Boolean,
                     .JSFunction => .Function,
-                    .JSWeakMap, JSValue.JSType.JSMap => .Map,
-                    .JSMapIterator => .MapIterator,
-                    .JSSetIterator => .SetIterator,
-                    .JSWeakSet, JSValue.JSType.JSSet => .Set,
+                    .WeakMap, JSValue.JSType.Map => .Map,
+                    .MapIterator => .MapIterator,
+                    .SetIterator => .SetIterator,
+                    .WeakSet, JSValue.JSType.Set => .Set,
                     .JSDate => .JSON,
                     .JSPromise => .Promise,
 
+                    .WrapForValidIterator,
+                    .RegExpStringIterator,
+                    .JSArrayIterator,
+                    .Iterator,
+                    .IteratorHelper,
                     .Object,
                     .FinalObject,
                     .ModuleNamespaceObject,
@@ -1778,7 +1783,7 @@ pub const Formatter = struct {
 
                         writer.print(
                             comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                            .{JSPrinter.formatJSONString(key.slice())},
+                            .{bun.fmt.formatJSONString(key.slice())},
                         );
                     }
                 } else if (Environment.isDebug and is_private_symbol) {
@@ -2433,7 +2438,7 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const map_name = if (value.jsType() == .JSWeakMap) "WeakMap" else "Map";
+                const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
 
                 if (length == 0) {
                     return writer.print("{s} {{}}", .{map_name});
@@ -2541,7 +2546,7 @@ pub const Formatter = struct {
                     this.writeIndent(Writer, writer_) catch {};
                 }
 
-                const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
+                const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                 if (length == 0) {
                     return writer.print("{s} {{}}", .{set_name});

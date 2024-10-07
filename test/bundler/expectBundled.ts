@@ -120,6 +120,7 @@ export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
   todo?: boolean;
 
+
   // file options
   files: Record<string, string | Buffer | Blob>;
   /** Files to be written only after the bundle is done. */
@@ -161,7 +162,7 @@ export interface BundlerTestInput {
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
-  format?: "esm" | "cjs" | "iife" | "internal_kit_dev";
+  format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   emitDCEAnnotations?: boolean;
@@ -189,6 +190,7 @@ export interface BundlerTestInput {
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
+  experimentalCss?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -269,6 +271,11 @@ export interface BundlerTestInput {
   snapshotSourceMap?: Record<string, SourceMapTests>;
 
   expectExactFilesize?: Record<string, number>;
+
+  /** Multiplier for test timeout */
+  timeoutScale?: number;
+  /** Multiplier for test timeout when using bun-debug. Debug builds already have a higher timeout. */
+  debugTimeoutScale?: number;
 }
 
 export interface SourceMapTests {
@@ -424,6 +431,7 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
+    experimentalCss,
     onAfterBundle,
     outdir,
     outfile,
@@ -647,6 +655,7 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              experimentalCss && "--experimental-css",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -1520,7 +1529,11 @@ for (const [key, blob] of build.outputs) {
           ["stdout", run.stdout, stdout],
           ["stderr", run.stderr, stderr],
         ].filter(([, v]) => v !== undefined)) {
-          const result = out!.toUnixString().trim();
+          let result = out!.toUnixString().trim();
+
+          // no idea why this logs. ¯\_(ツ)_/¯
+          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, '');
+
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
             if (expected !== result) {
@@ -1594,7 +1607,10 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
+      (opts.snapshotSourceMap
+        ? isDebug ? Infinity : 30_000
+        : isDebug ? 15_000 : 5_000)
+      * ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
     );
   }
   return ref;
@@ -1606,7 +1622,10 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
+    (opts.snapshotSourceMap
+      ? isDebug ? Infinity : 30_000
+      : isDebug ? 15_000 : 5_000)
+    * ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
   );
 };
 

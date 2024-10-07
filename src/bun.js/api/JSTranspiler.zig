@@ -55,7 +55,6 @@ const default_transform_options: Api.TransformOptions = brk: {
     var opts = std.mem.zeroes(Api.TransformOptions);
     opts.disable_hmr = true;
     opts.target = Api.Target.browser;
-    opts.serve = false;
     break :brk opts;
 };
 

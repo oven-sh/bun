@@ -430,7 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto ty = buffer.asCell()->type();
 
     if (JSC::typedArrayType(ty) == NotTypedArray) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer, true);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
     }
     return JSValue::encode(jsUndefined());
 }

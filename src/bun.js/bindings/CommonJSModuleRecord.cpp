@@ -942,6 +942,11 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
 }
 
+void JSCommonJSModule::setExportsObject(JSC::JSValue exportsObject)
+{
+    this->putDirect(vm(), JSC::PropertyName(clientData(vm())->builtinNames().exportsPublicName()), exportsObject, 0);
+}
+
 JSValue JSCommonJSModule::exportsObject()
 {
     return this->get(globalObject(), JSC::PropertyName(clientData(vm())->builtinNames().exportsPublicName()));
@@ -1003,12 +1008,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    // Special-case for "process" to just return the process object directly.
-    if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
-        jsCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
-        return JSValue::encode(globalObject->processObject());
-    }
 
     WTF::String referrer = thisObject->id().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

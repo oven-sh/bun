@@ -72,6 +72,7 @@ pub const JSBundler = struct {
         packages: options.PackagesOption = .bundle,
         format: options.Format = .esm,
         bytecode: bool = false,
+        experimental_css: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -93,6 +94,10 @@ pub const JSBundler = struct {
             };
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
+
+            if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
+                this.experimental_css = if (enable_css.isBoolean()) enable_css.toBoolean() else false;
+            }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {

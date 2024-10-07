@@ -249,7 +249,7 @@ pub const Registry = struct {
 
         var newly_last_modified: string = "";
         var new_etag: string = "";
-        for (response.headers) |header| {
+        for (response.headers.list) |header| {
             if (!(header.name.len == "last-modified".len or header.name.len == "etag".len)) continue;
 
             const hashed = HTTPClient.hashHeaderName(header.name);
@@ -1280,7 +1280,7 @@ pub const PackageManifest = struct {
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        const json = json_parser.ParseJSONUTF8(
+        const json = json_parser.parseUTF8(
             &source,
             log,
             arena.allocator(),

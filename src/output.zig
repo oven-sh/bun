@@ -703,7 +703,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),
@@ -712,10 +712,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 
     if (comptime !Environment.isDebug and !Environment.enable_logs) {
         return struct {
-            pub fn isVisible() bool {
+            pub inline fn isVisible() bool {
                 return false;
             }
-            pub fn log(comptime _: string, _: anytype) void {}
+            pub inline fn log(comptime _: string, _: anytype) void {}
         };
     }
 
@@ -1004,12 +1004,12 @@ pub const DebugTimer = struct {
     }
 };
 
-/// Print a blue note message
+/// Print a blue note message to stderr
 pub inline fn note(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<blue>note<r><d>:<r> " ++ fmt, args);
 }
 
-/// Print a yellow warning message
+/// Print a yellow warning message to stderr
 pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }

@@ -458,7 +458,7 @@ function Server(options, callback) {
 
 function onRequestEvent(event) {
   const [server, http_res, req] = this.socket[kInternalSocketData];
-  // console.log({ event, finished: http_res[finishedSymbol] });
+
   if (!http_res[finishedSymbol]) {
     switch (event) {
       case NodeHTTPResponseAbortEvent.timeout:
@@ -713,30 +713,19 @@ Server.prototype = {
 
           http_req.once("error", errorCallback);
           http_res.once("error", errorCallback);
-          server.once("error", errorCallback);
-          http_res.once("close", closeCallback);
 
           handle.onabort = onRequestEvent.bind(http_req);
           const socket = http_req.socket;
           socket[kInternalSocketData] = [server, http_res, handle];
-
-          try {
-            server.emit("connection", socket);
-            server.emit("request", http_req, http_res);
-          } catch (err) {
-            errorCallback(err);
-          }
+          server.emit("connection", socket);
+          server.emit("request", http_req, http_res);
 
           if (capturedError) {
-            server.off("error", errorCallback);
-            http_res.off("error", errorCallback);
-            http_res.off("close", closeCallback);
             handle = undefined;
             throw capturedError;
           }
 
           if (handle.finished || didFinish) {
-            server.off("error", errorCallback);
             http_res.off("error", errorCallback);
             http_res.off("close", closeCallback);
             handle = undefined;
@@ -2058,9 +2047,10 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     this.#send();
   }
 
-  destroy(err?: Error) {
+  _destroy(err?: Error, callback) {
     if (this.destroyed) return this;
     this.destroyed = true;
+
     this[finishedSymbol] = true;
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
@@ -2188,6 +2178,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
           this.#maybeEmitClose();
           if (res.statusCode === 304) {
             res.complete = true;
+            this.#maybeEmitClose();
             return;
           }
         })

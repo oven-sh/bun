@@ -110,6 +110,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile
             \\  <d>└<r>  <cyan>--all<r>                  list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>whoami<r>             print the current npm username
             \\  bun pm <b>hash<r>               generate & print the hash of the current lockfile
             \\  bun pm <b>hash-string<r>        print the string used to hash the lockfile
             \\  bun pm <b>hash-print<r>         print the hash stored in the current lockfile

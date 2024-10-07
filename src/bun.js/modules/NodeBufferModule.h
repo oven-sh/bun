@@ -5,6 +5,7 @@
 #include "../bindings/JSBuffer.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/PageCount.h"
+#include "NodeValidator.h"
 #include "_NativeModule.h"
 #include "wtf/SIMDUTF.h"
 #include <limits>
@@ -136,6 +137,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
   return {};
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_INSPECT_MAX_BYTES_getter, (JSGlobalObject * lexicalGlobalObject, CallFrame *callFrame)) {
+  auto globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
+  return JSValue::encode(jsNumber(globalObject->INSPECT_MAX_BYTES));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_INSPECT_MAX_BYTES_setter, (JSGlobalObject * lexicalGlobalObject, CallFrame *callFrame)) {
+  auto globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
+  auto &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  auto val = callFrame->argument(0);
+  Bun::V::validateNumber(scope, globalObject, val, jsString(vm, String("INSPECT_MAX_BYTES"_s)), jsNumber(0), jsUndefined());
+  RETURN_IF_EXCEPTION(scope, {});
+  globalObject->INSPECT_MAX_BYTES = val.asNumber();
+  return JSValue::encode(jsUndefined());
+}
+
 DEFINE_NATIVE_MODULE(NodeBuffer) {
   INIT_NATIVE_MODULE(12);
 
@@ -159,8 +176,15 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
   put(JSC::Identifier::fromString(vm, "File"_s),
       globalObject->JSDOMFileConstructor());
 
-  put(JSC::Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s),
-      JSC::jsNumber(50));
+  {
+    PropertyDescriptor descriptor;
+    descriptor.setConfigurable(true);
+    descriptor.setEnumerable(true);
+    descriptor.setWritable(false);
+    descriptor.setGetter(JSFunction::create(vm, lexicalGlobalObject, 0, String("get"_s), jsFunction_INSPECT_MAX_BYTES_getter, {}, {}, {}, {}));
+    descriptor.setSetter(JSFunction::create(vm, lexicalGlobalObject, 0, String("set"_s), jsFunction_INSPECT_MAX_BYTES_setter, {}, {}, {}, {}));
+    JSObject::defineOwnProperty(defaultObject, lexicalGlobalObject, Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s), descriptor, true);
+  }
 
   put(JSC::Identifier::fromString(vm, "kMaxLength"_s),
       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));

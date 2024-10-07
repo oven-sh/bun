@@ -332,6 +332,7 @@ pub fn getHmrRuntime(mode: Side) []const u8 {
 
 pub const Mode = enum { production, development };
 pub const Side = enum { client, server };
+/// TODO: Rename this to Graph
 pub const Renderer = enum(u2) {
     client,
     server,

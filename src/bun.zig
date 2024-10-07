@@ -3297,7 +3297,7 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
 }
 
 pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src },
+    comptime root: enum { codegen, src, src_eager },
     comptime sub_path: []const u8,
 ) []const u8 {
     comptime assert(Environment.isDebug);
@@ -3309,7 +3309,7 @@ pub fn runtimeEmbedFile(
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
                 .codegen => Environment.codegen_path,
-                .src => Environment.base_path ++ "/src",
+                .src, .src_eager => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
@@ -3333,6 +3333,11 @@ pub fn runtimeEmbedFile(
             };
         }
     };
+
+    if (root == .src_eager and static.once.done) {
+        static.once.done = false;
+        default_allocator.free(static.storage);
+    }
 
     static.once.call();
 
@@ -3863,12 +3868,14 @@ pub const bytecode_extension = ".jsc";
 /// An typed index into an array or other structure.
 /// maxInt is reserved for an empty state.
 ///
-/// `const Index = bun.GenericIndex(u32, opaque{})
+/// const Thing = struct {};
+/// const Index = bun.GenericIndex(u32, Thing)
 ///
-/// The empty opaque prevents Zig from memoizing the
+/// The second argument prevents Zig from memoizing the
 /// call, which would otherwise make all indexes
 /// equal to each other.
 pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    const null_value = std.math.maxInt(backing_int);
     return enum(backing_int) {
         _,
         const Index = @This();
@@ -3876,19 +3883,31 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             _ = uid;
         }
 
-        pub fn toOptional(oi: @This()) Optional {
-            return @enumFromInt(@intFromEnum(oi));
+        /// Prefer this over @enumFromInt to assert the int is in range
+        pub fn init(int: backing_int) callconv(callconv_inline) Index {
+            bun.assert(int != null_value); // would be confused for null
+            return @enumFromInt(int);
+        }
+
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
+        pub fn get(i: @This()) callconv(callconv_inline) backing_int {
+            bun.assert(@intFromEnum(i) != null_value); // memory corruption
+            return @intFromEnum(i);
+        }
+
+        pub fn toOptional(oi: @This()) callconv(callconv_inline) Optional {
+            return @enumFromInt(oi.get());
         }
 
         pub const Optional = enum(backing_int) {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub fn init(maybe: ?Index) ?Index {
-                return if (maybe) |i| @enumFromInt(@intFromEnum(i)) else .none;
+            pub fn init(maybe: ?Index) callconv(callconv_inline) ?Index {
+                return if (maybe) |i| i.toOptional() else .none;
             }
 
-            pub fn unwrap(oi: Optional) ?Index {
+            pub fn unwrap(oi: Optional) callconv(callconv_inline) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
         };
@@ -3898,4 +3917,14 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 comptime {
     // Must be nominal
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}
+
+/// Reverse of the slice index operator.
+/// Given `&slice[index] == item`, returns the `index` needed.
+/// The item must be in the slice.
+pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    bun.assert(isSliceInBufferT(T, slice, item[0..1]));
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    const index = @divExact(offset, @sizeOf(T));
+    return index;
 }

@@ -11,8 +11,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 // Server Side
 server_exports = {
   async handleRequest(req, { clientEntryPoint }, requested_id) {
-    const serverRenderer = loadModule<Bake.ServerEntryPoint>(config.main, LoadModuleType.AssertPresent).exports
-      .default;
+    const serverRenderer = loadModule<Bake.ServerEntryPoint>(config.main, LoadModuleType.AssertPresent).exports.default;
 
     if (!serverRenderer) {
       throw new Error('Framework server entrypoint is missing a "default" export.');

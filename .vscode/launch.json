@@ -172,6 +172,8 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
+        "BUN_DEBUG_IncrementalGraph": "1",
+        "BUN_DEBUG_Bake": "1",
       },
       "console": "internalConsole",
     },

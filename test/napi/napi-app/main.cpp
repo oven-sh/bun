@@ -661,7 +661,9 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
     char buf[1024];
     assert(napi_get_value_string_utf8(env, key, buf, 1024, nullptr) == napi_ok);
     status = napi_get_named_property(env, obj, buf, &value);
-    printf("get_named_property status = %d\n", status);
+    printf("get_named_property status is pending_exception or generic_failure "
+           "= %d\n",
+           status == napi_pending_exception || status == napi_generic_failure);
     if (status == napi_ok) {
       assert(value != nullptr);
       assert(napi_typeof(env, value, &type) == napi_ok);
@@ -672,7 +674,8 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
   }
 
   status = napi_get_property(env, obj, key, &value);
-  printf("get_property status = %d\n", status);
+  printf("get_property status is pending_exception or generic_failure  = %d\n",
+         status == napi_pending_exception || status == napi_generic_failure);
   if (status == napi_ok) {
     assert(value != nullptr);
     assert(napi_typeof(env, value, &type) == napi_ok);

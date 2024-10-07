@@ -1127,10 +1127,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
                 try g.first_dep.append(g.owner().allocator, .none);
                 try g.first_import.append(g.owner().allocator, .none);
-            } else {
-                if (g.stale_files.bit_length > gop.index) {
-                    g.stale_files.unset(gop.index);
-                }
+            }
+
+            if (g.stale_files.bit_length > gop.index) {
+                g.stale_files.unset(gop.index);
             }
 
             ctx.getCachedIndex(side, index).* = FileIndex.init(@intCast(gop.index));
@@ -1402,12 +1402,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 try g.first_dep.append(g.owner().allocator, .none);
                 try g.first_import.append(g.owner().allocator, .none);
             } else {
-                if (g.stale_files.bit_length > gop.index) {
-                    g.stale_files.set(gop.index);
-                }
                 if (side == .server) {
                     if (is_route) gop.value_ptr.*.is_route = is_route;
                 }
+            }
+
+            if (g.stale_files.bit_length > gop.index) {
+                g.stale_files.set(gop.index);
             }
 
             if (is_route) {

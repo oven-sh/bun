@@ -5808,14 +5808,21 @@ pub const NodeHTTPResponse = struct {
     aborted: bool = false,
     finished: bool = false,
     ended: bool = false,
-    has_body: bool = false,
+    body_read_state: BodyReadState = .none,
+    body_read_ref: JSC.Ref = .{},
     promise: JSC.Strong = .{},
     server: AnyServer,
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
-
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
+    pub const BodyReadState = enum {
+        none,
+        pending,
+        done,
+    };
+
     pub fn create(
         any_server_tag: u64,
         globalObject: *JSC.JSGlobalObject,
@@ -5825,6 +5832,7 @@ pub const NodeHTTPResponse = struct {
         response_ptr: *anyopaque,
         node_response_ptr: *?*NodeHTTPResponse,
     ) callconv(.C) JSC.JSValue {
+        const vm = globalObject.bunVM();
         if ((HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
             const req_len: usize = brk: {
                 if (request.header("content-length")) |content_length| {
@@ -5843,13 +5851,17 @@ pub const NodeHTTPResponse = struct {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
                 false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
             },
-            .has_body = has_body.* != 0,
-            // 1 - the HTTP request
+            .body_read_state = if (has_body.* != 0) .pending else .none,
+            // 1 - the HTTP response
             // 1 - the JS object
             // 1 - the Server handler.
-            .ref_count = 3,
+            // 1 - the onData callback (request bod)
+            .ref_count = if (has_body.* != 0) 4 else 3,
         });
-        response.js_ref.ref(globalObject.bunVM());
+        if (has_body.* != 0) {
+            response.body_read_ref.ref(vm);
+        }
+        response.js_ref.ref(vm);
         const js_this = response.toJS(globalObject);
         response.strong_this.set(globalObject, js_this);
         node_response_ptr.* = response;
@@ -5858,6 +5870,7 @@ pub const NodeHTTPResponse = struct {
 
     pub fn setOnAbortedHandler(this: *NodeHTTPResponse) void {
         this.response.onAborted(*NodeHTTPResponse, onAbort, this);
+        this.response.onTimeout(*NodeHTTPResponse, onTimeout, this);
     }
 
     fn isDone(this: *const NodeHTTPResponse) bool {
@@ -5877,7 +5890,7 @@ pub const NodeHTTPResponse = struct {
     }
 
     pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.has_body);
+        return JSC.JSValue.jsBoolean(this.body_read_state != .none);
     }
 
     pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
@@ -5944,8 +5957,8 @@ pub const NodeHTTPResponse = struct {
         }
 
         const status_code_value = if (arguments.len > 0) arguments[0] else .undefined;
-        const status_message_value = if (arguments.len > 1) arguments[1] else .undefined;
-        const headers_object_value = if (arguments.len > 2) arguments[2] else .undefined;
+        const status_message_value = if (arguments.len > 1 and arguments[1] != .null) arguments[1] else .undefined;
+        const headers_object_value = if (arguments.len > 2 and arguments[2] != .null) arguments[2] else .undefined;
 
         const status_code: i32 = brk: {
             if (status_code_value != .undefined) {
@@ -5958,11 +5971,14 @@ pub const NodeHTTPResponse = struct {
             break :brk 200;
         };
 
+        var stack_fallback = std.heap.stackFallback(256, bun.default_allocator);
+        const allocator = stack_fallback.get();
         const status_message_slice = if (status_message_value != .undefined)
-            status_message_value.toSlice(globalObject, bun.default_allocator)
+            status_message_value.toSlice(globalObject, allocator)
         else
             ZigString.Slice.empty;
         defer status_message_slice.deinit();
+
         if (globalObject.hasException()) {
             return .zero;
         }
@@ -5976,8 +5992,8 @@ pub const NodeHTTPResponse = struct {
             }
 
             const message = if (status_message_slice.len > 0) status_message_slice.slice() else "HM";
-            const status_message = std.fmt.allocPrint(bun.default_allocator, "{d} {s}", .{ status_code, message }) catch bun.outOfMemory();
-            defer bun.default_allocator.free(status_message);
+            const status_message = std.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }) catch bun.outOfMemory();
+            defer allocator.free(status_message);
             writeHeadInternal(this.response, globalObject, status_message, headers_object_value);
             break :do_it;
         }
@@ -6009,37 +6025,61 @@ pub const NodeHTTPResponse = struct {
         return .undefined;
     }
 
-    pub fn onAbort(this: *NodeHTTPResponse, resp: uws.AnyResponse) void {
+    pub const AbortEvent = enum(u8) {
+        none = 0,
+        abort = 1,
+        timeout = 2,
+    };
+
+    fn handleAbortOrTimeout(this: *NodeHTTPResponse, resp: uws.AnyResponse, comptime event: AbortEvent) void {
         _ = resp; // autofix
         if (this.finished) {
             return;
         }
-        defer this.onRequestComplete();
-        this.aborted = true;
-        log("onAbort", .{});
+
+        defer if (event == .abort) this.onRequestComplete();
+        if (event == .abort) {
+            this.aborted = true;
+        }
 
         this.ref();
         defer this.deref();
 
-        const js_this = this.strong_this.trySwap() orelse .undefined;
+        const js_this: JSValue = brk: {
+            if (comptime event == .abort) {
+                break :brk this.strong_this.trySwap() orelse .undefined;
+            }
+            break :brk this.strong_this.get() orelse .undefined;
+        };
 
-        if (this.onAbortedCallback.trySwap()) |on_aborted| {
+        if (this.onAbortedCallback.get()) |on_aborted| {
+            defer {
+                if (event == .abort) {
+                    this.onAbortedCallback.deinit();
+                }
+            }
             const globalThis = this.onAbortedCallback.globalThis orelse JSC.VirtualMachine.get().global;
             const vm = globalThis.bunVM();
             const event_loop = vm.eventLoop();
 
             event_loop.runCallback(on_aborted, globalThis, js_this, &.{
-                js_this,
+                JSC.JSValue.jsNumber(@intFromEnum(event)),
             });
         }
 
-        if (this.onDataCallback.trySwap()) |onDataCallback| {
-            defer this.deref();
-            const globalThis = this.onDataCallback.globalThis orelse JSC.VirtualMachine.get().global;
-            const vm = globalThis.bunVM();
-            const event_loop = vm.eventLoop();
-            event_loop.runCallback(onDataCallback, globalThis, .undefined, &.{ .undefined, JSC.jsBoolean(true), JSC.jsBoolean(true) });
+        if (event == .abort) {
+            this.onDataOrAborted("", true, .abort);
         }
+    }
+
+    pub fn onAbort(this: *NodeHTTPResponse, response: uws.AnyResponse) void {
+        log("onAbort", .{});
+        this.handleAbortOrTimeout(response, .abort);
+    }
+
+    pub fn onTimeout(this: *NodeHTTPResponse, response: uws.AnyResponse) void {
+        log("onTimeout", .{});
+        this.handleAbortOrTimeout(response, .timeout);
     }
 
     fn onRequestComplete(this: *NodeHTTPResponse) void {
@@ -6049,10 +6089,13 @@ pub const NodeHTTPResponse = struct {
         log("onRequestComplete", .{});
         this.finished = true;
         this.js_ref.unref(JSC.VirtualMachine.get());
+
         const server = this.server;
         this.clearJSValues();
+        if (this.body_read_state != .pending) {
+            server.onRequestComplete();
+        }
         this.deref();
-        server.onRequestComplete();
     }
 
     pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
@@ -6101,7 +6144,6 @@ pub const NodeHTTPResponse = struct {
 
     fn clearJSValues(this: *NodeHTTPResponse) void {
         // Promise is handled separately.
-        this.onDataCallback.deinit();
         this.strong_this.deinit();
         this.onWritableCallback.deinit();
         this.onAbortedCallback.deinit();
@@ -6129,27 +6171,40 @@ pub const NodeHTTPResponse = struct {
         return .undefined;
     }
 
-    pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
-        log("onData({d} bytes, is_last = {d})", .{ chunk.len, @intFromBool(last) });
-        if (this.onDataCallback.get()) |callback| {
-            if (last) this.ref();
-            defer {
-                if (last) {
-                    this.onDataCallback.deinit();
-                    this.deref();
+    fn onDataOrAborted(this: *NodeHTTPResponse, chunk: []const u8, last: bool, event: AbortEvent) void {
+        if (last) {
+            this.ref();
+            this.body_read_state = .done;
+        }
+
+        defer {
+            if (last) {
+                if (this.body_read_ref.has) {
+                    this.body_read_ref.unref(JSC.VirtualMachine.get());
+                    if (this.finished) {
+                        this.server.onRequestComplete();
+                    }
                     this.deref();
                 }
+
+                this.deref();
             }
+        }
+
+        if (this.onDataCallback.get()) |callback| {
             const globalThis = this.onDataCallback.globalThis orelse JSC.VirtualMachine.get().global;
             const event_loop = globalThis.bunVM().eventLoop();
             event_loop.runCallback(callback, globalThis, .undefined, &.{
-                JSC.ArrayBuffer.createBuffer(globalThis, chunk),
+                if (chunk.len > 0) JSC.ArrayBuffer.createBuffer(globalThis, chunk) else .undefined,
                 JSC.JSValue.jsBoolean(last),
-                JSC.JSValue.jsBoolean(false),
+                JSC.JSValue.jsNumber(@intFromEnum(event)),
             });
-        } else {
-            this.response.clearOnData();
         }
+    }
+    pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
+        log("onData({d} bytes, is_last = {d})", .{ chunk.len, @intFromBool(last) });
+
+        onDataOrAborted(this, chunk, last, .none);
     }
 
     fn onDrain(this: *NodeHTTPResponse, offset: u64, response: uws.AnyResponse) bool {
@@ -6241,13 +6296,11 @@ pub const NodeHTTPResponse = struct {
         const bytes = string_or_buffer.slice();
 
         if (is_end) {
-            this.clearOnDataCallback();
             this.response.clearAborted();
             this.response.clearOnWritable();
             this.response.clearTimeout();
-
             this.ended = true;
-            if (!state.isHttpWriteCalled()) {
+            if (!state.isHttpWriteCalled() or bytes.len > 0) {
                 this.response.end(bytes, state.isHttpConnectionClose());
             } else {
                 this.response.endStream(state.isHttpConnectionClose());
@@ -6306,24 +6359,45 @@ pub const NodeHTTPResponse = struct {
     }
 
     fn clearOnDataCallback(this: *NodeHTTPResponse) void {
-        if (this.onDataCallback.has()) {
+        if (this.body_read_state != .none) {
             this.onDataCallback.deinit();
             this.response.clearOnData();
-            this.deref();
+            if (this.body_read_state != .done) {
+                this.body_read_state = .done;
+                this.deref();
+            }
         }
     }
 
     pub fn setOnData(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
-        if (!this.has_body or this.isDone() or value == .undefined) {
-            this.clearOnDataCallback();
+        if (value == .undefined or this.ended or this.aborted or this.body_read_state == .none) {
+            this.onDataCallback.deinit();
+            defer {
+                if (this.body_read_ref.has) {
+                    this.body_read_ref.unref(globalObject.bunVM());
+                    this.deref();
+                }
+            }
+            switch (this.body_read_state) {
+                .pending, .done => {
+                    if (!this.ended and !this.aborted) {
+                        this.response.clearOnData();
+                    }
+                    this.body_read_state = .done;
+                },
+                .none => {},
+            }
             return true;
         }
 
-        if (!this.onDataCallback.has()) {
-            this.ref();
-        }
         this.onDataCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         this.response.onData(*NodeHTTPResponse, onData, this);
+
+        if (!this.body_read_ref.has) {
+            this.ref();
+            this.body_read_ref.ref(globalObject.bunVM());
+        }
+
         return true;
     }
 
@@ -6345,10 +6419,29 @@ pub const NodeHTTPResponse = struct {
             return;
         };
     }
+
+    export fn NodeHTTPResponse__setTimeout(this: *NodeHTTPResponse, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+        if (!seconds.isNumber()) {
+            _ = globalThis.throwInvalidArgumentTypeValue("timeout", "number", seconds);
+            return;
+        }
+
+        if (this.finished or this.aborted) {
+            return;
+        }
+
+        this.response.timeout(@intCast(@min(seconds.to(c_uint), 255)));
+    }
+
     pub fn cork(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0 or !arguments[0].isCallable(globalObject.vm())) {
             return globalObject.throwInvalidArgumentTypeValue("cork", "function", arguments[0]);
+        }
+
+        if (this.finished or this.aborted) {
+            globalObject.ERR_STREAM_ALREADY_FINISHED("Stream is already ended", .{}).throw();
+            return .zero;
         }
 
         var result: JSC.JSValue = .zero;
@@ -6380,6 +6473,7 @@ pub const NodeHTTPResponse = struct {
 
     pub fn deinit(this: *NodeHTTPResponse) void {
         this.js_ref.unref(JSC.VirtualMachine.get());
+        this.body_read_ref.unref(JSC.VirtualMachine.get());
         this.onAbortedCallback.deinit();
         this.onDataCallback.deinit();
         this.onWritableCallback.deinit();
@@ -6435,8 +6529,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doPublish = JSC.wrapInstanceMethod(ThisServer, "publish", false);
         pub const doReload = onReload;
         pub const doFetch = onFetch;
-        pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
-        pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
+        pub const doRequestIP = requestIP;
+        pub const doTimeout = timeout;
 
         pub fn doSubscriberCount(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
             const arguments = callframe.arguments(1);
@@ -6473,28 +6567,70 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
 
-        pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+        pub fn requestIP(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+            const arguments = callframe.arguments(1).slice();
+            if (arguments.len < 1 or arguments[0].isEmptyOrUndefinedOrNull()) {
+                globalObject.throwNotEnoughArguments("requestIP", 1, 0);
+                return .zero;
+            }
+
             if (this.config.address == .unix) {
                 return JSValue.jsNull();
             }
-            return if (request.request_context.getRemoteSocketInfo()) |info|
-                JSSocketAddress__create(
-                    this.globalThis,
-                    bun.String.init(info.ip).toJS(this.globalThis),
-                    info.port,
-                    info.is_ipv6,
-                )
-            else
-                JSValue.jsNull();
+
+            const info = brk: {
+                if (arguments[0].as(Request)) |request| {
+                    if (request.request_context.getRemoteSocketInfo()) |info|
+                        break :brk info;
+                } else if (arguments[0].as(NodeHTTPResponse)) |response| {
+                    if (!response.finished) {
+                        if (response.response.getRemoteSocketInfo()) |info| {
+                            break :brk info;
+                        }
+                    }
+                }
+
+                return JSC.JSValue.jsNull();
+            };
+
+            return JSSocketAddress__create(
+                globalObject,
+                bun.String.init(info.ip).toJS(this.globalThis),
+                info.port,
+                info.is_ipv6,
+            );
         }
 
-        pub fn timeout(this: *ThisServer, request: *JSC.WebCore.Request, seconds: JSValue) JSC.JSValue {
+        pub fn timeout(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+            const arguments = callframe.arguments(2).slice();
+            if (arguments.len < 2 or arguments[0].isEmptyOrUndefinedOrNull()) {
+                globalObject.throwNotEnoughArguments("timeout", 2, arguments.len);
+                return .zero;
+            }
+
+            const seconds = arguments[1];
+
+            if (this.config.address == .unix) {
+                return JSValue.jsNull();
+            }
+
             if (!seconds.isNumber()) {
                 this.globalThis.throw("timeout() requires a number", .{});
                 return .zero;
             }
             const value = seconds.to(c_uint);
-            _ = request.request_context.setTimeout(value);
+
+            if (arguments[0].as(Request)) |request| {
+                _ = request.request_context.setTimeout(value);
+            } else if (arguments[0].as(NodeHTTPResponse)) |response| {
+                if (!response.finished) {
+                    _ = response.response.timeout(@intCast(@min(value, 255)));
+                }
+            } else {
+                this.globalThis.throwInvalidArguments("timeout() requires a Request object", .{});
+                return .zero;
+            }
+
             return JSValue.jsUndefined();
         }
 

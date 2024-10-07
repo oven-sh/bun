@@ -77,10 +77,8 @@ describe("node:http", () => {
       }
     });
     it("request & response body streaming (large)", async () => {
+      const input = Buffer.alloc("hello world, hello world".length * 9000, "hello world, hello world");
       try {
-        const bodyBlob = new Blob(["hello world", "hello world".repeat(9000)]);
-        const input = await bodyBlob.text();
-
         var server = createServer((req, res) => {
           res.writeHead(200, { "Content-Type": "text/plain" });
           req.on("data", chunk => {
@@ -94,11 +92,11 @@ describe("node:http", () => {
         const url = await listen(server);
         const res = await fetch(url, {
           method: "POST",
-          body: bodyBlob,
+          body: input,
         });
 
         const out = await res.text();
-        expect(out).toBe(input);
+        expect(out).toBe(input.toString());
       } finally {
         server.close();
       }
@@ -416,6 +414,7 @@ describe("node:http", () => {
         const req = request(`http://localhost:${port}`, res => {
           let data = "";
           res.setEncoding("utf8");
+
           res.on("data", chunk => {
             data += chunk;
           });
@@ -1279,22 +1278,7 @@ describe("server.address should be valid IP", () => {
       done(err);
     }
   });
-  test("ServerResponse reply", done => {
-    const createDone = createDoneDotAll(done);
-    const doneRequest = createDone();
-    try {
-      const req = {};
-      const sendedText = "Bun\n";
-      const res = new ServerResponse(req, async (res: Response) => {
-        expect(await res.text()).toBe(sendedText);
-        doneRequest();
-      });
-      res.write(sendedText);
-      res.end();
-    } catch (err) {
-      doneRequest(err);
-    }
-  });
+
   test("ServerResponse instanceof OutgoingMessage", () => {
     expect(new ServerResponse({}) instanceof OutgoingMessage).toBe(true);
   });
@@ -1885,19 +1869,17 @@ it("should emit events in the right order", async () => {
   expect(err).toBeEmpty();
   const out = await new Response(stdout).text();
   // TODO prefinish and socket are not emitted in the right order
-  expect(out.split("\n")).toEqual([
-    `[ "req", "prefinish" ]`,
-    `[ "req", "socket" ]`,
-    `[ "req", "finish" ]`,
-    `[ "req", "response" ]`,
+  expect(out.split("\n").filter(Boolean).map(JSON.parse)).toStrictEqual([
+    ["req", "socket"],
+    ["req", "prefinish"],
+    ["req", "finish"],
+    ["req", "response"],
     "STATUS: 200",
-    // `[ "res", "resume" ]`,
-    // `[ "res", "readable" ]`,
-    // `[ "res", "end" ]`,
-    `[ "req", "close" ]`,
-    `[ "res", Symbol(kConstruct) ]`,
-    // `[ "res", "close" ]`,
-    "",
+    ["res", "resume"],
+    ["res", "readable"],
+    ["res", "end"],
+    ["req", "close"],
+    ["res", "close"],
   ]);
 });
 
@@ -2332,6 +2314,7 @@ it("should emit close, and complete should be true only after close #13373", asy
 
     const [req, res] = await once(server, "request");
     expect(req.complete).toBe(false);
+    console.log("ok 1");
     const closeEvent = once(req, "close");
     res.end("hi");
 

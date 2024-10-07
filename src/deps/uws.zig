@@ -3040,6 +3040,13 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn getRemoteSocketInfo(this: AnyResponse) ?SocketAddress {
+        return switch (this) {
+            .SSL => |resp| resp.getRemoteSocketInfo(),
+            .TCP => |resp| resp.getRemoteSocketInfo(),
+        };
+    }
+
     pub fn getWriteOffset(this: AnyResponse) u64 {
         return switch (this) {
             .SSL => |resp| resp.getWriteOffset(),
@@ -3168,6 +3175,22 @@ pub const AnyResponse = union(enum) {
         return switch (this) {
             .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, opcional_data),
             .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, opcional_data),
+        };
+    }
+
+    pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
+                handler(user_data, .{ .SSL = resp });
+            }
+            pub fn tcp_handler(user_data: UserDataType, resp: *NewApp(false).Response) void {
+                handler(user_data, .{ .TCP = resp });
+            }
+        };
+
+        return switch (this) {
+            .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, opcional_data),
+            .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, opcional_data),
         };
     }
 

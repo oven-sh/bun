@@ -669,7 +669,42 @@ Server.prototype = {
             [kHandle]: handle,
           });
 
+          let capturedError;
+          let rejectFunction;
+          let errorCallback = err => {
+            if (capturedError) return;
+            capturedError = err;
+            if (rejectFunction) rejectFunction(err);
+          };
+
+          let resolveFunction;
+          let didFinish = false;
+          let closeCallback = () => {
+            didFinish = true;
+            if (resolveFunction) resolveFunction(http_res);
+          };
+
+          http_req.once("error", errorCallback);
+          http_res.once("error", errorCallback);
+          http_res.once("close", closeCallback);
+
           server.emit("request", http_req, http_res);
+
+          if (capturedError) {
+            throw capturedError;
+          }
+
+          if (handle.finished || didFinish) {
+            http_res.off("close", closeCallback);
+            closeCallback = () => {};
+            return;
+          }
+
+          const { reject, resolve, promise } = $newPromiseCapability(Promise);
+          resolveFunction = resolve;
+          rejectFunction = reject;
+
+          return promise;
         },
 
         // Be very careful not to access (web) Request object
@@ -916,7 +951,7 @@ IncomingMessage.prototype = {
       this.push(null);
     } else if ((internalRequest = this[kInternalRequest])) {
       internalRequest.ondata = (chunk, isLast, isAborted) => {
-        console.log("ondata", chunk, isLast, isAborted);
+        $debug("ondata", chunk, isLast, isAborted);
         if (isAborted) {
           if (!this.destroyed) {
             this.destroy();
@@ -1213,10 +1248,6 @@ const OutgoingMessagePrototype = {
 
   _send(data, encoding, callback, byteLength) {
     return this.write(data, encoding, callback);
-  },
-
-  [EventEmitter.captureRejectionSymbol]: function (err, event) {
-    this.destroy(err);
   },
 } satisfies typeof import("node:http").OutgoingMessage.prototype;
 OutgoingMessage.prototype = OutgoingMessagePrototype;

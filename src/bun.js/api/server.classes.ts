@@ -120,6 +120,21 @@ export default [
         fn: "abort",
         length: 0,
       },
+      bufferedAmount: {
+        getter: "getBufferedAmount",
+      },
+      aborted: {
+        getter: "getAborted",
+      },
+      finished: {
+        getter: "getFinished",
+      },
+      hasBody: {
+        getter: "getHasBody",
+      },
+      ended: {
+        getter: "getEnded",
+      },
       ondata: {
         getter: "getOnData",
         setter: "setOnData",

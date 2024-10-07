@@ -275,6 +275,19 @@ extern "C"
     }
   }
 
+  size_t uws_res_get_buffered_amount(int ssl, uws_res_t *res) nonnull_fn_decl;
+
+  size_t uws_res_get_buffered_amount(int ssl, uws_res_t *res)
+  {
+      if (ssl) {
+        uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+        return uwsRes->getBufferedAmount();
+      } else {
+        uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+        return uwsRes->getBufferedAmount();
+      }
+  }
+
   void uws_app_any(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string pattern = std::string(pattern_ptr, pattern_len);

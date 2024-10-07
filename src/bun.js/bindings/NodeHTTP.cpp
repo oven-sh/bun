@@ -415,10 +415,11 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     return JSValue::encode(tuple);
 }
 
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void** nodeHttpResponsePtr);
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
+    size_t any_server,
     JSC::JSGlobalObject* globalObject,
     JSValue thisValue,
     JSValue callback,
@@ -442,7 +443,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
 
     int hasBody = 0;
-    EncodedJSValue nodehttpobjectValue = NodeHTTPResponse__createForJS(globalObject, &hasBody, request, isSSL, response, nodeHttpResponsePtr);
+    EncodedJSValue nodehttpobjectValue = NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, nodeHttpResponsePtr);
 
     JSC::CallData callData = getCallData(callbackObject);
     args.append(JSValue::decode(nodehttpobjectValue));
@@ -530,13 +531,8 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // <
         //
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_END_CALLED)) {
-                data->state |= uWS::HttpResponseData<isSSL>::HTTP_END_CALLED;
-                res->writeMark();
-            }
-        } else if (header.key == WebCore::HTTPHeaderName::TransferEncoding || header.key == WebCore::HTTPHeaderName::Date) {
-            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WRITE_CALLED)) {
-                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WRITE_CALLED;
+            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                 res->writeMark();
             }
         }
@@ -639,6 +635,7 @@ extern "C" void NodeHTTPServer__writeHead_https(
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
+    size_t any_server,
     JSC::JSGlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
@@ -646,10 +643,11 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     uWS::HttpResponse<false>* response,
     void** nodeHttpResponsePtr)
 {
-    return NodeHTTPServer__onRequest<false>(globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<false>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
+    size_t any_server,
     JSC::JSGlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
@@ -657,7 +655,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     uWS::HttpResponse<true>* response,
     void** nodeHttpResponsePtr)
 {
-    return NodeHTTPServer__onRequest<true>(globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
+    return NodeHTTPServer__onRequest<true>(any_server, globalObject, JSValue::decode(thisValue), JSValue::decode(callback), request, response, nodeHttpResponsePtr);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))

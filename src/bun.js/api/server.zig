@@ -5809,12 +5809,15 @@ pub const NodeHTTPResponse = struct {
     finished: bool = false,
     ended: bool = false,
     has_body: bool = false,
+    promise: JSC.Strong = .{},
+    server: AnyServer,
 
     const log = bun.Output.scoped(.NodeHTTPResponse, false);
 
     pub usingnamespace JSC.Codegen.JSNodeHTTPResponse;
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
     pub fn create(
+        any_server_tag: u64,
         globalObject: *JSC.JSGlobalObject,
         has_body: *i32,
         request: *uws.Request,
@@ -5835,6 +5838,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         const response = NodeHTTPResponse.new(.{
+            .server = AnyServer{ .ptr = AnyServer.Ptr.from(@ptrFromInt(any_server_tag)) },
             .response = switch (is_ssl != 0) {
                 true => uws.AnyResponse{ .SSL = @ptrCast(response_ptr) },
                 false => uws.AnyResponse{ .TCP = @ptrCast(response_ptr) },
@@ -5858,6 +5862,30 @@ pub const NodeHTTPResponse = struct {
 
     fn isDone(this: *const NodeHTTPResponse) bool {
         return this.finished or this.ended or this.aborted;
+    }
+
+    pub fn getEnded(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.ended);
+    }
+
+    pub fn getFinished(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.finished);
+    }
+
+    pub fn getAborted(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.aborted);
+    }
+
+    pub fn getHasBody(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.has_body);
+    }
+
+    pub fn getBufferedAmount(this: *const NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        if (this.finished) {
+            return JSC.JSValue.jsNull();
+        }
+
+        return JSC.JSValue.jsNumber(this.response.getBufferedAmount());
     }
 
     pub fn jsRef(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -6021,11 +6049,58 @@ pub const NodeHTTPResponse = struct {
         log("onRequestComplete", .{});
         this.finished = true;
         this.js_ref.unref(JSC.VirtualMachine.get());
+        const server = this.server;
         this.clearJSValues();
         this.deref();
+        server.onRequestComplete();
+    }
+
+    pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        _ = globalObject; // autofix
+        log("onResolve", .{});
+        const arguments = callframe.arguments(2).slice();
+        const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
+        this.promise.deinit();
+        defer this.deref();
+        if (!this.finished and !this.aborted) {
+            this.clearJSValues();
+            this.response.clearAborted();
+            this.response.clearOnData();
+            this.response.clearOnWritable();
+            this.response.clearTimeout();
+            this.response.endWithoutBody(this.response.state().isHttpConnectionClose());
+            this.onRequestComplete();
+        }
+
+        return .undefined;
+    }
+
+    pub export fn Bun__NodeHTTPRequest__onReject(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments(2).slice();
+        const err = arguments[0];
+        const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
+        this.promise.deinit();
+        defer this.deref();
+
+        if (!this.finished and !this.aborted) {
+            this.clearJSValues();
+            this.response.clearAborted();
+            this.response.clearOnData();
+            this.response.clearOnWritable();
+            this.response.clearTimeout();
+            if (!this.response.state().isHttpStatusCalled()) {
+                this.response.writeStatus("500 Internal Server Error");
+            }
+            this.response.endStream(this.response.state().isHttpConnectionClose());
+            this.onRequestComplete();
+        }
+
+        _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
+        return .undefined;
     }
 
     fn clearJSValues(this: *NodeHTTPResponse) void {
+        // Promise is handled separately.
         this.onDataCallback.deinit();
         this.strong_this.deinit();
         this.onWritableCallback.deinit();
@@ -6062,6 +6137,7 @@ pub const NodeHTTPResponse = struct {
                 if (last) {
                     this.onDataCallback.deinit();
                     this.deref();
+                    this.deref();
                 }
             }
             const globalThis = this.onDataCallback.globalThis orelse JSC.VirtualMachine.get().global;
@@ -6073,8 +6149,6 @@ pub const NodeHTTPResponse = struct {
             });
         } else {
             this.response.clearOnData();
-            this.onDataCallback.deinit();
-            this.deref();
         }
     }
 
@@ -6166,24 +6240,20 @@ pub const NodeHTTPResponse = struct {
 
         const bytes = string_or_buffer.slice();
 
-        const write_offset = this.response.getWriteOffset();
-
         if (is_end) {
             this.clearOnDataCallback();
-            this.response.clearOnWritable();
             this.response.clearAborted();
+            this.response.clearOnWritable();
             this.response.clearTimeout();
-        }
 
-        if (is_end and bytes.len == 0 and write_offset == 0) {
-            this.response.endStream(state.isHttpConnectionClose());
+            this.ended = true;
+            if (!state.isHttpWriteCalled()) {
+                this.response.end(bytes, state.isHttpConnectionClose());
+            } else {
+                this.response.endStream(state.isHttpConnectionClose());
+            }
             this.onRequestComplete();
-            return JSC.JSValue.jsNumberFromInt32(0);
-        }
 
-        if (is_end) {
-            this.response.end(bytes, state.isHttpConnectionClose());
-            this.onRequestComplete();
             return JSC.JSValue.jsNumberFromUint64(bytes.len);
         } else {
             switch (this.response.write(bytes)) {
@@ -6314,6 +6384,7 @@ pub const NodeHTTPResponse = struct {
         this.onDataCallback.deinit();
         this.onWritableCallback.deinit();
         this.strong_this.deinit();
+        this.promise.deinit();
 
         this.destroy();
     }
@@ -7411,31 +7482,120 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             req.setYield(false);
             resp.timeout(this.config.idleTimeout);
 
+            const globalThis = this.globalThis;
+            const thisObject = this.thisObject;
+            const vm = this.vm;
+
             var node_http_response: ?*NodeHTTPResponse = null;
+            var is_async = false;
             defer {
-                if (node_http_response) |node_response| {
-                    node_response.deref();
+                if (!is_async) {
+                    if (node_http_response) |node_response| {
+                        node_response.deref();
+                    }
                 }
             }
 
-            const result = onNodeHTTPRequestFn(
-                this.globalThis,
-                this.thisObject,
+            const result: JSValue = onNodeHTTPRequestFn(
+                @bitCast(AnyServer.from(this)),
+                globalThis,
+                thisObject,
                 this.config.onNodeHTTPRequest,
                 req,
                 resp,
                 &node_http_response,
             );
 
-            if (result.toError()) |err| {
-                _ = this.vm.uncaughtException(this.globalThis, err, false);
-                return;
+            const HTTPResult = union(enum) {
+                rejection: JSC.JSValue,
+                exception: JSC.JSValue,
+                success: void,
+                pending: JSC.JSValue,
+            };
+            var strong_promise: JSC.Strong = .{};
+            var needs_to_drain = true;
+
+            defer {
+                if (needs_to_drain) {
+                    vm.drainMicrotasks();
+                }
+            }
+            defer strong_promise.deinit();
+            const http_result: HTTPResult = brk: {
+                if (result.toError()) |err| {
+                    break :brk .{ .exception = err };
+                }
+
+                if (result.asAnyPromise()) |promise| {
+                    if (promise.status(globalThis.vm()) == .pending) {
+                        strong_promise.set(globalThis, result);
+                        needs_to_drain = false;
+                        vm.drainMicrotasks();
+                    }
+
+                    switch (promise.status(globalThis.vm())) {
+                        .fulfilled => {
+                            globalThis.handleRejectedPromises();
+                            break :brk .{ .success = {} };
+                        },
+                        .rejected => {
+                            promise.setHandled(globalThis.vm());
+                            break :brk .{ .rejection = promise.result(globalThis.vm()) };
+                        },
+                        .pending => {
+                            globalThis.handleRejectedPromises();
+                            if (node_http_response) |node_response| {
+                                if (node_response.finished or node_response.aborted) {
+                                    strong_promise.deinit();
+                                    break :brk .{ .success = {} };
+                                }
+
+                                if (node_response.strong_this.get()) |strong_self| {
+                                    node_response.promise = strong_promise;
+                                    strong_promise = .{};
+                                    result._then(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
+                                } else {
+                                    @panic("This should not happen");
+                                }
+
+                                is_async = true;
+                            }
+
+                            break :brk .{ .pending = result };
+                        },
+                    }
+                }
+
+                break :brk .{ .success = {} };
+            };
+
+            switch (http_result) {
+                .exception, .rejection => |err| {
+                    _ = vm.uncaughtException(globalThis, err, http_result == .rejection);
+
+                    if (node_http_response) |node_response| {
+                        if (!node_response.finished and node_response.response.state().isResponsePending()) {
+                            node_response.clearJSValues();
+                            node_response.response.clearAborted();
+                            node_response.response.clearOnData();
+                            node_response.response.clearTimeout();
+                            node_response.response.clearOnWritable();
+                            node_response.finished = true;
+                            if (node_response.response.state().isHttpStatusCalled()) {
+                                node_response.response.writeStatus("500 Internal Server Error");
+                                node_response.response.endWithoutBody(true);
+                            } else {
+                                node_response.response.endStream(true);
+                            }
+                        }
+                    }
+                },
+                .success => {},
+                .pending => {},
             }
 
-            this.vm.drainMicrotasks();
-
             if (node_http_response) |node_response| {
-                if (!node_response.isDone()) {
+                if (!node_response.finished and node_response.response.state().isResponsePending()) {
                     node_response.setOnAbortedHandler();
                 }
             }
@@ -7791,43 +7951,57 @@ pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
 pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);
 pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, true);
-const AnyServer = union(enum) {
-    HTTPServer: *HTTPServer,
-    HTTPSServer: *HTTPSServer,
-    DebugHTTPServer: *DebugHTTPServer,
-    DebugHTTPSServer: *DebugHTTPSServer,
+const AnyServer = packed struct {
+    ptr: Ptr,
+
+    const Ptr = bun.TaggedPointerUnion(.{
+        HTTPServer,
+        HTTPSServer,
+        DebugHTTPServer,
+        DebugHTTPSServer,
+    });
 
     pub fn config(this: AnyServer) *const ServerConfig {
-        return switch (this) {
-            inline else => |server| &server.config,
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => &this.ptr.as(HTTPServer).config,
+            Ptr.case(HTTPSServer) => &this.ptr.as(HTTPSServer).config,
+            Ptr.case(DebugHTTPServer) => &this.ptr.as(DebugHTTPServer).config,
+            Ptr.case(DebugHTTPSServer) => &this.ptr.as(DebugHTTPSServer).config,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
 
     pub fn from(server: anytype) AnyServer {
-        return switch (@TypeOf(server)) {
-            *HTTPServer => AnyServer{ .HTTPServer = server },
-            *HTTPSServer => AnyServer{ .HTTPSServer = server },
-            *DebugHTTPServer => AnyServer{ .DebugHTTPServer = server },
-            *DebugHTTPSServer => AnyServer{ .DebugHTTPSServer = server },
-            else => @compileError("Invalid server type"),
-        };
+        return .{ .ptr = Ptr.init(server) };
     }
 
     pub fn onPendingRequest(this: AnyServer) void {
-        switch (this) {
-            inline else => |server| server.onPendingRequest(),
+        switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onPendingRequest(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onPendingRequest(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onPendingRequest(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onPendingRequest(),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         }
     }
 
     pub fn onRequestComplete(this: AnyServer) void {
-        switch (this) {
-            inline else => |server| server.onRequestComplete(),
+        switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onRequestComplete(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onRequestComplete(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onRequestComplete(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onRequestComplete(),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         }
     }
 
     pub fn onStaticRequestComplete(this: AnyServer) void {
-        switch (this) {
-            inline else => |server| server.onStaticRequestComplete(),
+        switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).onStaticRequestComplete(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).onStaticRequestComplete(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).onStaticRequestComplete(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).onStaticRequestComplete(),
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
         }
     }
 };
@@ -7873,6 +8047,7 @@ comptime {
 }
 
 extern fn NodeHTTPServer__onRequest_http(
+    any_server: u64,
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
@@ -7882,6 +8057,7 @@ extern fn NodeHTTPServer__onRequest_http(
 ) JSC.JSValue;
 
 extern fn NodeHTTPServer__onRequest_https(
+    any_server: u64,
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,

@@ -81,8 +81,12 @@ public:
 
     /* Called only once per request */
     void writeMark() {
+        if (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER) {
+            return;
+        }
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
@@ -113,7 +117,8 @@ public:
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
         }
 
-        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) {
+        /* if write was called and there was previously no Content-Length header set */
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
@@ -152,7 +157,7 @@ public:
             return true;
         } else {
             /* Write content-length on first call */
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
                 /* Write mark, this propagates to WebSockets too */
                 writeMark();
 
@@ -162,7 +167,8 @@ public:
                     Super::write("Content-Length: ", 16);
                     writeUnsigned64(totalSize);
                     Super::write("\r\n\r\n", 4);
-                } else {
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     Super::write("\r\n", 2);
                 }
 
@@ -427,7 +433,7 @@ public:
 
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
-        internalEnd(data, data.length(), false, true, closeConnection);
+        internalEnd(data, data.length(), false, !(this->getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER), closeConnection);
     }
 
     /* Try and end the response. Returns [true, true] on success.
@@ -440,7 +446,7 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED))) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
             /* Write mark on first call to write */
             writeMark();
 
@@ -469,21 +475,22 @@ public:
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_END_CALLED))) {
-            /* Write mark on first call to write */
-            writeMark();
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                /* Write mark on first call to write */
+                writeMark();
 
-            writeHeader("Transfer-Encoding", "chunked");
-            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
-        }
+                writeHeader("Transfer-Encoding", "chunked");
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            }
 
-        
-        Super::write("\r\n", 2);
-        
-        // This happens if they call send, include a content-length header
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            Super::write("\r\n", 2);
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
+        } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            writeMark();
+            Super::write("\r\n", 2);
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
         auto [written, failed] = Super::write(data.data(), (int) data.length());

@@ -3047,6 +3047,13 @@ pub const AnyResponse = union(enum) {
         };
     }
 
+    pub fn getBufferedAmount(this: AnyResponse) u64 {
+        return switch (this) {
+            .SSL => |resp| resp.getBufferedAmount(),
+            .TCP => |resp| resp.getBufferedAmount(),
+        };
+    }
+
     pub fn writeContinue(this: AnyResponse) void {
         return switch (this) {
             .SSL => |resp| resp.writeContinue(),
@@ -3561,6 +3568,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn resetTimeout(res: *Response) void {
                 uws_res_reset_timeout(ssl_flag, res.downcast());
             }
+            pub fn getBufferedAmount(res: *Response) u64 {
+                return uws_res_get_buffered_amount(ssl_flag, res.downcast());
+            }
             pub fn write(res: *Response, data: []const u8) WriteResult {
                 var len: usize = data.len;
                 return switch (uws_res_write(ssl_flag, res.downcast(), data.ptr, &len)) {
@@ -3991,6 +4001,7 @@ extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bo
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
 extern fn uws_res_reset_timeout(ssl: i32, res: *uws_res) void;
+extern fn uws_res_get_buffered_amount(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: ?[*]const u8, length: *usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
@@ -4088,11 +4099,16 @@ pub const State = enum(u8) {
     HTTP_END_CALLED = 4,
     HTTP_RESPONSE_PENDING = 8,
     HTTP_CONNECTION_CLOSE = 16,
+    HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
 
     _,
 
     pub inline fn isResponsePending(this: State) bool {
         return @intFromEnum(this) & @intFromEnum(State.HTTP_RESPONSE_PENDING) != 0;
+    }
+
+    pub inline fn hasWrittenContentLengthHeader(this: State) bool {
+        return @intFromEnum(this) & @intFromEnum(State.HTTP_WROTE_CONTENT_LENGTH_HEADER) != 0;
     }
 
     pub inline fn isHttpEndCalled(this: State) bool {

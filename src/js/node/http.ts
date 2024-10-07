@@ -913,7 +913,7 @@ const isInternalRequestSymbol = Symbol("isInternalRequest");
 
 function emitEOFIncomingMessageOuter(self) {
   self.push(null);
-
+  self.complete = true;
   process.nextTick(emitCloseNTAndComplete, self);
 }
 function emitEOFIncomingMessage(self) {
@@ -2160,6 +2160,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
           if (this.aborted) {
+            this.#maybeEmitClose();
             return;
           }
 
@@ -2184,7 +2185,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
             this,
             res,
           );
-
+          this.#maybeEmitClose();
           if (res.statusCode === 304) {
             res.complete = true;
             return;
@@ -2209,7 +2210,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
-      this.#maybeEmitClose();
+      this.#maybeEmitFinish();
     }
   }
 
@@ -2547,7 +2548,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
 
   #onTimeout() {
     this.#timeoutTimer = undefined;
-    this[kAbortController]?.abort();
+    this[kAbortController]?.abort?.();
     this.emit("timeout");
   }
 

@@ -37,6 +37,8 @@ pub const scope = @import("./scope.zig");
 pub const media = @import("./media.zig");
 pub const starting_style = @import("./starting_style.zig");
 
+const debug = bun.Output.scoped(.CSS_MINIFY, false);
+
 pub fn CssRule(comptime Rule: type) type {
     return union(enum) {
         /// A `@media` rule.
@@ -124,12 +126,13 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
         const This = @This();
 
-        pub fn minify(this: *This, context: *MinifyContext, parent_is_unused: bool) Maybe(void, css.MinifyError) {
-            var keyframe_rules: keyframes.KeyframesName.HashMap(usize) = .{};
-            const layer_rules: layer.LayerName.HashMap(usize) = .{};
-            _ = layer_rules; // autofix
-            const property_rules: css.css_values.ident.DashedIdent.HashMap(usize) = .{};
-            _ = property_rules; // autofix
+        pub fn minify(this: *This, context: *MinifyContext, parent_is_unused: bool) css.MinifyErr!void {
+            // var keyframe_rules: keyframes.KeyframesName.HashMap(usize) = .{};
+            // _ = keyframe_rules; // autofix
+            // const layer_rules: layer.LayerName.HashMap(usize) = .{};
+            // _ = layer_rules; // autofix
+            // const property_rules: css.css_values.ident.DashedIdent.HashMap(usize) = .{};
+            // _ = property_rules; // autofix
             // const style_rules = void;
             // _ = style_rules; // autofix
             var rules = ArrayList(CssRule(AtRule)){};
@@ -138,46 +141,49 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 // NOTE Anytime you append to `rules` with this `rule`, you must set `moved_rule` to true.
                 var moved_rule = false;
                 defer if (moved_rule) {
+                    // PERF calling deinit here might allow mimalloc to reuse the freed memory
                     rule.* = .ignored;
                 };
 
                 switch (rule.*) {
                     .keyframes => |*keyframez| {
-                        if (context.unused_symbols.contains(switch (keyframez.name) {
-                            .ident => |ident| ident,
-                            .custom => |custom| custom,
-                        })) {
-                            continue;
-                        }
+                        _ = keyframez; // autofix
+                        // if (context.unused_symbols.contains(switch (keyframez.name) {
+                        //     .ident => |ident| ident.v,
+                        //     .custom => |custom| custom,
+                        // })) {
+                        //     continue;
+                        // }
 
-                        keyframez.minify(context);
+                        // keyframez.minify(context);
 
-                        // Merge @keyframes rules with the same name.
-                        if (keyframe_rules.get(keyframez.name)) |existing_idx| {
-                            if (existing_idx < rules.items.len and rules.items[existing_idx] == .keyframes) {
-                                var existing = &rules.items[existing_idx].keyframes;
-                                // If the existing rule has the same vendor prefixes, replace it with this rule.
-                                if (existing.vendor_prefix.eq(keyframez.vendor_prefix)) {
-                                    existing.* = keyframez.clone(context.allocator);
-                                    continue;
-                                }
-                                // Otherwise, if the keyframes are identical, merge the prefixes.
-                                if (existing.keyframes == keyframez.keyframes) {
-                                    existing.vendor_prefix |= keyframez.vendor_prefix;
-                                    existing.vendor_prefix = context.targets.prefixes(existing.vendor_prefix, css.prefixes.Feature.at_keyframes);
-                                    continue;
-                                }
-                            }
-                        }
+                        // // Merge @keyframes rules with the same name.
+                        // if (keyframe_rules.get(keyframez.name)) |existing_idx| {
+                        //     if (existing_idx < rules.items.len and rules.items[existing_idx] == .keyframes) {
+                        //         var existing = &rules.items[existing_idx].keyframes;
+                        //         // If the existing rule has the same vendor prefixes, replace it with this rule.
+                        //         if (existing.vendor_prefix.eq(keyframez.vendor_prefix)) {
+                        //             existing.* = keyframez.clone(context.allocator);
+                        //             continue;
+                        //         }
+                        //         // Otherwise, if the keyframes are identical, merge the prefixes.
+                        //         if (existing.keyframes == keyframez.keyframes) {
+                        //             existing.vendor_prefix |= keyframez.vendor_prefix;
+                        //             existing.vendor_prefix = context.targets.prefixes(existing.vendor_prefix, css.prefixes.Feature.at_keyframes);
+                        //             continue;
+                        //         }
+                        //     }
+                        // }
 
-                        keyframez.vendor_prefix = context.targets.prefixes(keyframez.vendor_prefix, css.prefixes.Feature.at_keyframes);
-                        keyframe_rules.put(context.allocator, keyframez.name, rules.items.len) catch bun.outOfMemory();
+                        // keyframez.vendor_prefix = context.targets.prefixes(keyframez.vendor_prefix, css.prefixes.Feature.at_keyframes);
+                        // keyframe_rules.put(context.allocator, keyframez.name, rules.items.len) catch bun.outOfMemory();
 
-                        const fallbacks = keyframez.getFallbacks(AtRule, context.targets);
-                        moved_rule = true;
-                        rules.append(context.allocator, rule.*) catch bun.outOfMemory();
-                        rules.appendSlice(context.allocator, fallbacks) catch bun.outOfMemory();
-                        continue;
+                        // const fallbacks = keyframez.getFallbacks(AtRule, context.targets);
+                        // moved_rule = true;
+                        // rules.append(context.allocator, rule.*) catch bun.outOfMemory();
+                        // rules.appendSlice(context.allocator, fallbacks) catch bun.outOfMemory();
+                        // continue;
+                        debug("TODO: KeyframesRule", .{});
                     },
                     .custom_media => {
                         if (context.custom_media != null) {
@@ -185,19 +191,17 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         }
                     },
                     .media => |*med| {
+                        moved_rule = false;
                         if (rules.items[rules.items.len - 1] == .media) {
                             var last_rule = &rules.items[rules.items.len - 1].media;
                             if (last_rule.query.eql(&med.query)) {
                                 last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items) catch bun.outOfMemory();
-                                if (last_rule.minify(context, parent_is_unused).asErr()) |e| {
-                                    return .{ .err = e };
-                                }
+                                _ = try last_rule.minify(context, parent_is_unused);
                                 continue;
                             }
 
-                            switch (med.minify(context, parent_is_unused)) {
-                                .result => continue,
-                                .err => |e| return .{ .err = e },
+                            if (try med.minify(context, parent_is_unused)) {
+                                continue;
                             }
                         }
                     },
@@ -209,41 +213,112 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             }
                         }
 
-                        if (supp.minify(context, parent_is_unused).asErr()) |e| return .{ .err = e };
+                        try supp.minify(context, parent_is_unused);
                         if (supp.rules.v.items.len == 0) continue;
                     },
                     .container => |*cont| {
                         _ = cont; // autofix
+                        debug("TODO: ContainerRule", .{});
                     },
                     .layer_block => |*lay| {
                         _ = lay; // autofix
+                        debug("TODO: LayerBlockRule", .{});
                     },
                     .layer_statement => |*lay| {
                         _ = lay; // autofix
+                        debug("TODO: LayerStatementRule", .{});
                     },
                     .moz_document => |*doc| {
                         _ = doc; // autofix
+                        debug("TODO: MozDocumentRule", .{});
                     },
                     .style => |*sty| {
-                        _ = sty; // autofix
+                        const Selector = css.selector.Selector;
+                        const SelectorList = css.selector.SelectorList;
+                        const Component = css.selector.Component;
+                        if (parent_is_unused or try sty.minify(context, parent_is_unused)) {
+                            continue;
+                        }
+
+                        // If some of the selectors in this rule are not compatible with the targets,
+                        // we need to either wrap in :is() or split them into multiple rules.
+                        const incompatible: css.SmallList(css.selector.parser.Selector, 1) = if (sty.selectors.v.items.len > 1 and
+                            context.targets.shouldCompileSelectors() and
+                            !sty.isCompatible(context.targets.*))
+                        incompatible: {
+                            // The :is() selector accepts a forgiving selector list, so use that if possible.
+                            // Note that :is() does not allow pseudo elements, so we need to check for that.
+                            // In addition, :is() takes the highest specificity of its arguments, so if the selectors
+                            // have different weights, we need to split them into separate rules as well.
+                            if (context.targets.isCompatible(css.compat.Feature.is_selector) and !sty.selectors.anyHasPseudoElement() and sty.selectors.specifitiesAllEqual()) {
+                                const component = Component{ .is = sty.selectors.v.items };
+                                var list = css.SmallList(css.selector.parser.Selector, 1){};
+                                list.append(context.allocator, Selector.fromComponent(context.allocator, component)) catch bun.outOfMemory();
+                                sty.selectors = SelectorList{
+                                    .v = list,
+                                };
+                                break :incompatible css.SmallList(Selector, 1){};
+                            } else {
+                                // Otherwise, partition the selectors and keep the compatible ones in this rule.
+                                // We will generate additional rules for incompatible selectors later.
+                                var incompatible = css.SmallList(Selector, 1){};
+                                var i: usize = 0;
+                                while (i < sty.selectors.v.items.len) {
+                                    if (css.selector.isCompatible(sty.selectors.v.items[i .. i + 1], context.targets.*)) {
+                                        i += 1;
+                                    } else {
+                                        // Move the selector to the incompatible list.
+                                        incompatible.append(
+                                            context.allocator,
+                                            sty.selectors.v.orderedRemove(i),
+                                        ) catch bun.outOfMemory();
+                                    }
+                                }
+                                break :incompatible incompatible;
+                            }
+                        } else .{};
+                        _ = incompatible; // autofix
+
+                        sty.updatePrefix(context);
+
+                        // Attempt to merge the new rule with the last rule we added.
+                        // var merged = false;
+                        // _ = merged; // autofix
+                        // if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
+                        //     var last_style_rule = &rules.items[rules.items.len - 1].style;
+                        //     if (mergeStyleRules(sty, last_style_rule, context)) {
+                        //         // If that was successful, then the last rule has been updated to include the
+                        //         // selectors/declarations of the new rule. This might mean that we can merge it
+                        //         // with the previous rule, so continue trying while we have style rules available.
+                        //     }
+                        // }
+                        @panic("TODO finish this my g");
+
+                        // continue;
                     },
                     .counter_style => |*cntr| {
                         _ = cntr; // autofix
+                        debug("TODO: CounterStyleRule", .{});
                     },
                     .scope => |*scpe| {
                         _ = scpe; // autofix
+                        debug("TODO: ScopeRule", .{});
                     },
                     .nesting => |*nst| {
                         _ = nst; // autofix
+                        debug("TODO: NestingRule", .{});
                     },
                     .starting_style => |*rl| {
                         _ = rl; // autofix
+                        debug("TODO: StartingStyleRule", .{});
                     },
                     .font_palette_values => |*f| {
                         _ = f; // autofix
+                        debug("TODO: FontPaletteValuesRule", .{});
                     },
                     .property => |*prop| {
                         _ = prop; // autofix
+                        debug("TODO: PropertyRule", .{});
                     },
                     else => {},
                 }
@@ -255,7 +330,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
             css.deepDeinit(CssRule(AtRule), context.allocator, &this.v);
             this.v = rules;
-            return .{ .result = {} };
+            return;
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -298,6 +373,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 }
 
 pub const MinifyContext = struct {
+    /// NOTE: this should the same allocator the AST was allocated with
     allocator: std.mem.Allocator,
     targets: *const css.targets.Targets,
     handler: *css.DeclarationHandler,
@@ -306,6 +382,7 @@ pub const MinifyContext = struct {
     unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
     custom_media: ?std.StringArrayHashMapUnmanaged(custom_media.CustomMediaRule),
     css_modules: bool,
+    err: ?css.MinifyError = null,
 };
 
 pub const Location = struct {
@@ -369,4 +446,52 @@ pub fn StyleRuleKey(comptime R: type) type {
             return rule.isDuplicate(other_rule);
         }
     };
+}
+
+fn mergeStyleRules(
+    comptime T: type,
+    sty: *style.StyleRule(T),
+    last_style_rule: *style.StyleRule(T),
+    context: *MinifyContext,
+) bool {
+    // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
+    if (sty.selectors.eql(&last_style_rule.selectors) and
+        sty.isCompatible(context.targets.*) and
+        last_style_rule.isCompatible(context.targets.*) and
+        sty.rules.v.items.len == 0 and
+        (!context.css_modules or sty.loc.source_index == last_style_rule.loc.source_index))
+    {
+        last_style_rule.declarations.declarations.appendSlice(
+            context.allocator,
+            sty.declarations.declarations.items,
+        ) catch bun.outOfMemory();
+        sty.declarations.declarations.clearRetainingCapacity();
+
+        last_style_rule.declarations.important_declarations.appendSlice(
+            context.allocator,
+            sty.declarations.important_declarations.items,
+        ) catch bun.outOfMemory();
+        sty.declarations.important_declarations.clearRetainingCapacity();
+
+        last_style_rule.declarations.minify(
+            context.handler,
+            context.important_handler,
+            &context.handler_context,
+        );
+        return true;
+    } else if (sty.declarations.eql(&last_style_rule.declarations) and
+        sty.rules.v.items.len == 0 and
+        last_style_rule.rules.v.items.len == 0)
+    {
+        // If both selectors are potentially vendor prefixable, and they are
+        // equivalent minus prefixes, add the prefix to the last rule.
+        if (!sty.vendor_prefix.isEmpty() and
+            !last_style_rule.vendor_prefix.isEmpty() and
+            css.selector.isEquivalent(sty.selectors.v.items, &last_style_rule.selectors.v.items))
+        {
+            // If the new rule is unprefixed, replace the prefixes of the last rule.
+            // Otherwise, add the new prefix.
+        }
+    }
+    @panic("TODO finish this my g");
 }

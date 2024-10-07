@@ -304,6 +304,9 @@ pub fn ErrorWithLocation(comptime T: type) type {
     };
 }
 
+pub const MinifyErr = error{
+    minify_err,
+};
 pub const MinifyError = ErrorWithLocation(MinifyErrorKind);
 /// A transformation error.
 pub const MinifyErrorKind = union(enum) {

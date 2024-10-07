@@ -219,6 +219,7 @@ pub const BorderSideWidth = union(enum) {
     }
 };
 
+// TODO: fallbacks
 /// A value for the [border-color](https://drafts.csswg.org/css-backgrounds/#propdef-border-color) shorthand property.
 pub const BorderColor = struct {
     top: CssColor,
@@ -273,6 +274,7 @@ pub const BorderWidth = struct {
     };
 };
 
+// TODO: fallbacks
 /// A value for the [border-block-color](https://drafts.csswg.org/css-logical/#propdef-border-block-color) shorthand property.
 pub const BorderBlockColor = struct {
     /// The block start value.
@@ -321,6 +323,7 @@ pub const BorderBlockWidth = struct {
     };
 };
 
+// TODO: fallbacks
 /// A value for the [border-inline-color](https://drafts.csswg.org/css-logical/#propdef-border-inline-color) shorthand property.
 pub const BorderInlineColor = struct {
     /// The inline start value.

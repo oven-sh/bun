@@ -49,4 +49,18 @@ pub const PropertyHandlerContext = struct {
             .unused_symbols = unused_symbols,
         };
     }
+
+    pub fn child(this: *const PropertyHandlerContext, context: DeclarationContext) PropertyHandlerContext {
+        return PropertyHandlerContext{
+            .allocator = this.allocator,
+            .targets = this.targets,
+            .is_important = false,
+            .supports = .{},
+            .ltr = .{},
+            .rtl = .{},
+            .dark = .{},
+            .context = context,
+            .unused_symbols = this.unused_symbols,
+        };
+    }
 };

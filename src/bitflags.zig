@@ -39,6 +39,14 @@ pub fn Bitflags(comptime T: type) type {
             this.* = bitwiseOr(this.*, other);
         }
 
+        pub inline fn remove(this: *T, other: T) void {
+            this.* = bitwiseAnd(this.*, ~other);
+        }
+
+        pub inline fn maskOut(this: T, other: T) T {
+            return @bitCast(asBits(this) & ~asBits(other));
+        }
+
         pub fn contains(lhs: T, rhs: T) bool {
             return @as(IntType, @bitCast(lhs)) & @as(IntType, @bitCast(rhs)) != 0;
         }

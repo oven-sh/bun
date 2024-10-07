@@ -65,6 +65,22 @@ pub const DashedIdentFns = DashedIdent;
 pub const DashedIdent = struct {
     v: []const u8,
 
+    pub fn HashMap(comptime V: type) type {
+        return std.ArrayHashMapUnmanaged(
+            DashedIdent,
+            V,
+            struct {
+                pub fn hash(_: @This(), s: DashedIdent) u32 {
+                    return std.array_hash_map.hashString(s.v);
+                }
+                pub fn eql(_: @This(), a: DashedIdent, b: DashedIdent, _: usize) bool {
+                    return bun.strings.eql(a, b);
+                }
+            },
+            false,
+        );
+    }
+
     pub fn parse(input: *css.Parser) Result(DashedIdent) {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {

@@ -43,6 +43,10 @@ pub const SupportsCondition = union(enum) {
         property_id: css.PropertyId,
         /// The raw value of the declaration.
         value: []const u8,
+
+        pub fn eql(this: *const @This(), other: *const @This()) bool {
+            return css.implementEql(@This(), this, other);
+        }
     },
 
     /// A selector to evaluate.
@@ -50,6 +54,10 @@ pub const SupportsCondition = union(enum) {
 
     /// An unknown condition.
     unknown: []const u8,
+
+    pub fn eql(this: *const SupportsCondition, other: *const SupportsCondition) bool {
+        return css.implementEql(SupportsCondition, this, other);
+    }
 
     pub fn deepClone(this: *const SupportsCondition, allocator: std.mem.Allocator) SupportsCondition {
         _ = allocator; // autofix
@@ -379,7 +387,7 @@ pub fn SupportsRule(comptime R: type) type {
             try dest.writeChar('}');
         }
 
-        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) Maybe(void, css.MinifyError) {
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!void {
             _ = this; // autofix
             _ = context; // autofix
             _ = parent_is_unused; // autofix

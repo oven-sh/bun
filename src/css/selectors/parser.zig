@@ -822,6 +822,20 @@ pub const PseudoClass = union(enum) {
         arguments: css.TokenList,
     },
 
+    pub fn isEquivalent(this: *const PseudoClass, other: *const PseudoClass) bool {
+        if (this.* == .fullscreen and other.* == .fullscreen) return true;
+        if (this.* == .any_link and other.* == .any_link) return true;
+        if (this.* == .read_only and other.* == .read_only) return true;
+        if (this.* == .read_write and other.* == .read_write) return true;
+        if (this.* == .placeholder_shown and other.* == .placeholder_shown) return true;
+        if (this.* == .autofill and other.* == .autofill) return true;
+        return this.eql(other);
+    }
+
+    pub fn eql(lhs: *const PseudoClass, rhs: *const PseudoClass) bool {
+        return css.implementEql(PseudoClass, lhs, rhs);
+    }
+
     pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
         var s = ArrayList(u8){};
         // PERF(alloc): I don't like making these little allocations
@@ -831,6 +845,28 @@ pub const PseudoClass = union(enum) {
         var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
+    }
+
+    pub fn getPrefix(this: *const PseudoClass) css.VendorPrefix {
+        return switch (this.*) {
+            inline .fullscreen, .any_link, .read_only, .read_write, .placeholder_shown, .autofill => |p| p,
+            else => css.VendorPrefix.empty(),
+        };
+    }
+
+    pub fn getNecessaryPrefixes(this: *PseudoClass, targets: css.targets.Targets) css.VendorPrefix {
+        const F = css.prefixes.Feature;
+        const p: *css.VendorPrefix, const feature: F = switch (this.*) {
+            .fullscreen => |*p| .{ p, F.pseudo_class_fullscreen },
+            .any_link => |*p| .{ p, F.pseudo_class_any_link },
+            .read_only => |*p| .{ p, F.pseudo_class_read_only },
+            .read_write => |*p| .{ p, F.pseudo_class_read_write },
+            .placeholder_shown => |*p| .{ p, F.pseudo_class_placeholder_shown },
+            .autofill => |*p| .{ p, F.pseudo_class_autofill },
+            else => return css.VendorPrefix.empty(),
+        };
+        p.* = targets.prefixes(p.*, feature);
+        return p.*;
     }
 
     pub fn isUserActionState(this: *const PseudoClass) bool {
@@ -1304,6 +1340,28 @@ pub fn GenericSelectorList(comptime Impl: type) type {
 
         const This = @This();
 
+        pub fn eql(lhs: *const This, rhs: *const This) bool {
+            return css.generic.eqlList(SelectorT, &lhs.v, &rhs.v);
+        }
+
+        pub fn anyHasPseudoElement(this: *const This) bool {
+            for (this.v.items) |*sel| {
+                if (sel.hasPseudoElement()) return true;
+            }
+            return false;
+        }
+
+        pub fn specifitiesAllEqual(this: *const This) bool {
+            if (this.v.items.len == 0) return true;
+            if (this.v.items.len == 1) return true;
+
+            const value = this.v.items[0].specifity();
+            for (this.v.items[1..]) |*sel| {
+                if (sel.specifity() != value) return false;
+            }
+            return true;
+        }
+
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
@@ -1495,6 +1553,17 @@ pub fn GenericSelector(comptime Impl: type) type {
             @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
         }
 
+        pub fn hasCombinator(this: *const This) bool {
+            for (this.components.items) |*c| {
+                if (c.* == .combinator and c.combinator.isTreeCombinator()) return true;
+            }
+            return false;
+        }
+
+        pub fn hasPseudoElement(this: *const This) bool {
+            return this.specifity_and_flags.hasPseudoElement();
+        }
+
         /// Returns count of simple selectors and combinators in the Selector.
         pub fn len(this: *const This) usize {
             return this.components.items.len;
@@ -1658,6 +1727,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         nesting,
 
         const This = @This();
+
+        pub fn eql(lhs: *const This, rhs: *const This) bool {
+            return css.implementEql(This, lhs, rhs);
+        }
 
         pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             switch (this.*) {
@@ -1895,6 +1968,10 @@ pub const SpecifityAndFlags = struct {
     specificity: u32,
     /// There's padding after this field due to the size of the flags.
     flags: SelectorFlags,
+
+    pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
+        return this.flags.intersects(SelectorFlags{ .has_pseudo = true });
+    }
 };
 
 pub const SelectorFlags = packed struct(u8) {
@@ -1957,6 +2034,13 @@ pub const Combinator = enum {
         _ = this; // autofix
         _ = dest; // autofix
         @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
+    }
+
+    pub fn isTreeCombinator(this: *const @This()) bool {
+        return switch (this.*) {
+            .child, .descendant, .next_sibling, .later_sibling => true,
+            else => false,
+        };
     }
 
     pub fn format(this: *const Combinator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -2104,6 +2188,40 @@ pub const PseudoElement = union(enum) {
         /// The arguments of the pseudo element function.
         arguments: css.TokenList,
     },
+
+    pub fn isEquivalent(this: *const PseudoElement, other: *const PseudoElement) bool {
+        if (this.* == .selection and other.* == .selection) return true;
+        if (this.* == .placeholder and other.* == .placeholder) return true;
+        if (this.* == .backdrop and other.* == .backdrop) return true;
+        if (this.* == .file_selector_button and other.* == .file_selector_button) return true;
+        return this.eql(other);
+    }
+
+    pub fn eql(this: *const PseudoElement, other: *const PseudoElement) bool {
+        return css.implementEql(PseudoElement, this, other);
+    }
+
+    pub fn getNecessaryPrefixes(this: *PseudoElement, targets: css.targets.Targets) css.VendorPrefix {
+        const F = css.prefixes.Feature;
+        const p: *css.VendorPrefix, const feature: F = switch (this.*) {
+            .selection => |*p| .{ p, F.pseudo_element_selection },
+            .placeholder => |*p| .{ p, F.pseudo_element_placeholder },
+            .backdrop => |*p| .{ p, F.pseudo_element_backdrop },
+            .file_selector_button => |*p| .{ p, F.pseudo_element_file_selector_button },
+            else => return css.VendorPrefix.empty(),
+        };
+
+        p.* = targets.prefixes(p.*, feature);
+
+        return p.*;
+    }
+
+    pub fn getPrefix(this: *const PseudoElement) css.VendorPrefix {
+        return switch (this.*) {
+            .selection, .placeholder, .backdrop, .file_selector_button => |p| p,
+            else => css.VendorPrefix.empty(),
+        };
+    }
 
     pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("{s}", .{@tagName(this.*)});

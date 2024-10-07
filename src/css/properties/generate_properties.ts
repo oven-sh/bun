@@ -233,7 +233,6 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
     return null;
   }
 
-
   pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
     return switch (this.*) {
       ${Object.entries(property_defs)
@@ -256,6 +255,20 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
         .join("\n")}
       else => {},
     };
+  }
+
+  pub fn eql(lhs: *const PropertyId, rhs: *const PropertyId) bool {
+    if (@intFromEnum(lhs.*) != @intFromEnum(rhs.*)) return false;
+    inline for (bun.meta.EnumFields(PropertyId), std.meta.fields(PropertyId)) |enum_field, union_field| {
+      if (enum_field.value == @intFromEnum(lhs.*)) {
+        if (comptime union_field.type == css.VendorPrefix) {
+          return @field(lhs, union_field.name).eql(@field(rhs, union_field.name));
+        } else {
+          return true;
+        }
+      }
+    }
+    unreachable;
   }
 `;
 }
@@ -689,30 +702,30 @@ generateCode({
     ty: "BorderRight",
     shorthand: true,
   },
-  // "border-block": {
-  //   ty: "BorderBlock",
-  //   shorthand: true,
-  // },
-  // "border-block-start": {
-  //   ty: "BorderBlockStart",
-  //   shorthand: true,
-  // },
-  // "border-block-end": {
-  //   ty: "BorderBlockEnd",
-  //   shorthand: true,
-  // },
-  // "border-inline": {
-  //   ty: "BorderInline",
-  //   shorthand: true,
-  // },
-  // "border-inline-start": {
-  //   ty: "BorderInlineStart",
-  //   shorthand: true,
-  // },
-  // "border-inline-end": {
-  //   ty: "BorderInlineEnd",
-  //   shorthand: true,
-  // },
+  "border-block": {
+    ty: "BorderBlock",
+    shorthand: true,
+  },
+  "border-block-start": {
+    ty: "BorderBlockStart",
+    shorthand: true,
+  },
+  "border-block-end": {
+    ty: "BorderBlockEnd",
+    shorthand: true,
+  },
+  "border-inline": {
+    ty: "BorderInline",
+    shorthand: true,
+  },
+  "border-inline-start": {
+    ty: "BorderInlineStart",
+    shorthand: true,
+  },
+  "border-inline-end": {
+    ty: "BorderInlineEnd",
+    shorthand: true,
+  },
   // outline: {
   //   ty: "Outline",
   //   shorthand: true,
@@ -1293,9 +1306,9 @@ generateCode({
   //   ty: "TextSizeAdjust",
   //   valid_prefixes: ["webkit", "moz", "ms"],
   // },
-  // direction: {
-  //   ty: "Direction",
-  // },
+  direction: {
+    ty: "Direction",
+  },
   // "unicode-bidi": {
   //   ty: "UnicodeBidi",
   // },
@@ -1744,7 +1757,7 @@ const BorderInline = border.BorderInline;
 // const TextEmphasisPosition = text.TextEmphasisPosition;
 // const TextShadow = text.TextShadow;
 // const TextSizeAdjust = text.TextSizeAdjust;
-// const Direction = text.Direction;
+const Direction = text.Direction;
 // const UnicodeBidi = text.UnicodeBidi;
 // const BoxDecorationBreak = text.BoxDecorationBreak;
 // const Resize = ui.Resize;

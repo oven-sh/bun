@@ -31,6 +31,19 @@ pub fn StyleRule(comptime R: type) type {
 
         const This = @This();
 
+        pub fn updatePrefix(this: *This, context: *css.MinifyContext) void {
+            this.vendor_prefix = css.selector.getPrefix(&this.selectors);
+            if (this.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and
+                context.targets.shouldCompileSelectors())
+            {
+                this.vendor_prefix = css.selector.downlevelSelectors(context.allocator, this.selectors.v.items, context.targets.*);
+            }
+        }
+
+        pub fn isCompatible(this: *const This, targets: css.targets.Targets) bool {
+            return css.selector.isCompatible(this.selectors.v.items, targets);
+        }
+
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             if (this.vendor_prefix.isEmpty()) {
                 try this.toCssBase(W, dest);
@@ -151,6 +164,36 @@ pub fn StyleRule(comptime R: type) type {
                 try Helpers.newline(this, W, dest, supports_nesting, len);
                 try dest.withContext(&this.selectors, this, This.toCss);
             }
+        }
+
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
+            var unused = false;
+            if (context.unused_symbols.count() > 0) {
+                if (css.selector.isUnused(this.selectors.v.items, context.unused_symbols, parent_is_unused)) {
+                    if (this.rules.v.items.len == 0) {
+                        return true;
+                    }
+
+                    this.declarations.declarations.clearRetainingCapacity();
+                    this.declarations.important_declarations.clearRetainingCapacity();
+                    unused = true;
+                }
+            }
+
+            context.handler_context.context = .style_rule;
+            this.declarations.minify(context.handler, context.important_handler, &context.handler_context);
+            context.handler_context.context = .none;
+
+            if (this.rules.v.items.len > 0) {
+                var handler_context = context.handler_context.child(.style_rule);
+                std.mem.swap(css.PropertyHandlerContext, &context.handler_context, &handler_context);
+                try this.rules.minify(context, unused);
+                if (unused and this.rules.v.items.len == 0) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// Returns whether this rule is a duplicate of another rule.

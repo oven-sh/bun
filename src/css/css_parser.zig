@@ -99,6 +99,7 @@ pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
 pub const SelectorError = errors_.SelectorError;
 pub const MinifyErrorKind = errors_.MinifyErrorKind;
 pub const MinifyError = errors_.MinifyError;
+pub const MinifyErr = errors_.MinifyErr;
 
 pub const ImportConditions = css_rules.import.ImportConditions;
 
@@ -2517,49 +2518,41 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
         /// Minify and transform the style sheet for the provided browser targets.
         pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) Maybe(void, Err(MinifyErrorKind)) {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            _ = options; // autofix
-            // TODO
+            const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
+            var handler = declaration.DeclarationHandler.default();
+            var important_handler = declaration.DeclarationHandler.default();
+
+            // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
+            // of a stylesheet. Do a pre-scan here and create a lookup table by name.
+            var custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.contains(ParserFlags{ .custom_media = true }) and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
+                var custom_media = std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule){};
+
+                for (this.rules.v.items) |*rule| {
+                    if (rule.* == .custom_media) {
+                        custom_media.put(allocator, rule.custom_media.name.v, rule.custom_media.deepClone(allocator)) catch bun.outOfMemory();
+                    }
+                }
+
+                break :brk custom_media;
+            } else null;
+            defer if (custom_media) |*media| media.deinit(allocator);
+
+            var minify_ctx = MinifyContext{
+                .allocator = allocator,
+                .targets = &options.targets,
+                .handler = &handler,
+                .important_handler = &important_handler,
+                .handler_context = ctx,
+                .unused_symbols = &options.unused_symbols,
+                .custom_media = custom_media,
+                .css_modules = this.options.css_modules != null,
+            };
+
+            this.rules.minify(&minify_ctx, false) catch {
+                @panic("TODO: Handle");
+            };
+
             return .{ .result = {} };
-
-            // const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
-            // var handler = declaration.DeclarationHandler.default();
-            // var important_handler = declaration.DeclarationHandler.default();
-
-            // // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
-            // // of a stylesheet. Do a pre-scan here and create a lookup table by name.
-            // const custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.contains(ParserFlags{ .custom_media = true }) and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
-            //     var custom_media = std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule){};
-
-            //     for (this.rules.v.items) |*rule| {
-            //         if (rule.* == .custom_media) {
-            //             custom_media.put(allocator, rule.custom_media.name, rule.deepClone(allocator)) catch bun.outOfMemory();
-            //         }
-            //     }
-
-            //     break :brk custom_media;
-            // } else null;
-            // defer if (custom_media) |media| media.deinit(allocator);
-
-            // var minify_ctx = MinifyContext{
-            //     .targets = &options.targets,
-            //     .handler = &handler,
-            //     .important_handler = &important_handler,
-            //     .handler_context = ctx,
-            //     .unused_symbols = &options.unused_symbols,
-            //     .custom_media = custom_media,
-            //     .css_modules = this.options.css_modules != null,
-            // };
-
-            // switch (this.rules.minify(&minify_ctx, false)) {
-            //     .result => return .{ .result = {} },
-            //     .err => |e| {
-            //         _ = e; // autofix
-            //         @panic("TODO: here");
-            //         // return .{ .err = .{ .kind = e, .loc = } };
-            //     },
-            // }
         }
 
         pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
@@ -6017,10 +6010,25 @@ pub const serializer = struct {
     }
 };
 
+/// A function to implement `lhs.eql(&rhs)` for the many types in the CSS parser that needs this.
+///
+/// This is the equivalent of doing `#[derive(PartialEq])` in Rust.
+///
+/// This function only works on simple types like:
+/// - Simple equality types (e.g. integers, floats, strings, enums, etc.)
+/// - Types which implement a `.eql(lhs: *const @This(), rhs: *const @This()) bool` function
+///
+/// Or compound types composed of simple types such as:
+/// - Pointers to simple types
+/// - Optional simple types
+/// - Structs, Arrays, and Unions
 pub inline fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     const tyinfo = @typeInfo(T);
     if (comptime bun.meta.isSimpleEqlType(T)) {
         return this.* == other.*;
+    }
+    if (comptime T == []const u8) {
+        return bun.strings.eql(this.*, other.*);
     }
     if (comptime @typeInfo(T) == .Pointer) {
         const TT = std.meta.Child(T);
@@ -6054,8 +6062,13 @@ pub inline fn implementEql(comptime T: type, this: *const T, other: *const T) bo
         .Union => {
             if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
             if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
-            inline for (tyinfo.Union.fields) |field| {
-                if (!generic.eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
+            const enum_fields = bun.meta.EnumFields(T);
+            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
+                if (enum_field.value == @intFromEnum(this.*)) {
+                    if (union_field.type != void) {
+                        return generic.eql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
+                    } else return true;
+                }
             }
             return true;
         },
@@ -6142,8 +6155,8 @@ pub const generic = struct {
             // Looks like array list
             if (tyinfo.Struct.fields.len == 2 and
                 std.mem.eql(u8, tyinfo.Struct.fields[0].name, "items") and
-                std.mem.eql(u8, tyinfo.Struct.fields[0].name, "capacity"))
-                return std.meta.Child(tyinfo.Struct.fields[0].items);
+                std.mem.eql(u8, tyinfo.Struct.fields[1].name, "capacity"))
+                return std.meta.Child(tyinfo.Struct.fields[0].type);
 
             // Looks like babylist
             if (tyinfo.Struct.fields.len == 3 and
@@ -6157,11 +6170,12 @@ pub const generic = struct {
     }
 
     pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
-        if (comptime @typeInfo(T) == .Pointer) {
+        const tyinfo = comptime @typeInfo(T);
+        if (comptime tyinfo == .Pointer and tyinfo.Pointer.size == .One) {
             const TT = std.meta.Child(T);
             return eql(TT, lhs.*, rhs.*);
         }
-        if (comptime @typeInfo(T) == .Optional) {
+        if (comptime tyinfo == .Optional) {
             const TT = std.meta.Child(T);
             if (lhs.* != null and rhs.* != null) return eql(TT, &lhs.*.?, &rhs.*.?);
             return false;
@@ -6176,6 +6190,7 @@ pub const generic = struct {
             f32 => lhs.* == rhs.*,
             CSSInteger => lhs.* == rhs.*,
             CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.*, rhs.*),
+            []const u8 => bun.strings.eql(lhs.*, rhs.*),
             else => T.eql(lhs, rhs),
         };
     }

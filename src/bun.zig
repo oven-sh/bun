@@ -3923,8 +3923,8 @@ comptime {
 /// Given `&slice[index] == item`, returns the `index` needed.
 /// The item must be in the slice.
 pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    bun.assert(isSliceInBuffer(slice, item[0..1]));
     const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
     const index = @divExact(offset, @sizeOf(T));
-    bun.assert(index < slice.len);
     return index;
 }

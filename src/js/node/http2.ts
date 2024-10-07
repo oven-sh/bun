@@ -2402,8 +2402,7 @@ class ServerHttp2Session extends Http2Session {
     write(self: ServerHttp2Session, buffer: Buffer) {
       if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (!socket || socket.writableEnded) return false;
-      if (self.#connected) {
+      if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
         return socket.write(buffer);
       }
@@ -2419,14 +2418,14 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-    // this[bunHTTP2Socket] = null;
+    this[bunHTTP2Socket] = null;
     // this.emit("close");
     this.close();
   }
 
   #onError(error: Error) {
     this.#parser = null;
-    // this[bunHTTP2Socket] = null;
+    this[bunHTTP2Socket] = null;
     // this.emit("error", error);
     this.destroy(error);
   }
@@ -2817,11 +2816,9 @@ class ClientHttp2Session extends Http2Session {
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (!socket || socket.writableEnded) return false;
-      if (self.#connected) {
-        if (socket.write)
-          // redirect writes to socket
-          return socket.write(buffer);
+      if (socket && !socket.writableEnded && self.#connected) {
+        // redirect writes to socket
+        return socket.write(buffer);
       }
       //queue
       self.#queue.push(buffer);
@@ -2881,13 +2878,13 @@ class ClientHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-    // this[bunHTTP2Socket] = null;
+    this[bunHTTP2Socket] = null;
     // this.emit("close");
     this.close();
   }
   #onError(error: Error) {
     this.#parser = null;
-    // this[bunHTTP2Socket] = null;
+    this[bunHTTP2Socket] = null;
     // this.emit("error", error);
     this.destroy(error);
   }
@@ -3280,7 +3277,6 @@ function connectionListener(socket: Socket) {
   session.on("error", sessionOnError);
   const timeout = this.timeout;
   if (timeout) session.setTimeout(timeout, sessionOnTimeout);
-  else socket.setTimeout(0);
 
   this.emit("session", session);
 }

@@ -28,7 +28,7 @@ const expect = std.testing.expect;
 const isAllAscii = @import("./string_immutable.zig").isAllASCII;
 const math = std.math;
 const mem = std.mem;
-const isWindows = @import("builtin").os.tag == .windows;
+const Environment = bun.Environment;
 
 const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
@@ -338,6 +338,16 @@ pub fn GlobWalker_(
 
         /// not owned by this struct
         pattern: []const u8 = "",
+        // pattern: struct {
+        //     data: bun.String = bun.String.empty,
+
+        //     pub fn isAbsolute(this: *const @This()) bool {
+        //         if (this.data.isUTF16()) {
+        //             return std.fs.path.isAbsoluteWindowsWTF16(this.data.utf16());
+        //         }
+        //         return std.fs.path.isAbsolute(this.data.latin1());
+        //     }
+        // } = .{},
 
         pattern_codepoints: []u32 = &[_]u32{},
         cp_len: u32 = 0,
@@ -1341,11 +1351,11 @@ pub fn GlobWalker_(
 
             return switch (pattern_component.syntax_hint) {
                 .Double, .Single => true,
-                .WildcardFilepath => if (comptime !isWindows)
+                .WildcardFilepath => if (comptime !Environment.isWindows)
                     matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
-                .Literal => if (comptime !isWindows)
+                .Literal => if (comptime !Environment.isWindows)
                     matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
@@ -1355,22 +1365,21 @@ pub fn GlobWalker_(
 
         fn matchPatternSlow(this: *GlobWalker, pattern_component: *Component, filepath: []const u8) bool {
             // windows filepaths are utf-16 so GlobAscii.match will never work
-            if (comptime !isWindows) {
-                if (pattern_component.is_ascii and isAllAscii(filepath))
-                    return GlobAscii.match(
-                        pattern_component.patternSlice(this.pattern),
-                        filepath,
-                    );
+            if (comptime !Environment.isWindows) {
+                if (pattern_component.is_ascii and isAllAscii(filepath)) {
+                    return match(.latin1, pattern_component.patternSlice(this.pattern), .latin1, filepath).matches();
+                    // return GlobAscii.match(
+                    //     pattern_component.patternSlice(this.pattern),
+                    //     filepath,
+                    // );
+                }
             }
             const codepoints = this.componentStringUnicode(pattern_component);
-            return matchImpl(
-                codepoints,
-                filepath,
-            ).matches();
+            return match(.utf32, codepoints, .utf8, filepath).matches();
         }
 
         fn componentStringUnicode(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            if (comptime isWindows) {
+            if (comptime Environment.isWindows) {
                 return this.componentStringUnicodeWindows(pattern_component);
             } else {
                 return this.componentStringUnicodePosix(pattern_component);
@@ -1637,7 +1646,7 @@ pub fn GlobWalker_(
 
                 switch (c) {
                     '\\' => {
-                        if (comptime isWindows) {
+                        if (comptime Environment.isWindows) {
                             var end_cp = cp_len;
                             var end_byte = cursor.i;
                             // is last char
@@ -1707,7 +1716,7 @@ pub fn GlobWalker_(
 
             const codepoints = try arena.allocator().alloc(u32, cp_len);
             // On Windows filepaths are UTF-16 so its better to fill the codepoints buffer upfront
-            if (comptime isWindows) {
+            if (comptime Environment.isWindows) {
                 GlobWalker.convertUtf8ToCodepoints(codepoints, pattern);
             }
             out_pattern_cp.* = codepoints;
@@ -1737,99 +1746,104 @@ pub fn GlobWalker_(
 
 // From: https://github.com/The-King-of-Toasters/globlin
 /// State for matching a glob against a string
-pub const GlobState = struct {
-    // These store character indices into the glob and path strings.
-    path_index: CursorState = .{},
-    glob_index: u32 = 0,
-    // When we hit a * or **, we store the state for backtracking.
-    wildcard: Wildcard = .{},
-    globstar: Wildcard = .{},
+fn GlobState(comptime glob_encoding: Encoding, comptime path_encoding: Encoding) type {
+    return struct {
+        // These store character indices into the glob and path strings.
+        glob: CodePointIterator(glob_encoding) = .{},
+        path: CodePointIterator(path_encoding) = .{},
+        // When we hit a * or **, we store the state for backtracking.
+        wildcard: Wildcard(glob_encoding, path_encoding) = .{},
+        globstar: Wildcard(glob_encoding, path_encoding) = .{},
 
-    fn init(path_iter: *const CodepointIterator) GlobState {
-        var this = GlobState{};
-        // this.glob_index = CursorState.init(glob_iter);
-        this.path_index = CursorState.init(path_iter);
-        return this;
-    }
-
-    fn skipBraces(self: *GlobState, glob: []const u32, stop_on_comma: bool) BraceState {
-        var braces: u32 = 1;
-        var in_brackets = false;
-        while (self.glob_index < glob.len and braces > 0) : (self.glob_index += 1) {
-            switch (glob[self.glob_index]) {
-                // Skip nested braces
-                '{' => if (!in_brackets) {
-                    braces += 1;
-                },
-                '}' => if (!in_brackets) {
-                    braces -= 1;
-                },
-                ',' => if (stop_on_comma and braces == 1 and !in_brackets) {
-                    self.glob_index += 1;
-                    return .Comma;
-                },
-                '*', '?', '[' => |c| if (!in_brackets) {
-                    if (c == '[')
-                        in_brackets = true;
-                },
-                ']' => in_brackets = false,
-                '\\' => self.glob_index += 1,
-                else => {},
-            }
+        pub fn init(glob_input: []const glob_encoding.unit(), path_input: []const path_encoding.unit()) @This() {
+            return .{
+                .glob = CodePointIterator(glob_encoding).init(glob_input),
+                .path = CodePointIterator(path_encoding).init(path_input),
+            };
         }
 
-        if (braces != 0)
-            return .Invalid;
-        return .EndBrace;
-    }
+        pub fn skipBraces(this: *@This(), stop_on_comma: bool) BraceState {
+            var braces: u32 = 1;
+            var in_brackets = false;
+            while (!this.glob.isDone() and braces > 0) : (this.glob.next()) {
+                switch (this.glob.units[this.glob.i].int()) {
+                    // Skip nested braces
+                    '{' => if (!in_brackets) {
+                        braces += 1;
+                    },
+                    '}' => if (!in_brackets) {
+                        braces -= 1;
+                    },
+                    ',' => if (stop_on_comma and braces == 1 and !in_brackets) {
+                        this.glob.next();
+                        return .comma;
+                    },
+                    '*', '?', '[' => |c| if (!in_brackets) {
+                        if (c == '[') {
+                            in_brackets = true;
+                        }
+                    },
+                    ']' => in_brackets = false,
+                    '\\' => this.glob.next(),
+                    else => {},
+                }
+            }
 
-    inline fn backtrack(self: *GlobState) void {
-        self.glob_index = self.wildcard.glob_index;
-        self.path_index = self.wildcard.path_index;
-    }
-};
+            return if (braces != 0) .invalid else .end_brace;
+        }
 
-const Wildcard = struct {
-    // Using u32 rather than usize for these results in 10% faster performance.
-    // glob_index: CursorState = .{},
-    glob_index: u32 = 0,
-    path_index: CursorState = .{},
-};
+        pub inline fn backtrack(this: *@This()) void {
+            this.glob = this.wildcard.glob;
+            this.path = this.wildcard.path;
+        }
+    };
+}
 
-const BraceState = enum { Invalid, Comma, EndBrace };
+fn Wildcard(comptime glob_encoding: Encoding, comptime path_encoding: Encoding) type {
+    return struct {
+        glob: CodePointIterator(glob_encoding) = .{},
+        path: CodePointIterator(path_encoding) = .{},
+    };
+}
 
-const BraceStack = struct {
-    stack: [10]GlobState = undefined,
-    len: u32 = 0,
-    longest_brace_match: CursorState = .{},
+const BraceState = enum { invalid, comma, end_brace };
 
-    inline fn push(self: *BraceStack, state: *const GlobState) GlobState {
-        self.stack[self.len] = state.*;
-        self.len += 1;
-        return GlobState{
-            .path_index = state.path_index,
-            .glob_index = state.glob_index + 1,
-        };
-    }
+fn BraceStack(comptime glob_encoding: Encoding, comptime path_encoding: Encoding) type {
+    const State = GlobState(glob_encoding, path_encoding);
+    return struct {
+        stack: [10]State = undefined,
+        len: u32 = 0,
+        longest_brace_match: CodePointIterator(path_encoding) = .{},
 
-    inline fn pop(self: *BraceStack, state: *const GlobState) GlobState {
-        self.len -= 1;
-        const s = GlobState{
-            .glob_index = state.glob_index,
-            .path_index = self.longest_brace_match,
-            // Restore star state if needed later.
-            .wildcard = self.stack[self.len].wildcard,
-            .globstar = self.stack[self.len].globstar,
-        };
-        if (self.len == 0)
-            self.longest_brace_match = .{};
-        return s;
-    }
+        inline fn push(this: *@This(), state: *const State) State {
+            this.stack[this.len] = state.*;
+            this.len += 1;
+            return .{
+                .path = state.path,
+                .glob = state.glob.peek(),
+            };
+        }
 
-    inline fn last(self: *const BraceStack) *const GlobState {
-        return &self.stack[self.len - 1];
-    }
-};
+        pub inline fn pop(this: *@This(), state: *const State) State {
+            this.len -= 1;
+            const s: State = .{
+                .glob = state.glob,
+                .path = this.longest_brace_match,
+                // Restore start state if needed later.
+                .wildcard = this.stack[this.len].wildcard,
+                .globstar = this.stack[this.len].globstar,
+            };
+            if (this.len == 0) {
+                this.longest_brace_match = .{};
+            }
+            return s;
+        }
+
+        pub inline fn last(this: *const @This()) *const State {
+            return &this.stack[this.len - 1];
+        }
+    };
+}
 
 pub const MatchResult = enum {
     no_match,
@@ -1870,59 +1884,58 @@ pub const MatchResult = enum {
 ///     Multiple "!" characters negate the pattern multiple times.
 /// "\"
 ///     Used to escape any of the special characters above.
-pub fn matchImpl(glob: []const u32, path: []const u8) MatchResult {
-    const path_iter = CodepointIterator.init(path);
+pub fn match(
+    comptime glob_encoding: Encoding,
+    glob_units: []const glob_encoding.unit(),
+    comptime path_encoding: Encoding,
+    path_units: []const path_encoding.unit(),
+) MatchResult {
+    var state = GlobState(glob_encoding, path_encoding).init(glob_units, path_units);
+    var brace_stack: BraceStack(glob_encoding, path_encoding) = .{};
 
-    // This algorithm is based on https://research.swtch.com/glob
-    var state = GlobState.init(&path_iter);
-    // Store the state when we see an opening '{' brace in a stack.
-    // Up to 10 nested braces are supported.
-    var brace_stack = BraceStack{};
-
-    // First, check if the pattern is negated with a leading '!' character.
-    // Multiple negations can occur.
     var negated = false;
-    while (state.glob_index < glob.len and glob[state.glob_index] == '!') {
+    while (state.glob.eqlAsciiByte('!')) {
         negated = !negated;
-        state.glob_index += 1;
+        state.glob.next();
     }
 
-    while (state.glob_index < glob.len or state.path_index.cursor.i < path.len) {
-        if (state.glob_index < glob.len) {
-            switch (glob[state.glob_index]) {
+    while (!state.glob.isDone() or !state.path.isDone()) {
+        if (!state.glob.isDone()) {
+            switch (state.glob.units[state.glob.i].int()) {
                 '*' => {
-                    const is_globstar = state.glob_index + 1 < glob.len and glob[state.glob_index + 1] == '*';
+                    const is_globstar = state.glob.eqlAscii("**");
                     // const is_globstar = state.glob_index.cursor.i + state.glob_index.cursor.width < glob.len and
                     //     state.glob_index.peek(&glob_iter).cursor.c == '*';
                     if (is_globstar) {
                         // Coalesce multiple ** segments into one.
-                        var index = state.glob_index + 2;
-                        state.glob_index = skipGlobstars(glob, &index) - 2;
+                        var skip = state.glob.peekAscii(2);
+                        while (skip.eqlAscii("/**")) {
+                            skip = skip.peekAscii(3);
+                        }
+
+                        state.glob.setAtAscii(skip.i - 2);
+                        // state.glob.i = skip.i - 2;
+                        // state.glob.width = 1;
                     }
 
-                    state.wildcard.glob_index = state.glob_index;
-                    state.wildcard.path_index = state.path_index.peek(&path_iter);
+                    state.wildcard.glob = state.glob;
+                    state.wildcard.path = state.path.peek();
 
                     // ** allows path separators, whereas * does not.
                     // However, ** must be a full path component, i.e. a/**/b not a**b.
                     if (is_globstar) {
                         // Skip wildcards
-                        state.glob_index += 2;
+                        state.glob.nextAscii(2);
 
-                        if (glob.len == state.glob_index) {
+                        if (state.glob.isDone()) {
                             // A trailing ** segment without a following separator.
                             state.globstar = state.wildcard;
-                        } else if (glob[state.glob_index] == '/' and
-                            (state.glob_index < 3 or glob[state.glob_index - 3] == '/'))
-                        {
+                        } else if (state.glob.eqlAsciiByte('/') and (state.glob.i < 3 or state.glob.eqlAsciiByteAt(state.glob.i - 3, '/'))) {
                             // Matched a full /**/ segment. If the last character in the path was a separator,
                             // skip the separator in the glob so we search for the next character.
                             // In effect, this makes the whole segment optional so that a/**/b matches a/b.
-                            if (state.path_index.cursor.i == 0 or
-                                (state.path_index.cursor.i < path.len and
-                                isSeparator(path[state.path_index.cursor.i - 1])))
-                            {
-                                state.glob_index += 1;
+                            if (state.path.i == 0 or (!state.path.isDone() and state.path.previous().isSeparator())) {
+                                state.glob.next();
                             }
 
                             // The allows_sep flag allows separator characters in ** matches.
@@ -1930,93 +1943,91 @@ pub fn matchImpl(glob: []const u32, path: []const u8) MatchResult {
                             state.globstar = state.wildcard;
                         }
                     } else {
-                        state.glob_index += 1;
+                        state.glob.next();
                     }
 
                     // If we are in a * segment and hit a separator,
                     // either jump back to a previous ** or end the wildcard.
-                    if (state.globstar.path_index.cursor.i != state.wildcard.path_index.cursor.i and
-                        state.path_index.cursor.i < path.len and
-                        isSeparator(state.path_index.cursor.c))
-                    {
+                    if (state.globstar.path.i != state.wildcard.path.i and state.path.isSeparator()) {
                         // Special case: don't jump back for a / at the end of the glob.
-                        if (state.globstar.path_index.cursor.i > 0 and state.path_index.cursor.i + state.path_index.cursor.width < path.len) {
-                            state.glob_index = state.globstar.glob_index;
-                            state.wildcard.glob_index = state.globstar.glob_index;
+                        if (state.globstar.path.i > 0 and !state.path.peek().isDone()) {
+                            state.glob = state.globstar.glob;
+                            state.wildcard.glob = state.globstar.glob;
                         } else {
-                            state.wildcard.path_index.cursor.i = 0;
+                            state.wildcard.path.reset();
                         }
                     }
 
                     // If the next char is a special brace separator,
                     // skip to the end of the braces so we don't try to match it.
-                    if (brace_stack.len > 0 and
-                        state.glob_index < glob.len and
-                        (glob[state.glob_index] == ',' or glob[state.glob_index] == '}'))
-                    {
-                        if (state.skipBraces(glob, false) == .Invalid)
+                    if (brace_stack.len > 0 and !state.glob.isDone() and (state.glob.eqlAsciiByteUnchecked(',') or state.glob.eqlAsciiByteUnchecked('}'))) {
+                        if (state.skipBraces(false) == .invalid) {
                             return .no_match; // invalid pattern!
+                        }
                     }
 
                     continue;
                 },
-                '?' => if (state.path_index.cursor.i < path.len) {
-                    if (!isSeparator(state.path_index.cursor.c)) {
-                        state.glob_index += 1;
-                        state.path_index.bump(&path_iter);
+                '?' => if (!state.path.isDone()) {
+                    if (!state.path.isSeparatorUnchecked()) {
+                        state.glob.next();
+                        state.path.next();
                         continue;
                     }
                 },
-                '[' => if (state.path_index.cursor.i < path.len) {
-                    state.glob_index += 1;
-                    const c = state.path_index.cursor.c;
+                '[' => if (!state.path.isDone()) {
+                    state.glob.next();
+                    const cp = state.path.codePoint();
 
                     // Check if the character class is negated.
                     var class_negated = false;
-                    if (state.glob_index < glob.len and
-                        (glob[state.glob_index] == '^' or glob[state.glob_index] == '!'))
-                    {
+                    if (!state.glob.isDone() and (state.glob.eqlAsciiByteUnchecked('^') or state.glob.eqlAsciiByteUnchecked('!'))) {
                         class_negated = true;
-                        state.glob_index += 1;
+                        state.glob.next();
                     }
 
                     // Try each range.
                     var first = true;
                     var is_match = false;
-                    while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
-                        var low = glob[state.glob_index];
-                        if (!unescape(&low, glob, &state.glob_index))
-                            return .no_match; // Invalid pattern
-                        state.glob_index += 1;
+                    while (!state.glob.isDone() and (first or !state.glob.eqlAsciiByteUnchecked(']'))) {
+                        const low = state.glob.unescapedCodePoint() orelse {
+                            return .no_match; // Invalid pattern!
+                        };
+                        state.glob.next();
 
                         // If there is a - and the following character is not ],
                         // read the range end character.
-                        const high = if (state.glob_index + 1 < glob.len and
-                            glob[state.glob_index] == '-' and glob[state.glob_index + 1] != ']')
-                        blk: {
-                            state.glob_index += 1;
-                            var h = glob[state.glob_index];
-                            if (!unescape(&h, glob, &state.glob_index))
+                        const high = if (!state.glob.peek().isDone() and
+                            state.glob.eqlAsciiByteUnchecked('-') and !state.glob.peek().eqlAsciiByteUnchecked(']'))
+                        high: {
+                            state.glob.next();
+                            const h = state.glob.unescapedCodePoint() orelse {
                                 return .no_match; // Invalid pattern!
-                            state.glob_index += 1;
-                            break :blk h;
+                            };
+                            state.glob.next();
+                            break :high h;
                         } else low;
 
-                        if (low <= c and c <= high)
+                        if (low <= cp and cp <= high) {
                             is_match = true;
+                        }
                         first = false;
                     }
-                    if (state.glob_index >= glob.len)
+
+                    if (state.glob.isDone()) {
                         return .no_match; // Invalid pattern!
-                    state.glob_index += 1;
+                    }
+
+                    state.glob.next();
                     if (is_match != class_negated) {
-                        state.path_index.bump(&path_iter);
+                        state.path.next();
                         continue;
                     }
                 },
-                '{' => if (state.path_index.cursor.i < path.len) {
-                    if (brace_stack.len >= brace_stack.stack.len)
+                '{' => if (!state.path.isDone()) {
+                    if (brace_stack.len >= brace_stack.stack.len) {
                         return .no_match; // Invalid pattern! Too many nested braces.
+                    }
 
                     // Push old state to the stack, and reset current state.
                     state = brace_stack.push(&state);
@@ -2024,52 +2035,49 @@ pub fn matchImpl(glob: []const u32, path: []const u8) MatchResult {
                 },
                 '}' => if (brace_stack.len > 0) {
                     // If we hit the end of the braces, we matched the last option.
-                    brace_stack.longest_brace_match = if (state.path_index.cursor.i >= brace_stack.longest_brace_match.cursor.i)
-                        state.path_index
+                    brace_stack.longest_brace_match = if (state.path.i >= brace_stack.longest_brace_match.i)
+                        state.path
                     else
                         brace_stack.longest_brace_match;
-                    state.glob_index += 1;
+                    state.glob.next();
                     state = brace_stack.pop(&state);
                     continue;
                 },
                 ',' => if (brace_stack.len > 0) {
-                    // If we hit a comma, we matched one of the options!
-                    // But we still need to check the others in case there is a longer match.
-                    brace_stack.longest_brace_match = if (state.path_index.cursor.i >= brace_stack.longest_brace_match.cursor.i)
-                        state.path_index
+                    // If we hit the end of the braces, we matched the last option.
+                    brace_stack.longest_brace_match = if (state.path.i >= brace_stack.longest_brace_match.i)
+                        state.path
                     else
                         brace_stack.longest_brace_match;
-                    state.path_index = brace_stack.last().path_index;
-                    state.glob_index += 1;
-                    state.wildcard = Wildcard{};
-                    state.globstar = Wildcard{};
+                    state.path = brace_stack.last().path;
+                    state.glob.next();
+                    state.wildcard = .{};
+                    state.globstar = .{};
                     continue;
                 },
-                else => |c| if (state.path_index.cursor.i < path.len) {
-                    var cc = c;
+                else => if (!state.path.isDone()) {
                     // Match escaped characters as literals.
-                    if (!unescape(&cc, glob, &state.glob_index))
-                        return .no_match; // Invalid pattern;
+                    const cp = state.glob.unescapedCodePoint() orelse {
+                        return .no_match; // Invalid pattern!
+                    };
 
-                    const is_match = if (cc == '/')
-                        isSeparator(state.path_index.cursor.c)
+                    const is_match = if (cp == '/')
+                        state.path.isSeparatorUnchecked()
                     else
-                        state.path_index.cursor.c == cc;
+                        state.path.codePoint() == cp;
 
                     if (is_match) {
-                        if (brace_stack.len > 0 and
-                            state.glob_index > 0 and
-                            glob[state.glob_index - 1] == '}')
-                        {
-                            brace_stack.longest_brace_match = state.path_index;
+                        if (brace_stack.len > 0 and state.glob.i > 0 and state.glob.previous().eqlAsciiByteUnchecked('}')) {
+                            brace_stack.longest_brace_match = state.path;
                             state = brace_stack.pop(&state);
                         }
-                        state.glob_index += 1;
-                        state.path_index.bump(&path_iter);
+                        state.glob.next();
+                        state.path.next();
 
-                        // If this is not a separator, lock in the previous globstar.
-                        if (cc != '/')
-                            state.globstar.path_index.cursor.i = 0;
+                        if (cp != '/') {
+                            // If this is not a separator, lock in the previous globstar.
+                            state.globstar.path.reset();
+                        }
 
                         continue;
                     }
@@ -2077,35 +2085,37 @@ pub fn matchImpl(glob: []const u32, path: []const u8) MatchResult {
             }
         }
         // If we didn't match, restore state to the previous star pattern.
-        if (state.wildcard.path_index.cursor.i > 0 and state.wildcard.path_index.cursor.i <= path.len) {
+        // if (state.wildcard.path.i > 0 and !state.wildcard.path.isDone()) {
+        if (state.wildcard.path.i > 0 and state.wildcard.path.i <= state.wildcard.path.units.len) {
             state.backtrack();
             continue;
         }
 
         if (brace_stack.len > 0) {
             // If in braces, find next option and reset path to index where we saw the '{'
-            switch (state.skipBraces(glob, true)) {
-                .Invalid => return .no_match,
-                .Comma => {
-                    state.path_index = brace_stack.last().path_index;
+            switch (state.skipBraces(true)) {
+                .invalid => return .no_match,
+                .comma => {
+                    state.path = brace_stack.last().path;
                     continue;
                 },
-                .EndBrace => {},
+                .end_brace => {},
             }
 
             // Hit the end. Pop the stack.
             // If we matched a previous option, use that.
-            if (brace_stack.longest_brace_match.cursor.i > 0) {
+            if (brace_stack.longest_brace_match.i > 0) {
                 state = brace_stack.pop(&state);
                 continue;
-            } else {
-                // Didn't match. Restore state, and check if we need to jump back to a star pattern.
-                state = brace_stack.last().*;
-                brace_stack.len -= 1;
-                if (state.wildcard.path_index.cursor.i > 0 and state.wildcard.path_index.cursor.i <= path.len) {
-                    state.backtrack();
-                    continue;
-                }
+            }
+
+            // Didn't match. Restore state, and check if we need to jump back to a star pattern.
+            state = brace_stack.last().*;
+            brace_stack.len -= 1;
+            // if (state.wildcard.path.i > 0 and !state.wildcard.path.isDone()) {
+            if (state.wildcard.path.i > 0 and state.wildcard.path.i <= state.wildcard.path.units.len) {
+                state.backtrack();
+                continue;
             }
         }
 
@@ -2115,45 +2125,356 @@ pub fn matchImpl(glob: []const u32, path: []const u8) MatchResult {
     return if (!negated) .match else .negate_no_match;
 }
 
-pub inline fn isSeparator(c: Codepoint) bool {
-    if (comptime @import("builtin").os.tag == .windows) return c == '/' or c == '\\';
-    return c == '/';
-}
+const Encoding = enum {
+    latin1,
+    utf8,
+    utf16,
+    utf32,
 
-inline fn unescape(c: *u32, glob: []const u32, glob_index: *u32) bool {
-    if (c.* == '\\') {
-        glob_index.* += 1;
-        if (glob_index.* >= glob.len)
-            return false; // Invalid pattern!
-
-        c.* = switch (glob[glob_index.*]) {
-            'a' => '\x61',
-            'b' => '\x08',
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            else => |cc| cc,
+    pub fn unit(comptime this: Encoding) type {
+        return switch (this) {
+            .latin1 => u8,
+            .utf8 => u8,
+            .utf16 => u16,
+            .utf32 => u32,
         };
     }
 
-    return true;
-}
-
-const GLOB_STAR_MATCH_STR: []const u32 = &[_]u32{ '/', '*', '*' };
-// src/**/**/foo.ts
-inline fn skipGlobstars(glob: []const u32, glob_index: *u32) u32 {
-    // Coalesce multiple ** segments into one.
-    while (glob_index.* + 3 <= glob.len and
-        // std.mem.eql(u8, glob[glob_index.*..][0..3], "/**"))
-        std.mem.eql(u32, glob[glob_index.*..][0..3], GLOB_STAR_MATCH_STR))
-    {
-        glob_index.* += 3;
+    pub fn needsWidth(comptime this: Encoding) bool {
+        return switch (this) {
+            .latin1, .utf32 => false,
+            .utf8, .utf16 => true,
+        };
     }
+};
 
-    return glob_index.*;
+pub fn CodeUnit(comptime enc: Encoding) type {
+    return enum(enc.unit()) {
+        _,
+
+        pub const WidthSize = switch (enc) {
+            .latin1, .utf32 => u1,
+            .utf8 => u3,
+            .utf16 => u2,
+        };
+
+        pub fn sequenceWidth(this: @This()) WidthSize {
+            switch (comptime enc) {
+                .latin1, .utf32 => return 1,
+                .utf8 => return bun.strings.utf8ByteSequenceLength(this.int()), //utf8ByteSequenceLength(this.int()),
+                .utf16 => {
+                    if (std.unicode.utf16IsHighSurrogate(this.int())) {
+                        return 2;
+                    }
+                    return 1;
+                },
+            }
+        }
+
+        pub inline fn int(this: @This()) enc.unit() {
+            return @intFromEnum(this);
+        }
+    };
 }
 
-const MatchAscii = struct {};
+pub fn CodePointIterator(comptime enc: Encoding) type {
+    const Unit = CodeUnit(enc);
+    return struct {
+        units: []const Unit = &.{},
+        i: u32 = 0,
+        width: if (enc.needsWidth()) Unit.WidthSize else void = if (enc.needsWidth()) 0 else {},
+
+        pub fn init(input: []const enc.unit()) @This() {
+            if (input.len == 0) {
+                return .{};
+            }
+
+            const units: []const Unit = @ptrCast(input);
+
+            return switch (comptime enc) {
+                .latin1, .utf32 => .{
+                    .i = 0,
+                    .units = units,
+                },
+                .utf8, .utf16 => .{
+                    .i = 0,
+                    .width = units[0].sequenceWidth(),
+                    .units = units,
+                },
+            };
+        }
+
+        pub inline fn done(this: *@This()) void {
+            switch (comptime enc) {
+                .latin1, .utf32 => this.i = @intCast(this.units.len + @intFromBool(this.isDone())),
+                .utf16, .utf8 => {
+                    this.width = 0;
+                    this.i = @intCast(this.units.len + @intFromBool(this.isDone()));
+                },
+            }
+        }
+
+        pub inline fn isDone(this: *const @This()) bool {
+            return this.i >= this.units.len;
+        }
+
+        pub fn reset(this: *@This()) void {
+            this.i = 0;
+            switch (comptime enc) {
+                .latin1, .utf32 => {},
+                .utf8, .utf16 => {
+                    this.width = if (this.units.len > 0) this.units[0].sequenceWidth() else 0;
+                },
+            }
+        }
+
+        pub fn next(this: *@This()) void {
+            const i = switch (comptime enc) {
+                .latin1, .utf32 => this.i + 1,
+                .utf16, .utf8 => this.i + this.width,
+            };
+            if (i >= this.units.len) {
+                this.done();
+                return;
+            }
+            this.i = i;
+            if (comptime enc.needsWidth()) {
+                this.width = this.units[i].sequenceWidth();
+            }
+        }
+
+        pub fn nextAscii(this: *@This(), n: u32) void {
+            if (n == 0) return;
+
+            if (comptime Environment.isDebug) {
+                // assert all is ascii, not including destination
+                for (0..n) |ascii_i| {
+                    bun.assertWithLocation(this.units[this.i + ascii_i].int() < 128, @src());
+                }
+            }
+
+            const i = this.i + n;
+            if (i >= this.units.len) {
+                this.done();
+                return;
+            }
+            this.i = i;
+            if (comptime enc.needsWidth()) {
+                this.width = this.units[i].sequenceWidth();
+            }
+        }
+
+        pub fn peek(this: *const @This()) @This() {
+            var copy = this.*;
+
+            const i = switch (comptime enc) {
+                .latin1, .utf32 => this.i + 1,
+                .utf16, .utf8 => this.i + this.width,
+            };
+            if (i >= copy.units.len) {
+                copy.done();
+                return copy;
+            }
+            copy.i = i;
+            if (comptime enc.needsWidth()) {
+                copy.width = copy.units[i].sequenceWidth();
+            }
+            return copy;
+        }
+
+        pub fn peekAscii(this: *const @This(), n: u32) @This() {
+            if (n == 0) return this.*;
+
+            if (comptime Environment.isDebug) {
+                // assert all is ascii, not including destination
+                for (0..n) |ascii_i| {
+                    bun.assertWithLocation(this.units[this.i + ascii_i].int() < 128, @src());
+                }
+            }
+
+            var copy = this.*;
+            const i = copy.i + n;
+            if (i >= copy.units.len) {
+                copy.done();
+                return copy;
+            }
+            copy.i = i;
+            if (comptime enc.needsWidth()) {
+                copy.width = copy.units[i].sequenceWidth();
+            }
+            return copy;
+        }
+
+        pub fn previous(this: *const @This()) @This() {
+            var copy = this.*;
+            switch (comptime enc) {
+                .latin1, .utf32 => {
+                    copy.i -= 1;
+                    return copy;
+                },
+                .utf16 => {
+                    if (std.unicode.utf16IsLowSurrogate(copy.units[copy.i - 1].int())) {
+                        copy.i -= 2;
+                        copy.width = 2;
+                        return copy;
+                    }
+
+                    copy.i -= 1;
+                    copy.width = 1;
+                    return copy;
+                },
+                .utf8 => {
+                    var i: u32 = copy.i - 1;
+
+                    var cmp = copy.units[i].int() & 0xc0;
+                    // 0 for ascii, 0x80 for start of a sequence
+                    while (cmp != 0 and cmp != 0x80) {
+                        i -= 1;
+                        cmp = copy.units[i].int() & 0xc0;
+                    }
+
+                    copy.width = @intCast(copy.i - i);
+                    copy.i = i;
+                    return copy;
+                },
+            }
+        }
+
+        pub inline fn setAtAscii(this: *@This(), pos: u32) void {
+            if (comptime Environment.isDebug) {
+                bun.assertWithLocation(this.units[pos].int() < 128, @src());
+            }
+            switch (comptime enc) {
+                .latin1, .utf32 => {
+                    this.i = pos;
+                },
+                .utf16, .utf8 => {
+                    this.i = pos;
+                    this.width = 1;
+                },
+            }
+        }
+
+        pub fn eqlAscii(this: *const @This(), str: []const u8) bool {
+            var ascii_i: u32 = 0;
+            while (ascii_i < str.len) : (ascii_i += 1) {
+                if (this.i + ascii_i >= this.units.len) return false;
+                switch (comptime enc) {
+                    .latin1, .utf32 => if (this.units[this.i + ascii_i].int() != str[ascii_i]) return false,
+                    .utf16, .utf8 => {
+                        if (this.units[this.i + ascii_i].sequenceWidth() != 1) return false;
+                        if (this.units[this.i + ascii_i].int() != str[ascii_i]) return false;
+                    },
+                }
+            }
+
+            return true;
+        }
+
+        pub inline fn eqlAsciiByte(this: *const @This(), byte: u8) bool {
+            if (this.isDone()) return false;
+            return this.eqlAsciiByteUnchecked(byte);
+        }
+
+        pub inline fn eqlAsciiByteUnchecked(this: *const @This(), byte: u8) bool {
+            return switch (comptime enc) {
+                // don't need to check width
+                .latin1, .utf8, .utf16, .utf32 => this.units[this.i].int() == byte,
+            };
+        }
+
+        // assumes all widths to index are 1. does not assume each character
+        // is ascii
+        pub inline fn eqlAsciiByteAt(this: *const @This(), i: u32, byte: u8) bool {
+            return this.units[i].int() == byte;
+        }
+
+        pub inline fn isSeparator(this: *const @This()) bool {
+            if (this.isDone()) return false;
+            return this.isSeparatorUnchecked();
+        }
+
+        pub inline fn isSeparatorUnchecked(this: *const @This()) bool {
+            if (comptime Environment.isWindows) {
+                return this.eqlAsciiByteUnchecked('/') or this.eqlAsciiByteUnchecked('\\');
+            }
+            return this.eqlAsciiByteUnchecked('/');
+        }
+
+        pub inline fn codePoint(this: *const @This()) switch (enc) {
+            .latin1 => u8,
+            .utf16, .utf8, .utf32 => u32,
+        } {
+            switch (comptime enc) {
+                .latin1, .utf32 => return this.units[this.i].int(),
+                .utf16 => {
+                    switch (this.width) {
+                        1 => return this.units[this.i].int(),
+                        else => {
+                            invalid: {
+                                const lead: u21 = this.units[this.i].int();
+                                if (!std.unicode.utf16IsHighSurrogate(@intCast(lead))) {
+                                    break :invalid;
+                                }
+                                const trail = this.units[this.i + 1].int();
+                                if (!std.unicode.utf16IsHighSurrogate(trail)) {
+                                    break :invalid;
+                                }
+                                return 0x10000 + ((lead & 0x03ff) << 10) | (trail & 0x03ff);
+                            }
+                            return std.unicode.replacement_character;
+                        },
+                    }
+                },
+                // TODO(dylan-conway): invalid utf8. length too short, invalid cp values
+                .utf8 => {
+                    if (comptime Environment.isDebug) {
+                        bun.assertWithLocation(this.width > 0, @src());
+                    }
+                    const c1 = this.units[this.i].int();
+                    if (this.width == 1) {
+                        return c1;
+                    }
+                    const c2 = this.units[this.i + 1].int();
+                    if (this.width == 2) {
+                        return ((c1 & 0x1f) << 6) | (c2 & 0x3f);
+                    }
+                    const c3 = this.units[this.i + 2].int();
+                    if (this.width == 3) {
+                        return (@as(u32, (c1 & 0x0f)) << 12) | (@as(u32, (c2 & 0x3f) << 6)) | (c3 & 0x3f);
+                    }
+                    const c4 = this.units[this.i + 3].int();
+                    return (@as(u32, (c1 & 0x07)) << 18) | (@as(u32, (c2 & 0x3f)) << 12) | (@as(u32, (c3 & 0x3f)) << 6) | (c4 & 0x3f);
+                },
+            }
+        }
+
+        pub inline fn unescapedCodePoint(this: *@This()) ?switch (enc) {
+            .latin1 => u8,
+            .utf16, .utf8, .utf32 => u32,
+        } {
+            const cp = this.codePoint();
+
+            if (cp == '\\') {
+                this.next();
+                if (this.isDone()) {
+                    return null; // Invalid pattern!
+                }
+
+                return switch (this.codePoint()) {
+                    'a' => '\x61',
+                    'b' => '\x08',
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    else => |next_cp| next_cp,
+                };
+            }
+
+            return cp;
+        }
+    };
+}
 
 pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
     const needle = glob[1..];

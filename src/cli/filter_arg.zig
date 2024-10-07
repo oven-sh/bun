@@ -7,6 +7,7 @@ const Global = bun.Global;
 const strings = bun.strings;
 const JSON = bun.JSON;
 const Glob = @import("../glob.zig");
+const OOM = bun.OOM;
 
 const Package = @import("../install/lockfile.zig").Package;
 
@@ -133,7 +134,7 @@ pub const FilterSet = struct {
     }
 
     const Pattern = struct {
-        codepoints: []u32,
+        bytes: []const u8,
         kind: enum {
             name,
             path,
@@ -141,8 +142,8 @@ pub const FilterSet = struct {
         // negate: bool = false,
     };
 
-    pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd: []const u8) !FilterSet {
-        var buf: bun.PathBuffer = undefined;
+    pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd: []const u8) OOM!FilterSet {
+        var path_buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
         var list = try std.ArrayList(Pattern).initCapacity(allocator, filters.len);
         var self = FilterSet{ .allocator = allocator, .filters = &.{} };
@@ -156,20 +157,22 @@ pub const FilterSet = struct {
             const is_path = filter_utf8.len > 0 and filter_utf8[0] == '.';
             if (is_path) {
                 const parts = [_]string{filter_utf8};
-                filter_utf8 = bun.path.joinAbsStringBuf(cwd, &buf, &parts, .auto);
+                filter_utf8 = bun.path.joinAbsStringBuf(cwd, &path_buf, &parts, .auto);
             }
-            var filter_utf32 = try std.ArrayListUnmanaged(u32).initCapacity(allocator, filter_utf8.len + 1);
-            var codepointer_iter = strings.UnsignedCodepointIterator.init(filter_utf8);
-            var cursor = strings.UnsignedCodepointIterator.Cursor{};
-            while (codepointer_iter.next(&cursor)) {
-                if (cursor.c == @as(u32, '\\')) {
-                    try filter_utf32.append(self.allocator, cursor.c);
+
+            var bytes = try std.ArrayListUnmanaged(u8).initCapacity(allocator, filter_utf8.len + 1);
+
+            // TODO(dylan-conway): investigate if this is necessary
+            for (filter_utf8) |c| {
+                if (c == '\\') {
+                    try bytes.append(allocator, c);
                 }
-                try filter_utf32.append(self.allocator, cursor.c);
+                try bytes.append(allocator, c);
             }
+
             self.has_name_filters = self.has_name_filters or !is_path;
             try list.append(.{
-                .codepoints = filter_utf32.items,
+                .bytes = bytes.items,
                 .kind = if (is_path) .path else .name,
             });
         }
@@ -180,14 +183,14 @@ pub const FilterSet = struct {
     pub fn deinit(self: *FilterSet) void {
         for (self.filters) |filter| {
             // TODO is this free correct? we're freeing only part of the array
-            self.allocator.free(filter.codepoints);
+            self.allocator.free(filter.bytes);
         }
         self.allocator.free(self.filters);
     }
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.matchImpl(filter.codepoints, path).matches()) {
+            if (Glob.match(.utf8, filter.bytes, .utf8, path).matches()) {
                 return true;
             }
         }
@@ -200,7 +203,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.matchImpl(filter.codepoints, target).matches()) {
+            if (Glob.match(.utf8, filter.bytes, .utf8, target).matches()) {
                 return true;
             }
         }

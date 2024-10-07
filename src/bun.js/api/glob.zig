@@ -17,18 +17,20 @@ const JSValue = @import("../bindings/bindings.zig").JSValue;
 const ZigString = @import("../bindings/bindings.zig").ZigString;
 const Base = @import("../base.zig");
 const JSGlobalObject = @import("../bindings/bindings.zig").JSGlobalObject;
-const getAllocator = Base.getAllocator;
 const ResolvePath = @import("../../resolver/resolve_path.zig");
 const isAllAscii = @import("../../string_immutable.zig").isAllASCII;
 const CodepointIterator = @import("../../string_immutable.zig").UnsignedCodepointIterator;
+const String = bun.String;
 
 const Arena = std.heap.ArenaAllocator;
 
 pub usingnamespace JSC.Codegen.JSGlob;
+pub usingnamespace bun.New(Glob);
 
-pattern: []const u8,
-pattern_codepoints: ?std.ArrayList(u32) = null,
-is_ascii: bool,
+// TODO(dylan-conway): delete
+pattern_utf8: ?ZigString.Slice,
+
+pattern: String,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 const ScanOpts = struct {
@@ -242,9 +244,9 @@ fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValu
 /// by `GlobWalker.init`/`GlobWalker.initWithCwd` if all allocations work and no
 /// errors occur
 fn makeGlobWalker(
-    this: *Glob,
     globalThis: *JSGlobalObject,
     arguments: *ArgumentsSlice,
+    pattern: []const u8,
     comptime fnName: []const u8,
     alloc: Allocator,
     arena: *Arena,
@@ -267,7 +269,7 @@ fn makeGlobWalker(
 
         switch (globWalker.initWithCwd(
             arena,
-            this.pattern,
+            pattern,
             cwd.?,
             dot,
             absolute,
@@ -294,7 +296,7 @@ fn makeGlobWalker(
     globWalker.* = .{};
     switch (globWalker.init(
         arena,
-        this.pattern,
+        pattern,
         dot,
         absolute,
         follow_symlinks,
@@ -318,8 +320,6 @@ pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) ?*Glob {
-    const alloc = getAllocator(globalThis);
-
     const arguments_ = callframe.arguments(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -333,40 +333,22 @@ pub fn constructor(
         return null;
     }
 
-    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return null).slice());
+    const pattern_str = bun.String.fromJSRef(pat_arg, globalThis);
 
-    const all_ascii = isAllAscii(pat_str);
-
-    var glob = alloc.create(Glob) catch bun.outOfMemory();
-    glob.* = .{ .pattern = pat_str, .is_ascii = all_ascii };
-
-    if (!all_ascii) {
-        var codepoints = std.ArrayList(u32).initCapacity(alloc, glob.pattern.len * 2) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
-        errdefer codepoints.deinit();
-
-        convertUtf8(&codepoints, glob.pattern) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
-
-        glob.pattern_codepoints = codepoints;
-    }
-
-    return glob;
+    return Glob.new(.{
+        .pattern = pattern_str,
+        .pattern_utf8 = null,
+    });
 }
 
 pub fn finalize(
     this: *Glob,
 ) callconv(.C) void {
-    const alloc = JSC.VirtualMachine.get().allocator;
-    alloc.free(this.pattern);
-    if (this.pattern_codepoints) |*codepoints| {
-        codepoints.deinit();
+    this.pattern.deref();
+    if (this.pattern_utf8) |utf8| {
+        utf8.deinit();
     }
-    alloc.destroy(this);
+    this.destroy();
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
@@ -385,20 +367,23 @@ fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void 
 }
 
 pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const alloc = getAllocator(globalThis);
-
     const arguments_ = callframe.arguments(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    const globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
+    const pattern = this.pattern_utf8 orelse pattern: {
+        this.pattern_utf8 = this.pattern.toUTF8(bun.default_allocator);
+        break :pattern this.pattern_utf8.?;
+    };
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    const globWalker = makeGlobWalker(globalThis, &arguments, pattern.slice(), "scan", bun.default_allocator, &arena) orelse {
         arena.deinit();
         return .undefined;
     };
 
     incrPendingActivityFlag(&this.has_pending_activity);
-    var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
+    var task = WalkTask.create(globalThis, bun.default_allocator, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
         globalThis.throwOutOfMemory();
         return .undefined;
@@ -409,14 +394,17 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const alloc = getAllocator(globalThis);
-
     const arguments_ = callframe.arguments(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
 
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
+    const pattern = this.pattern_utf8 orelse pattern: {
+        this.pattern_utf8 = this.pattern.toUTF8(bun.default_allocator);
+        break :pattern this.pattern_utf8.?;
+    };
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    var globWalker = makeGlobWalker(globalThis, &arguments, pattern.slice(), "scanSync", bun.default_allocator, &arena) orelse {
         arena.deinit();
         return .undefined;
     };
@@ -439,10 +427,6 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
 }
 
 pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const alloc = getAllocator(globalThis);
-    var arena = Arena.init(alloc);
-    defer arena.deinit();
-
     const arguments_ = callframe.arguments(1);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -456,37 +440,18 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
         return .undefined;
     }
 
-    var str = str_arg.toSlice(globalThis, arena.allocator());
-    defer str.deinit();
+    const path_str = String.fromJSRef(str_arg, globalThis);
+    defer path_str.deref();
 
-    if (this.is_ascii and isAllAscii(str.slice())) return JSC.JSValue.jsBoolean(globImplAscii.match(this.pattern, str.slice()));
-
-    const codepoints = codepoints: {
-        if (this.pattern_codepoints) |cp| break :codepoints cp.items[0..];
-
-        var codepoints = std.ArrayList(u32).initCapacity(alloc, this.pattern.len * 2) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
-        errdefer codepoints.deinit();
-
-        convertUtf8(&codepoints, this.pattern) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
-
-        this.pattern_codepoints = codepoints;
-
-        break :codepoints codepoints.items[0..codepoints.items.len];
-    };
-
-    return if (globImpl.matchImpl(codepoints, str.slice()).matches()) .true else .false;
-}
-
-pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
-    const iter = CodepointIterator.init(pattern);
-    var cursor = CodepointIterator.Cursor{};
-    while (iter.next(&cursor)) {
-        try codepoints.append(@intCast(cursor.c));
+    if (path_str.isUTF16()) {
+        if (this.pattern.isUTF16()) {
+            return if (globImpl.match(.utf16, this.pattern.utf16(), .utf16, path_str.utf16()).matches()) .true else .false;
+        }
+        return if (globImpl.match(.latin1, this.pattern.latin1(), .utf16, path_str.utf16()).matches()) .true else .false;
     }
+
+    if (this.pattern.isUTF16()) {
+        return if (globImpl.match(.utf16, this.pattern.utf16(), .latin1, path_str.latin1()).matches()) .true else .false;
+    }
+    return if (globImpl.match(.latin1, this.pattern.latin1(), .latin1, path_str.latin1()).matches()) .true else .false;
 }

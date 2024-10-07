@@ -1355,7 +1355,7 @@ fn NewSocket(comptime ssl: bool) type {
                 switch (this) {
                     .h2 => |h2| {
                         h2.onNativeWritable();
-                        return true;
+                        return false;
                     },
                     .none => return false,
                 }

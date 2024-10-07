@@ -722,7 +722,7 @@ pub const H2FrameParser = struct {
     maxOutstandingPings: u64 = 10,
     outStandingPings: u64 = 0,
     lastStreamID: u32 = 0,
-    firstSettingsACK: bool = false,
+    firstSettingsACK: bool = true,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -1212,7 +1212,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendGoAway(this: *H2FrameParser, streamIdentifier: u32, rstCode: ErrorCode, debug_data: []const u8, lastStreamID: u32, emitError: bool) void {
-        log("HTTP_FRAME_GOAWAY {} code {} debug_data {s}", .{ streamIdentifier, rstCode, debug_data });
+        log("HTTP_FRAME_GOAWAY {} code {} debug_data {s} emitError {}", .{ streamIdentifier, rstCode, debug_data, emitError });
         var buffer: [FrameHeader.byteSize + 8]u8 = undefined;
         @memset(&buffer, 0);
         var stream = std.io.fixedBufferStream(&buffer);
@@ -1266,6 +1266,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn sendPrefaceAndSettings(this: *H2FrameParser) void {
+        log("sendPrefaceAndSettings", .{});
         // PREFACE + Settings Frame
         var preface_buffer: [24 + FrameHeader.byteSize + FullSettingsPayload.byteSize]u8 = undefined;
         @memset(&preface_buffer, 0);
@@ -1298,9 +1299,7 @@ pub const H2FrameParser = struct {
         };
         _ = settingsHeader.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
-        this.firstSettingsACK = true;
         _ = this.ajustWindowSize(null, @intCast(buffer.len));
-        this.flushPending();
     }
 
     pub fn sendWindowUpdate(this: *H2FrameParser, streamIdentifier: u32, windowSize: UInt31WithReserved) void {
@@ -1478,6 +1477,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn flush(this: *H2FrameParser) usize {
+        this.flushPending();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -1701,6 +1701,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        log("handleDataFrame {s}", .{if (this.isServer) "server" else "client"});
+
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
             return data.len;
@@ -1775,6 +1777,7 @@ pub const H2FrameParser = struct {
         return end;
     }
     pub fn handleGoAwayFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        log("handleGoAwayFrame {} {s}", .{ frame.streamIdentifier, data });
         if (stream_ != null) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "GoAway frame on stream", this.lastStreamID, true);
             return data.len;
@@ -1929,7 +1932,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn handleHeadersFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
-        log("handleHeadersFrame", .{});
+        log("handleHeadersFrame {s}", .{if (this.isServer) "server" else "client"});
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Headers frame on connection stream", this.lastStreamID, true);
             return data.len;
@@ -1989,20 +1992,27 @@ pub const H2FrameParser = struct {
         return data.len;
     }
     pub fn handleSettingsFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8) usize {
+        const isACK = frame.flags & @intFromEnum(SettingsFlags.ACK) != 0;
+        defer if (!this.firstSettingsACK) {
+            this.firstSettingsACK = true;
+            this.flushPending();
+        };
+        log("handleSettingsFrame {s} isACK {}", .{ if (this.isServer) "server" else "client", isACK });
         if (frame.streamIdentifier != 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID, true);
             return data.len;
         }
+        defer if (!isACK) this.sendSettingsACK();
 
         const settingByteSize = SettingsPayloadUnit.byteSize;
         if (frame.length > 0) {
-            if (frame.flags & @intFromEnum(SettingsFlags.ACK) != 0 or frame.length % settingByteSize != 0) {
+            if (isACK or frame.length % settingByteSize != 0) {
                 log("invalid settings frame size", .{});
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID, true);
                 return data.len;
             }
         } else {
-            if (frame.flags & @intFromEnum(SettingsFlags.ACK) != 0) {
+            if (isACK) {
                 // we received an ACK
                 log("settings frame ACK", .{});
 
@@ -2012,12 +2022,10 @@ pub const H2FrameParser = struct {
                 this.remoteSettings = this.localSettings;
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             }
+
             this.currentFrame = null;
             return 0;
         }
-
-        defer if (this.isServer) this.sendSettingsACK();
-
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             var remoteSettings = this.remoteSettings orelse this.localSettings;
             var i: usize = 0;
@@ -2197,7 +2205,8 @@ pub const H2FrameParser = struct {
     }
 
     fn flushPending(this: *H2FrameParser) void {
-        if (this.pendingBuffer.len > 0) {
+        log("flushPending", .{});
+        if (this.pendingBuffer.len > 0 and this.firstSettingsACK) {
             const slice = this.pendingBuffer.slice();
             _ = this.write(slice);
             // we will only flush one time
@@ -2726,7 +2735,7 @@ pub const H2FrameParser = struct {
                 .streamIdentifier = @intCast(stream_id),
                 .length = 0,
             };
-            if (this.firstSettingsACK and (this.hasBackpressure() or this.outboundQueueSize > 0)) {
+            if (!this.firstSettingsACK or (this.hasBackpressure() or this.outboundQueueSize > 0)) {
                 enqueued = true;
                 stream.queueFrame("", callback, close);
             } else {
@@ -2744,7 +2753,7 @@ pub const H2FrameParser = struct {
                 offset += size;
                 const end_stream = offset >= payload.len and can_close;
 
-                if (this.firstSettingsACK and (this.hasBackpressure() or this.outboundQueueSize > 0)) {
+                if (!this.firstSettingsACK or (this.hasBackpressure() or this.outboundQueueSize > 0)) {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     stream.queueFrame(slice, callback, offset >= payload.len and close);

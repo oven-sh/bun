@@ -2350,10 +2350,11 @@ pub const BundleV2 = struct {
             debug("failed with error: {s}", .{@errorName(err)});
             resolve_queue.clearAndFree();
             parse_result.value = .{
-                .err = ParseTask.Result.Error{
+                .err = .{
                     .err = err,
                     .step = .resolve,
                     .log = Logger.Log.init(bun.default_allocator),
+                    .source_index = source.index,
                 },
             };
         }
@@ -2389,10 +2390,29 @@ pub const BundleV2 = struct {
             }
         }
 
+        // To minimize contention, watchers are appended by the bundler thread.
+        if (this.bun_watcher) |watcher| {
+            if (parse_result.watcher_data.fd != .zero and parse_result.watcher_data.fd != bun.invalid_fd) {
+                const source = switch (parse_result.value) {
+                    inline .empty, .err => |data| graph.input_files.items(.source)[data.source_index.get()],
+                    .success => |val| val.source,
+                };
+                _ = watcher.addFile(
+                    parse_result.watcher_data.fd,
+                    source.path.text,
+                    bun.hash32(source.path.text),
+                    graph.input_files.items(.loader)[source.index.get()],
+                    parse_result.watcher_data.dir_fd,
+                    null,
+                    false,
+                );
+            }
+        }
+
         switch (parse_result.value) {
             .empty => |empty_result| {
-                var input_files = graph.input_files.slice();
-                var side_effects = input_files.items(.side_effects);
+                const input_files = graph.input_files.slice();
+                const side_effects = input_files.items(.side_effects);
                 side_effects[empty_result.source_index.get()] = .no_side_effects__empty_ast;
                 if (comptime Environment.allow_assert) {
                     debug("onParse({d}, {s}) = empty", .{
@@ -2400,41 +2420,12 @@ pub const BundleV2 = struct {
                         input_files.items(.source)[empty_result.source_index.get()].path.text,
                     });
                 }
-
-                if (this.bun_watcher) |watcher| {
-                    if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
-                        _ = watcher.addFile(
-                            empty_result.watcher_data.fd,
-                            input_files.items(.source)[empty_result.source_index.get()].path.text,
-                            bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
-                            graph.input_files.items(.loader)[empty_result.source_index.get()],
-                            empty_result.watcher_data.dir_fd,
-                            null,
-                            false,
-                        );
-                    }
-                }
             },
             .success => |*result| {
                 result.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
 
-                // to minimize contention, we add watcher on the bundling thread instead of the parsing thread.
-                if (this.bun_watcher) |watcher| {
-                    if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
-                        _ = watcher.addFile(
-                            result.watcher_data.fd,
-                            result.source.path.text,
-                            bun.hash32(result.source.path.text),
-                            result.source.path.loader(&this.bundler.options.loaders) orelse options.Loader.file,
-                            result.watcher_data.dir_fd,
-                            result.watcher_data.package_json,
-                            false,
-                        );
-                    }
-                }
-
-                // Warning: this array may resize in this function call
-                // do not reuse it.
+                // Warning: `input_files` and `ast` arrays may resize in this function call
+                // It is not safe to cache slices from them.
                 graph.input_files.items(.source)[result.source.index.get()] = result.source;
                 this.source_code_length += if (!result.source.index.isRuntime())
                     result.source.contents.len
@@ -2589,7 +2580,7 @@ pub const BundleV2 = struct {
                 }
             },
             .err => |*err| {
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.enable_logs) {
                     debug("onParse() = err", .{});
                 }
 
@@ -2818,8 +2809,59 @@ pub const ParseTask = struct {
     package_version: string = "",
     is_entry_point: bool = false,
 
-    /// Used by generated client components
-    presolved_source_indices: []const Index.Int = &.{},
+    /// The information returned to the Bundler thread when a parse finishes.
+    pub const Result = struct {
+        task: EventLoop.Task,
+        ctx: *BundleV2,
+        value: Value,
+        watcher_data: WatcherData,
+
+        pub const Value = union(enum) {
+            success: Success,
+            err: Error,
+            empty: struct {
+                source_index: Index,
+            },
+        };
+
+        const WatcherData = struct {
+            fd: bun.StoredFileDescriptorType,
+            dir_fd: bun.StoredFileDescriptorType,
+
+            /// When no files to watch, this encoding is used.
+            const none: WatcherData = .{
+                .fd = bun.invalid_fd,
+                .dir_fd = bun.invalid_fd,
+            };
+        };
+
+        pub const Success = struct {
+            ast: JSAst,
+            source: Logger.Source,
+            log: Logger.Log,
+            use_directive: UseDirective,
+            side_effects: _resolver.SideEffects,
+
+            /// Used by "file" loader files.
+            unique_key_for_additional_file: []const u8 = "",
+            /// Used by "file" loader files.
+            content_hash_for_additional_file: u64 = 0,
+        };
+
+        pub const Error = struct {
+            err: anyerror,
+            step: Step,
+            log: Logger.Log,
+            source_index: Index,
+
+            pub const Step = enum {
+                pending,
+                read_file,
+                parse,
+                resolve,
+            };
+        };
+    };
 
     const debug = Output.scoped(.ParseTask, false);
 
@@ -2990,63 +3032,6 @@ pub const ParseTask = struct {
             inline else => |t| comptime getRuntimeSourceComptime(t),
         };
     }
-
-    pub const Result = struct {
-        task: EventLoop.Task,
-        ctx: *BundleV2,
-        value: Value,
-
-        pub const Value = union(Tag) {
-            success: Success,
-            err: Error,
-            empty: struct {
-                source_index: Index,
-
-                watcher_data: WatcherData = .{},
-            },
-        };
-
-        const WatcherData = struct {
-            fd: bun.StoredFileDescriptorType = .zero,
-            dir_fd: bun.StoredFileDescriptorType = .zero,
-            package_json: ?*PackageJSON = null,
-        };
-
-        pub const Success = struct {
-            ast: JSAst,
-            source: Logger.Source,
-            log: Logger.Log,
-
-            use_directive: UseDirective = .none,
-            watcher_data: WatcherData = .{},
-            side_effects: ?_resolver.SideEffects = null,
-
-            /// Used by "file" loader files.
-            unique_key_for_additional_file: []const u8 = "",
-
-            /// Used by "file" loader files.
-            content_hash_for_additional_file: u64 = 0,
-        };
-
-        pub const Error = struct {
-            err: anyerror,
-            step: Step,
-            log: Logger.Log,
-
-            pub const Step = enum {
-                pending,
-                read_file,
-                parse,
-                resolve,
-            };
-        };
-
-        pub const Tag = enum {
-            success,
-            err,
-            empty,
-        };
-    };
 
     threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
 
@@ -3242,12 +3227,12 @@ pub const ParseTask = struct {
         return ast;
     }
 
-    fn run_(
+    fn run(
         task: *ParseTask,
         this: *ThreadPool.Worker,
         step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
-    ) anyerror!?Result.Success {
+    ) anyerror!Result.Success {
         const allocator = this.allocator;
 
         var data = this.data;
@@ -3437,15 +3422,6 @@ pub const ParseTask = struct {
             task.side_effects = .no_side_effects__empty_ast;
         }
 
-        if (task.presolved_source_indices.len > 0) {
-            for (ast.import_records.slice(), task.presolved_source_indices) |*record, source_index| {
-                if (record.is_unused or record.is_internal)
-                    continue;
-
-                record.source_index = Index.source(source_index);
-            }
-        }
-
         step.* = .resolve;
 
         return Result.Success{
@@ -3454,77 +3430,50 @@ pub const ParseTask = struct {
             .log = log.*,
             .use_directive = use_directive,
             .unique_key_for_additional_file = unique_key_for_additional_file,
+            .side_effects = task.side_effects,
 
             // Hash the files in here so that we do it in parallel.
             .content_hash_for_additional_file = if (loader.shouldCopyForBundling(this.ctx.bundler.options.experimental_css))
                 ContentHasher.run(source.contents)
             else
                 0,
-
-            .watcher_data = .{
-                .fd = if (task.contents_or_fd == .fd and !will_close_file_descriptor) task.contents_or_fd.fd.file else .zero,
-                .dir_fd = if (task.contents_or_fd == .fd) task.contents_or_fd.fd.dir else .zero,
-            },
         };
     }
 
-    pub fn callback(this: *ThreadPoolLib.Task) void {
-        run(@fieldParentPtr("task", this));
-    }
-
-    fn run(this: *ParseTask) void {
+    pub fn callback(task: *ThreadPoolLib.Task) void {
+        const this: *ParseTask = @fieldParentPtr("task", task);
         var worker = ThreadPool.Worker.get(this.ctx);
         defer worker.unget();
+
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
         bun.assert(this.source_index.isValid()); // forgot to set source_index
 
-        const result = bun.default_allocator.create(Result) catch unreachable;
+        const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
+        const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast|
+            .{ .success = ast }
+        else |err| value: {
+            if (err == error.EmptyAST) {
+                log.deinit();
+                break :value .{ .empty = .{
+                    .source_index = this.source_index,
+                } };
+            }
+
+            break :value .{ .err = .{
+                .err = err,
+                .step = step,
+                .log = log,
+                .source_index = this.source_index,
+            } };
+        };
         result.* = .{
             .ctx = this.ctx,
             .task = undefined,
-            .value = brk: {
-                if (run_(
-                    this,
-                    worker,
-                    &step,
-                    &log,
-                )) |ast_or_null| {
-                    if (ast_or_null) |ast| {
-                        break :brk .{ .success = ast };
-                    } else {
-                        log.deinit();
-                        break :brk .{
-                            .empty = .{
-                                .source_index = this.source_index,
-                                .watcher_data = .{
-                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else .zero,
-                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else .zero,
-                                },
-                            },
-                        };
-                    }
-                } else |err| {
-                    if (err == error.EmptyAST) {
-                        log.deinit();
-                        break :brk .{
-                            .empty = .{
-                                .source_index = this.source_index,
-                                .watcher_data = .{
-                                    .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else .zero,
-                                    .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else .zero,
-                                },
-                            },
-                        };
-                    }
-                    break :brk .{
-                        .err = .{
-                            .err = err,
-                            .step = step,
-                            .log = log,
-                        },
-                    };
-                }
+            .value = value,
+            .watcher_data = .{
+                .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else bun.invalid_fd,
+                .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else bun.invalid_fd,
             },
         };
 
@@ -3591,8 +3540,11 @@ pub const ServerComponentParseTask = struct {
                     .err = err,
                     .step = .resolve,
                     .log = log,
+                    .source_index = task.source.index,
                 } };
             },
+
+            .watcher_data = ParseTask.Result.WatcherData.none,
         };
 
         switch (worker.ctx.loop().*) {
@@ -3629,6 +3581,8 @@ pub const ServerComponentParseTask = struct {
             }),
             .source = task.source,
             .log = log.*,
+            .use_directive = .none,
+            .side_effects = .no_side_effects__pure_data,
         };
     }
 

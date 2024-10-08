@@ -79,7 +79,7 @@ log: Log,
 
 // Debugging
 dump_dir: ?std.fs.Dir,
-emit_visualizer_events: u32 = 0,
+emit_visualizer_events: u32,
 
 pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
@@ -174,6 +174,7 @@ pub fn init(options: Options) !*DevServer {
         .framework = options.framework,
         .watch_state = .{ .raw = 0 },
         .watch_current = 0,
+        .emit_visualizer_events = 0,
 
         .client_graph = IncrementalGraph(.client).empty,
         .server_graph = IncrementalGraph(.server).empty,
@@ -2120,6 +2121,13 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
     }
 
     _ = dev.app.publish("v", payload.items, .binary, false);
+}
+
+fn serializeLog(log: *const Log, w: anytype) void {
+    _ = log; // autofix
+    _ = w; // autofix
+
+    //
 }
 
 pub fn onWebSocketUpgrade(

@@ -585,7 +585,14 @@ fn NewHTTPContext(comptime ssl: bool) type {
             bun.default_allocator.destroy(this);
         }
 
-        pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) !void {
+        pub const InitError = error{
+            FailedToOpenSocket,
+            LoadCAFile,
+            InvalidCAFile,
+            InvalidCA,
+        };
+
+        pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
@@ -595,13 +602,20 @@ fn NewHTTPContext(comptime ssl: bool) type {
             try this.initWithOpts(&opts);
         }
 
-        pub fn initWithOpts(this: *@This(), opts: *const uws.us_bun_socket_context_options_t) !void {
+        fn initWithOpts(this: *@This(), opts: *const uws.us_bun_socket_context_options_t) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts.*);
+
+            var err: uws.create_bun_socket_error_t = .none;
+            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts.*, &err);
             if (socket == null) {
-                return error.FailedToOpenSocket;
+                return switch (err) {
+                    .load_ca_file => error.LoadCAFile,
+                    .invalid_ca_file => error.InvalidCAFile,
+                    .invalid_ca => error.InvalidCA,
+                    else => error.FailedToOpenSocket,
+                };
             }
             this.us_socket_context = socket.?;
             this.sslCtx().setup();
@@ -614,7 +628,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             );
         }
 
-        pub fn initWithThreadOpts(this: *@This(), init_opts: *const HTTPThread.InitOpts) !void {
+        pub fn initWithThreadOpts(this: *@This(), init_opts: *const HTTPThread.InitOpts) InitError!void {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
@@ -630,7 +644,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             try this.initWithOpts(&opts);
         }
 
-        pub fn init(this: *@This()) !void {
+        pub fn init(this: *@This()) void {
             if (comptime ssl) {
                 const opts: uws.us_bun_socket_context_options_t = .{
                     // we request the cert so we load root certs and can verify it
@@ -638,7 +652,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
                 };
-                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;
+                var err: uws.create_bun_socket_error_t = .none;
+                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts, &err).?;
 
                 this.sslCtx().setup();
             } else {
@@ -1074,8 +1089,28 @@ pub const HTTPThread = struct {
         }
 
         http_thread.loop = loop;
-        http_thread.http_context.init() catch @panic("Failed to init http context");
-        http_thread.https_context.initWithThreadOpts(&opts) catch @panic("Failed to init https context");
+        http_thread.http_context.init();
+        http_thread.https_context.initWithThreadOpts(&opts) catch |err| {
+            switch (err) {
+                error.LoadCAFile => {
+                    if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
+                        Output.err("HTTPThread", "failed to find CA file: '{s}'", .{opts.abs_ca_file_name});
+                    } else {
+                        Output.err("HTTPThread", "failed to load CA file: '{s}'", .{opts.abs_ca_file_name});
+                    }
+                },
+                error.InvalidCAFile => {
+                    Output.err("HTTPThread", "the CA file is invalid: '{s}'", .{opts.abs_ca_file_name});
+                },
+                error.InvalidCA => {
+                    Output.err("HTTPThread", "the provided CA is invalid", .{});
+                },
+                error.FailedToOpenSocket => {
+                    Output.errGeneric("failed to start HTTP client thread", .{});
+                },
+            }
+            Global.crash();
+        };
         http_thread.has_awoken.store(true, .monotonic);
         http_thread.processEvents();
     }

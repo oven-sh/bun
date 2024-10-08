@@ -649,11 +649,13 @@ pub const Listener = struct {
 
         vm.eventLoop().ensureWaker();
 
+        var create_err: uws.create_bun_socket_error_t = .none;
         const socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
             uws.Loop.get(),
             @sizeOf(usize),
             ctx_opts,
+            &create_err,
         ) orelse {
             var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
             defer {
@@ -1180,7 +1182,8 @@ pub const Listener = struct {
         else
             .{};
 
-        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts) orelse {
+        var create_err: uws.create_bun_socket_error_t = .none;
+        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err) orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),

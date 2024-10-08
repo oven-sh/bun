@@ -3451,28 +3451,6 @@ pub const Parser = struct {
                         try p.appendPart(parts_list, sliced.items);
                     },
 
-                    // Hoist functions to the top in the output
-                    // This is normally done by the JS parser, but we need to do it here
-                    // incase we have CommonJS exports converted to ESM exports there are assignments
-                    // to the exports object that need to be hoisted.
-                    .s_function => {
-                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
-                        sliced.items.len = 1;
-                        sliced.items[0] = stmt;
-                        // since we convert top-level function statements to look like this:
-                        //
-                        //   let foo = function () { ... }
-                        //
-                        // we have to hoist them to the top of the file, even when not bundling
-                        //
-                        // we might also need to do this for classes but i'm not sure yet.
-                        try p.appendPart(&parts, sliced.items);
-
-                        if (parts.items.len > 0) {
-                            before.append(parts.getLast()) catch unreachable;
-                            parts.items.len -= 1;
-                        }
-                    },
                     .s_class => |class| {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues

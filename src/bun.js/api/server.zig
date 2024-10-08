@@ -6193,11 +6193,13 @@ pub const NodeHTTPResponse = struct {
             this.body_read_state = .done;
         }
 
+        const was_finished = this.finished;
+
         defer {
             if (last) {
                 if (this.body_read_ref.has) {
                     this.body_read_ref.unref(JSC.VirtualMachine.get());
-                    if (this.finished) {
+                    if (this.finished and !was_finished) {
                         this.server.onRequestComplete();
                     }
                     this.deref();

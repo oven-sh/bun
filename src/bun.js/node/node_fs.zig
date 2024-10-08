@@ -2941,7 +2941,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2953,16 +2954,15 @@ pub const Arguments = struct {
                 return null;
             }) orelse {
                 if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "data must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
+                    _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
                 }
                 return null;
             };
             if (exception.* != null) return null;
+            if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
+                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
+                return null;
+            }
 
             var args = Write{
                 .fd = fd,

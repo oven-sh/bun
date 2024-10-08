@@ -435,7 +435,7 @@ steps:
       - key: "linux-x64-test-amzn-2023"
         label: ":aws: 2023 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 10
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         retry:
@@ -823,7 +823,7 @@ steps:
       - key: "linux-aarch64-test-amzn-2023"
         label: ":aws: 2023 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 10
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         retry:

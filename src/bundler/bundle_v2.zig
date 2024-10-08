@@ -3087,7 +3087,7 @@ pub const ParseTask = struct {
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-                ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, "text/plain");
+                ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, "text/plain", null);
                 return ast;
             },
 
@@ -3155,6 +3155,7 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .napi => {
+                // (dap-eval-cb "source.contents.ptr")
                 if (bundler.options.target == .browser) {
                     log.addError(
                         null,
@@ -3219,7 +3220,8 @@ pub const ParseTask = struct {
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-        ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, null);
+        ast.url_for_css = unique_key;
+        ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, null, unique_key);
         return ast;
     }
 
@@ -6075,7 +6077,9 @@ pub const LinkerContext = struct {
                         if (record.source_index.isValid()) {
                             // Other file is not CSS
                             if (css_asts[record.source_index.get()] == null) {
-                                record.path.text = urls_for_css[record.source_index.get()];
+                                if (urls_for_css[record.source_index.get()]) |url| {
+                                    record.path.text = url;
+                                }
                             }
                         }
                         // else if (record.copy_source_index.isValid()) {}

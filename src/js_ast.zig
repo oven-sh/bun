@@ -6994,7 +6994,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     css: ?*bun.css.BundlerStyleSheet = null,
-    url_for_css: []const u8 = "",
+    url_for_css: ?[]const u8 = null,
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7156,11 +7156,25 @@ pub const BundledAst = struct {
     }
 
     /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
-    pub fn addUrlForCss(this: *BundledAst, allocator: std.mem.Allocator, css_enabled: bool, source: *const logger.Source, mime_type_: ?[]const u8) void {
+    pub fn addUrlForCss(
+        this: *BundledAst,
+        allocator: std.mem.Allocator,
+        css_enabled: bool,
+        source: *const logger.Source,
+        mime_type_: ?[]const u8,
+        unique_key: ?[]const u8,
+    ) void {
         if (css_enabled) {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
             const contents = source.contents;
+            // TODO: make this configurable
+            const COPY_THRESHOLD = 128 * 1024; // 128kb
+            const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
             this.url_for_css = url_for_css: {
+                // Copy it
+                if (should_copy) break :url_for_css unique_key.?;
+
+                // Encode as base64
                 const encode_len = bun.base64.encodeLen(contents);
                 if (encode_len == 0) return;
                 const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;

@@ -3065,7 +3065,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = Buffer.fromJS(ctx.ptr(), arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer: Buffer = Buffer.fromJS(ctx.ptr(), buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "buffer is required",
@@ -3096,6 +3097,7 @@ pub const Arguments = struct {
                 .buffer = buffer,
             };
 
+            var defined_length = false;
             if (arguments.next()) |current| {
                 arguments.eat();
                 if (current.isNumber() or current.isBigInt()) {
@@ -3108,13 +3110,10 @@ pub const Arguments = struct {
 
                     const arg_length = arguments.next().?;
                     arguments.eat();
+                    defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = arg_length.to(u52);
-                    }
-                    if (args.length == 0) {
-                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
-                        return null;
                     }
 
                     if (arguments.next()) |arg_position| {
@@ -3134,6 +3133,7 @@ pub const Arguments = struct {
                         if (num.isNumber() or num.isBigInt()) {
                             args.length = num.to(u52);
                         }
+                        defined_length = true;
                     }
 
                     if (current.getTruthy(ctx.ptr(), "position")) |num| {
@@ -3142,6 +3142,12 @@ pub const Arguments = struct {
                         }
                     }
                 }
+            }
+
+            if (defined_length and args.length > 0 and buffer.slice().len == 0) {
+                var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
+                return null;
             }
 
             return args;
@@ -5147,6 +5153,11 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        const len1 = args.buffer.slice().len;
+        const len2 = args.length;
+        if (len1 == 0 or len2 == 0) {
+            return Maybe(Return.Read).initResult(.{ .bytes_read = 0 });
+        }
         return if (args.position != null)
             this._pread(
                 args,

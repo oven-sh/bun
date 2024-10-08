@@ -73,6 +73,7 @@ pub const JSBundler = struct {
         format: options.Format = .esm,
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         experimental_css: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
@@ -188,6 +189,11 @@ pub const JSBundler = struct {
             if (try config.getOwnOptional(globalThis, "banner", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.banner.appendSliceExact(slice.slice());
+            }
+
+            if (try config.getOwnOptional(globalThis, "footer", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.footer.appendSliceExact(slice.slice());
             }
 
             if (config.getOwnTruthy(globalThis, "sourcemap")) |source_map_js| {

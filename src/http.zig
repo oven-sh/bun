@@ -587,12 +587,19 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) !void {
             if (!comptime ssl) {
-                unreachable;
+                @compileError("ssl only");
             }
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
-            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts);
+            try this.initWithOpts(&opts);
+        }
+
+        pub fn initWithOpts(this: *@This(), opts: *const uws.us_bun_socket_context_options_t) !void {
+            if (!comptime ssl) {
+                @compileError("ssl only");
+            }
+            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts.*);
             if (socket == null) {
                 return error.FailedToOpenSocket;
             }
@@ -605,6 +612,22 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 anyopaque,
                 Handler,
             );
+        }
+
+        pub fn initWithThreadOpts(this: *@This(), init_opts: *const HTTPThread.InitOpts) !void {
+            if (!comptime ssl) {
+                @compileError("ssl only");
+            }
+            var opts: uws.us_bun_socket_context_options_t = .{
+                .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
+                .ca_count = @intCast(init_opts.ca.len),
+                .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
+
+                // TODO: is this needed?
+                .request_cert = 1,
+            };
+
+            try this.initWithOpts(&opts);
         }
 
         pub fn init(this: *@This()) !void {
@@ -1005,7 +1028,12 @@ pub const HTTPThread = struct {
         return this.lazy_libdeflater.?;
     }
 
-    fn initOnce() void {
+    pub const InitOpts = struct {
+        ca: []stringZ = &.{},
+        abs_ca_file_name: stringZ = &.{},
+    };
+
+    fn initOnce(opts: *const InitOpts) void {
         http_thread = .{
             .loop = undefined,
             .http_context = .{
@@ -1022,17 +1050,17 @@ pub const HTTPThread = struct {
                 .stack_size = bun.default_thread_stack_size,
             },
             onStart,
-            .{},
+            .{opts},
         ) catch |err| Output.panic("Failed to start HTTP Client thread: {s}", .{@errorName(err)});
         thread.detach();
     }
-    var init_once = std.once(initOnce);
+    var init_once = bun.once(initOnce);
 
-    pub fn init() void {
-        init_once.call();
+    pub fn init(opts: *const InitOpts) void {
+        init_once.call(.{opts});
     }
 
-    pub fn onStart() void {
+    pub fn onStart(opts: *const InitOpts) void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
@@ -1047,7 +1075,7 @@ pub const HTTPThread = struct {
 
         http_thread.loop = loop;
         http_thread.http_context.init() catch @panic("Failed to init http context");
-        http_thread.https_context.init() catch @panic("Failed to init https context");
+        http_thread.https_context.initWithThreadOpts(opts) catch @panic("Failed to init https context");
         http_thread.has_awoken.store(true, .monotonic);
         http_thread.processEvents();
     }
@@ -2479,7 +2507,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
-        HTTPThread.init();
+        HTTPThread.init(&.{});
 
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();

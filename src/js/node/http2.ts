@@ -1648,7 +1648,7 @@ function assertSession(session) {
 hideFromStack(assertSession);
 
 function pushToStream(stream, data) {
-  if (stream.writableEnded) return;
+  // if (stream.writableEnded) return;
   const queue = stream[bunHTTP2StreamReadQueue];
   if (queue.isEmpty()) {
     if (stream.push(data)) return;

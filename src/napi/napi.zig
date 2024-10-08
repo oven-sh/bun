@@ -1474,6 +1474,24 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
 pub const Finalizer = struct {
     fun: napi_finalize,
     data: ?*anyopaque = null,
+    hint: ?*anyopaque = null,
+
+    pub const Queue = std.fifo.LinearFifo(Finalizer, .Dynamic);
+
+    pub fn drain(this: *Finalizer.Queue, env: napi_env) void {
+        while (this.readItem()) |*finalizer| {
+            const handle_scope = NapiHandleScope.open(env, false);
+            defer if (handle_scope) |scope| scope.close(env);
+            finalizer.fun.?(env, finalizer.data, finalizer.hint);
+        }
+    }
+
+    /// Node defers finalizers to the immediate task queue.
+    /// This is most likely to account for napi addons which cause GC inside of the finalizer.
+    pub export fn napi_enqueue_finalizer(fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
+        const vm = JSC.VirtualMachine.get();
+        vm.eventLoop().napi_finalizer_queue.writeItem(.{ .fun = fun, .data = data, .hint = hint }) catch bun.outOfMemory();
+    }
 };
 
 // TODO: generate comptime version of this instead of runtime checking
@@ -1626,7 +1644,7 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
-            fun(this.event_loop.global, this.finalizer.data, this.ctx);
+            Finalizer.napi_enqueue_finalizer(fun, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {

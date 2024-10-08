@@ -2539,7 +2539,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{(bun.fmt.hash(hash))});
+                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
             }

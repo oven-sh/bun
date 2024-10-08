@@ -254,6 +254,7 @@ static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
 {
     if (!arg.isNumber()) {
         auto num = arg.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, 0);
         if (std::isnan(num)) num = 0;
         num = std::trunc(num);
         arg = jsNumber(num);
@@ -947,11 +948,14 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_copyBytesFromBody(
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto encodingValue = callFrame->argument(0);
     if (!encodingValue.isString()) {
         return JSValue::encode(jsBoolean(false));
     }
-    auto* encoding = callFrame->argument(0).toString(lexicalGlobalObject);
+    auto* encoding = encodingValue.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding);
     return JSValue::encode(jsBoolean(!!encoded));
 }
@@ -1129,8 +1133,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     case 3:
         sourceStartValue = callFrame->uncheckedArgument(2);
         sourceStart = parseIndex(lexicalGlobalObject, throwScope, "sourceStart"_s, callFrame->uncheckedArgument(2), sourceEndInit);
-        if (sourceStart > sourceEndInit) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
         RETURN_IF_EXCEPTION(throwScope, {});
+        if (sourceStart > sourceEndInit) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
         FALLTHROUGH;
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
@@ -1263,6 +1267,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     if (value.isString()) {
         auto startPtr = castedThis->typedVector() + start;
         auto str_ = value.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         ZigString str = Zig::toZigString(str_);
 
         if (str.len == 0) {
@@ -1302,6 +1307,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         }
     } else {
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
+        RETURN_IF_EXCEPTION(scope, {});
 
         auto value_uint8 = static_cast<uint8_t>(value_);
         RETURN_IF_EXCEPTION(scope, {});

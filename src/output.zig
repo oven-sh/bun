@@ -1004,12 +1004,12 @@ pub const DebugTimer = struct {
     }
 };
 
-/// Print a blue note message
+/// Print a blue note message to stderr
 pub inline fn note(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<blue>note<r><d>:<r> " ++ fmt, args);
 }
 
-/// Print a yellow warning message
+/// Print a yellow warning message to stderr
 pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }

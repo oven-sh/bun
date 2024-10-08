@@ -324,41 +324,41 @@ register_command(
     ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
-set(BUN_KIT_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/kit-codegen.ts)
+set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
-file(GLOB_RECURSE BUN_KIT_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/kit/*.ts
-  ${CWD}/src/kit/*/*.ts
-  ${CWD}/src/kit/*/*.css
+file(GLOB_RECURSE BUN_BAKE_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/bake/*.ts
+  ${CWD}/src/bake/*/*.ts
+  ${CWD}/src/bake/*/*.css
 )
 
-list(APPEND BUN_KIT_RUNTIME_CODEGEN_SOURCES
+list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
 )
 
-set(BUN_KIT_RUNTIME_OUTPUTS
-  ${CODEGEN_PATH}/kit_empty_file
-  ${CODEGEN_PATH}/kit.client.js
-  ${CODEGEN_PATH}/kit.server.js
+set(BUN_BAKE_RUNTIME_OUTPUTS
+  ${CODEGEN_PATH}/bake.client.js
+  ${CODEGEN_PATH}/bake.server.js
 )
 
 register_command(
   TARGET
-    bun-kit-codegen
+    bun-bake-codegen
   COMMENT
     "Bundling Kit Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
       run
-      ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+      ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
         --codegen_root=${CODEGEN_PATH}
   SOURCES
-    ${BUN_KIT_RUNTIME_SOURCES}
-    ${BUN_KIT_RUNTIME_CODEGEN_SOURCES}
-    ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+    ${BUN_BAKE_RUNTIME_SOURCES}
+    ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
+    ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
   OUTPUTS
-    ${BUN_KIT_RUNTIME_OUTPUTS}
+    ${CODEGEN_PATH}/bake_empty_file
+    ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
@@ -503,9 +503,9 @@ set(BUN_ZIG_GENERATED_SOURCES
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
 if (DEBUG)
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/bake_empty_file)
 else()
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
@@ -574,7 +574,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
-  ${CWD}/src/kit/*.cpp
+  ${CWD}/src/bake/*.cpp
   ${CWD}/src/deps/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
 )
@@ -883,26 +883,33 @@ else()
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
-    -Wl,--wrap=stat64
-    -Wl,--wrap=pow
+    -Wl,--wrap=cosf
     -Wl,--wrap=exp
     -Wl,--wrap=expf
-    -Wl,--wrap=log
-    -Wl,--wrap=log2
-    -Wl,--wrap=lstat
-    -Wl,--wrap=stat64
-    -Wl,--wrap=stat
+    -Wl,--wrap=fcntl
+    -Wl,--wrap=fcntl64
+    -Wl,--wrap=fmod
+    -Wl,--wrap=fmodf
     -Wl,--wrap=fstat
-    -Wl,--wrap=fstatat
-    -Wl,--wrap=lstat64
     -Wl,--wrap=fstat64
+    -Wl,--wrap=fstatat
     -Wl,--wrap=fstatat64
+    -Wl,--wrap=log
+    -Wl,--wrap=log10f
+    -Wl,--wrap=log2
+    -Wl,--wrap=log2f
+    -Wl,--wrap=logf
+    -Wl,--wrap=lstat
+    -Wl,--wrap=lstat64
     -Wl,--wrap=mknod
     -Wl,--wrap=mknodat
+    -Wl,--wrap=pow
+    -Wl,--wrap=sincosf
+    -Wl,--wrap=sinf
+    -Wl,--wrap=stat
+    -Wl,--wrap=stat64
     -Wl,--wrap=statx
-    -Wl,--wrap=fmod
+    -Wl,--wrap=tanf
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro

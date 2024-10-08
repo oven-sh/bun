@@ -17,6 +17,16 @@ pub const LengthOrNumber = union(enum) {
     number: CSSNumber,
     /// A length.
     length: Length,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return switch (this.*) {
+            .number => |*n| n.* == other.number,
+            .length => |*l| l.eql(&other.length),
+        };
+    }
 };
 
 pub const LengthPercentage = DimensionPercentage(LengthValue);

@@ -44,4 +44,51 @@ nativeTests.test_get_exception = (_, value) => {
   }
 };
 
+nativeTests.test_get_property = () => {
+  const objects = [
+    {},
+    { foo: "bar" },
+    {
+      get foo() {
+        throw new Error("get foo");
+      },
+    },
+    {
+      set foo(newValue) {},
+    },
+    new Proxy(
+      {},
+      {
+        get(_target, key) {
+          throw new Error(`proxy get ${key}`);
+        },
+      },
+    ),
+  ];
+  const keys = [
+    "foo",
+    {
+      toString() {
+        throw new Error("toString");
+      },
+    },
+    {
+      [Symbol.toPrimitive]() {
+        throw new Error("Symbol.toPrimitive");
+      },
+    },
+  ];
+
+  for (const object of objects) {
+    for (const key of keys) {
+      try {
+        const ret = nativeTests.perform_get(object, key);
+        console.log("native function returned", ret);
+      } catch (e) {
+        console.log("threw", e.toString());
+      }
+    }
+  }
+};
+
 module.exports = nativeTests;

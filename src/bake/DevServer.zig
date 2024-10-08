@@ -383,7 +383,7 @@ fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: *Response) void {
 }
 
 fn onIncrementalVisualizerCorked(resp: *Response) void {
-    const code = if (Environment.embed_code)
+    const code = if (Environment.codegen_embed)
         @embedFile("incremental_visualizer.html")
     else
         bun.runtimeEmbedFile(.src_eager, "bake/incremental_visualizer.html");

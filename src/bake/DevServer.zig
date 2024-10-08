@@ -2476,15 +2476,15 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
 
     dev.incremental_result.reset();
 
-    var fail: Failure = undefined;
+    // var fail: Failure = undefined;
     const bundle = dev.theRealBundlingFunction(
         files.items,
         null,
         .hmr_chunk,
-        &fail,
+        // &fail,
     ) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
-        fail.printToConsole(&dev.routes[0]);
+        // fail.printToConsole(&dev.routes[0]);
         return;
     };
 

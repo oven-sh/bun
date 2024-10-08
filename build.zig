@@ -476,17 +476,44 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
+        .{ .file = "runtime.out.js" },
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "bun-error/index.js", .import = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "bun-error/bun-error.css", .import = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
-        .{ .file = "fallback-decoder.js", .import = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "runtime.out.js", .import = "runtime.out.js" },
+        .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
+        .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/assert.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/buffer.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/console.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/constants.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/crypto.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/domain.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/events.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/http.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/https.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/net.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/os.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/path.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/process.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/punycode.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/querystring.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/stream.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/string_decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/sys.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/timers.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/tty.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/url.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/util.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/zlib.js", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
             const path = b.pathJoin(&.{ opts.codegen_path, entry.file });
             validateGeneratedPath(path);
-            obj.root_module.addAnonymousImport(entry.import, .{
+            const import_path = if (@hasField(@TypeOf(entry), "import"))
+                entry.import
+            else
+                entry.file;
+            obj.root_module.addAnonymousImport(import_path, .{
                 .root_source_file = .{ .cwd_relative = path },
             });
         }

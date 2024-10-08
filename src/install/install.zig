@@ -8592,13 +8592,7 @@ pub const PackageManager = struct {
             ".npmrc",
         );
 
-        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
-
-        if (env.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @min(cpu_count, cpu_count_);
-            } else |_| {}
-        }
+        const cpu_count = bun.getThreadCount();
 
         const options = Options{
             .global = cli.global,
@@ -8705,13 +8699,7 @@ pub const PackageManager = struct {
             PackageManager.verbose_install = true;
         }
 
-        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
-
-        if (env.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @min(cpu_count, cpu_count_);
-            } else |_| {}
-        }
+        const cpu_count = bun.getThreadCount();
 
         var manager = &instance;
         var root_dir = try Fs.FileSystem.instance.fs.readDirectory(

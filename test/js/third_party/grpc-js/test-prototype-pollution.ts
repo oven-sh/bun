@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 gRPC authors.
+ * Copyright 2020 gRPC authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,30 +15,17 @@
  *
  */
 
-syntax = "proto3";
+import * as assert from 'assert';
 
-message Request {
-  bool error = 1;
-  string message = 2;
-  int32 errorAfter = 3;
-  int32 responseLength = 4;
-}
+import { loadPackageDefinition } from '../src';
 
-message Response {
-  int32 count = 1;
-  string message = 2;
-}
-
-service TestService {
-  rpc Unary (Request) returns (Response) {
-  }
-
-  rpc ClientStream (stream Request) returns (Response) {
-  }
-
-  rpc ServerStream (Request) returns (stream Response) {
-  }
-
-  rpc BidiStream (stream Request) returns (stream Response) {
-  }
-}
+describe('loadPackageDefinition', () => {
+  it('Should not allow prototype pollution', () => {
+    loadPackageDefinition({ '__proto__.polluted': true } as any);
+    assert.notStrictEqual(({} as any).polluted, true);
+  });
+  it('Should not allow prototype pollution #2', () => {
+    loadPackageDefinition({ 'constructor.prototype.polluted': true } as any);
+    assert.notStrictEqual(({} as any).polluted, true);
+  });
+});

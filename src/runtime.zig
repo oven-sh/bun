@@ -149,11 +149,6 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const Source = struct {
-        comptime code: string = "",
-        comptime hash: u32 = 0,
-    };
-
     pub const source_code = @embedFile("runtime.out.js");
     pub const hash = brk: {
         @setEvalBranchQuota(source_code.len * 50);

@@ -31,6 +31,10 @@ pub const LengthOrNumber = union(enum) {
             .length => |*l| l.eql(&other.length),
         };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const LengthPercentage = DimensionPercentage(LengthValue);

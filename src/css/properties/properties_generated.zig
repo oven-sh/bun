@@ -314,6 +314,212 @@ pub const Property = union(PropertyIdTag) {
     custom: CustomProperty,
 
     pub usingnamespace PropertyImpl();
+
+    // SANITY CHECK!
+    comptime {
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
+            @compileError("css.css_values.size.Size2D(Length): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(border.LineStyle, "deepClone")) {
+            @compileError("border.LineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderSideWidth, "deepClone")) {
+            @compileError("BorderSideWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderRadius, "deepClone")) {
+            @compileError("BorderRadius: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Image, "deepClone")) {
+            @compileError("Image: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
+            @compileError("Rect(LengthOrNumber): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderImageRepeat, "deepClone")) {
+            @compileError("BorderImageRepeat: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
+            @compileError("Rect(BorderImageSideWidth): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderImageSlice, "deepClone")) {
+            @compileError("BorderImageSlice: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderImage, "deepClone")) {
+            @compileError("BorderImage: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderColor, "deepClone")) {
+            @compileError("BorderColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderStyle, "deepClone")) {
+            @compileError("BorderStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderWidth, "deepClone")) {
+            @compileError("BorderWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBlockColor, "deepClone")) {
+            @compileError("BorderBlockColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBlockStyle, "deepClone")) {
+            @compileError("BorderBlockStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBlockWidth, "deepClone")) {
+            @compileError("BorderBlockWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderInlineColor, "deepClone")) {
+            @compileError("BorderInlineColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderInlineStyle, "deepClone")) {
+            @compileError("BorderInlineStyle: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderInlineWidth, "deepClone")) {
+            @compileError("BorderInlineWidth: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Border, "deepClone")) {
+            @compileError("Border: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderTop, "deepClone")) {
+            @compileError("BorderTop: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBottom, "deepClone")) {
+            @compileError("BorderBottom: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderLeft, "deepClone")) {
+            @compileError("BorderLeft: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderRight, "deepClone")) {
+            @compileError("BorderRight: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBlock, "deepClone")) {
+            @compileError("BorderBlock: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBlockStart, "deepClone")) {
+            @compileError("BorderBlockStart: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderBlockEnd, "deepClone")) {
+            @compileError("BorderBlockEnd: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderInline, "deepClone")) {
+            @compileError("BorderInline: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderInlineStart, "deepClone")) {
+            @compileError("BorderInlineStart: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(BorderInlineEnd, "deepClone")) {
+            @compileError("BorderInlineEnd: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(CssColor, "deepClone")) {
+            @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Direction, "deepClone")) {
+            @compileError("Direction: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Composes, "deepClone")) {
+            @compileError("Composes: does not have a deepClone() function.");
+        }
+    }
+
     /// Parses a CSS property by name.
     pub fn parse(property_id: PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(Property) {
         const state = input.state();
@@ -808,6 +1014,162 @@ pub const Property = union(PropertyIdTag) {
             .result => |v| v,
             .err => |e| return .{ .err = e },
         } } };
+    }
+
+    pub fn propertyId(this: *const Property) PropertyId {
+        return switch (this.*) {
+            .@"background-color" => .@"background-color",
+            .color => .color,
+            .@"border-spacing" => .@"border-spacing",
+            .@"border-top-color" => .@"border-top-color",
+            .@"border-bottom-color" => .@"border-bottom-color",
+            .@"border-left-color" => .@"border-left-color",
+            .@"border-right-color" => .@"border-right-color",
+            .@"border-block-start-color" => .@"border-block-start-color",
+            .@"border-block-end-color" => .@"border-block-end-color",
+            .@"border-inline-start-color" => .@"border-inline-start-color",
+            .@"border-inline-end-color" => .@"border-inline-end-color",
+            .@"border-top-style" => .@"border-top-style",
+            .@"border-bottom-style" => .@"border-bottom-style",
+            .@"border-left-style" => .@"border-left-style",
+            .@"border-right-style" => .@"border-right-style",
+            .@"border-block-start-style" => .@"border-block-start-style",
+            .@"border-block-end-style" => .@"border-block-end-style",
+            .@"border-inline-start-style" => .@"border-inline-start-style",
+            .@"border-inline-end-style" => .@"border-inline-end-style",
+            .@"border-top-width" => .@"border-top-width",
+            .@"border-bottom-width" => .@"border-bottom-width",
+            .@"border-left-width" => .@"border-left-width",
+            .@"border-right-width" => .@"border-right-width",
+            .@"border-block-start-width" => .@"border-block-start-width",
+            .@"border-block-end-width" => .@"border-block-end-width",
+            .@"border-inline-start-width" => .@"border-inline-start-width",
+            .@"border-inline-end-width" => .@"border-inline-end-width",
+            .@"border-top-left-radius" => |*v| PropertyId{ .@"border-top-left-radius" = v[1] },
+            .@"border-top-right-radius" => |*v| PropertyId{ .@"border-top-right-radius" = v[1] },
+            .@"border-bottom-left-radius" => |*v| PropertyId{ .@"border-bottom-left-radius" = v[1] },
+            .@"border-bottom-right-radius" => |*v| PropertyId{ .@"border-bottom-right-radius" = v[1] },
+            .@"border-start-start-radius" => .@"border-start-start-radius",
+            .@"border-start-end-radius" => .@"border-start-end-radius",
+            .@"border-end-start-radius" => .@"border-end-start-radius",
+            .@"border-end-end-radius" => .@"border-end-end-radius",
+            .@"border-radius" => |*v| PropertyId{ .@"border-radius" = v[1] },
+            .@"border-image-source" => .@"border-image-source",
+            .@"border-image-outset" => .@"border-image-outset",
+            .@"border-image-repeat" => .@"border-image-repeat",
+            .@"border-image-width" => .@"border-image-width",
+            .@"border-image-slice" => .@"border-image-slice",
+            .@"border-image" => |*v| PropertyId{ .@"border-image" = v[1] },
+            .@"border-color" => .@"border-color",
+            .@"border-style" => .@"border-style",
+            .@"border-width" => .@"border-width",
+            .@"border-block-color" => .@"border-block-color",
+            .@"border-block-style" => .@"border-block-style",
+            .@"border-block-width" => .@"border-block-width",
+            .@"border-inline-color" => .@"border-inline-color",
+            .@"border-inline-style" => .@"border-inline-style",
+            .@"border-inline-width" => .@"border-inline-width",
+            .border => .border,
+            .@"border-top" => .@"border-top",
+            .@"border-bottom" => .@"border-bottom",
+            .@"border-left" => .@"border-left",
+            .@"border-right" => .@"border-right",
+            .@"border-block" => .@"border-block",
+            .@"border-block-start" => .@"border-block-start",
+            .@"border-block-end" => .@"border-block-end",
+            .@"border-inline" => .@"border-inline",
+            .@"border-inline-start" => .@"border-inline-start",
+            .@"border-inline-end" => .@"border-inline-end",
+            .@"outline-color" => .@"outline-color",
+            .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
+            .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
+            .direction => .direction,
+            .composes => .composes,
+            .all => PropertyId.all,
+            .unparsed => |unparsed| unparsed.property_id,
+            .custom => |c| .{ .custom = c.name },
+        };
+    }
+
+    pub fn deepClone(this: *const Property, allocator: std.mem.Allocator) Property {
+        return switch (this.*) {
+            .@"background-color" => |*v| .{ .@"background-color" = v.deepClone(allocator) },
+            .color => |*v| .{ .color = v.deepClone(allocator) },
+            .@"border-spacing" => |*v| .{ .@"border-spacing" = v.deepClone(allocator) },
+            .@"border-top-color" => |*v| .{ .@"border-top-color" = v.deepClone(allocator) },
+            .@"border-bottom-color" => |*v| .{ .@"border-bottom-color" = v.deepClone(allocator) },
+            .@"border-left-color" => |*v| .{ .@"border-left-color" = v.deepClone(allocator) },
+            .@"border-right-color" => |*v| .{ .@"border-right-color" = v.deepClone(allocator) },
+            .@"border-block-start-color" => |*v| .{ .@"border-block-start-color" = v.deepClone(allocator) },
+            .@"border-block-end-color" => |*v| .{ .@"border-block-end-color" = v.deepClone(allocator) },
+            .@"border-inline-start-color" => |*v| .{ .@"border-inline-start-color" = v.deepClone(allocator) },
+            .@"border-inline-end-color" => |*v| .{ .@"border-inline-end-color" = v.deepClone(allocator) },
+            .@"border-top-style" => |*v| .{ .@"border-top-style" = v.deepClone(allocator) },
+            .@"border-bottom-style" => |*v| .{ .@"border-bottom-style" = v.deepClone(allocator) },
+            .@"border-left-style" => |*v| .{ .@"border-left-style" = v.deepClone(allocator) },
+            .@"border-right-style" => |*v| .{ .@"border-right-style" = v.deepClone(allocator) },
+            .@"border-block-start-style" => |*v| .{ .@"border-block-start-style" = v.deepClone(allocator) },
+            .@"border-block-end-style" => |*v| .{ .@"border-block-end-style" = v.deepClone(allocator) },
+            .@"border-inline-start-style" => |*v| .{ .@"border-inline-start-style" = v.deepClone(allocator) },
+            .@"border-inline-end-style" => |*v| .{ .@"border-inline-end-style" = v.deepClone(allocator) },
+            .@"border-top-width" => |*v| .{ .@"border-top-width" = v.deepClone(allocator) },
+            .@"border-bottom-width" => |*v| .{ .@"border-bottom-width" = v.deepClone(allocator) },
+            .@"border-left-width" => |*v| .{ .@"border-left-width" = v.deepClone(allocator) },
+            .@"border-right-width" => |*v| .{ .@"border-right-width" = v.deepClone(allocator) },
+            .@"border-block-start-width" => |*v| .{ .@"border-block-start-width" = v.deepClone(allocator) },
+            .@"border-block-end-width" => |*v| .{ .@"border-block-end-width" = v.deepClone(allocator) },
+            .@"border-inline-start-width" => |*v| .{ .@"border-inline-start-width" = v.deepClone(allocator) },
+            .@"border-inline-end-width" => |*v| .{ .@"border-inline-end-width" = v.deepClone(allocator) },
+            .@"border-top-left-radius" => |*v| .{ .@"border-top-left-radius" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"border-top-right-radius" => |*v| .{ .@"border-top-right-radius" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"border-bottom-left-radius" => |*v| .{ .@"border-bottom-left-radius" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"border-bottom-right-radius" => |*v| .{ .@"border-bottom-right-radius" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"border-start-start-radius" => |*v| .{ .@"border-start-start-radius" = v.deepClone(allocator) },
+            .@"border-start-end-radius" => |*v| .{ .@"border-start-end-radius" = v.deepClone(allocator) },
+            .@"border-end-start-radius" => |*v| .{ .@"border-end-start-radius" = v.deepClone(allocator) },
+            .@"border-end-end-radius" => |*v| .{ .@"border-end-end-radius" = v.deepClone(allocator) },
+            .@"border-radius" => |*v| .{ .@"border-radius" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"border-image-source" => |*v| .{ .@"border-image-source" = v.deepClone(allocator) },
+            .@"border-image-outset" => |*v| .{ .@"border-image-outset" = v.deepClone(allocator) },
+            .@"border-image-repeat" => |*v| .{ .@"border-image-repeat" = v.deepClone(allocator) },
+            .@"border-image-width" => |*v| .{ .@"border-image-width" = v.deepClone(allocator) },
+            .@"border-image-slice" => |*v| .{ .@"border-image-slice" = v.deepClone(allocator) },
+            .@"border-image" => |*v| .{ .@"border-image" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"border-color" => |*v| .{ .@"border-color" = v.deepClone(allocator) },
+            .@"border-style" => |*v| .{ .@"border-style" = v.deepClone(allocator) },
+            .@"border-width" => |*v| .{ .@"border-width" = v.deepClone(allocator) },
+            .@"border-block-color" => |*v| .{ .@"border-block-color" = v.deepClone(allocator) },
+            .@"border-block-style" => |*v| .{ .@"border-block-style" = v.deepClone(allocator) },
+            .@"border-block-width" => |*v| .{ .@"border-block-width" = v.deepClone(allocator) },
+            .@"border-inline-color" => |*v| .{ .@"border-inline-color" = v.deepClone(allocator) },
+            .@"border-inline-style" => |*v| .{ .@"border-inline-style" = v.deepClone(allocator) },
+            .@"border-inline-width" => |*v| .{ .@"border-inline-width" = v.deepClone(allocator) },
+            .border => |*v| .{ .border = v.deepClone(allocator) },
+            .@"border-top" => |*v| .{ .@"border-top" = v.deepClone(allocator) },
+            .@"border-bottom" => |*v| .{ .@"border-bottom" = v.deepClone(allocator) },
+            .@"border-left" => |*v| .{ .@"border-left" = v.deepClone(allocator) },
+            .@"border-right" => |*v| .{ .@"border-right" = v.deepClone(allocator) },
+            .@"border-block" => |*v| .{ .@"border-block" = v.deepClone(allocator) },
+            .@"border-block-start" => |*v| .{ .@"border-block-start" = v.deepClone(allocator) },
+            .@"border-block-end" => |*v| .{ .@"border-block-end" = v.deepClone(allocator) },
+            .@"border-inline" => |*v| .{ .@"border-inline" = v.deepClone(allocator) },
+            .@"border-inline-start" => |*v| .{ .@"border-inline-start" = v.deepClone(allocator) },
+            .@"border-inline-end" => |*v| .{ .@"border-inline-end" = v.deepClone(allocator) },
+            .@"outline-color" => |*v| .{ .@"outline-color" = v.deepClone(allocator) },
+            .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
+            .direction => |*v| .{ .direction = v.deepClone(allocator) },
+            .composes => |*v| .{ .composes = v.deepClone(allocator) },
+            .all => |*a| return .{ .all = a.deepClone(allocator) },
+            .unparsed => |*u| return .{ .unparsed = u.deepClone(allocator) },
+            .custom => |*c| return .{ .custom = c.deepClone(allocator) },
+        };
+    }
+
+    pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+        _ = this; // autofix
+        _ = allocator; // autofix
+        @panic(css.todo_stuff.depth);
     }
 
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {
@@ -1526,6 +1888,10 @@ pub const PropertyId = union(PropertyIdTag) {
             .composes => {},
             else => {},
         };
+    }
+
+    pub inline fn deepClone(this: *const PropertyId, _: std.mem.Allocator) PropertyId {
+        return this.*;
     }
 
     pub fn eql(lhs: *const PropertyId, rhs: *const PropertyId) bool {

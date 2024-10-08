@@ -180,6 +180,10 @@ pub const BorderImage = struct {
         return;
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const BorderImage, other: *const BorderImage) bool {
         return this.source.eql(&other.source) and
             this.slice.eql(&other.slice) and
@@ -226,6 +230,10 @@ pub const BorderImageRepeat = struct {
     pub fn eql(this: *const BorderImageRepeat, other: *const BorderImageRepeat) bool {
         return this.horizontal.eql(&other.horizontal) and this.vertical.eql(&other.vertical);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [border-image-width](https://www.w3.org/TR/css-backgrounds-3/#border-image-width) property.
@@ -242,6 +250,10 @@ pub const BorderImageSideWidth = union(enum) {
 
     pub fn default() BorderImageSideWidth {
         return .{ .number = 1.0 };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
     pub fn eql(this: *const BorderImageSideWidth, other: *const BorderImageSideWidth) bool {
@@ -321,5 +333,9 @@ pub const BorderImageSlice = struct {
             .offsets = Rect(NumberOrPercentage).all(NumberOrPercentage{ .percentage = Percentage{ .v = 1.0 } }),
             .fill = false,
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

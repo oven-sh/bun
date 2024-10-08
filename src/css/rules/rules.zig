@@ -133,7 +133,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
             // _ = layer_rules; // autofix
             // const property_rules: css.css_values.ident.DashedIdent.HashMap(usize) = .{};
             // _ = property_rules; // autofix
-            // const style_rules = void;
+            var style_rules = StyleRuleKey(AtRule).HashMap(usize){};
             // _ = style_rules; // autofix
             var rules = ArrayList(CssRule(AtRule)){};
 
@@ -283,53 +283,123 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                         // Attempt to merge the new rule with the last rule we added.
                         const merged = false;
-                        _ = merged; // autofix
-                        if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
-                            const last_style_rule = &rules.items[rules.items.len - 1].style;
-                            if (mergeStyleRules(AtRule, sty, last_style_rule, context)) {
-                                // If that was successful, then the last rule has been updated to include the
-                                // selectors/declarations of the new rule. This might mean that we can merge it
-                                // with the previous rule, so continue trying while we have style rules available.
-                                while (rules.items.len >= 2) {
-                                    const len = rules.items.len;
-                                    var a, var b = bun.splitAtMut(CssRule(AtRule), rules.items, len - 1);
-                                    if (b[0] == .style and a[len - 2] == .style) {
-                                        if (mergeStyleRules(AtRule, &b[0].style, &a[len - 2].style, context)) {
-                                            // If we were able to merge the last rule into the previous one, remove the last.
-                                            const popped = rules.pop();
-                                            _ = popped; // autofix
-                                            // TODO: deinit?
-                                            // popped.deinit(contet.allocator);
-                                            continue;
+                        const ZACK_REMOVE_THIS = false;
+                        if (comptime !ZACK_REMOVE_THIS) {
+                            if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
+                                const last_style_rule = &rules.items[rules.items.len - 1].style;
+                                if (mergeStyleRules(AtRule, sty, last_style_rule, context)) {
+                                    // If that was successful, then the last rule has been updated to include the
+                                    // selectors/declarations of the new rule. This might mean that we can merge it
+                                    // with the previous rule, so continue trying while we have style rules available.
+                                    while (rules.items.len >= 2) {
+                                        const len = rules.items.len;
+                                        var a, var b = bun.splitAtMut(CssRule(AtRule), rules.items, len - 1);
+                                        if (b[0] == .style and a[len - 2] == .style) {
+                                            if (mergeStyleRules(AtRule, &b[0].style, &a[len - 2].style, context)) {
+                                                // If we were able to merge the last rule into the previous one, remove the last.
+                                                const popped = rules.pop();
+                                                _ = popped; // autofix
+                                                // TODO: deinit?
+                                                // popped.deinit(contet.allocator);
+                                                continue;
+                                            }
                                         }
+                                        // If we didn't see a style rule, or were unable to merge, stop.
+                                        break;
                                     }
-                                    // If we didn't see a style rule, or were unable to merge, stop.
-                                    break;
                                 }
                             }
                         }
 
-                        _ = sty.deepClone(context.allocator);
-                        @panic("TODO: FIX");
                         // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
-                        // const supps = context.handler_context.getSupportsRules(sty);
-                        // const logical = context.handler_context.getAdditionalRules(sty);
-                        // const StyleRule = style.StyleRule(AtRule);
+                        const supps = context.handler_context.getSupportsRules(AtRule, sty);
+                        const logical = context.handler_context.getAdditionalRules(AtRule, sty);
+                        const StyleRule = style.StyleRule(AtRule);
 
-                        // var incompatible_rules = incompatible_rules: {
-                        //     var list = ArrayList(struct { StyleRule, ArrayList(StyleRule), ArrayList(StyleRule) }).initCapacity(context.allocator, incompatible.items.len) catch bun.outOfMemory();
-                        //     // Create a clone of the rule with only the one incompatible selector.
-                        //     const list = SelectorList{
-                        //         .v = v: {
-                        //             var v = ArrayList(Selector).initCapacity(context.allocator, 1) catch bun.outOfMemory();
-                        //             var clone = sty.deepClone(context.allocator);
-                        //             // clone.se
-                        //             break :v v;
-                        //         },
-                        //     };
-                        // };
+                        const IncompatibleRuleEntry = struct { StyleRule, ArrayList(StyleRule), ArrayList(StyleRule) };
+                        const incompatible_rules: ArrayList(IncompatibleRuleEntry) = incompatible_rules: {
+                            if (comptime !ZACK_REMOVE_THIS) break :incompatible_rules .{};
+                            // var list = ArrayList(struct { StyleRule, ArrayList(StyleRule), ArrayList(StyleRule) }).initCapacity(
+                            //     context.allocator,
+                            //     incompatible.items.len,
+                            // ) catch bun.outOfMemory();
 
-                        // continue;
+                            // // Create a clone of the rule with only the one incompatible selector.
+                            // const list = SelectorList{
+                            //     .v = v: {
+                            //         var v = ArrayList(Selector).initCapacity(context.allocator, 1) catch bun.outOfMemory();
+                            //         var clone = sty.deepClone(context.allocator);
+                            //         // clone.selectors
+                            //         break :v v;
+                            //     },
+                            // };
+                        };
+
+                        context.handler_context.reset();
+
+                        // If the rule has nested rules, and we have extra rules to insert such as for logical properties,
+                        // we need to split the rule in two so we can insert the extra rules in between the declarations from
+                        // the main rule and the nested rules.
+                        const nested_rule: ?StyleRule = if (sty.rules.v.items.len > 0 and
+                            // can happen if there are no compatible rules, above.
+                            sty.selectors.v.items.len > 0 and
+                            (logical.items.len > 0 or supps.items.len > 0 or incompatible_rules.items.len > 0))
+                        brk: {
+                            var rulesss: CssRuleList(AtRule) = .{};
+                            std.mem.swap(CssRuleList(AtRule), &sty.rules, &rulesss);
+                            break :brk StyleRule{
+                                .selectors = sty.selectors.deepClone(context.allocator),
+                                .declarations = css.DeclarationBlock{},
+                                .rules = rulesss,
+                                .vendor_prefix = sty.vendor_prefix,
+                                .loc = sty.loc,
+                            };
+                        } else null;
+
+                        if (!merged and !sty.isEmpty()) {
+                            const source_index = sty.loc.source_index;
+                            const has_no_rules = sty.rules.v.items.len == 0;
+                            const idx = rules.items.len;
+
+                            rules.append(context.allocator, rule.*) catch bun.outOfMemory();
+                            moved_rule = true;
+
+                            // Check if this rule is a duplicate of an earlier rule, meaning it has
+                            // the same selectors and defines the same properties. If so, remove the
+                            // earlier rule because this one completely overrides it.
+                            if (has_no_rules) {
+                                const key = StyleRuleKey(AtRule).new(&rules, idx);
+                                if (idx > 0) {
+                                    if (style_rules.fetchSwapRemove(key)) |i_| {
+                                        const i = i_.value;
+                                        if (i < rules.items.len and rules.items[i] == .style) {
+                                            const other = &rules.items[i].style;
+                                            // Don't remove the rule if this is a CSS module and the other rule came from a different file.
+                                            if (!context.css_modules or source_index == other.loc.source_index) {
+                                                // Only mark the rule as ignored so we don't need to change all of the indices.
+                                                rules.items[i] = .ignored;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                style_rules.put(context.allocator, key, idx) catch bun.outOfMemory();
+                            }
+                        }
+
+                        if (logical.items.len > 0) {
+                            @panic(css.todo_stuff.depth);
+                        }
+                        rules.appendSlice(context.allocator, supps.items) catch bun.outOfMemory();
+                        for (incompatible_rules.items) |incompatible_entry| {
+                            _ = incompatible_entry; // autofix
+                            @panic(css.todo_stuff.depth);
+                        }
+                        if (nested_rule) |nested| {
+                            rules.append(context.allocator, .{ .style = nested }) catch bun.outOfMemory();
+                        }
+
+                        continue;
                     },
                     .counter_style => |*cntr| {
                         _ = cntr; // autofix
@@ -404,6 +474,10 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 last_without_block = rule.* == .import or rule.* == .namespace or rule.* == .layer_statement;
             }
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }
 
@@ -450,21 +524,36 @@ pub fn StyleRuleKey(comptime R: type) type {
     return struct {
         list: *const ArrayList(CssRule(R)),
         index: usize,
+        // TODO: store in the hashmap by setting `store_hash` to true
         hash: u64,
 
         const This = @This();
 
         pub fn HashMap(comptime V: type) type {
-            return std.ArrayHashMapUnmanaged(StyleRuleKey(R), V, struct {
-                pub fn hash(_: @This(), key: This) u32 {
-                    _ = key; // autofix
-                    @panic("TODO");
-                }
+            return std.ArrayHashMapUnmanaged(
+                StyleRuleKey(R),
+                V,
+                struct {
+                    pub fn hash(_: @This(), key: This) u32 {
+                        return @intCast(key.hash);
+                    }
 
-                pub fn eql(_: @This(), a: This, b: This, _: usize) bool {
-                    return a.eql(&b);
-                }
-            });
+                    pub fn eql(_: @This(), a: This, b: This, _: usize) bool {
+                        return a.eql(&b);
+                    }
+                },
+                // TODO: make this true
+                false,
+            );
+        }
+
+        pub fn new(list: *const ArrayList(CssRule(R)), index: usize) This {
+            const rule = &list.items[index].style;
+            return This{
+                .list = list,
+                .index = index,
+                .hash = rule.hashKey(),
+            };
         }
 
         pub fn eql(this: *const This, other: *const This) bool {

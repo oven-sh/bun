@@ -36,6 +36,10 @@ pub const DeclarationBlock = struct {
         @panic(css.todo_stuff.depth);
     }
 
+    pub fn isEmpty(this: *const This) bool {
+        return this.declarations.items.len == 0 and this.important_declarations.items.len == 0;
+    }
+
     pub fn parse(input: *css.Parser, options: *const css.ParserOptions) Result(DeclarationBlock) {
         var important_declarations = DeclarationList{};
         var declarations = DeclarationList{};

@@ -47,6 +47,10 @@ pub const SupportsCondition = union(enum) {
         pub fn eql(this: *const @This(), other: *const @This()) bool {
             return css.implementEql(@This(), this, other);
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
 
     /// A selector to evaluate.
@@ -60,9 +64,7 @@ pub const SupportsCondition = union(enum) {
     }
 
     pub fn deepClone(this: *const SupportsCondition, allocator: std.mem.Allocator) SupportsCondition {
-        _ = allocator; // autofix
-        _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        return css.implementDeepClone(SupportsCondition, this, allocator);
     }
 
     fn needsParens(this: *const SupportsCondition, parent: *const SupportsCondition) bool {

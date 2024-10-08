@@ -68,6 +68,21 @@ ${Object.entries(property_defs)
 function generatePropertyImpl(property_defs: Record<string, PropertyDef>): string {
   return `
   pub usingnamespace PropertyImpl();
+
+  // SANITY CHECK!
+  comptime {
+  ${Object.entries(property_defs)
+    .map(([name, meta]) => {
+      if (meta.ty != "void") {
+        return `if (!@hasDecl(${meta.ty}, "deepClone")) {
+          @compileError("${meta.ty}: does not have a deepClone() function.");
+        }`;
+      }
+      return "";
+    })
+    .join("\n")}
+  }
+
   /// Parses a CSS property by name.
   pub fn parse(property_id: PropertyId, input: *css.Parser, options: *const css.ParserOptions) Result(Property) {
     const state = input.state();
@@ -94,6 +109,42 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
     .result => |v| v,
     .err => |e| return .{ .err = e },
     } } };
+  }
+
+  pub fn propertyId(this: *const Property) PropertyId {
+    return switch (this.*) {
+      ${Object.entries(property_defs)
+        .map(([name, meta]) => {
+          if (meta.valid_prefixes !== undefined) {
+            return `.${escapeIdent(name)} => |*v| PropertyId{ .${escapeIdent(name)} = v[1]  },`;
+          }
+          return `.${escapeIdent(name)} => .${escapeIdent(name)},`;
+        })
+        .join("\n")}
+      .all => PropertyId.all,
+      .unparsed => |unparsed| unparsed.property_id,
+      .custom => |c| .{ .custom = c.name },
+    };
+  }
+
+  pub fn deepClone(this: *const Property, allocator: std.mem.Allocator) Property {
+    return switch (this.*) {
+      ${Object.entries(property_defs)
+        .map(([name, meta]) => {
+          if (meta.valid_prefixes !== undefined) {
+            return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = .{ v[0].deepClone(allocator), v[1] } },`;
+          }
+          return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = v.deepClone(allocator) },`;
+        })
+        .join("\n")}
+      .all => |*a| return .{ .all = a.deepClone(allocator) },
+      .unparsed => |*u| return .{ .unparsed = u.deepClone(allocator) },
+      .custom => |*c| return .{ .custom = c.deepClone(allocator) },
+    };
+  }
+
+  pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+    @panic(css.todo_stuff.depth);
   }
 
   pub inline fn __toCssHelper(this: *const Property) struct{[]const u8, VendorPrefix} {
@@ -255,6 +306,10 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
         .join("\n")}
       else => {},
     };
+  }
+
+  pub inline fn deepClone(this: *const PropertyId, _: std.mem.Allocator) PropertyId {
+    return this.*;
   }
 
   pub fn eql(lhs: *const PropertyId, rhs: *const PropertyId) bool {

@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
+const bun = @import("root").bun;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -31,13 +32,28 @@ pub fn StyleRule(comptime R: type) type {
 
         const This = @This();
 
+        /// Returns whether the rule is empty.
+        pub fn isEmpty(this: *const This) bool {
+            return this.selectors.v.items.len == 0 or (this.declarations.isEmpty() and this.rules.v.items.len == 0);
+        }
+
+        /// Returns a hash of this rule for use when deduplicating.
+        /// Includes the selectors and properties.
+        pub fn hashKey(this: *const This) u64 {
+            _ = this; // autofix
+            // var hasher = std.hash.Wyhash.init(0);
+            // this.selectors.hash(&hasher);
+            // this.declarations.hashProperties(&hasher);
+            // return hasher.finish();
+            @panic(css.todo_stuff.depth);
+        }
+
         pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
             return This{
                 .selectors = this.selectors.deepClone(allocator),
                 .vendor_prefix = this.vendor_prefix,
-                // .declarations = this.declarations.deepClone(allocator),
-                .declarations = @panic("TODO"),
-                .rules = @panic("TODO"),
+                .declarations = this.declarations.deepClone(allocator),
+                // .rules = this.rules.deepClone(allocator),
                 .loc = this.loc,
             };
         }
@@ -214,8 +230,11 @@ pub fn StyleRule(comptime R: type) type {
                 this.selectors.eql(&other.selectors) and
                 brk: {
                 const len = @min(this.declarations.len(), other.declarations.len());
-                for (this.declarations[0..len], other.declarations[0..len]) |*a, *b| {
-                    if (!a.eql(b)) break :brk false;
+                for (this.declarations.declarations.items[0..len], other.declarations.declarations.items[0..len]) |*a, *b| {
+                    if (!a.propertyId().eql(&b.propertyId())) break :brk false;
+                }
+                for (this.declarations.important_declarations.items[0..len], other.declarations.important_declarations.items[0..len]) |*a, *b| {
+                    if (!a.propertyId().eql(&b.propertyId())) break :brk false;
                 }
                 break :brk true;
             };

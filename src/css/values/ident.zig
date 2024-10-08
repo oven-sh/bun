@@ -101,6 +101,10 @@ pub const DashedIdent = struct {
     pub fn toCss(this: *const DashedIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return dest.writeDashedIdent(this, true);
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
@@ -118,6 +122,10 @@ pub const Ident = struct {
 
     pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.serializer.serializeIdentifier(this.v, dest) catch return dest.addFmtError();
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -162,6 +170,10 @@ pub const CustomIdent = struct {
         else
             false;
         return dest.writeIdent(this.v, css_module_custom_idents_enabled);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

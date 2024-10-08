@@ -1274,6 +1274,10 @@ pub const UnparsedProperty = struct {
 
         return .{ .result = .{ .property_id = property_id, .value = value } };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A CSS custom property, representing any unknown property.
@@ -1314,6 +1318,10 @@ pub const CustomProperty = struct {
             .value = value,
         } };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A CSS custom property name.
@@ -1340,6 +1348,10 @@ pub const CustomPropertyName = union(enum) {
             .custom => |custom| return custom.v,
             .unknown => |unknown| return unknown.v,
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

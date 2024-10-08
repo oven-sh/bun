@@ -60,6 +60,10 @@ pub const Composes = struct {
             try from.toCss(W, dest);
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// Defines where the class names referenced in the `composes` property are located.
@@ -91,5 +95,9 @@ pub const Specifier = union(enum) {
             .file => |file| css.serializer.serializeString(file, dest) catch return dest.addFmtError(),
             .source_index => {},
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

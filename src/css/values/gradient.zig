@@ -187,6 +187,10 @@ pub const Gradient = union(enum) {
         return dest.writeChar(')');
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const Gradient, other: *const Gradient) bool {
         return css.implementEql(Gradient, this, other);
         // if (this.* == .linear and other.* == .linear) {
@@ -216,6 +220,10 @@ pub const LinearGradient = struct {
     direction: LineDirection,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn eql(this: *const LinearGradient, other: *const LinearGradient) bool {
         return this.vendor_prefix.eql(other.vendor_prefix) and this.direction.eql(&other.direction) and css.generic.eqlList(GradientItem(LengthPercentage), &this.items, &other.items);
@@ -309,6 +317,10 @@ pub const RadialGradient = struct {
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(RadialGradient) {
         // todo_stuff.depth
         const shape = switch (input.tryParse(EndingShape.parse, .{})) {
@@ -381,6 +393,10 @@ pub const ConicGradient = struct {
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(AnglePercentage)),
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn parse(input: *css.Parser) Result(ConicGradient) {
         const angle = input.tryParse(struct {
             inline fn parse(i: *css.Parser) Result(Angle) {
@@ -451,6 +467,10 @@ pub const WebKitGradient = union(enum) {
         to: WebKitGradientPoint,
         /// The color stops in the gradient.
         stops: ArrayList(WebKitColorStop),
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A radial `-webkit-gradient()`.
     radial: struct {
@@ -464,7 +484,15 @@ pub const WebKitGradient = union(enum) {
         r1: CSSNumber,
         /// The color stops in the gradient.
         stops: ArrayList(WebKitColorStop),
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn eql(this: *const WebKitGradient, other: *const WebKitGradient) bool {
         return switch (this.*) {
@@ -597,7 +625,15 @@ pub const LineDirection = union(enum) {
         horizontal: HorizontalPositionKeyword,
         /// A vertical position keyword, e.g. `top` or `bottom`.
         vertical: VerticalPositionKeyword,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn eql(this: *const LineDirection, other: *const LineDirection) bool {
         return switch (this.*) {
@@ -725,6 +761,10 @@ pub fn GradientItem(comptime D: type) type {
                 },
             };
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }
 
@@ -742,6 +782,10 @@ pub const EndingShape = union(enum) {
 
     pub fn default() EndingShape {
         return .{ .ellipse = .{ .extent = .@"farthest-corner" } };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
     pub fn eql(this: *const EndingShape, other: *const EndingShape) bool {
@@ -785,6 +829,10 @@ pub const WebKitGradientPoint = struct {
 
     pub fn eql(this: *const WebKitGradientPoint, other: *const WebKitGradientPoint) bool {
         return this.x.eql(&other.x) and this.y.eql(&other.y);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -925,6 +973,10 @@ pub const WebKitColorStop = struct {
         try dest.writeChar(')');
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const WebKitColorStop, other: *const WebKitColorStop) bool {
         return css.implementEql(WebKitColorStop, this, other);
     }
@@ -964,6 +1016,10 @@ pub fn ColorStop(comptime D: type) type {
             return;
         }
 
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
         pub fn eql(this: *const This, other: *const This) bool {
             return this.color.eql(&other.color) and css.generic.eql(?D, &this.position, &other.position);
         }
@@ -980,6 +1036,10 @@ pub const Ellipse = union(enum) {
         x: LengthPercentage,
         /// The y-radius of the ellipse.
         y: LengthPercentage,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A shape extent keyword.
     extent: ShapeExtent,
@@ -1037,6 +1097,10 @@ pub const Ellipse = union(enum) {
         };
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const Ellipse, other: *const Ellipse) bool {
         return this.size.x.eql(&other.size.x) and this.size.y.eql(&other.size.y) and this.extent.eql(&other.extent);
     }
@@ -1062,6 +1126,10 @@ pub const ShapeExtent = enum {
 
     pub fn parse(input: *css.Parser) Result(@This()) {
         return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -1119,6 +1187,10 @@ pub const Circle = union(enum) {
                 }
             },
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
     pub fn eql(this: *const Circle, other: *const Circle) bool {

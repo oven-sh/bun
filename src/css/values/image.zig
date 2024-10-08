@@ -53,6 +53,10 @@ pub const Image = union(enum) {
         };
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     // pub fn parse(input: *css.Parser) Result(Image) {
     //     _ = input; // autofix
     //     @panic(css.todo_stuff.depth);
@@ -125,6 +129,10 @@ pub const ImageSet = struct {
 
     pub fn eql(this: *const ImageSet, other: *const ImageSet) bool {
         return this.vendor_prefix.eql(other.vendor_prefix) and css.generic.eqlList(ImageSetOption, &this.options, &other.options);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -221,6 +229,10 @@ pub const ImageSetOption = struct {
             css.serializer.serializeString(file_type, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
     pub fn eql(lhs: *const ImageSetOption, rhs: *const ImageSetOption) bool {

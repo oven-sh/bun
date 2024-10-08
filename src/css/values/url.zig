@@ -145,6 +145,10 @@ pub const Url = struct {
         }
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     // TODO: dedupe import records??
     // This might not fucking work
     pub fn eql(this: *const Url, other: *const Url) bool {

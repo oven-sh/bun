@@ -1603,18 +1603,37 @@ pub fn GenericSelector(comptime Impl: type) type {
 
         const This = @This();
 
-        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
-            return css.generic.deepClone(@This(), this, allocator);
-        }
-
-        pub fn eql(this: *const This, other: *const This) bool {
-            return css.implementEql(This, this, other);
+        /// Parse a selector, without any pseudo-element.
+        pub fn parse(parser: *SelectorParser, input: *css.Parser) Result(This) {
+            var state = SelectorParsingState.empty();
+            return parse_selector(Impl, parser, input, &state, .none);
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
+        }
+
+        pub fn append(this: *This, allocator: Allocator, component: GenericComponent(Impl)) void {
+            const index = index: {
+                for (this.components.items, 0..) |*comp, i| {
+                    switch (comp.*) {
+                        .combinator, .pseudo_element => break :index i,
+                        else => {},
+                    }
+                }
+                break :index this.components.items.len;
+            };
+            this.components.insert(allocator, index, component) catch bun.outOfMemory();
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
+            return css.generic.deepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return css.implementEql(This, this, other);
         }
 
         pub fn hasCombinator(this: *const This) bool {
@@ -1649,12 +1668,6 @@ pub fn GenericSelector(comptime Impl: type) type {
 
         pub fn specifity(this: *const This) u32 {
             return this.specifity_and_flags.specificity;
-        }
-
-        /// Parse a selector, without any pseudo-element.
-        pub fn parse(parser: *SelectorParser, input: *css.Parser) Result(This) {
-            var state = SelectorParsingState.empty();
-            return parse_selector(Impl, parser, input, &state, .none);
         }
 
         pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(This) {

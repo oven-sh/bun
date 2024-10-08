@@ -33,6 +33,10 @@ pub const Position = struct {
         return this.x.eql(&other.x) and this.y.eql(&other.y);
     }
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn parse(input: *css.Parser) Result(Position) {
         // Try parsing a horizontal position first
         if (input.tryParse(HorizontalPosition.parse, .{}).asValue()) |horizontal_pos| {
@@ -265,9 +269,17 @@ pub fn PositionComponent(comptime S: type) type {
             side: S,
             /// Offset from the side.
             offset: ?LengthPercentage,
+
+            pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+                return css.implementDeepClone(@This(), this, allocator);
+            }
         },
 
         const This = @This();
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
 
         pub fn eql(this: *const This, other: *const This) bool {
             return switch (this.*) {

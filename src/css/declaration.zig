@@ -30,6 +30,12 @@ pub const DeclarationBlock = struct {
 
     const This = @This();
 
+    pub fn eql(this: *const This, other: *const This) bool {
+        _ = this; // autofix
+        _ = other; // autofix
+        @panic(css.todo_stuff.depth);
+    }
+
     pub fn parse(input: *css.Parser, options: *const css.ParserOptions) Result(DeclarationBlock) {
         var important_declarations = DeclarationList{};
         var declarations = DeclarationList{};

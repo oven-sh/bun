@@ -41,6 +41,10 @@ pub const TokenList = struct {
 
     const This = @This();
 
+    pub fn eql(lhs: *const TokenList, rhs: *const TokenList) bool {
+        return css.generic.eqlList(TokenOrValue, &lhs.v, &rhs.v);
+    }
+
     pub fn deepClone(this: *const TokenList, allocator: Allocator) TokenList {
         return .{
             .v = css.deepClone(TokenOrValue, allocator, &this.v),
@@ -621,6 +625,9 @@ pub const UnresolvedColor = union(enum) {
         b: f32,
         /// The unresolved alpha component.
         alpha: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// An hsl() color.
     HSL: struct {
@@ -632,6 +639,9 @@ pub const UnresolvedColor = union(enum) {
         l: f32,
         /// The unresolved alpha component.
         alpha: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The light-dark() function.
     light_dark: struct {
@@ -639,8 +649,15 @@ pub const UnresolvedColor = union(enum) {
         light: TokenList,
         /// The dark value.
         dark: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     const This = @This();
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn deepClone(this: *const This, allocator: Allocator) This {
         return switch (this.*) {
@@ -893,6 +910,10 @@ pub const Variable = struct {
 
     const This = @This();
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn deepClone(this: *const Variable, allocator: Allocator) Variable {
         return .{
             .name = this.name,
@@ -952,6 +973,10 @@ pub const EnvironmentVariable = struct {
     indices: ArrayList(CSSInteger) = ArrayList(CSSInteger){},
     /// A fallback value in case the variable is not defined.
     fallback: ?TokenList,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
         return .{
@@ -1047,6 +1072,10 @@ pub const EnvironmentVariableName = union(enum) {
     /// An unknown environment variable.
     unknown: CustomIdent,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn parse(input: *css.Parser) Result(EnvironmentVariableName) {
         if (input.tryParse(UAEnvironmentVariable.parse, .{}).asValue()) |ua| {
             return .{ .result = .{ .ua = ua } };
@@ -1101,6 +1130,10 @@ pub const UAEnvironmentVariable = enum {
     @"viewport-segment-right",
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A custom CSS function.
@@ -1111,6 +1144,10 @@ pub const Function = struct {
     arguments: TokenList,
 
     const This = @This();
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn deepClone(this: *const Function, allocator: Allocator) Function {
         return .{
@@ -1164,6 +1201,10 @@ pub const TokenOrValue = union(enum) {
     dashed_ident: DashedIdent,
     /// An animation name.
     animation_name: AnimationName,
+
+    pub fn eql(lhs: *const TokenOrValue, rhs: *const TokenOrValue) bool {
+        return css.implementEql(TokenOrValue, lhs, rhs);
+    }
 
     pub fn deepClone(this: *const TokenOrValue, allocator: Allocator) TokenOrValue {
         return switch (this.*) {

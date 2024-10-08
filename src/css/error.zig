@@ -325,4 +325,18 @@ pub const MinifyErrorKind = union(enum) {
         /// The source location of the `@custom-media` rule with unsupported boolean logic.
         custom_media_loc: Location,
     },
+
+    pub fn format(this: *const @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        return switch (this.*) {
+            .circular_custom_media => |name| try writer.print("Circular @custom-media rule: \"{s}\"", .{name.name}),
+            .custom_media_not_defined => |name| try writer.print("Custom media rule \"{s}\" not defined", .{name.name}),
+            .unsupported_custom_media_boolean_logic => |custom_media_loc| try writer.print(
+                "Unsupported boolean logic in custom media rule at line {d}, column {d}",
+                .{
+                    custom_media_loc.custom_media_loc.line,
+                    custom_media_loc.custom_media_loc.column,
+                },
+            ),
+        };
+    }
 };

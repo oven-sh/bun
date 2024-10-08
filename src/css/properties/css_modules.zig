@@ -73,6 +73,10 @@ pub const Specifier = union(enum) {
     /// The referenced name comes from a source index (used during bundling).
     source_index: u32,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn parse(input: *css.Parser) css.Result(Specifier) {
         if (input.tryParse(css.Parser.expectString, .{}).asValue()) |file| {
             return .{ .result = .{ .file = file } };

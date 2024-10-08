@@ -53,6 +53,10 @@ pub const attrs = struct {
         return struct {
             prefix: Impl.SelectorImpl.NamespacePrefix,
             url: Impl.SelectorImpl.NamespaceUrl,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         };
     }
 
@@ -63,6 +67,10 @@ pub const attrs = struct {
             local_name_lower: Impl.SelectorImpl.LocalName,
             operation: ParsedAttrSelectorOperation(Impl.SelectorImpl.AttrValue),
             never_matches: bool,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
 
             pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
                 try dest.writeChar('[');
@@ -103,6 +111,10 @@ pub const attrs = struct {
             any,
             /// Empty string for no namespace
             specific: NamespaceUrl_,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         };
     }
 
@@ -113,7 +125,15 @@ pub const attrs = struct {
                 operator: AttrSelectorOperator,
                 case_sensitivity: ParsedCaseSensitivity,
                 expected_value: AttrValue,
+
+                pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                    return css.implementEql(@This(), lhs, rhs);
+                }
             },
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         };
     }
 
@@ -658,6 +678,10 @@ pub const Direction = enum {
     /// Right to left
     rtl,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
     }
@@ -678,11 +702,19 @@ pub const PseudoClass = union(enum) {
     lang: struct {
         /// A list of language codes.
         languages: ArrayList([]const u8),
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
     dir: struct {
         /// A direction.
         direction: Direction,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
 
     // https://drafts.csswg.org/selectors-4/#useraction-pseudos
@@ -799,11 +831,19 @@ pub const PseudoClass = union(enum) {
     local: struct {
         /// A local selector.
         selector: *Selector,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The CSS modules :global() pseudo class.
     global: struct {
         /// A global selector.
         selector: *Selector,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
 
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
@@ -813,6 +853,10 @@ pub const PseudoClass = union(enum) {
     custom: struct {
         /// The pseudo class name.
         name: []const u8,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// An unknown functional pseudo class.
     custom_function: struct {
@@ -820,6 +864,10 @@ pub const PseudoClass = union(enum) {
         name: []const u8,
         /// The arguments of the pseudo class function.
         arguments: css.TokenList,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
 
     pub fn isEquivalent(this: *const PseudoClass, other: *const PseudoClass) bool {
@@ -933,6 +981,10 @@ pub const WebKitScrollbarPseudoElement = enum {
     corner,
     /// ::-webkit-resizer
     resizer,
+
+    pub inline fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return lhs.* == rhs.*;
+    }
 };
 
 pub const SelectorParser = struct {
@@ -1340,6 +1392,10 @@ pub fn GenericSelectorList(comptime Impl: type) type {
 
         const This = @This();
 
+        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
+            return .{ .v = css.deepClone(SelectorT, allocator, &this.v) };
+        }
+
         pub fn eql(lhs: *const This, rhs: *const This) bool {
             return css.generic.eqlList(SelectorT, &lhs.v, &rhs.v);
         }
@@ -1547,6 +1603,14 @@ pub fn GenericSelector(comptime Impl: type) type {
 
         const This = @This();
 
+        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
+            return css.generic.deepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return css.implementEql(This, this, other);
+        }
+
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
@@ -1640,6 +1704,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         namespace: struct {
             prefix: Impl.SelectorImpl.NamespacePrefix,
             url: Impl.SelectorImpl.NamespaceUrl,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
 
         explicit_universal_type,
@@ -1651,6 +1719,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         attribute_in_no_namespace_exists: struct {
             local_name: Impl.SelectorImpl.LocalName,
             local_name_lower: Impl.SelectorImpl.LocalName,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
         /// Used only when local_name is already lowercase.
         attribute_in_no_namespace: struct {
@@ -1659,6 +1731,10 @@ pub fn GenericComponent(comptime Impl: type) type {
             value: Impl.SelectorImpl.AttrValue,
             case_sensitivity: attrs.ParsedCaseSensitivity,
             never_matches: bool,
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
         /// Use a Box in the less common cases with more data to keep size_of::<Component>() small.
         attribute_other: *attrs.AttrSelectorWithOptionalNamespace(Impl),
@@ -1712,6 +1788,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         any: struct {
             vendor_prefix: Impl.SelectorImpl.VendorPrefix,
             selectors: []GenericSelector(Impl),
+
+            pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+                return css.implementEql(@This(), lhs, rhs);
+            }
         },
         /// The `:has` pseudo-class.
         ///
@@ -1727,6 +1807,10 @@ pub fn GenericComponent(comptime Impl: type) type {
         nesting,
 
         const This = @This();
+
+        pub fn deepClone(this: *const This, allocator: Allocator) *This {
+            css.implementDeepClone(This, this, allocator);
+        }
 
         pub fn eql(lhs: *const This, rhs: *const This) bool {
             return css.implementEql(This, lhs, rhs);
@@ -1785,6 +1869,10 @@ pub const NthSelectorData = struct {
     is_function: bool,
     a: i32,
     b: i32,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     /// Returns selector data for :only-{child,of-type}
     pub fn only(of_type: bool) NthSelectorData {
@@ -1869,6 +1957,14 @@ pub fn NthOfSelectorData(comptime Impl: type) type {
     return struct {
         data: NthSelectorData,
         selectors: []GenericSelector(Impl),
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
 
         pub fn nthData(this: *const @This()) NthSelectorData {
             return this.data;
@@ -1969,6 +2065,10 @@ pub const SpecifityAndFlags = struct {
     /// There's padding after this field due to the size of the flags.
     flags: SelectorFlags,
 
+    pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
+        return this.specificity == other.specificity and this.flags.eql(other.flags);
+    }
+
     pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
         return this.flags.intersects(SelectorFlags{ .has_pseudo = true });
     }
@@ -2029,6 +2129,10 @@ pub const Combinator = enum {
     /// https://www.w3.org/TR/2014/WD-css-scoping-1-20140403/#deep-combinator
     /// And still supported as an alias for >>> by Vue.
     deep,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return lhs.* == rhs.*;
+    }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         _ = this; // autofix
@@ -2148,11 +2252,19 @@ pub const PseudoElement = union(enum) {
     cue_function: struct {
         /// The selector argument.
         selector: *Selector,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The [::cue-region()](https://w3c.github.io/webvtt/#cue-region-selector) functional pseudo element.
     cue_region_function: struct {
         /// The selector argument.
         selector: *Selector,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The [::view-transition](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition) pseudo element.
     view_transition,
@@ -2160,26 +2272,46 @@ pub const PseudoElement = union(enum) {
     view_transition_group: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The [::view-transition-image-pair()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-image-pair-pt-name-selector) functional pseudo element.
     view_transition_image_pair: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The [::view-transition-old()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-old-pt-name-selector) functional pseudo element.
     view_transition_old: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// The [::view-transition-new()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-new-pt-name-selector) functional pseudo element.
     view_transition_new: struct {
         /// A part name selector.
         part_name: ViewTransitionPartName,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// An unknown pseudo element.
     custom: struct {
         /// The name of the pseudo element.
         name: []const u8,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
     /// An unknown functional pseudo element.
     custom_function: struct {
@@ -2187,6 +2319,10 @@ pub const PseudoElement = union(enum) {
         name: []const u8,
         /// The arguments of the pseudo element function.
         arguments: css.TokenList,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     },
 
     pub fn isEquivalent(this: *const PseudoElement, other: *const PseudoElement) bool {
@@ -3250,6 +3386,10 @@ pub fn LocalName(comptime Impl: type) type {
         pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
             return css.IdentFns.toCss(&this.name, W, dest);
         }
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
     };
 }
 
@@ -3330,6 +3470,10 @@ pub const ViewTransitionPartName = union(enum) {
     all,
     /// <custom-ident>
     name: css.css_values.ident.CustomIdent,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         return switch (this.*) {

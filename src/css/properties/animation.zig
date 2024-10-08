@@ -38,6 +38,10 @@ pub const AnimationName = union(enum) {
     // ~toCssImpl
     const This = @This();
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix

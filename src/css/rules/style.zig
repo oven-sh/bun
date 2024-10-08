@@ -31,6 +31,17 @@ pub fn StyleRule(comptime R: type) type {
 
         const This = @This();
 
+        pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
+            return This{
+                .selectors = this.selectors.deepClone(allocator),
+                .vendor_prefix = this.vendor_prefix,
+                // .declarations = this.declarations.deepClone(allocator),
+                .declarations = @panic("TODO"),
+                .rules = @panic("TODO"),
+                .loc = this.loc,
+            };
+        }
+
         pub fn updatePrefix(this: *This, context: *css.MinifyContext) void {
             this.vendor_prefix = css.selector.getPrefix(&this.selectors);
             if (this.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and

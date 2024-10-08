@@ -25,6 +25,10 @@ pub const DashedIdentReference = struct {
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
     from: ?Specifier,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(DashedIdentReference) {
         const ident = switch (DashedIdentFns.parse(input)) {
             .result => |vv| vv,

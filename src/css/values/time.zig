@@ -36,6 +36,10 @@ pub const Time = union(enum) {
 
     const Tag = enum(u8) { seconds = 1, milliseconds = 2 };
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn parse(input: *css.Parser) Result(Time) {
         var calc_result = switch (input.tryParse(Calc(Time).parse, .{})) {
             .result => |v| v,

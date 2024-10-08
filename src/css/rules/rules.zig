@@ -282,17 +282,52 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         sty.updatePrefix(context);
 
                         // Attempt to merge the new rule with the last rule we added.
-                        // var merged = false;
-                        // _ = merged; // autofix
-                        // if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
-                        //     var last_style_rule = &rules.items[rules.items.len - 1].style;
-                        //     if (mergeStyleRules(sty, last_style_rule, context)) {
-                        //         // If that was successful, then the last rule has been updated to include the
-                        //         // selectors/declarations of the new rule. This might mean that we can merge it
-                        //         // with the previous rule, so continue trying while we have style rules available.
-                        //     }
-                        // }
-                        @panic("TODO finish this my g");
+                        const merged = false;
+                        _ = merged; // autofix
+                        if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .style) {
+                            const last_style_rule = &rules.items[rules.items.len - 1].style;
+                            if (mergeStyleRules(AtRule, sty, last_style_rule, context)) {
+                                // If that was successful, then the last rule has been updated to include the
+                                // selectors/declarations of the new rule. This might mean that we can merge it
+                                // with the previous rule, so continue trying while we have style rules available.
+                                while (rules.items.len >= 2) {
+                                    const len = rules.items.len;
+                                    var a, var b = bun.splitAtMut(CssRule(AtRule), rules.items, len - 1);
+                                    if (b[0] == .style and a[len - 2] == .style) {
+                                        if (mergeStyleRules(AtRule, &b[0].style, &a[len - 2].style, context)) {
+                                            // If we were able to merge the last rule into the previous one, remove the last.
+                                            const popped = rules.pop();
+                                            _ = popped; // autofix
+                                            // TODO: deinit?
+                                            // popped.deinit(contet.allocator);
+                                            continue;
+                                        }
+                                    }
+                                    // If we didn't see a style rule, or were unable to merge, stop.
+                                    break;
+                                }
+                            }
+                        }
+
+                        _ = sty.deepClone(context.allocator);
+                        @panic("TODO: FIX");
+                        // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
+                        // const supps = context.handler_context.getSupportsRules(sty);
+                        // const logical = context.handler_context.getAdditionalRules(sty);
+                        // const StyleRule = style.StyleRule(AtRule);
+
+                        // var incompatible_rules = incompatible_rules: {
+                        //     var list = ArrayList(struct { StyleRule, ArrayList(StyleRule), ArrayList(StyleRule) }).initCapacity(context.allocator, incompatible.items.len) catch bun.outOfMemory();
+                        //     // Create a clone of the rule with only the one incompatible selector.
+                        //     const list = SelectorList{
+                        //         .v = v: {
+                        //             var v = ArrayList(Selector).initCapacity(context.allocator, 1) catch bun.outOfMemory();
+                        //             var clone = sty.deepClone(context.allocator);
+                        //             // clone.se
+                        //             break :v v;
+                        //         },
+                        //     };
+                        // };
 
                         // continue;
                     },
@@ -487,11 +522,32 @@ fn mergeStyleRules(
         // equivalent minus prefixes, add the prefix to the last rule.
         if (!sty.vendor_prefix.isEmpty() and
             !last_style_rule.vendor_prefix.isEmpty() and
-            css.selector.isEquivalent(sty.selectors.v.items, &last_style_rule.selectors.v.items))
+            css.selector.isEquivalent(sty.selectors.v.items, last_style_rule.selectors.v.items))
         {
             // If the new rule is unprefixed, replace the prefixes of the last rule.
             // Otherwise, add the new prefix.
+            if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
+                last_style_rule.vendor_prefix = sty.vendor_prefix;
+            } else {
+                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+            }
+            return true;
+        }
+
+        // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
+        if (sty.isCompatible(context.targets.*) and last_style_rule.isCompatible(context.targets.*)) {
+            last_style_rule.selectors.v.appendSlice(
+                context.allocator,
+                sty.selectors.v.items,
+            ) catch bun.outOfMemory();
+            sty.selectors.v.clearRetainingCapacity();
+            if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
+                last_style_rule.vendor_prefix = sty.vendor_prefix;
+            } else {
+                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+            }
+            return true;
         }
     }
-    @panic("TODO finish this my g");
+    return false;
 }

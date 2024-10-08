@@ -76,7 +76,7 @@ pub fn isEquivalent(selectors: []const Selector, other: []const Selector) bool {
                     };
                     break :blk isEquivalent(a_selectors, b_selectors);
                 } else {
-                    break :blk a_comp.eql(&b_comp);
+                    break :blk Component.eql(a_comp, b_comp);
                 }
             };
 

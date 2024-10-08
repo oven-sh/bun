@@ -8,209 +8,209 @@
 # for a particular commit.
 
 steps:
-  # macOS aarch64
-  - key: "darwin-aarch64"
-    group: ":darwin: aarch64"
-    steps:
-      - key: "darwin-aarch64-build-deps"
-        label: "build-deps"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        command:
-          - "bun run build:ci --target dependencies"
+  # # macOS aarch64
+  # - key: "darwin-aarch64"
+  #   group: ":darwin: aarch64"
+  #   steps:
+  #     - key: "darwin-aarch64-build-deps"
+  #       label: "build-deps"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       command:
+  #         - "bun run build:ci --target dependencies"
 
-      - key: "darwin-aarch64-build-cpp"
-        label: "build-cpp"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        env:
-          BUN_CPP_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "darwin-aarch64-build-cpp"
+  #       label: "build-cpp"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       env:
+  #         BUN_CPP_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "darwin-aarch64-build-zig"
-        label: "build-zig"
-        agents:
-          queue: "build-zig"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
+  #     - key: "darwin-aarch64-build-zig"
+  #       label: "build-zig"
+  #       agents:
+  #         queue: "build-zig"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
 
-      - key: "darwin-aarch64-build-bun"
-        label: "build-bun"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "aarch64"
-        depends_on:
-          - "darwin-aarch64-build-deps"
-          - "darwin-aarch64-build-cpp"
-          - "darwin-aarch64-build-zig"
-        env:
-          BUN_LINK_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "darwin-aarch64-build-bun"
+  #       label: "build-bun"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       depends_on:
+  #         - "darwin-aarch64-build-deps"
+  #         - "darwin-aarch64-build-cpp"
+  #         - "darwin-aarch64-build-zig"
+  #       env:
+  #         BUN_LINK_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "darwin-aarch64-test-macos-14"
-        label: ":darwin: 14 aarch64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 3
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-aarch64-build-bun"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "aarch64"
-          release: "14"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+  #     - key: "darwin-aarch64-test-macos-14"
+  #       label: ":darwin: 14 aarch64 - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 3
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "darwin-aarch64-build-bun"
+  #       agents:
+  #         queue: "test-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #         release: "14"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
 
-      - key: "darwin-aarch64-test-macos-13"
-        label: ":darwin: 13 aarch64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 3
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-aarch64-build-bun"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "aarch64"
-          release: "13"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+  #     - key: "darwin-aarch64-test-macos-13"
+  #       label: ":darwin: 13 aarch64 - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 3
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "darwin-aarch64-build-bun"
+  #       agents:
+  #         queue: "test-darwin"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #         release: "13"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
 
-  # macOS x64
-  - key: "darwin-x64"
-    group: ":darwin: x64"
-    steps:
-      - key: "darwin-x64-build-deps"
-        label: "build-deps"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "x64"
-        command:
-          - "bun run build:ci --target dependencies"
+  # # macOS x64
+  # - key: "darwin-x64"
+  #   group: ":darwin: x64"
+  #   steps:
+  #     - key: "darwin-x64-build-deps"
+  #       label: "build-deps"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       command:
+  #         - "bun run build:ci --target dependencies"
 
-      - key: "darwin-x64-build-cpp"
-        label: "build-cpp"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "x64"
-        env:
-          BUN_CPP_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "darwin-x64-build-cpp"
+  #       label: "build-cpp"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       env:
+  #         BUN_CPP_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "darwin-x64-build-zig"
-        label: "build-zig"
-        agents:
-          queue: "build-zig"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain darwin-x64"
+  #     - key: "darwin-x64-build-zig"
+  #       label: "build-zig"
+  #       agents:
+  #         queue: "build-zig"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain darwin-x64"
 
-      - key: "darwin-x64-build-bun"
-        label: "build-bun"
-        agents:
-          queue: "build-darwin"
-          os: "darwin"
-          arch: "x64"
-        depends_on:
-          - "darwin-x64-build-deps"
-          - "darwin-x64-build-cpp"
-          - "darwin-x64-build-zig"
-        env:
-          BUN_LINK_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "darwin-x64-build-bun"
+  #       label: "build-bun"
+  #       agents:
+  #         queue: "build-darwin"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       depends_on:
+  #         - "darwin-x64-build-deps"
+  #         - "darwin-x64-build-cpp"
+  #         - "darwin-x64-build-zig"
+  #       env:
+  #         BUN_LINK_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "darwin-x64-test-macos-14"
-        label: ":darwin: 14 x64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 3
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-x64-build-bun"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "x64"
-          release: "14"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+  #     - key: "darwin-x64-test-macos-14"
+  #       label: ":darwin: 14 x64 - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 3
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "darwin-x64-build-bun"
+  #       agents:
+  #         queue: "test-darwin"
+  #         os: "darwin"
+  #         arch: "x64"
+  #         release: "14"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
-      - key: "darwin-x64-test-macos-13"
-        label: ":darwin: 13 x64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 3
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-x64-build-bun"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "x64"
-          release: "13"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+  #     - key: "darwin-x64-test-macos-13"
+  #       label: ":darwin: 13 x64 - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 3
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "darwin-x64-build-bun"
+  #       agents:
+  #         queue: "test-darwin"
+  #         os: "darwin"
+  #         arch: "x64"
+  #         release: "13"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
   # Linux x64
   - key: "linux-x64"
@@ -258,10 +258,39 @@ steps:
         command:
           - "bun run build:ci --target bun"
 
-      - key: "linux-x64-test-debian-12"
-        label: ":debian: 12 x64 - test-bun"
+      # - key: "linux-x64-test-debian-12"
+      #   label: ":debian: 12 x64 - test-bun"
+      #   if: "build.branch != 'main'"
+      #   parallelism: 10
+      #   soft_fail:
+      #     - exit_status: 2
+      #   retry:
+      #     automatic:
+      #       - exit_status: 1
+      #         limit: 1
+      #       - exit_status: -1
+      #         limit: 3
+      #       - exit_status: 255
+      #         limit: 3
+      #       - signal_reason: agent_stop
+      #         limit: 3
+      #       - signal: SIGTERM
+      #         limit: 3
+      #   depends_on:
+      #     - "linux-x64-build-bun"
+      #   agents:
+      #     robobun: "true"
+      #     os: "linux"
+      #     arch: "x64"
+      #     distro: "debian"
+      #     release: "12"
+      #   command:
+      #     - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+
+      - key: "linux-x64-test-debian-11"
+        label: ":debian: 11 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 10
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         retry:
@@ -283,14 +312,43 @@ steps:
           os: "linux"
           arch: "x64"
           distro: "debian"
-          release: "12"
+          release: "11"
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
-      - key: "linux-x64-test-ubuntu-2204"
-        label: ":ubuntu: 22.04 x64 - test-bun"
+      - key: "linux-x64-test-debian-10"
+        label: ":debian: 10 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 10
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-x64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "debian"
+          release: "10"
+        command:
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+
+      - key: "linux-x64-test-ubuntu-2404"
+        label: ":ubuntu: 24.04 x64 - test-bun"
+        if: "build.branch != 'main'"
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         retry:
@@ -312,177 +370,206 @@ steps:
           os: "linux"
           arch: "x64"
           distro: "ubuntu"
-          release: "22.04"
+          release: "24.04"
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
-      - key: "linux-x64-test-ubuntu-2004"
-        label: ":ubuntu: 20.04 x64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "ubuntu"
-          release: "20.04"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+      # - key: "linux-x64-test-ubuntu-2204"
+      #   label: ":ubuntu: 22.04 x64 - test-bun"
+      #   if: "build.branch != 'main'"
+      #   parallelism: 10
+      #   soft_fail:
+      #     - exit_status: 2
+      #   retry:
+      #     automatic:
+      #       - exit_status: 1
+      #         limit: 1
+      #       - exit_status: -1
+      #         limit: 3
+      #       - exit_status: 255
+      #         limit: 3
+      #       - signal_reason: agent_stop
+      #         limit: 3
+      #       - signal: SIGTERM
+      #         limit: 3
+      #   depends_on:
+      #     - "linux-x64-build-bun"
+      #   agents:
+      #     robobun: "true"
+      #     os: "linux"
+      #     arch: "x64"
+      #     distro: "ubuntu"
+      #     release: "22.04"
+      #   command:
+      #     - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+
+      # - key: "linux-x64-test-ubuntu-2004"
+      #   label: ":ubuntu: 20.04 x64 - test-bun"
+      #   if: "build.branch != 'main'"
+      #   parallelism: 10
+      #   soft_fail:
+      #     - exit_status: 2
+      #   retry:
+      #     automatic:
+      #       - exit_status: 1
+      #         limit: 1
+      #       - exit_status: -1
+      #         limit: 3
+      #       - exit_status: 255
+      #         limit: 3
+      #       - signal_reason: agent_stop
+      #         limit: 3
+      #       - signal: SIGTERM
+      #         limit: 3
+      #   depends_on:
+      #     - "linux-x64-build-bun"
+      #   agents:
+      #     robobun: "true"
+      #     os: "linux"
+      #     arch: "x64"
+      #     distro: "ubuntu"
+      #     release: "20.04"
+      #   command:
+      #     - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
   # Linux x64-baseline
-  - key: "linux-x64-baseline"
-    group: ":linux: x64-baseline"
-    steps:
-      - key: "linux-x64-baseline-build-deps"
-        label: "build-deps"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        env:
-          ENABLE_BASELINE: "ON"
-        command:
-          - "bun run build:ci --target dependencies"
+  # - key: "linux-x64-baseline"
+  #   group: ":linux: x64-baseline"
+  #   steps:
+  #     - key: "linux-x64-baseline-build-deps"
+  #       label: "build-deps"
+  #       agents:
+  #         queue: "build-linux"
+  #         os: "linux"
+  #         arch: "x64"
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #       command:
+  #         - "bun run build:ci --target dependencies"
 
-      - key: "linux-x64-baseline-build-cpp"
-        label: "build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        env:
-          ENABLE_BASELINE: "ON"
-          BUN_CPP_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "linux-x64-baseline-build-cpp"
+  #       label: "build-cpp"
+  #       agents:
+  #         queue: "build-linux"
+  #         os: "linux"
+  #         arch: "x64"
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #         BUN_CPP_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "linux-x64-baseline-build-zig"
-        label: "build-zig"
-        agents:
-          queue: "build-zig"
-        env:
-          ENABLE_BASELINE: "ON"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain linux-x64-baseline"
+  #     - key: "linux-x64-baseline-build-zig"
+  #       label: "build-zig"
+  #       agents:
+  #         queue: "build-zig"
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain linux-x64-baseline"
 
-      - key: "linux-x64-baseline-build-bun"
-        label: "build-bun"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        depends_on:
-          - "linux-x64-baseline-build-deps"
-          - "linux-x64-baseline-build-cpp"
-          - "linux-x64-baseline-build-zig"
-        env:
-          ENABLE_BASELINE: "ON"
-          BUN_LINK_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "linux-x64-baseline-build-bun"
+  #       label: "build-bun"
+  #       agents:
+  #         queue: "build-linux"
+  #         os: "linux"
+  #         arch: "x64"
+  #       depends_on:
+  #         - "linux-x64-baseline-build-deps"
+  #         - "linux-x64-baseline-build-cpp"
+  #         - "linux-x64-baseline-build-zig"
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #         BUN_LINK_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "linux-x64-baseline-test-debian-12"
-        label: ":debian: 12 x64-baseline - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-baseline-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "debian"
-          release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+  #     - key: "linux-x64-baseline-test-debian-12"
+  #       label: ":debian: 12 x64-baseline - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 10
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "linux-x64-baseline-build-bun"
+  #       agents:
+  #         robobun: "true"
+  #         os: "linux"
+  #         arch: "x64"
+  #         distro: "debian"
+  #         release: "12"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
-      - key: "linux-x64-baseline-test-ubuntu-2204"
-        label: ":ubuntu: 22.04 x64-baseline - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-baseline-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "ubuntu"
-          release: "22.04"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+  #     - key: "linux-x64-baseline-test-ubuntu-2204"
+  #       label: ":ubuntu: 22.04 x64-baseline - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 10
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "linux-x64-baseline-build-bun"
+  #       agents:
+  #         robobun: "true"
+  #         os: "linux"
+  #         arch: "x64"
+  #         distro: "ubuntu"
+  #         release: "22.04"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
-      - key: "linux-x64-baseline-test-ubuntu-2004"
-        label: ":ubuntu: 20.04 x64-baseline - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-baseline-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "ubuntu"
-          release: "20.04"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+  #     - key: "linux-x64-baseline-test-ubuntu-2004"
+  #       label: ":ubuntu: 20.04 x64-baseline - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 10
+  #       soft_fail:
+  #         - exit_status: 2
+  #       retry:
+  #         automatic:
+  #           - exit_status: 1
+  #             limit: 1
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "linux-x64-baseline-build-bun"
+  #       agents:
+  #         robobun: "true"
+  #         os: "linux"
+  #         arch: "x64"
+  #         distro: "ubuntu"
+  #         release: "20.04"
+  #       command:
+  #         - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
   # Linux aarch64
   - key: "linux-aarch64"
@@ -530,10 +617,39 @@ steps:
         command:
           - "bun run build:ci --target bun"
 
-      - key: "linux-aarch64-test-debian-12"
-        label: ":debian: 12 aarch64 - test-bun"
+      # - key: "linux-aarch64-test-debian-12"
+      #   label: ":debian: 12 aarch64 - test-bun"
+      #   if: "build.branch != 'main'"
+      #   parallelism: 10
+      #   soft_fail:
+      #     - exit_status: 2
+      #   retry:
+      #     automatic:
+      #       - exit_status: 1
+      #         limit: 1
+      #       - exit_status: -1
+      #         limit: 3
+      #       - exit_status: 255
+      #         limit: 3
+      #       - signal_reason: agent_stop
+      #         limit: 3
+      #       - signal: SIGTERM
+      #         limit: 3
+      #   depends_on:
+      #     - "linux-aarch64-build-bun"
+      #   agents:
+      #     robobun: "true"
+      #     os: "linux"
+      #     arch: "aarch64"
+      #     distro: "debian"
+      #     release: "12"
+      #   command:
+      #     - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+
+      - key: "linux-aarch64-test-debian-11"
+        label: ":debian: 11 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 10
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         retry:
@@ -555,14 +671,43 @@ steps:
           os: "linux"
           arch: "aarch64"
           distro: "debian"
-          release: "12"
+          release: "11"
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
-      - key: "linux-aarch64-test-ubuntu-2204"
-        label: ":ubuntu: 22.04 aarch64 - test-bun"
+      - key: "linux-aarch64-test-debian-10"
+        label: ":debian: 10 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 10
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-aarch64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "debian"
+          release: "10"
+        command:
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+
+      - key: "linux-aarch64-test-ubuntu-2404"
+        label: ":ubuntu: 24.04 aarch64 - test-bun"
+        if: "build.branch != 'main'"
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         retry:
@@ -584,207 +729,236 @@ steps:
           os: "linux"
           arch: "aarch64"
           distro: "ubuntu"
-          release: "22.04"
+          release: "24.04"
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
-      - key: "linux-aarch64-test-ubuntu-2004"
-        label: ":ubuntu: 20.04 aarch64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-aarch64-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "ubuntu"
-          release: "20.04"
-        command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+      # - key: "linux-aarch64-test-ubuntu-2204"
+      #   label: ":ubuntu: 22.04 aarch64 - test-bun"
+      #   if: "build.branch != 'main'"
+      #   parallelism: 10
+      #   soft_fail:
+      #     - exit_status: 2
+      #   retry:
+      #     automatic:
+      #       - exit_status: 1
+      #         limit: 1
+      #       - exit_status: -1
+      #         limit: 3
+      #       - exit_status: 255
+      #         limit: 3
+      #       - signal_reason: agent_stop
+      #         limit: 3
+      #       - signal: SIGTERM
+      #         limit: 3
+      #   depends_on:
+      #     - "linux-aarch64-build-bun"
+      #   agents:
+      #     robobun: "true"
+      #     os: "linux"
+      #     arch: "aarch64"
+      #     distro: "ubuntu"
+      #     release: "22.04"
+      #   command:
+      #     - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+
+      # - key: "linux-aarch64-test-ubuntu-2004"
+      #   label: ":ubuntu: 20.04 aarch64 - test-bun"
+      #   if: "build.branch != 'main'"
+      #   parallelism: 10
+      #   soft_fail:
+      #     - exit_status: 2
+      #   retry:
+      #     automatic:
+      #       - exit_status: 1
+      #         limit: 1
+      #       - exit_status: -1
+      #         limit: 3
+      #       - exit_status: 255
+      #         limit: 3
+      #       - signal_reason: agent_stop
+      #         limit: 3
+      #       - signal: SIGTERM
+      #         limit: 3
+      #   depends_on:
+      #     - "linux-aarch64-build-bun"
+      #   agents:
+      #     robobun: "true"
+      #     os: "linux"
+      #     arch: "aarch64"
+      #     distro: "ubuntu"
+      #     release: "20.04"
+      #   command:
+      #     - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
   # Windows x64
-  - key: "windows-x64"
-    group: ":windows: x64"
-    steps:
-      - key: "windows-x64-build-deps"
-        label: "build-deps"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
-        command:
-          - "bun run build:ci --target dependencies"
+  # - key: "windows-x64"
+  #   group: ":windows: x64"
+  #   steps:
+  #     - key: "windows-x64-build-deps"
+  #       label: "build-deps"
+  #       agents:
+  #         queue: "build-windows"
+  #         os: "windows"
+  #         arch: "x64"
+  #       retry:
+  #         automatic:
+  #           - exit_status: 255
+  #             limit: 5
+  #       command:
+  #         - "bun run build:ci --target dependencies"
 
-      - key: "windows-x64-build-cpp"
-        label: "build-cpp"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
-        env:
-          BUN_CPP_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "windows-x64-build-cpp"
+  #       label: "build-cpp"
+  #       agents:
+  #         queue: "build-windows"
+  #         os: "windows"
+  #         arch: "x64"
+  #       retry:
+  #         automatic:
+  #           - exit_status: 255
+  #             limit: 5
+  #       env:
+  #         BUN_CPP_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "windows-x64-build-zig"
-        label: "build-zig"
-        agents:
-          queue: "build-zig"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain windows-x64"
+  #     - key: "windows-x64-build-zig"
+  #       label: "build-zig"
+  #       agents:
+  #         queue: "build-zig"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain windows-x64"
 
-      - key: "windows-x64-build-bun"
-        label: "build-bun"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        depends_on:
-          - "windows-x64-build-deps"
-          - "windows-x64-build-cpp"
-          - "windows-x64-build-zig"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
-        env:
-          BUN_LINK_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "windows-x64-build-bun"
+  #       label: "build-bun"
+  #       agents:
+  #         queue: "build-windows"
+  #         os: "windows"
+  #         arch: "x64"
+  #       depends_on:
+  #         - "windows-x64-build-deps"
+  #         - "windows-x64-build-cpp"
+  #         - "windows-x64-build-zig"
+  #       retry:
+  #         automatic:
+  #           - exit_status: 255
+  #             limit: 5
+  #       env:
+  #         BUN_LINK_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "windows-x64-test-bun"
-        label: ":windows: x64 - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 1
-        retry:
-          automatic:
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "windows-x64-build-bun"
-        agents:
-          robobun: "true"
-          os: "windows"
-          arch: "x64"
-        command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun"
+  #     - key: "windows-x64-test-bun"
+  #       label: ":windows: x64 - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 10
+  #       soft_fail:
+  #         - exit_status: 1
+  #       retry:
+  #         automatic:
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "windows-x64-build-bun"
+  #       agents:
+  #         robobun: "true"
+  #         os: "windows"
+  #         arch: "x64"
+  #       command:
+  #         - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun"
 
-  # Windows x64-baseline
-  - key: "windows-x64-baseline"
-    group: ":windows: x64-baseline"
-    steps:
-      - key: "windows-x64-baseline-build-deps"
-        label: "build-deps"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
-        env:
-          ENABLE_BASELINE: "ON"
-        command:
-          - "bun run build:ci --target dependencies"
+  # # Windows x64-baseline
+  # - key: "windows-x64-baseline"
+  #   group: ":windows: x64-baseline"
+  #   steps:
+  #     - key: "windows-x64-baseline-build-deps"
+  #       label: "build-deps"
+  #       agents:
+  #         queue: "build-windows"
+  #         os: "windows"
+  #         arch: "x64"
+  #       retry:
+  #         automatic:
+  #           - exit_status: 255
+  #             limit: 5
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #       command:
+  #         - "bun run build:ci --target dependencies"
 
-      - key: "windows-x64-baseline-build-cpp"
-        label: "build-cpp"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
-        env:
-          ENABLE_BASELINE: "ON"
-          BUN_CPP_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "windows-x64-baseline-build-cpp"
+  #       label: "build-cpp"
+  #       agents:
+  #         queue: "build-windows"
+  #         os: "windows"
+  #         arch: "x64"
+  #       retry:
+  #         automatic:
+  #           - exit_status: 255
+  #             limit: 5
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #         BUN_CPP_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "windows-x64-baseline-build-zig"
-        label: "build-zig"
-        agents:
-          queue: "build-zig"
-        env:
-          ENABLE_BASELINE: "ON"
-        command:
-          - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"
+  #     - key: "windows-x64-baseline-build-zig"
+  #       label: "build-zig"
+  #       agents:
+  #         queue: "build-zig"
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"
 
-      - key: "windows-x64-baseline-build-bun"
-        label: "build-bun"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        depends_on:
-          - "windows-x64-baseline-build-deps"
-          - "windows-x64-baseline-build-cpp"
-          - "windows-x64-baseline-build-zig"
-        retry:
-          automatic:
-            - exit_status: 255
-              limit: 5
-        env:
-          ENABLE_BASELINE: "ON"
-          BUN_LINK_ONLY: "ON"
-        command:
-          - "bun run build:ci --target bun"
+  #     - key: "windows-x64-baseline-build-bun"
+  #       label: "build-bun"
+  #       agents:
+  #         queue: "build-windows"
+  #         os: "windows"
+  #         arch: "x64"
+  #       depends_on:
+  #         - "windows-x64-baseline-build-deps"
+  #         - "windows-x64-baseline-build-cpp"
+  #         - "windows-x64-baseline-build-zig"
+  #       retry:
+  #         automatic:
+  #           - exit_status: 255
+  #             limit: 5
+  #       env:
+  #         ENABLE_BASELINE: "ON"
+  #         BUN_LINK_ONLY: "ON"
+  #       command:
+  #         - "bun run build:ci --target bun"
 
-      - key: "windows-x64-baseline-test-bun"
-        label: ":windows: x64-baseline - test-bun"
-        if: "build.branch != 'main'"
-        parallelism: 10
-        soft_fail:
-          - exit_status: 1
-        retry:
-          automatic:
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "windows-x64-baseline-build-bun"
-        agents:
-          robobun: "true"
-          os: "windows"
-          arch: "x64"
-        command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun"
+  #     - key: "windows-x64-baseline-test-bun"
+  #       label: ":windows: x64-baseline - test-bun"
+  #       if: "build.branch != 'main'"
+  #       parallelism: 10
+  #       soft_fail:
+  #         - exit_status: 1
+  #       retry:
+  #         automatic:
+  #           - exit_status: -1
+  #             limit: 3
+  #           - exit_status: 255
+  #             limit: 3
+  #           - signal_reason: agent_stop
+  #             limit: 3
+  #           - signal: SIGTERM
+  #             limit: 3
+  #       depends_on:
+  #         - "windows-x64-baseline-build-bun"
+  #       agents:
+  #         robobun: "true"
+  #         os: "windows"
+  #         arch: "x64"
+  #       command:
+  #         - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun"

@@ -1671,12 +1671,6 @@ pub const Api = struct {
         /// extension_order
         extension_order: []const []const u8,
 
-        /// framework
-        framework: ?FrameworkConfig = null,
-
-        /// router
-        router: ?RouteConfig = null,
-
         /// no_summary
         no_summary: ?bool = null,
 
@@ -1755,9 +1749,7 @@ pub const Api = struct {
                     15 => {
                         this.target = try reader.readValue(Target);
                     },
-                    16 => {
-                        this.serve = try reader.readValue(bool);
-                    },
+                    16 => {},
                     17 => {
                         this.env_files = try reader.readArray([]const u8);
                     },

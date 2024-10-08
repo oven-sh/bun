@@ -12,7 +12,7 @@ const std = @import("std");
 const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
-const ParseJSON = @import("../json_parser.zig").ParsePackageJSONUTF8;
+const JSON = bun.JSON;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
@@ -26,11 +26,10 @@ fn exists(path: anytype) bool {
     return bun.sys.exists(path);
 }
 pub const InitCommand = struct {
-    fn prompt(
+    pub fn prompt(
         alloc: std.mem.Allocator,
         comptime label: string,
         default: []const u8,
-        _: bool,
     ) ![]const u8 {
         Output.pretty(label, .{});
         if (default.len > 0) {
@@ -171,7 +170,7 @@ pub const InitCommand = struct {
             process_package_json: {
                 var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
                 var log = logger.Log.init(alloc);
-                var package_json_expr = ParseJSON(&source, &log, alloc) catch {
+                var package_json_expr = JSON.parsePackageJSONUTF8(&source, &log, alloc) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -248,7 +247,6 @@ pub const InitCommand = struct {
                     alloc,
                     "<r><cyan>package name<r> ",
                     fields.name,
-                    Output.enable_ansi_colors_stdout,
                 ) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
@@ -260,7 +258,6 @@ pub const InitCommand = struct {
                     alloc,
                     "<r><cyan>entry point<r> ",
                     fields.entry_point,
-                    Output.enable_ansi_colors_stdout,
                 ) catch |err| {
                     if (err == error.EndOfStream) return;
                     return err;
@@ -439,7 +436,7 @@ pub const InitCommand = struct {
                 " \"'",
                 fields.entry_point,
             )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{JSPrinter.formatJSONString(fields.entry_point)});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONString(fields.entry_point)});
             } else {
                 Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
             }

@@ -52,7 +52,7 @@ const BunBuildOptions = struct {
     /// instead of at compile time. This is disabled in release or if this flag
     /// is set (to allow CI to build a portable executable). Affected files:
     ///
-    /// - src/kit/runtime.ts (bundled)
+    /// - src/bake/runtime.ts (bundled)
     /// - src/bun.js/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
@@ -157,7 +157,7 @@ pub fn build(b: *Build) !void {
 
     // TODO: Upgrade path for 0.14.0
     // b.graph.zig_lib_directory = brk: {
-    //     const sub_path = "src/deps/zig/lib";
+    //     const sub_path = "vendor/zig/lib";
     //     const dir = try b.build_root.handle.openDir(sub_path, .{});
     //     break :brk .{ .handle = dir, .path = try b.build_root.join(b.graph.arena, &.{sub_path}) };
     // };
@@ -295,7 +295,7 @@ pub fn build(b: *Build) !void {
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
-        // The default install step will run zig build check This is so ZLS
+        // The default install step will run zig build check. This is so ZLS
         // identifies the codebase, as well as performs checking if build on
         // save is enabled.
 
@@ -475,8 +475,8 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
-        .{ .file = "kit.client.js", .import = "kit-codegen/kit.client.js", .enable = opts.shouldEmbedCode() },
-        .{ .file = "kit.server.js", .import = "kit-codegen/kit.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
             const path = b.pathJoin(&.{ opts.generated_code_dir, entry.file });

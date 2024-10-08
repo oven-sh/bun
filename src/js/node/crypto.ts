@@ -1194,7 +1194,7 @@ var require_browser2 = __commonJS({
     // does not become a node stream unless you create it into one
     const LazyHash = function Hash(algorithm, options) {
       this._options = options;
-      this._hasher = new CryptoHasher(algorithm, options);
+      this._hasher = new CryptoHasher(algorithm);
       this._finalized = false;
     };
     LazyHash.prototype = Object.create(StreamModule.Transform.prototype);

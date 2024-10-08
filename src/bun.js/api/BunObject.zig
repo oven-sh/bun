@@ -61,7 +61,6 @@ pub const BunObject = struct {
     pub const Glob = toJSGetter(Bun.getGlobConstructor);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
-    pub const assetPrefix = toJSGetter(Bun.getAssetPrefix);
     pub const cwd = toJSGetter(Bun.getCWD);
     pub const enableANSIColors = toJSGetter(Bun.enableANSIColors);
     pub const hash = toJSGetter(Bun.getHashObject);
@@ -121,7 +120,6 @@ pub const BunObject = struct {
         @export(BunObject.Glob, .{ .name = getterName("Glob") });
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
-        @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
         @export(BunObject.cwd, .{ .name = getterName("cwd") });
         @export(BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
         @export(BunObject.hash, .{ .name = getterName("hash") });
@@ -254,160 +252,12 @@ const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
 const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
-const max_addressible_memory = std.math.maxInt(u56);
+const max_addressable_memory = std.math.maxInt(u56);
 const glob = @import("../../glob.zig");
 const Async = bun.Async;
 const SemverObject = @import("../../install/semver.zig").SemverObject;
 const Braces = @import("../../shell/braces.zig");
 const Shell = @import("../../shell/shell.zig");
-
-threadlocal var css_imports_list_strings: [512]ZigString = undefined;
-threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
-threadlocal var css_imports_list_tail: u16 = 0;
-threadlocal var css_imports_buf: std.ArrayList(u8) = undefined;
-threadlocal var css_imports_buf_loaded: bool = false;
-
-threadlocal var routes_list_strings: [1024]ZigString = undefined;
-
-pub fn onImportCSS(
-    resolve_result: *const Resolver.Result,
-    import_record: *ImportRecord,
-    origin: URL,
-) void {
-    if (!css_imports_buf_loaded) {
-        css_imports_buf = std.ArrayList(u8).initCapacity(
-            VirtualMachine.get().allocator,
-            import_record.path.text.len,
-        ) catch unreachable;
-        css_imports_buf_loaded = true;
-    }
-
-    const writer = css_imports_buf.writer();
-    const offset = css_imports_buf.items.len;
-    css_imports_list[css_imports_list_tail] = .{
-        .offset = @as(u32, @truncate(offset)),
-        .length = 0,
-    };
-    getPublicPath(resolve_result.path_pair.primary.text, origin, @TypeOf(writer), writer);
-    const length = css_imports_buf.items.len - offset;
-    css_imports_list[css_imports_list_tail].length = @as(u32, @truncate(length));
-    css_imports_list_tail += 1;
-}
-
-pub fn flushCSSImports() void {
-    if (css_imports_buf_loaded) {
-        css_imports_buf.clearRetainingCapacity();
-        css_imports_list_tail = 0;
-    }
-}
-
-pub fn getCSSImports() []ZigString {
-    const tail = css_imports_list_tail;
-    for (0..tail) |i| {
-        ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
-    }
-    return css_imports_list_strings[0..tail];
-}
-
-const ShellTask = struct {
-    arena: std.heap.Arena,
-    script: std.ArrayList(u8),
-    interpreter: Shell.InterpreterSync,
-
-    pub const AsyncShellTask = JSC.ConcurrentPromiseTask(ShellTask);
-};
-
-pub fn shell(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) JSC.JSValue {
-    const Interpreter = @import("../../shell/interpreter.zig").Interpreter;
-
-    // var allocator = globalThis.bunVM().allocator;
-    const allocator = getAllocator(globalThis);
-    var arena = bun.ArenaAllocator.init(allocator);
-
-    const arguments_ = callframe.arguments(8);
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-    const string_args = arguments.nextEat() orelse {
-        globalThis.throw("shell: expected 2 arguments, got 0", .{});
-        return .undefined;
-    };
-
-    const template_args_js = arguments.nextEat() orelse {
-        globalThis.throw("shell: expected 2 arguments, got 0", .{});
-        return .undefined;
-    };
-    var template_args = template_args_js.arrayIterator(globalThis);
-    var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-    var script = std.ArrayList(u8).init(arena.allocator());
-
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &script) catch {
-        if (!globalThis.hasException())
-            globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    })) {
-        return .undefined;
-    }
-
-    if (globalThis.hasException()) {
-        arena.deinit();
-        return .undefined;
-    }
-
-    const lex_result = brk: {
-        if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
-            lexer.lex() catch |err| {
-                globalThis.throwError(err, "failed to lex shell");
-                return JSValue.undefined;
-            };
-            break :brk lexer.get_result();
-        }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
-        lexer.lex() catch |err| {
-            globalThis.throwError(err, "failed to lex shell");
-            return JSValue.undefined;
-        };
-        break :brk lexer.get_result();
-    };
-
-    var parser = Shell.Parser.new(arena.allocator(), lex_result, jsobjs.items[0..]) catch |err| {
-        globalThis.throwError(err, "failed to create shell parser");
-        return JSValue.undefined;
-    };
-
-    const script_ast = parser.parse() catch |err| {
-        globalThis.throwError(err, "failed to parse shell");
-        return JSValue.undefined;
-    };
-
-    const script_heap = arena.allocator().create(Shell.AST.Script) catch {
-        globalThis.throwOutOfMemory();
-        return JSValue.undefined;
-    };
-
-    script_heap.* = script_ast;
-
-    const interpreter = Interpreter.init(
-        globalThis,
-        allocator,
-        &arena,
-        script_heap,
-        jsobjs.items[0..],
-    ) catch {
-        arena.deinit();
-        return .false;
-    };
-    _ = interpreter; // autofix
-
-    // return interpreter;
-    return .undefined;
-
-    // return interpreter.start(globalThis) catch {
-    //     return .false;
-    // };
-}
 
 pub fn shellEscape(
     globalThis: *JSC.JSGlobalObject,
@@ -479,11 +329,11 @@ pub fn braces(
     if (arguments.nextEat()) |opts_val| {
         if (opts_val.isObject()) {
             if (comptime bun.Environment.allow_assert) {
-                if (opts_val.getOwnTruthy(globalThis, "tokenize")) |tokenize_val| {
+                if (opts_val.getTruthy(globalThis, "tokenize")) |tokenize_val| {
                     tokenize = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
                 }
 
-                if (opts_val.getOwnTruthy(globalThis, "parse")) |tokenize_val| {
+                if (opts_val.getTruthy(globalThis, "parse")) |tokenize_val| {
                     parse = if (tokenize_val.isBoolean()) tokenize_val.asBoolean() else false;
                 }
             }
@@ -611,11 +461,11 @@ pub fn which(
 
     if (arguments.nextEat()) |arg| {
         if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
-            if (arg.getOwn(globalThis, "PATH")) |str_| {
+            if (arg.get(globalThis, "PATH")) |str_| {
                 path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
 
-            if (arg.getOwn(globalThis, "cwd")) |str_| {
+            if (arg.get(globalThis, "cwd")) |str_| {
                 cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
             }
         }
@@ -664,7 +514,7 @@ pub fn inspect(
         const arg1 = arguments[1];
 
         if (arg1.isObject()) {
-            if (arg1.getOwnTruthy(globalThis, "depth")) |opt| {
+            if (arg1.getTruthy(globalThis, "depth")) |opt| {
                 if (opt.isInt32()) {
                     const arg = opt.toInt32();
                     if (arg < 0) {
@@ -902,13 +752,6 @@ pub fn getMain(
     return ZigString.init(vm.main).toJS(globalThis);
 }
 
-pub fn getAssetPrefix(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toJS(globalThis);
-}
-
 pub fn getArgv(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
@@ -936,7 +779,7 @@ pub fn openInEditor(
 
     if (arguments.nextEat()) |opts| {
         if (!opts.isUndefinedOrNull()) {
-            if (opts.getOwnTruthy(globalThis, "editor")) |editor_val| {
+            if (opts.getTruthy(globalThis, "editor")) |editor_val| {
                 var sliced = editor_val.toSlice(globalThis, arguments.arena.allocator());
                 const prev_name = edit.name;
 
@@ -956,11 +799,11 @@ pub fn openInEditor(
                 }
             }
 
-            if (opts.getOwnTruthy(globalThis, "line")) |line_| {
+            if (opts.getTruthy(globalThis, "line")) |line_| {
                 line = line_.toSlice(globalThis, arguments.arena.allocator()).slice();
             }
 
-            if (opts.getOwnTruthy(globalThis, "column")) |column_| {
+            if (opts.getTruthy(globalThis, "column")) |column_| {
                 column = column_.toSlice(globalThis, arguments.arena.allocator()).slice();
             }
         }
@@ -994,7 +837,7 @@ pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Wri
         to,
         VirtualMachine.get().bundler.fs.top_level_dir,
         origin,
-        VirtualMachine.get().bundler.options.routes.asset_prefix_path,
+        "",
         comptime Writer,
         writer,
         .loose,
@@ -1286,22 +1129,6 @@ export fn Bun__resolveSyncWithSource(
     };
 }
 
-pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const arguments = callframe.arguments(1).slice();
-    if (arguments.len < 1) {
-        return bun.String.empty.toJS(globalObject);
-    }
-    var public_path_temp_str: bun.PathBuffer = undefined;
-
-    const to = arguments[0].toSlice(globalObject, bun.default_allocator);
-    defer to.deinit();
-    var stream = std.io.fixedBufferStream(&public_path_temp_str);
-    var writer = stream.writer();
-    getPublicPath(to.slice(), VirtualMachine.get().origin, @TypeOf(&writer), &writer);
-
-    return ZigString.init(stream.buffer[0..stream.pos]).toJS(globalObject);
-}
-
 extern fn dump_zone_malloc_stats() void;
 
 fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -1363,6 +1190,58 @@ pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
     const BoringSSL = bun.BoringSSL;
+    pub const HMAC = struct {
+        ctx: BoringSSL.HMAC_CTX,
+        algorithm: EVP.Algorithm,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn init(algorithm: EVP.Algorithm, key: []const u8) ?*HMAC {
+            var ctx: BoringSSL.HMAC_CTX = undefined;
+            BoringSSL.HMAC_CTX_init(&ctx);
+            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), algorithm.md(), null) != 1) {
+                BoringSSL.HMAC_CTX_cleanup(&ctx);
+                return null;
+            }
+            return HMAC.new(.{
+                .ctx = ctx,
+                .algorithm = algorithm,
+            });
+        }
+
+        pub fn update(this: *HMAC, data: []const u8) void {
+            _ = BoringSSL.HMAC_Update(&this.ctx, data.ptr, data.len);
+        }
+
+        pub fn size(this: *const HMAC) usize {
+            return BoringSSL.HMAC_size(&this.ctx);
+        }
+
+        pub fn copy(this: *HMAC) !*HMAC {
+            var ctx: BoringSSL.HMAC_CTX = undefined;
+            BoringSSL.HMAC_CTX_init(&ctx);
+            if (BoringSSL.HMAC_CTX_copy(&ctx, &this.ctx) != 1) {
+                BoringSSL.HMAC_CTX_cleanup(&ctx);
+                return error.BoringSSLError;
+            }
+            return HMAC.new(.{
+                .ctx = ctx,
+                .algorithm = this.algorithm,
+            });
+        }
+
+        pub fn final(this: *HMAC, out: []u8) []u8 {
+            var outlen: c_uint = undefined;
+            _ = BoringSSL.HMAC_Final(&this.ctx, out.ptr, &outlen);
+            return out[0..outlen];
+        }
+
+        pub fn deinit(this: *HMAC) void {
+            BoringSSL.HMAC_CTX_cleanup(&this.ctx);
+            this.destroy();
+        }
+    };
+
     pub const EVP = struct {
         ctx: BoringSSL.EVP_MD_CTX = undefined,
         md: *const BoringSSL.EVP_MD = undefined,
@@ -1832,7 +1711,7 @@ pub const Crypto = struct {
 
                 pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?Value {
                     if (value.isObject()) {
-                        if (value.getOwnTruthy(globalObject, "algorithm")) |algorithm_value| {
+                        if (value.getTruthy(globalObject, "algorithm")) |algorithm_value| {
                             if (!algorithm_value.isString()) {
                                 globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
                                 return null;
@@ -1849,7 +1728,7 @@ pub const Crypto = struct {
                                         .bcrypt = PasswordObject.Algorithm.Value.bcrpyt_default,
                                     };
 
-                                    if (value.getOwnTruthy(globalObject, "cost")) |rounds_value| {
+                                    if (value.getTruthy(globalObject, "cost")) |rounds_value| {
                                         if (!rounds_value.isNumber()) {
                                             globalObject.throwInvalidArgumentType("hash", "cost", "number");
                                             return null;
@@ -1870,7 +1749,7 @@ pub const Crypto = struct {
                                 inline .argon2id, .argon2d, .argon2i => |tag| {
                                     var argon = Algorithm.Argon2Params{};
 
-                                    if (value.getOwnTruthy(globalObject, "timeCost")) |time_value| {
+                                    if (value.getTruthy(globalObject, "timeCost")) |time_value| {
                                         if (!time_value.isNumber()) {
                                             globalObject.throwInvalidArgumentType("hash", "timeCost", "number");
                                             return null;
@@ -1886,7 +1765,7 @@ pub const Crypto = struct {
                                         argon.time_cost = @as(u32, @intCast(time_cost));
                                     }
 
-                                    if (value.getOwnTruthy(globalObject, "memoryCost")) |memory_value| {
+                                    if (value.getTruthy(globalObject, "memoryCost")) |memory_value| {
                                         if (!memory_value.isNumber()) {
                                             globalObject.throwInvalidArgumentType("hash", "memoryCost", "number");
                                             return null;
@@ -2606,6 +2485,9 @@ pub const Crypto = struct {
     };
 
     pub const CryptoHasher = union(enum) {
+        // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
+        hmac: ?*HMAC,
+
         evp: EVP,
         zig: CryptoHasherZig,
 
@@ -2617,12 +2499,20 @@ pub const Crypto = struct {
         pub const digest = JSC.wrapInstanceMethod(CryptoHasher, "digest_", false);
         pub const hash = JSC.wrapStaticMethod(CryptoHasher, "hash_", false);
 
+        fn throwHmacConsumed(globalThis: *JSC.JSGlobalObject) void {
+            globalThis.throw("HMAC has been consumed and is no longer usable", .{});
+        }
+
         pub fn getByteLength(
             this: *CryptoHasher,
-            _: *JSC.JSGlobalObject,
+            globalThis: *JSC.JSGlobalObject,
         ) JSC.JSValue {
             return JSC.JSValue.jsNumber(switch (this.*) {
                 .evp => |*inner| inner.size(),
+                .hmac => |inner| if (inner) |hmac| hmac.size() else {
+                    throwHmacConsumed(globalThis);
+                    return JSC.JSValue.zero;
+                },
                 .zig => |*inner| inner.digest_length,
             });
         }
@@ -2632,7 +2522,11 @@ pub const Crypto = struct {
             globalObject: *JSC.JSGlobalObject,
         ) JSC.JSValue {
             return switch (this.*) {
-                inline else => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
+                inline .evp, .zig => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
+                .hmac => |inner| if (inner) |hmac| ZigString.fromUTF8(bun.asByteSlice(@tagName(hmac.algorithm))).toJS(globalObject) else {
+                    throwHmacConsumed(globalObject);
+                    return JSC.JSValue.zero;
+                },
             };
         }
 
@@ -2742,6 +2636,7 @@ pub const Crypto = struct {
             }
         }
 
+        // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
         pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*CryptoHasher {
             const arguments = callframe.arguments(2);
             if (arguments.len == 0) {
@@ -2762,13 +2657,54 @@ pub const Crypto = struct {
                 return null;
             }
 
-            var this: CryptoHasher = undefined;
-            const evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
-                globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
-                return null;
-            };
-            this = .{ .evp = evp };
-            return CryptoHasher.new(this);
+            const hmac_value = arguments.ptr[1];
+            var hmac_key: ?JSC.Node.StringOrBuffer = null;
+            defer {
+                if (hmac_key) |*key| {
+                    key.deinit();
+                }
+            }
+
+            if (!hmac_value.isEmptyOrUndefinedOrNull()) {
+                hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
+                    globalThis.throwInvalidArguments("key must be a string or buffer", .{});
+                    return null;
+                };
+            }
+
+            return CryptoHasher.new(brk: {
+                if (hmac_key) |*key| {
+                    const chosen_algorithm = algorithm_name.toEnumFromMap(globalThis, "algorithm", EVP.Algorithm, EVP.Algorithm.map) catch return null;
+                    if (chosen_algorithm == .ripemd160) {
+                        // crashes at runtime.
+                        globalThis.throw("ripemd160 is not supported", .{});
+                        return null;
+                    }
+
+                    break :brk .{
+                        .hmac = HMAC.init(chosen_algorithm, key.slice()) orelse {
+                            if (!globalThis.hasException()) {
+                                const err = BoringSSL.ERR_get_error();
+                                if (err != 0) {
+                                    const instance = createCryptoError(globalThis, err);
+                                    BoringSSL.ERR_clear_error();
+                                    globalThis.throwValue(instance);
+                                } else {
+                                    globalThis.throwTODO("HMAC is not supported for this algorithm");
+                                }
+                            }
+                            return null;
+                        },
+                    };
+                }
+
+                break :brk .{
+                    .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
+                        globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
+                        return null;
+                    },
+                };
+            });
         }
 
         pub fn getter(
@@ -2808,6 +2744,21 @@ pub const Crypto = struct {
                         return .zero;
                     }
                 },
+                .hmac => |inner| {
+                    const hmac = inner orelse {
+                        throwHmacConsumed(globalThis);
+                        return JSC.JSValue.zero;
+                    };
+
+                    hmac.update(buffer.slice());
+                    const err = BoringSSL.ERR_get_error();
+                    if (err != 0) {
+                        const instance = createCryptoError(globalThis, err);
+                        BoringSSL.ERR_clear_error();
+                        globalThis.throwValue(instance);
+                        return .zero;
+                    }
+                },
                 .zig => |*inner| {
                     inner.update(buffer.slice());
                     return thisValue;
@@ -2826,6 +2777,20 @@ pub const Crypto = struct {
             switch (this.*) {
                 .evp => |*inner| {
                     new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
+                },
+                .hmac => |inner| {
+                    const hmac = inner orelse {
+                        throwHmacConsumed(globalObject);
+                        return JSC.JSValue.zero;
+                    };
+                    new = .{
+                        .hmac = hmac.copy() catch {
+                            const err = createCryptoError(globalObject, BoringSSL.ERR_get_error());
+                            BoringSSL.ERR_clear_error();
+                            globalObject.throwValue(err);
+                            return JSC.JSValue.zero;
+                        },
+                    };
                 },
                 .zig => |*inner| {
                     new = .{ .zig = inner.copy() };
@@ -2877,6 +2842,9 @@ pub const Crypto = struct {
             }
 
             const result = this.final(globalThis, output_digest_slice);
+            if (globalThis.hasException()) {
+                return JSC.JSValue.zero;
+            }
 
             if (output) |output_buf| {
                 return output_buf.value;
@@ -2890,11 +2858,23 @@ pub const Crypto = struct {
             var output_digest_buf: EVP.Digest = std.mem.zeroes(EVP.Digest);
             const output_digest_slice: []u8 = &output_digest_buf;
             const out = this.final(globalThis, output_digest_slice);
+            if (globalThis.hasException()) {
+                return JSC.JSValue.zero;
+            }
             return encoding.encodeWithMaxSize(globalThis, BoringSSL.EVP_MAX_MD_SIZE, out);
         }
 
         fn final(this: *CryptoHasher, globalThis: *JSGlobalObject, output_digest_slice: []u8) []u8 {
             return switch (this.*) {
+                .hmac => |inner| brk: {
+                    const hmac: *HMAC = inner orelse {
+                        throwHmacConsumed(globalThis);
+                        return &.{};
+                    };
+                    this.hmac = null;
+                    defer hmac.deinit();
+                    break :brk hmac.final(output_digest_slice);
+                },
                 .evp => |*inner| inner.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice),
                 .zig => |*inner| inner.final(output_digest_slice),
             };
@@ -2908,6 +2888,11 @@ pub const Crypto = struct {
                 },
                 .zig => |*inner| {
                     inner.deinit();
+                },
+                .hmac => |inner| {
+                    if (inner) |hmac| {
+                        hmac.deinit();
+                    }
                 },
             }
             this.destroy();
@@ -3450,7 +3435,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
+        globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
         return .undefined;
     };
 
@@ -3496,7 +3481,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
+        globalObject.vm().throwError(globalObject, bun.String.static("Out of memory").toJS(globalObject));
         return .undefined;
     };
 
@@ -4377,7 +4362,7 @@ pub const FFIObject = struct {
             }
         }
 
-        if (addr > max_addressible_memory) {
+        if (addr > max_addressable_memory) {
             return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis);
         }
 
@@ -4459,7 +4444,7 @@ pub const FFIObject = struct {
                     return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
-                if (length_i > max_addressible_memory) {
+                if (length_i > max_addressable_memory) {
                     return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
@@ -4614,11 +4599,11 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC
     var ambiguous_as_wide = false;
 
     if (options_object.isObject()) {
-        if (options_object.getOwnTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
+        if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
             if (count_ansi_escapes_value.isBoolean())
                 count_ansi_escapes = count_ansi_escapes_value.toBoolean();
         }
-        if (options_object.getOwnTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
+        if (options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
             if (ambiguous_is_narrow.isBoolean())
                 ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
         }
@@ -4799,7 +4784,7 @@ pub const JSZlib = struct {
                 library = .zlib;
             }
 
-            if (options_val.getOwnTruthy(globalThis, "library")) |library_value| {
+            if (options_val.getTruthy(globalThis, "library")) |library_value| {
                 if (!library_value.isString()) {
                     globalThis.throwInvalidArguments("Expected library to be a string", .{});
                     return .zero;
@@ -4926,7 +4911,7 @@ pub const JSZlib = struct {
                 library = .zlib;
             }
 
-            if (options_val.getOwnTruthy(globalThis, "library")) |library_value| {
+            if (options_val.getTruthy(globalThis, "library")) |library_value| {
                 if (!library_value.isString()) {
                     globalThis.throwInvalidArguments("Expected library to be a string", .{});
                     return .zero;

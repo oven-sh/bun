@@ -1497,13 +1497,35 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  type ModuleFormat = "esm"; // later: "cjs", "iife"
-
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
     target?: Target; // default: "browser"
-    format?: ModuleFormat; // later: "cjs", "iife"
+    /**
+     * Output module format. Top-level await is only supported for `"esm"`.
+     *
+     * Can be:
+     * - `"esm"`
+     * - `"cjs"` (**experimental**)
+     * - `"iife"` (**experimental**)
+     *
+     * @default "esm"
+     */
+    format?: /**
+
+     * ECMAScript Module format
+     */
+    | "esm"
+      /**
+       * CommonJS format
+       * **Experimental**
+       */
+      | "cjs"
+      /**
+       * IIFE format
+       * **Experimental**
+       */
+      | "iife";
     naming?:
       | string
       | {
@@ -1561,6 +1583,29 @@ declare module "bun" {
     //       /** Only works when runtime=automatic */
     //       importSource?: string; // default: "react"
     //     };
+
+    /**
+     * Generate bytecode for the output. This can dramatically improve cold
+     * start times, but will make the final output larger and slightly increase
+     * memory usage.
+     *
+     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     *
+     * Must be `target: "bun"`
+     * @default false
+     */
+    bytecode?: boolean;
+    /**
+     * Add a banner to the bundled code such as "use client";
+     */
+    banner?: string;
+
+    /**
+     * **Experimental**
+     *
+     * Enable CSS support.
+     */
+    experimentalCss?: boolean;
   }
 
   namespace Password {
@@ -1781,7 +1826,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
   }
 
@@ -3345,8 +3390,9 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
+     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
      */
-    constructor(algorithm: SupportedCryptoAlgorithms);
+    constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
@@ -5224,6 +5270,12 @@ declare module "bun" {
    * "0.2.0"
    */
   const version: string;
+
+  /**
+   * The current version of Bun with the shortened commit sha of the build
+   * @example "v1.1.30 (d09df1af)"
+   */
+  const version_with_sha: string;
 
   /**
    * The git sha at the time the currently-running version of Bun was compiled

@@ -113,7 +113,7 @@ pub const BasicParseErrorKind = union(enum) {
         _ = opts; // autofix
         return switch (this.*) {
             .unexpected_token => |token| {
-                try writer.print("unexpected token: {any}", .{token});
+                try writer.print("unexpected token: {}", .{token});
             },
             .end_of_input => {
                 try writer.print("unexpected end of input", .{});
@@ -157,6 +157,7 @@ pub const PrinterErrorKind = union(enum) {
     invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
+    no_import_records,
 };
 
 /// A parser error.
@@ -197,7 +198,7 @@ pub const ParserError = union(enum) {
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
             .at_rule_invalid => |name| writer.print("at_rule_invalid: {s}", .{name}),
-            .unexpected_token => |token| writer.print("unexpected_token: {s}", .{@tagName(token)}),
+            .unexpected_token => |token| writer.print("unexpected_token: {}", .{token}),
             .selector_error => |err| writer.print("selector_error: {}", .{err}),
             else => writer.print("{s}", .{@tagName(this)}),
         };

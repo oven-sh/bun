@@ -61,6 +61,7 @@ const assert_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/assert/package.json", ""),
+    .side_effects = .false,
 };
 const buffer_package_json = PackageJSON{
     .name = "buffer",
@@ -70,6 +71,7 @@ const buffer_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/buffer/package.json", ""),
+    .side_effects = .false,
 };
 const console_package_json = PackageJSON{
     .name = "console",
@@ -79,6 +81,7 @@ const console_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/console/package.json", ""),
+    .side_effects = .false,
 };
 const constants_package_json = PackageJSON{
     .name = "constants",
@@ -88,6 +91,7 @@ const constants_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/constants/package.json", ""),
+    .side_effects = .false,
 };
 const crypto_package_json = PackageJSON{
     .name = "crypto",
@@ -97,6 +101,7 @@ const crypto_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/crypto/package.json", ""),
+    .side_effects = .false,
 };
 const domain_package_json = PackageJSON{
     .name = "domain",
@@ -106,6 +111,7 @@ const domain_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/domain/package.json", ""),
+    .side_effects = .false,
 };
 const events_package_json = PackageJSON{
     .name = "events",
@@ -115,6 +121,7 @@ const events_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/events/package.json", ""),
+    .side_effects = .false,
 };
 const http_package_json = PackageJSON{
     .name = "http",
@@ -124,6 +131,7 @@ const http_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/http/package.json", ""),
+    .side_effects = .false,
 };
 const https_package_json = PackageJSON{
     .name = "https",
@@ -133,6 +141,7 @@ const https_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/https/package.json", ""),
+    .side_effects = .false,
 };
 const net_package_json = PackageJSON{
     .name = "net",
@@ -142,6 +151,7 @@ const net_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/net/package.json", ""),
+    .side_effects = .false,
 };
 const os_package_json = PackageJSON{
     .name = "os",
@@ -151,6 +161,7 @@ const os_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/os/package.json", ""),
+    .side_effects = .false,
 };
 const path_package_json = PackageJSON{
     .name = "path",
@@ -160,6 +171,7 @@ const path_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/path/package.json", ""),
+    .side_effects = .false,
 };
 const process_package_json = PackageJSON{
     .name = "process",
@@ -169,6 +181,7 @@ const process_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/process/package.json", ""),
+    .side_effects = .false,
 };
 const punycode_package_json = PackageJSON{
     .name = "punycode",
@@ -178,6 +191,7 @@ const punycode_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/punycode/package.json", ""),
+    .side_effects = .false,
 };
 const querystring_package_json = PackageJSON{
     .name = "querystring",
@@ -187,6 +201,7 @@ const querystring_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/querystring/package.json", ""),
+    .side_effects = .false,
 };
 const stream_package_json = PackageJSON{
     .name = "stream",
@@ -196,6 +211,7 @@ const stream_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/stream/package.json", ""),
+    .side_effects = .false,
 };
 const string_decoder_package_json = PackageJSON{
     .name = "string_decoder",
@@ -205,12 +221,11 @@ const string_decoder_package_json = PackageJSON{
         @setEvalBranchQuota(9999);
         break :brk @as(u32, @truncate(bun.hash("string_decoder@0.0.0-polyfill")));
     },
-
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/string_decoder/package.json", ""),
+    .side_effects = .false,
 };
-
 const sys_package_json = PackageJSON{
     .name = "sys",
     .version = "0.0.0-polyfill",
@@ -219,6 +234,7 @@ const sys_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/sys/package.json", ""),
+    .side_effects = .false,
 };
 const timers_package_json = PackageJSON{
     .name = "timers",
@@ -228,6 +244,7 @@ const timers_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/timers/package.json", ""),
+    .side_effects = .false,
 };
 const tty_package_json = PackageJSON{
     .name = "tty",
@@ -237,6 +254,7 @@ const tty_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/tty/package.json", ""),
+    .side_effects = .false,
 };
 const url_package_json = PackageJSON{
     .name = "url",
@@ -246,6 +264,7 @@ const url_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/url/package.json", ""),
+    .side_effects = .false,
 };
 const util_package_json = PackageJSON{
     .name = "util",
@@ -255,6 +274,7 @@ const util_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/util/package.json", ""),
+    .side_effects = .false,
 };
 const zlib_package_json = PackageJSON{
     .name = "zlib",
@@ -264,6 +284,7 @@ const zlib_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/zlib/package.json", ""),
+    .side_effects = .false,
 };
 
 pub const FallbackModule = struct {

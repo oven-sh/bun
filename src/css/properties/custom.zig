@@ -76,9 +76,9 @@ pub const TokenList = struct {
                     has_whitespace = false;
                 },
                 .url => |url| {
-                    if (dest.dependencies != null and is_custom_property and !url.isAbsolute()) {
+                    if (dest.dependencies != null and is_custom_property and !url.isAbsolute(try dest.getImportRecords())) {
                         return dest.newError(css.PrinterErrorKind{
-                            .ambiguous_url_in_custom_property = .{ .url = url.url },
+                            .ambiguous_url_in_custom_property = .{ .url = (try dest.getImportRecords()).at(url.import_record_idx).path.pretty },
                         }, url.loc);
                     }
                     try url.toCss(W, dest);

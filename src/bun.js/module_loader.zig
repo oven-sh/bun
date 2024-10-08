@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                bun.fmt.formatJSONStringUTF8(specifier),
+                bun.fmt.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -479,6 +479,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .allow_bytecode_cache = true,
             };
 
             defer {
@@ -573,8 +574,9 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (parse_result.already_bundled) {
+            if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
+                const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -582,6 +584,9 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
+                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                    .bytecode_cache_size = bytecode_slice.len,
+                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -667,10 +672,10 @@ pub const RuntimeTranspilerStore = struct {
                 // In a benchmarking loading @babel/standalone 100 times:
                 //
                 // After ensureHash:
-                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 354.00 ms    4.2%    354.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 // Before ensureHash:
-                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 506.00 ms    6.1%    506.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 result.ensureHash();
 
@@ -1615,6 +1620,7 @@ pub const ModuleLoader = struct {
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
+                    .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1760,7 +1766,8 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (parse_result.already_bundled) {
+                if (parse_result.already_bundled != .none) {
+                    const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1768,6 +1775,9 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
 
@@ -2148,34 +2158,14 @@ pub const ModuleLoader = struct {
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-        var was_http = false;
-        if (jsc_vm.bundler.options.serve) {
-            if (strings.hasPrefixComptime(slice, "https://")) {
-                slice = slice["https://".len..];
-                was_http = true;
-            } else if (strings.hasPrefixComptime(slice, "http://")) {
-                slice = slice["http://".len..];
-                was_http = true;
-            }
-        }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
         }
 
         if (jsc_vm.origin.path.len > 1) {
             if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
                 slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        if (jsc_vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
             }
         }
 
@@ -2574,6 +2564,9 @@ pub const ModuleLoader = struct {
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
                     .source_code_needs_deref = false,
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_size = file.bytecode.len,
+                    .is_commonjs_module = file.module_format == .cjs,
                 };
             }
         }
@@ -2821,7 +2814,7 @@ pub const HardcodedModule = enum {
 
     pub const Alias = struct {
         path: string,
-        tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
+        tag: ImportRecord.Tag = .builtin,
     };
 
     pub const Aliases = struct {

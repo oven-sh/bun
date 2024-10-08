@@ -210,8 +210,8 @@ pub const Runtime = struct {
         /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
 
-        /// `hot_module_reloading` is specific to if we are using bun.kit.DevServer.
-        /// It can be enabled on the command line with --format=internal_kit_dev
+        /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
+        /// It can be enabled on the command line with --format=internal_bake_dev
         ///
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
@@ -241,6 +241,9 @@ pub const Runtime = struct {
         /// This is only supported with --target=bun
         use_import_meta_require: bool = false,
 
+        /// Allow runtime usage of require(), converting `require` into `__require`
+        auto_polyfill_require: bool = false,
+
         replace_exports: ReplaceableExport.Map = .{},
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
@@ -259,6 +262,7 @@ pub const Runtime = struct {
         unwrap_commonjs_packages: []const string = &.{},
 
         commonjs_at_runtime: bool = false,
+        unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
 

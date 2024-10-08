@@ -142,7 +142,7 @@ pub const ResolveMessage = struct {
         _: *JSC.CallFrame,
     ) JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 7);
-        object.put(globalThis, ZigString.static("name"), ZigString.init("ResolveMessage").toJS(globalThis));
+        object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));

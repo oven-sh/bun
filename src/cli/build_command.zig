@@ -30,9 +30,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");
-const Router = @import("../router.zig");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
-var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
     const compile_define_keys = &.{
@@ -40,14 +38,11 @@ pub const BuildCommand = struct {
         "process.arch",
     };
 
-    pub fn exec(
-        ctx: Command.Context,
-    ) !void {
+    pub fn exec(ctx: Command.Context) !void {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
-        estimated_input_lines_of_code_ = 0;
-        if (ctx.bundler_options.compile) {
+        if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
         }
@@ -56,12 +51,7 @@ pub const BuildCommand = struct {
 
         if (ctx.bundler_options.compile) {
             const compile_define_values = compile_target.defineValues();
-            if (ctx.args.define == null) {
-                ctx.args.define = .{
-                    .keys = compile_define_keys,
-                    .values = compile_define_values,
-                };
-            } else if (ctx.args.define) |*define| {
+            if (ctx.args.define) |*define| {
                 var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
                 keys.appendSliceAssumeCapacity(define.keys);
@@ -71,6 +61,11 @@ pub const BuildCommand = struct {
 
                 define.keys = keys.items;
                 define.values = values.items;
+            } else {
+                ctx.args.define = .{
+                    .keys = compile_define_keys,
+                    .values = compile_define_values,
+                };
             }
         }
 
@@ -85,13 +80,14 @@ pub const BuildCommand = struct {
             Global.exit(1);
             return;
         }
+
         var outfile = ctx.bundler_options.outfile;
 
         this_bundler.options.public_path = ctx.bundler_options.public_path;
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
         this_bundler.options.asset_naming = ctx.bundler_options.asset_naming;
-        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
+        this_bundler.options.server_components = ctx.bundler_options.server_components;
         this_bundler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
@@ -100,6 +96,18 @@ pub const BuildCommand = struct {
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+
+        this_bundler.options.banner = ctx.bundler_options.banner;
+        this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
+
+        this_bundler.options.output_dir = ctx.bundler_options.outdir;
+        this_bundler.options.output_format = ctx.bundler_options.output_format;
+
+        if (ctx.bundler_options.output_format == .internal_bake_dev) {
+            this_bundler.options.tree_shaking = false;
+        }
+
+        this_bundler.options.bytecode = ctx.bundler_options.bytecode;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {
@@ -161,9 +169,6 @@ pub const BuildCommand = struct {
             }
         }
 
-        this_bundler.options.output_dir = ctx.bundler_options.outdir;
-        this_bundler.options.output_format = ctx.bundler_options.output_format;
-
         var src_root_dir_buf: bun.PathBuffer = undefined;
         const src_root_dir: string = brk1: {
             const path = brk2: {
@@ -194,28 +199,10 @@ pub const BuildCommand = struct {
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.options.transform_only = ctx.bundler_options.transform_only;
 
-        if (this_bundler.options.transform_only) {
-            this_bundler.options.resolve_mode = .disable;
-        }
-
-        this_bundler.resolver.opts = this_bundler.options;
-
+        try this_bundler.configureDefines();
         this_bundler.configureLinker();
 
-        // This step is optional
-        // If it fails for any reason, ignore it and continue bundling
-        // This is partially a workaround for the 'error.MissingRoutesDir' error
-        this_bundler.configureRouter(true) catch {
-            this_bundler.options.routes.routes_enabled = false;
-            this_bundler.options.framework = null;
-            if (this_bundler.router) |*router| {
-                router.config.routes_enabled = false;
-                router.config.single_page_app_routing = false;
-                router.config.static_dir_enabled = false;
-                this_bundler.router = null;
-            }
-        };
-
+        this_bundler.resolver.opts = this_bundler.options;
         this_bundler.options.jsx.development = !this_bundler.options.production;
         this_bundler.resolver.opts.jsx.development = this_bundler.options.jsx.development;
 
@@ -227,6 +214,37 @@ pub const BuildCommand = struct {
                 this_bundler.options.macro_remap = macros;
             },
             .unspecified => {},
+        }
+
+        var client_bundler: bundler.Bundler = undefined;
+        if (this_bundler.options.server_components) {
+            client_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
+            client_bundler.options = this_bundler.options;
+            client_bundler.options.target = .browser;
+            client_bundler.options.server_components = true;
+            try this_bundler.options.conditions.appendSlice(&.{"react-server"});
+            this_bundler.options.react_fast_refresh = false;
+            this_bundler.options.minify_syntax = true;
+            client_bundler.options.minify_syntax = true;
+            client_bundler.options.define = try options.Define.init(
+                allocator,
+                if (ctx.args.define) |user_defines|
+                    try options.Define.Data.fromInput(try options.stringHashMapFromArrays(
+                        options.defines.RawDefines,
+                        allocator,
+                        user_defines.keys,
+                        user_defines.values,
+                    ), log, allocator)
+                else
+                    null,
+                null,
+            );
+
+            try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);
+            try bun.bake.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
+
+            this_bundler.resolver.opts = this_bundler.options;
+            client_bundler.resolver.opts = client_bundler.options;
         }
 
         // var env_loader = this_bundler.env;
@@ -268,6 +286,7 @@ pub const BuildCommand = struct {
 
             break :brk (BundleV2.generateFromCLI(
                 &this_bundler,
+                if (this_bundler.options.server_components) @panic("TODO") else null,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),
@@ -284,7 +303,6 @@ pub const BuildCommand = struct {
 
                 Output.flush();
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
-                unreachable;
             }).items;
         };
         const bundled_end = std.time.nanoTimestamp();
@@ -377,6 +395,7 @@ pub const BuildCommand = struct {
                             this_bundler.options.public_path,
                             outfile,
                             this_bundler.env,
+                            this_bundler.options.output_format,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
@@ -519,7 +538,7 @@ pub const BuildCommand = struct {
     }
 };
 
-fn exitOrWatch(code: u8, watch: bool) void {
+fn exitOrWatch(code: u8, watch: bool) noreturn {
     if (watch) {
         // the watcher thread will exit the process
         std.time.sleep(std.math.maxInt(u64) - 1);

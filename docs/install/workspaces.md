@@ -41,7 +41,7 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 **Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](https://bun.sh/docs/api/glob#supported-glob-patterns) for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
 {% /callout %}
 
-Each workspace has it's own `package.json` When referencing other packages in the monorepo, use `"workspace:*"` as the version field in your `package.json`.
+Each workspace has it's own `package.json`. When referencing other packages in the monorepo, semver or workspace protocols (e.g. `workspace:*`) can be used as the version field in your `package.json`.
 
 ```json
 {
@@ -52,10 +52,6 @@ Each workspace has it's own `package.json` When referencing other packages in th
   }
 }
 ```
-
-{% callout %}
-**Version support** — Bun supports simple `workspace:*` versions in `"dependencies"`. Full version syntax (e.g. `workspace:^*`) is not yet supported.
-{% /callout %}
 
 Workspaces have a couple major benefits.
 

@@ -1,14 +1,5 @@
 # https://clang.llvm.org/docs/ClangFormat.html
 
-find_command(
-  VARIABLE
-    CLANG_FORMAT_PROGRAM
-  COMMAND
-    clang-format
-  REQUIRED
-    OFF
-)
-
 set(CLANG_FORMAT_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
 
 register_command(

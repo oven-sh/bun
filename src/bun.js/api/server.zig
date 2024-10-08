@@ -6311,6 +6311,12 @@ pub const NodeHTTPResponse = struct {
 
         const bytes = string_or_buffer.slice();
 
+        if (comptime is_end) {
+            log("end('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
+        } else {
+            log("write('{s}', {d})", .{ bytes[0..@min(bytes.len, 128)], bytes.len });
+        }
+
         if (is_end) {
             this.response.clearAborted();
             this.response.clearOnWritable();

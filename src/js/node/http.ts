@@ -466,8 +466,8 @@ function onRequestEvent(event) {
         server.emit("timeout", req.socket);
         break;
       case NodeHTTPResponseAbortEvent.abort:
-        this.complete = true;
-        this.emit("close");
+        emitCloseNTAndComplete(http_res);
+        emitCloseNTAndComplete(this);
         http_res[finishedSymbol] = true;
         break;
     }
@@ -968,7 +968,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this._readableState.readingMore = true;
 }
 
-IncomingMessage.prototype = {
+const IncomingMessagePrototype = {
   constructor: IncomingMessage,
   __proto__: Readable.prototype,
   _construct(callback) {
@@ -1165,6 +1165,7 @@ IncomingMessage.prototype = {
     this[fakeSocketSymbol] = value;
   },
 } satisfies typeof import("node:http").IncomingMessage.prototype;
+IncomingMessage.prototype = IncomingMessagePrototype;
 $setPrototypeDirect.$call(IncomingMessage, Readable);
 
 async function consumeStream(self, reader: ReadableStreamDefaultReader) {
@@ -1356,7 +1357,9 @@ const OutgoingMessagePrototype = {
     }
     return this.write(data, encoding, callback);
   },
-  end(chunk, encoding, callback) {},
+  end(chunk, encoding, callback) {
+    return this;
+  },
 } satisfies typeof import("node:http").OutgoingMessage.prototype;
 OutgoingMessage.prototype = OutgoingMessagePrototype;
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
@@ -1388,6 +1391,9 @@ function emitContinueAndSocketNT(self) {
 function emitCloseNT(self) {
   if (!self._closed) {
     self._closed = true;
+    if (!self.destroyed) {
+      self.destroy();
+    }
     self.emit("close");
   }
 }
@@ -1540,6 +1546,12 @@ const ServerResponsePrototype = {
           handle.end(chunk, encoding);
         }
       }
+      const req = this.req;
+      const reqClosed = req?._closed;
+      if (reqClosed === false && req) {
+        process.nextTick(emitCloseNTAndComplete, req);
+      }
+
       this[finishedSymbol] = this.finished = true;
 
       this.emit("prefinish");
@@ -1560,6 +1572,9 @@ const ServerResponsePrototype = {
             process.nextTick(function (self) {
               if (!self[closedSymbol]) {
                 self[closedSymbol] = true;
+                if (!self.destroyed) {
+                  self.destroy();
+                }
                 self.emit("close");
               }
             }, self);
@@ -1572,6 +1587,9 @@ const ServerResponsePrototype = {
         process.nextTick(function (self) {
           if (!self[closedSymbol]) {
             self[closedSymbol] = true;
+            if (!self.destroyed) {
+              self.destroy();
+            }
             self.emit("close");
           }
         }, this);
@@ -1771,6 +1789,16 @@ const ServerResponsePrototype = {
   },
   set useChunkedEncodingByDefault(value) {
     // throw new Error('not implemented');
+  },
+
+  destroy(err?: Error) {
+    if (this.destroyed) return this;
+    const handle = this[kHandle];
+    this.destroyed = true;
+    if (handle) {
+      handle.abort();
+    }
+    return this;
   },
 
   flushHeaders() {
@@ -2045,9 +2073,10 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     }
 
     this.#send();
+    return this;
   }
 
-  _destroy(err?: Error, callback) {
+  destroy(err?: Error, callback) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
@@ -2802,10 +2831,6 @@ function _writeHead(statusCode, reason, obj, response) {
     // consisting only of the Status-Line and optional headers, and is
     // terminated by an empty line.
     response._hasBody = false;
-    const req = response.req;
-    if (req) {
-      req.complete = true;
-    }
   }
 }
 

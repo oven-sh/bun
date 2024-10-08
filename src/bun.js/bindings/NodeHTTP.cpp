@@ -823,14 +823,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue headersValue = callFrame->argument(0);
+    JSValue nameValue = callFrame->argument(1);
+    JSValue valueValue = callFrame->argument(2);
 
     if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue)) {
-        JSValue nameValue = callFrame->argument(1);
+
         if (nameValue.isString()) {
             String name = nameValue.toWTFString(globalObject);
             FetchHeaders* impl = &headers->wrapped();
 
-            JSValue valueValue = callFrame->argument(2);
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
@@ -841,23 +842,28 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     JSValue item = array->getIndex(globalObject, 0);
                     if (UNLIKELY(scope.exception()))
                         return JSValue::encode(jsUndefined());
-                    impl->set(name, item.getString(globalObject));
+
+                    auto value = item.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    impl->set(name, value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
                     JSValue value = array->getIndex(globalObject, i);
                     if (UNLIKELY(scope.exception()))
                         return JSValue::encode(jsUndefined());
-                    if (!value.isString())
-                        continue;
-                    impl->append(name, value.getString(globalObject));
+                    auto string = value.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    impl->append(name, string);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
                 return JSValue::encode(jsUndefined());
             }
 
-            impl->set(name, valueValue.getString(globalObject));
+            auto value = valueValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            impl->set(name, value);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }

@@ -3306,7 +3306,7 @@ pub inline fn resolveSourcePath(
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
                 .codegen => Environment.codegen_path,
-                .src, .src_eager => Environment.base_path ++ "/src",
+                .src => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
@@ -3316,7 +3316,7 @@ pub inline fn resolveSourcePath(
 }
 
 pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src },
+    comptime root: enum { codegen, src, src_eager },
     comptime sub_path: []const u8,
 ) []const u8 {
     comptime assert(Environment.isDebug);
@@ -3324,7 +3324,7 @@ pub fn runtimeEmbedFile(
 
     const abs_path = switch (root) {
         .codegen => resolveSourcePath(.codegen, sub_path),
-        .src => resolveSourcePath(.src, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
     const static = struct {

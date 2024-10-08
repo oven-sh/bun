@@ -123,6 +123,7 @@
 #include "JavaScriptCore/CustomGetterSetter.h"
 
 #include "ErrorStackFrame.h"
+#include "ObjectBindings.h"
 
 #if OS(DARWIN)
 #if BUN_DEBUG
@@ -3708,23 +3709,24 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
-    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, property));
 }
 
 extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSValue value = JSC::JSValue::decode(JSValue0);
-    if (UNLIKELY(!value.isObject()))
+    JSC::JSObject* object = value.getObject();
+    if (UNLIKELY(!object))
         return JSValue::encode({});
 
     JSC::VM& vm = globalObject->vm();
-    JSC::JSObject* object = value.getObject();
+
     WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::String(""_s) : propertyName->toWTFString(BunString::ZeroCopy);
     auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
 
-    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, property));
 }
 
 extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)

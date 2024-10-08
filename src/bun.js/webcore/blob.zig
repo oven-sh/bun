@@ -1018,7 +1018,7 @@ pub const Blob = struct {
 
         if (args.nextEat()) |options_object| {
             if (options_object.isObject()) {
-                if (options_object.getOwnTruthy(globalThis, "createPath")) |create_directory| {
+                if (options_object.getTruthy(globalThis, "createPath")) |create_directory| {
                     if (!create_directory.isBoolean()) {
                         globalThis.throwInvalidArgumentType("write", "options.createPath", "boolean");
                         return .zero;

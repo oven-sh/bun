@@ -36,7 +36,6 @@ pub fn MediaRule(comptime R: type) type {
                 try this.rules.toCss(W, dest);
                 return;
             }
-
             // #[cfg(feature = "sourcemap")]
             // dest.addMapping(this.loc);
 

@@ -906,7 +906,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXPathResult;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXSLTProcessor;
 
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKitGlobalScope;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeGlobalScope;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortSignal;

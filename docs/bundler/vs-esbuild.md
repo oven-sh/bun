@@ -154,8 +154,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--banner`
-- n/a
-- Not supported
+- `--banner`
+- Only applies to js bundles
 
 ---
 

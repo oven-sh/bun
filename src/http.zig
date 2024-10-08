@@ -1050,7 +1050,7 @@ pub const HTTPThread = struct {
                 .stack_size = bun.default_thread_stack_size,
             },
             onStart,
-            .{opts},
+            .{opts.*},
         ) catch |err| Output.panic("Failed to start HTTP Client thread: {s}", .{@errorName(err)});
         thread.detach();
     }
@@ -1060,7 +1060,7 @@ pub const HTTPThread = struct {
         init_once.call(.{opts});
     }
 
-    pub fn onStart(opts: *const InitOpts) void {
+    pub fn onStart(opts: InitOpts) void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
@@ -1075,7 +1075,7 @@ pub const HTTPThread = struct {
 
         http_thread.loop = loop;
         http_thread.http_context.init() catch @panic("Failed to init http context");
-        http_thread.https_context.initWithThreadOpts(opts) catch @panic("Failed to init https context");
+        http_thread.https_context.initWithThreadOpts(&opts) catch @panic("Failed to init https context");
         http_thread.has_awoken.store(true, .monotonic);
         http_thread.processEvents();
     }

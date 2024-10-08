@@ -252,6 +252,14 @@ const unsigned U32_MAX = std::numeric_limits<unsigned>().max();
 
 static inline uint32_t parseIndex(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral name, JSValue arg, size_t upperBound)
 {
+    if (arg.isUInt32()) {
+        return arg.asUInt32();
+    }
+    if (arg.isInt32()) {
+        auto num = arg.asInt32();
+        if (num < 0) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, 0, upperBound, arg);
+        return num;
+    }
     if (!arg.isNumber()) {
         auto num = arg.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, 0);

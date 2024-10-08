@@ -201,12 +201,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 ---
 
-- `--footer`
-- n/a
-- Not supported
-
----
-
 - `--global-name`
 - n/a
 - Not applicable, Bun does not support `iife` output at this time

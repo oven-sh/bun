@@ -68,7 +68,7 @@ pub const Framework = struct {
                 "bun-framework-rsc/client.tsx",
                 "bun-framework-rsc/server.tsx",
                 "bun-framework-rsc/ssr.tsx",
-            }, if (Environment.embed_code) &.{
+            }, if (Environment.codegen_embed) &.{
                 .{ .code = @embedFile("./bun-framework-rsc/client.tsx") },
                 .{ .code = @embedFile("./bun-framework-rsc/server.tsx") },
                 .{ .code = @embedFile("./bun-framework-rsc/ssr.tsx") },
@@ -320,7 +320,7 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
 }
 
 pub fn getHmrRuntime(mode: Side) []const u8 {
-    return if (Environment.embed_code)
+    return if (Environment.codegen_embed)
         switch (mode) {
             .client => @embedFile("bake-codegen/bake.client.js"),
             .server => @embedFile("bake-codegen/bake.server.js"),

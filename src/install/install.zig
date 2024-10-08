@@ -7090,8 +7090,8 @@ pub const PackageManager = struct {
                 .password = "",
                 .token = "",
             };
-            if (bun_install_) |bun_install| {
-                if (bun_install.default_registry) |registry| {
+            if (bun_install_) |config| {
+                if (config.default_registry) |registry| {
                     base = registry;
                 }
             }
@@ -7100,8 +7100,8 @@ pub const PackageManager = struct {
             defer {
                 this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
             }
-            if (bun_install_) |bun_install| {
-                if (bun_install.scoped) |scoped| {
+            if (bun_install_) |config| {
+                if (config.scoped) |scoped| {
                     for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
                         var registry = registry_.*;
                         if (registry.url.len == 0) registry.url = base.url;
@@ -7109,42 +7109,57 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (bun_install.disable_cache orelse false) {
+                if (config.ca) |ca| {
+                    switch (ca) {
+                        .list => |ca_list| {
+                            this.ca = ca_list;
+                        },
+                        .str => |ca_str| {
+                            this.ca = &.{ca_str};
+                        },
+                    }
+                }
+
+                if (config.cafile) |cafile| {
+                    this.ca_file_name = cafile;
+                }
+
+                if (config.disable_cache orelse false) {
                     this.enable.cache = false;
                 }
 
-                if (bun_install.disable_manifest_cache orelse false) {
+                if (config.disable_manifest_cache orelse false) {
                     this.enable.manifest_cache = false;
                 }
 
-                if (bun_install.force orelse false) {
+                if (config.force orelse false) {
                     this.enable.manifest_cache_control = false;
                     this.enable.force_install = true;
                 }
 
-                if (bun_install.save_yarn_lockfile orelse false) {
+                if (config.save_yarn_lockfile orelse false) {
                     this.do.save_yarn_lock = true;
                 }
 
-                if (bun_install.save_lockfile) |save_lockfile| {
+                if (config.save_lockfile) |save_lockfile| {
                     this.do.save_lockfile = save_lockfile;
                     this.enable.force_save_lockfile = true;
                 }
 
-                if (bun_install.save_dev) |save| {
+                if (config.save_dev) |save| {
                     this.local_package_features.dev_dependencies = save;
                 }
 
-                if (bun_install.save_peer) |save| {
+                if (config.save_peer) |save| {
                     this.do.install_peer_dependencies = save;
                     this.remote_package_features.peer_dependencies = save;
                 }
 
-                if (bun_install.exact) |exact| {
+                if (config.exact) |exact| {
                     this.enable.exact_versions = exact;
                 }
 
-                if (bun_install.production) |production| {
+                if (config.production) |production| {
                     if (production) {
                         this.local_package_features.dev_dependencies = false;
                         this.enable.fail_early = true;
@@ -7153,22 +7168,22 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (bun_install.frozen_lockfile) |frozen_lockfile| {
+                if (config.frozen_lockfile) |frozen_lockfile| {
                     if (frozen_lockfile) {
                         this.enable.frozen_lockfile = true;
                     }
                 }
 
-                if (bun_install.concurrent_scripts) |jobs| {
+                if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
                 }
 
-                if (bun_install.save_optional) |save| {
+                if (config.save_optional) |save| {
                     this.remote_package_features.optional_dependencies = save;
                     this.local_package_features.optional_dependencies = save;
                 }
 
-                this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;
+                this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
             }
 
             const default_disable_progress_bar: bool = brk: {

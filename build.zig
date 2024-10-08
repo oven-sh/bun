@@ -56,10 +56,10 @@ const BunBuildOptions = struct {
     /// - src/bun.js/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
-    force_embed_code: bool = false,
+    codegen_embed: bool = false,
 
     /// `./build/codegen` or equivalent
-    generated_code_dir: []const u8,
+    codegen_path: []const u8,
     no_llvm: bool,
 
     cached_options_module: ?*Module = null,
@@ -71,7 +71,7 @@ const BunBuildOptions = struct {
     }
 
     pub fn shouldEmbedCode(opts: *const BunBuildOptions) bool {
-        return opts.optimize != .Debug or opts.force_embed_code;
+        return opts.optimize != .Debug or opts.codegen_embed;
     }
 
     pub fn buildOptionsModule(this: *BunBuildOptions, b: *Build) *Module {
@@ -83,10 +83,10 @@ const BunBuildOptions = struct {
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
         opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
             b.build_root.path.?,
-            this.generated_code_dir,
+            this.codegen_path,
         }) catch @panic("OOM"));
 
-        opts.addOption(bool, "embed_code", this.shouldEmbedCode());
+        opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
         opts.addOption(bool, "is_canary", this.canary_revision != null);
         opts.addOption(Version, "version", this.version);
@@ -195,12 +195,13 @@ pub fn build(b: *Build) !void {
 
     const target = b.resolveTargetQuery(target_query);
 
-    const generated_code_dir = b.pathFromRoot(
-        b.option([]const u8, "generated-code", "Set the generated code directory") orelse
+    const codegen_path = b.pathFromRoot(
+        b.option([]const u8, "codegen_path", "Set the generated code directory") orelse
             "build/debug/codegen",
     );
+    const codegen_embed = b.option(bool, "codegen_embed", "If codegen files should be embedded in the binary") orelse false;
+
     const bun_version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0";
-    const force_embed_js_code = b.option(bool, "force_embed_js_code", "Always embed JavaScript builtins") orelse false;
 
     b.reference_trace = ref_trace: {
         const trace = b.option(u32, "reference-trace", "Set the reference trace") orelse 16;
@@ -218,8 +219,8 @@ pub fn build(b: *Build) !void {
         .os = os,
         .arch = arch,
 
-        .generated_code_dir = generated_code_dir,
-        .force_embed_code = force_embed_js_code,
+        .codegen_path = codegen_path,
+        .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
 
         .version = try Version.parse(bun_version),
@@ -351,7 +352,7 @@ pub inline fn addMultiCheck(
                 .tracy_callstack_depth = root_build_options.tracy_callstack_depth,
                 .version = root_build_options.version,
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
-                .generated_code_dir = root_build_options.generated_code_dir,
+                .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
             };
 
@@ -477,9 +478,13 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/index.js", .import = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bun-error/bun-error.css", .import = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
+        .{ .file = "fallback-decoder.js", .import = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "runtime.out.js", .import = "runtime.out.js" },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {
-            const path = b.pathJoin(&.{ opts.generated_code_dir, entry.file });
+            const path = b.pathJoin(&.{ opts.codegen_path, entry.file });
             validateGeneratedPath(path);
             obj.root_module.addAnonymousImport(entry.import, .{
                 .root_source_file = .{ .cwd_relative = path },

@@ -16,8 +16,6 @@ const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
 const JSAst = bun.JSAst;
 const content = @import("root").content;
-// packages/bun-cli-*/bun
-const BUN_ROOT = "../../";
 
 const Api = Schema.Api;
 fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
@@ -31,50 +29,8 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
 
     return code;
 }
-pub const ErrorCSS = struct {
-    pub inline fn sourceContent() string {
-        if (comptime Environment.isDebug) {
-            var out_buffer: bun.PathBuffer = undefined;
-            const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
-            const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, &paths, .auto),
-                .{ .mode = .read_only },
-            ) catch return embedDebugFallback(
-                "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
-                content.error_css,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return content.error_css;
-        }
-    }
-};
-
-pub const ErrorJS = struct {
-    pub inline fn sourceContent() string {
-        if (comptime Environment.isDebug) {
-            var out_buffer: bun.PathBuffer = undefined;
-            const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
-            const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, &paths, .auto),
-                .{ .mode = .read_only },
-            ) catch return embedDebugFallback(
-                "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
-                content.error_js,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return content.error_js;
-        }
-    }
-};
 
 pub const Fallback = struct {
-    pub const ProdSourceContent = @embedFile("./fallback.out.js");
     pub const HTMLTemplate = @embedFile("./fallback.html");
     pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
 
@@ -113,29 +69,27 @@ pub const Fallback = struct {
         };
     };
 
-    pub inline fn scriptContent() string {
-        if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ "/" ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
-            var buf: bun.PathBuffer = undefined;
-            const user = bun.getUserName(&buf) orelse "";
-            const dir = std.mem.replaceOwned(
-                u8,
-                default_allocator,
-                dirpath,
-                "jarred",
-                user,
-            ) catch unreachable;
-            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
-                "Missing bun/src/fallback.out.js. " ++ "Please run \"make fallback_decoder\"",
-                ProdSourceContent,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return ProdSourceContent;
-        }
+    pub inline fn errorJS() string {
+        return if (Environment.codegen_embed)
+            @embedFile("bun-error/bun-error.css")
+        else
+            bun.runtimeEmbedFile(.codegen, "bun-error/bun-error.css");
     }
+
+    pub inline fn errorCSS() string {
+        return if (Environment.codegen_embed)
+            @embedFile("bun-error/bun-error.css")
+        else
+            bun.runtimeEmbedFile(.codegen, "bun-error/bun-error.css");
+    }
+
+    pub inline fn fallbackDecoderJS() string {
+        return if (Environment.codegen_embed)
+            @embedFile("fallback-decoder.js")
+        else
+            bun.runtimeEmbedFile(.codegen, "fallback-decoder.js");
+    }
+
     pub const version_hash = @import("build_options").fallback_html_version;
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
@@ -166,7 +120,7 @@ pub const Fallback = struct {
         try writer.print(HTMLTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
             .preload = preload,
-            .fallback = scriptContent(),
+            .fallback = fallbackDecoderJS(),
             .entry_point = entry_point,
         });
     }
@@ -186,17 +140,21 @@ pub const Fallback = struct {
         };
         try writer.print(HTMLBackendTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
-            .bun_error_css = ErrorCSS.sourceContent(),
-            .bun_error = ErrorJS.sourceContent(),
+            .bun_error_css = errorCSS(),
+            .bun_error = errorJS(),
             .bun_error_page_css = "",
-            .fallback = scriptContent(),
+            .fallback = fallbackDecoderJS(),
         });
     }
 };
 
 pub const Runtime = struct {
-    pub const source_code = @embedFile("./runtime.out.js");
+    pub const Source = struct {
+        comptime code: string = "",
+        comptime hash: u32 = 0,
+    };
 
+    pub const source_code = @embedFile("runtime.out.js");
     pub const hash = brk: {
         @setEvalBranchQuota(source_code.len * 50);
         break :brk bun.Wyhash11.hash(0, source_code);

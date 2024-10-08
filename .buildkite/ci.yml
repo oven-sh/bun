@@ -432,6 +432,35 @@ steps:
       #   command:
       #     - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
+      - key: "linux-x64-test-amzn-2023"
+        label: ":aws: 2023 x64 - test-bun"
+        if: "build.branch != 'main'"
+        parallelism: 10
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-x64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "amazonlinux"
+          release: "2023"
+        command:
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+
   # Linux x64-baseline
   # - key: "linux-x64-baseline"
   #   group: ":linux: x64-baseline"
@@ -790,6 +819,35 @@ steps:
       #     release: "20.04"
       #   command:
       #     - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+
+      - key: "linux-aarch64-test-amzn-2023"
+        label: ":aws: 2023 aarch64 - test-bun"
+        if: "build.branch != 'main'"
+        parallelism: 10
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-aarch64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "amazonlinux"
+          release: "2023"
+        command:
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
   # Windows x64
   # - key: "windows-x64"

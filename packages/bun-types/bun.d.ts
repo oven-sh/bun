@@ -1599,6 +1599,12 @@ declare module "bun" {
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
+    /**
+     * Add a footer to the bundled code such as a comment block like
+     *
+     * `// made with bun!`
+     */
+    footer?: string;
 
     /**
      * **Experimental**

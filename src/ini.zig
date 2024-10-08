@@ -439,16 +439,13 @@ pub const Parser = struct {
             }
 
             const env_var = val[i + 2 .. j];
-            const expanded = this.expandEnvVar(env_var);
+            // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
+            const expanded = this.env.get(env_var) orelse return null;
             unesc.appendSlice(expanded) catch bun.outOfMemory();
 
             return j;
         }
         return null;
-    }
-
-    fn expandEnvVar(this: *Parser, name: []const u8) []const u8 {
-        return this.env.get(name) orelse "";
     }
 
     fn singleStrRope(ropealloc: Allocator, str: []const u8) *Rope {

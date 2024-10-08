@@ -5823,6 +5823,17 @@ pub const NodeHTTPResponse = struct {
         done,
     };
 
+    pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
+        if (this.finished and this.ended and this.body_read_ref.has and this.body_read_state == .pending and !this.onDataCallback.has()) {
+            this.response.clearOnData();
+            this.body_read_ref.unref(vm);
+            this.body_read_state = .done;
+            const server = this.server;
+            this.deref();
+            server.onRequestComplete();
+        }
+    }
+
     pub fn create(
         any_server_tag: u64,
         globalObject: *JSC.JSGlobalObject,
@@ -6099,19 +6110,22 @@ pub const NodeHTTPResponse = struct {
     }
 
     pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-        _ = globalObject; // autofix
         log("onResolve", .{});
         const arguments = callframe.arguments(2).slice();
         const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
         this.promise.deinit();
         defer this.deref();
+        this.maybeStopReadingBody(globalObject.bunVM());
+
         if (!this.finished and !this.aborted) {
             this.clearJSValues();
             this.response.clearAborted();
             this.response.clearOnData();
             this.response.clearOnWritable();
             this.response.clearTimeout();
-            this.response.endWithoutBody(this.response.state().isHttpConnectionClose());
+            if (this.response.state().isResponsePending()) {
+                this.response.endWithoutBody(this.response.state().isHttpConnectionClose());
+            }
             this.onRequestComplete();
         }
 
@@ -6123,6 +6137,8 @@ pub const NodeHTTPResponse = struct {
         const err = arguments[0];
         const this: *NodeHTTPResponse = arguments[1].as(NodeHTTPResponse).?;
         this.promise.deinit();
+        this.maybeStopReadingBody(globalObject.bunVM());
+
         defer this.deref();
 
         if (!this.finished and !this.aborted) {
@@ -7711,12 +7727,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                     if (node_http_response) |node_response| {
                         if (!node_response.finished and node_response.response.state().isResponsePending()) {
-                            node_response.clearJSValues();
-                            node_response.response.clearAborted();
-                            node_response.response.clearOnData();
-                            node_response.response.clearTimeout();
-                            node_response.response.clearOnWritable();
-                            node_response.finished = true;
                             if (node_response.response.state().isHttpStatusCalled()) {
                                 node_response.response.writeStatus("500 Internal Server Error");
                                 node_response.response.endWithoutBody(true);
@@ -7724,6 +7734,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                 node_response.response.endStream(true);
                             }
                         }
+                        node_response.onRequestComplete();
                     }
                 },
                 .success => {},
@@ -7733,6 +7744,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (node_http_response) |node_response| {
                 if (!node_response.finished and node_response.response.state().isResponsePending()) {
                     node_response.setOnAbortedHandler();
+                }
+                // If we ended the response without attaching an ondata handler, we discard the body read stream
+                else if (http_result != .pending) {
+                    node_response.maybeStopReadingBody(vm);
                 }
             }
         }

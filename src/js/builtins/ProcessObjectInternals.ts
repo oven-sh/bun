@@ -62,8 +62,8 @@ export function getStdioWriteStream(fd) {
 
 export function getStdinStream(fd) {
   const tty = require("node:tty");
-  if (!tty.isatty(fd)) {
-    const fs = require("node:fs");
+  const fs = require("node:fs");
+  if (!tty.isatty(fd) && fs.fstatSync(fd).isFile()) {
     return new fs.ReadStream(null, { fd: fd, autoClose: false });
   }
 

@@ -7,6 +7,8 @@
 // presented by util.inspect().
 
 const util = require("util");
+const buffer = require("buffer");
+buffer.INSPECT_MAX_BYTES = 50;
 
 test("Buffer.prototype.inspect() for non-empty buffer", () => {
   const buf = Buffer.from("fhqwhgads");

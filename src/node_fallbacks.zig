@@ -17,11 +17,9 @@ comptime {
 pub const FallbackModule = struct {
     path: Fs.Path,
     package_json: *const PackageJSON,
-    // If `Environment.codegen_embed` is true, this is the source code of the module.
-    // Otherwise, this is a path to the source code.
-    comptime source: string = "",
+    code: string,
 
-    pub inline fn init(comptime name: string) FallbackModule {
+    pub fn init(comptime name: string) FallbackModule {
         @setEvalBranchQuota(99999);
         const version = "0.0.0-polyfill";
         const code_path = "node-fallbacks/" ++ name ++ ".js";
@@ -37,15 +35,8 @@ pub const FallbackModule = struct {
                 .source = logger.Source.initPathString(import_path ++ name ++ "/package.json", ""),
                 .side_effects = .false,
             },
-            .source = if (Environment.codegen_embed) @embedFile(code_path) else code_path,
+            .code = @embedFile(code_path),
         };
-    }
-
-    pub inline fn sourceJS(this: *const FallbackModule) string {
-        if (Environment.codegen_embed)
-            return this.source
-        else
-            return bun.runtimeEmbedFile(.codegen, this.source);
     }
 };
 
@@ -76,14 +67,14 @@ pub const Map = bun.ComptimeStringMap(FallbackModule, .{
 });
 
 pub fn contentsFromPath(path: string) ?string {
-    if (bun.Environment.allow_assert)
+    if (Environment.allow_assert)
         bun.assert(bun.strings.hasPrefixComptime(path, import_path));
 
     var module_name = path[import_path.len..];
     module_name = module_name[0 .. std.mem.indexOfScalar(u8, module_name, '/') orelse module_name.len];
 
     if (Map.get(module_name)) |mod| {
-        return mod.sourceJS();
+        return mod.code;
     }
 
     return null;

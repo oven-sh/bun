@@ -223,7 +223,7 @@ fn langListToSelectors(allocator: Allocator, langs: []const []const u8) []Select
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
 pub fn getPrefix(selectors: *const SelectorList) css.VendorPrefix {
     var prefix = css.VendorPrefix.empty();
-    for (selectors.v.items) |*selector| {
+    for (selectors.v.slice()) |*selector| {
         for (selector.components.items) |*component_| {
             const component: *const Component = component_;
             const p = switch (component.*) {
@@ -1154,14 +1154,14 @@ pub const serialize = struct {
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
-            if (ctx.selectors.v.items.len == 1 and
-                (first or (!hasTypeSelector(&ctx.selectors.v.items[0]) and
-                isSimple(&ctx.selectors.v.items[0]))))
+            if (ctx.selectors.v.len() == 1 and
+                (first or (!hasTypeSelector(ctx.selectors.v.at(0)) and
+                isSimple(ctx.selectors.v.at(0)))))
             {
-                try serializeSelector(&ctx.selectors.v.items[0], W, dest, ctx.parent, false);
+                try serializeSelector(ctx.selectors.v.at(0), W, dest, ctx.parent, false);
             } else {
                 try dest.writeStr(":is(");
-                try serializeSelectorList(ctx.selectors.v.items, W, dest, ctx.parent, false);
+                try serializeSelectorList(ctx.selectors.v.slice(), W, dest, ctx.parent, false);
                 try dest.writeChar(')');
             }
         } else {

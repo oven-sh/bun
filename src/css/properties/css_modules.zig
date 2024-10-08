@@ -46,7 +46,7 @@ pub const Composes = struct {
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         var first = true;
-        for (this.names.items) |name| {
+        for (this.names.slice()) |name| {
             if (first) {
                 first = false;
             } else {

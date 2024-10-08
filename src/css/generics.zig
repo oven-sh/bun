@@ -123,7 +123,11 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
         return lhs.* == rhs.*;
     }
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
-        return eqlList(result.child, lhs, rhs);
+        return switch (result.list) {
+            .array_list => eqlList(result.child, lhs, rhs),
+            .baby_list => @compileError("zack do this plz"),
+            .small_list => lhs.eql(rhs),
+        };
     }
     return switch (T) {
         f32 => lhs.* == rhs.*,
@@ -167,6 +171,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
             .baby_list => @panic("Not implemented."),
+            .small_list => this.deepClone(allocator),
         };
     }
     // Strings in the CSS parser are always arena allocated

@@ -283,6 +283,7 @@ pub fn isSimpleEqlType(comptime T: type) bool {
 pub const ListContainerType = enum {
     array_list,
     baby_list,
+    small_list,
 };
 pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContainerType, child: type } {
     const tyinfo = @typeInfo(T);
@@ -299,6 +300,16 @@ pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContaine
             std.mem.eql(u8, tyinfo.Struct.fields[1].name, "len") and
             std.mem.eql(u8, tyinfo.Struct.fields[2].name, "cap"))
             return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.Struct.fields[0].type) };
+
+        // Looks like SmallList
+        if (tyinfo.Struct.fields.len == 2 and
+            std.mem.eql(u8, tyinfo.Struct.fields[0].name, "capacity") and
+            std.mem.eql(u8, tyinfo.Struct.fields[1].name, "data")) return .{
+            .list = .small_list,
+            .child = std.meta.Child(
+                @typeInfo(tyinfo.Struct.fields[1].type).Union.fields[0].type,
+            ),
+        };
     }
 
     return null;

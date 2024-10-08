@@ -13,6 +13,7 @@ pub const PrintErr = css.PrintErr;
 
 const Result = css.Result;
 const PrintResult = css.PrintResult;
+const SmallList = css.SmallList;
 const ArrayList = std.ArrayListUnmanaged;
 
 const impl = css.selector.impl;
@@ -1388,31 +1389,31 @@ pub fn GenericSelectorList(comptime Impl: type) type {
     const SelectorT = GenericSelector(Impl);
     return struct {
         // PERF: make this equivalent to SmallVec<[Selector; 1]>
-        v: ArrayList(SelectorT) = .{},
+        v: css.SmallList(SelectorT, 1) = .{},
 
         const This = @This();
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) This {
-            return .{ .v = css.deepClone(SelectorT, allocator, &this.v) };
+            return .{ .v = this.v.deepClone(allocator) };
         }
 
         pub fn eql(lhs: *const This, rhs: *const This) bool {
-            return css.generic.eqlList(SelectorT, &lhs.v, &rhs.v);
+            return lhs.eql(rhs);
         }
 
         pub fn anyHasPseudoElement(this: *const This) bool {
-            for (this.v.items) |*sel| {
+            for (this.v.slice()) |*sel| {
                 if (sel.hasPseudoElement()) return true;
             }
             return false;
         }
 
         pub fn specifitiesAllEqual(this: *const This) bool {
-            if (this.v.items.len == 0) return true;
-            if (this.v.items.len == 1) return true;
+            if (this.v.len() == 0) return true;
+            if (this.v.len() == 1) return true;
 
-            const value = this.v.items[0].specifity();
-            for (this.v.items[1..]) |*sel| {
+            const value = this.v.at(0).specifity();
+            for (this.v.slice()[1..]) |*sel| {
                 if (sel.specifity() != value) return false;
             }
             return true;
@@ -1461,7 +1462,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         ) Result(This) {
             const original_state = state.*;
             // TODO: Think about deinitialization in error cases
-            var values = ArrayList(SelectorT){};
+            var values = SmallList(SelectorT, 1){};
 
             while (true) {
                 const Closure = struct {
@@ -1490,7 +1491,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                 const was_ok = selector.isOk();
                 switch (selector) {
                     .result => |sel| {
-                        values.append(input.allocator(), sel) catch bun.outOfMemory();
+                        values.append(input.allocator(), sel);
                     },
                     .err => |e| {
                         switch (recovery) {
@@ -1521,7 +1522,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         ) Result(This) {
             const original_state = state.*;
             // TODO: Think about deinitialization in error cases
-            var values = ArrayList(SelectorT){};
+            var values = SmallList(SelectorT, 1){};
 
             while (true) {
                 const Closure = struct {
@@ -1550,7 +1551,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                 const was_ok = selector.isOk();
                 switch (selector) {
                     .result => |sel| {
-                        values.append(input.allocator(), sel) catch bun.outOfMemory();
+                        values.append(input.allocator(), sel);
                     },
                     .err => |e| {
                         switch (recovery) {
@@ -1573,7 +1574,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
 
         pub fn fromSelector(allocator: Allocator, selector: GenericSelector(Impl)) This {
             var result = This{};
-            result.v.append(allocator, selector) catch unreachable;
+            result.v.append(allocator, selector);
             return result;
         }
     };
@@ -3149,7 +3150,7 @@ pub fn parse_nth_pseudo_class(
     return .{ .result = .{
         .nth_of = NthOfSelectorData(Impl){
             .data = nth_data,
-            .selectors = selectors.v.items,
+            .selectors = selectors.v.toOwnedSlice(input.allocator()),
         },
     } };
 }
@@ -3184,7 +3185,7 @@ pub fn parse_is_or_where(
         state.after_nesting = true;
     }
 
-    const selector_slice = inner.v.items;
+    const selector_slice = inner.v.toOwnedSlice(input.allocator());
 
     const result = result: {
         const args = brk: {
@@ -3225,7 +3226,7 @@ pub fn parse_has(
     if (child_state.after_nesting) {
         state.after_nesting = true;
     }
-    return .{ .result = .{ .has = inner.v.items } };
+    return .{ .result = .{ .has = inner.v.toOwnedSlice(input.allocator()) } };
 }
 
 /// Level 3: Parse **one** simple_selector.  (Though we might insert a second
@@ -3249,7 +3250,7 @@ pub fn parse_negation(
         state.after_nesting = true;
     }
 
-    return .{ .result = .{ .negation = list.v.items } };
+    return .{ .result = .{ .negation = list.v.toOwnedSlice(input.allocator()) } };
 }
 
 pub fn OptionalQName(comptime Impl: type) type {

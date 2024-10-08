@@ -8441,7 +8441,7 @@ pub const LinkerContext = struct {
             if (item.layer) |l| {
                 if (l.v) |layer| {
                     if (ast.rules.v.items.len == 0) {
-                        if (layer.v.items.len == 0) {
+                        if (layer.v.isEmpty()) {
                             // Omit an empty "@layer {}" entirely
                             continue;
                         } else {

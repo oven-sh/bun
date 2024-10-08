@@ -198,8 +198,8 @@ pub const PropertyHandlerContext = struct {
         sty: *const css.StyleRule(T),
         dest: *ArrayList(css.CssRule(T)),
     ) void {
-        const selectors = sty.selectors.deepClone(this.allocator);
-        for (selectors.v.items) |*selector| {
+        var selectors = sty.selectors.deepClone(this.allocator);
+        for (selectors.v.slice_mut()) |*selector| {
             selector.append(this.allocator, css.Component{
                 .non_ts_pseudo_class = css.PseudoClass{
                     .dir = .{ .direction = @field(css.selector.parser.Direction, dir) },

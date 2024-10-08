@@ -242,7 +242,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                         // If some of the selectors in this rule are not compatible with the targets,
                         // we need to either wrap in :is() or split them into multiple rules.
-                        const incompatible: css.SmallList(css.selector.parser.Selector, 1) = if (sty.selectors.v.items.len > 1 and
+                        const incompatible: css.SmallList(css.selector.parser.Selector, 1) = if (sty.selectors.v.len() > 1 and
                             context.targets.shouldCompileSelectors() and
                             !sty.isCompatible(context.targets.*))
                         incompatible: {
@@ -251,9 +251,9 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             // In addition, :is() takes the highest specificity of its arguments, so if the selectors
                             // have different weights, we need to split them into separate rules as well.
                             if (context.targets.isCompatible(css.compat.Feature.is_selector) and !sty.selectors.anyHasPseudoElement() and sty.selectors.specifitiesAllEqual()) {
-                                const component = Component{ .is = sty.selectors.v.items };
+                                const component = Component{ .is = sty.selectors.v.toOwnedSlice(context.allocator) };
                                 var list = css.SmallList(css.selector.parser.Selector, 1){};
-                                list.append(context.allocator, Selector.fromComponent(context.allocator, component)) catch bun.outOfMemory();
+                                list.append(context.allocator, Selector.fromComponent(context.allocator, component));
                                 sty.selectors = SelectorList{
                                     .v = list,
                                 };
@@ -262,16 +262,16 @@ pub fn CssRuleList(comptime AtRule: type) type {
                                 // Otherwise, partition the selectors and keep the compatible ones in this rule.
                                 // We will generate additional rules for incompatible selectors later.
                                 var incompatible = css.SmallList(Selector, 1){};
-                                var i: usize = 0;
-                                while (i < sty.selectors.v.items.len) {
-                                    if (css.selector.isCompatible(sty.selectors.v.items[i .. i + 1], context.targets.*)) {
+                                var i: u32 = 0;
+                                while (i < sty.selectors.v.len()) {
+                                    if (css.selector.isCompatible(sty.selectors.v.slice()[i .. i + 1], context.targets.*)) {
                                         i += 1;
                                     } else {
                                         // Move the selector to the incompatible list.
                                         incompatible.append(
                                             context.allocator,
                                             sty.selectors.v.orderedRemove(i),
-                                        ) catch bun.outOfMemory();
+                                        );
                                     }
                                 }
                                 break :incompatible incompatible;
@@ -342,7 +342,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         // the main rule and the nested rules.
                         const nested_rule: ?StyleRule = if (sty.rules.v.items.len > 0 and
                             // can happen if there are no compatible rules, above.
-                            sty.selectors.v.items.len > 0 and
+                            sty.selectors.v.len() > 0 and
                             (logical.items.len > 0 or supps.items.len > 0 or incompatible_rules.items.len > 0))
                         brk: {
                             var rulesss: CssRuleList(AtRule) = .{};
@@ -611,7 +611,7 @@ fn mergeStyleRules(
         // equivalent minus prefixes, add the prefix to the last rule.
         if (!sty.vendor_prefix.isEmpty() and
             !last_style_rule.vendor_prefix.isEmpty() and
-            css.selector.isEquivalent(sty.selectors.v.items, last_style_rule.selectors.v.items))
+            css.selector.isEquivalent(sty.selectors.v.slice(), last_style_rule.selectors.v.slice()))
         {
             // If the new rule is unprefixed, replace the prefixes of the last rule.
             // Otherwise, add the new prefix.
@@ -627,8 +627,8 @@ fn mergeStyleRules(
         if (sty.isCompatible(context.targets.*) and last_style_rule.isCompatible(context.targets.*)) {
             last_style_rule.selectors.v.appendSlice(
                 context.allocator,
-                sty.selectors.v.items,
-            ) catch bun.outOfMemory();
+                sty.selectors.v.slice(),
+            );
             sty.selectors.v.clearRetainingCapacity();
             if (sty.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and context.targets.shouldCompileSelectors()) {
                 last_style_rule.vendor_prefix = sty.vendor_prefix;

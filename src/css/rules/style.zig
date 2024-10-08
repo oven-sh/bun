@@ -34,7 +34,7 @@ pub fn StyleRule(comptime R: type) type {
 
         /// Returns whether the rule is empty.
         pub fn isEmpty(this: *const This) bool {
-            return this.selectors.v.items.len == 0 or (this.declarations.isEmpty() and this.rules.v.items.len == 0);
+            return this.selectors.v.isEmpty() or (this.declarations.isEmpty() and this.rules.v.items.len == 0);
         }
 
         /// Returns a hash of this rule for use when deduplicating.
@@ -63,12 +63,12 @@ pub fn StyleRule(comptime R: type) type {
             if (this.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and
                 context.targets.shouldCompileSelectors())
             {
-                this.vendor_prefix = css.selector.downlevelSelectors(context.allocator, this.selectors.v.items, context.targets.*);
+                this.vendor_prefix = css.selector.downlevelSelectors(context.allocator, this.selectors.v.slice_mut(), context.targets.*);
             }
         }
 
         pub fn isCompatible(this: *const This, targets: css.targets.Targets) bool {
-            return css.selector.isCompatible(this.selectors.v.items, targets);
+            return css.selector.isCompatible(this.selectors.v.slice(), targets);
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -112,7 +112,7 @@ pub fn StyleRule(comptime R: type) type {
                 //   #[cfg(feature = "sourcemap")]
                 //   dest.add_mapping(self.loc);
 
-                try css.selector.serialize.serializeSelectorList(this.selectors.v.items, W, dest, dest.context(), false);
+                try css.selector.serialize.serializeSelectorList(this.selectors.v.slice(), W, dest, dest.context(), false);
                 try dest.whitespace();
                 try dest.writeChar('{');
                 dest.indent();
@@ -196,7 +196,7 @@ pub fn StyleRule(comptime R: type) type {
         pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
             var unused = false;
             if (context.unused_symbols.count() > 0) {
-                if (css.selector.isUnused(this.selectors.v.items, context.unused_symbols, parent_is_unused)) {
+                if (css.selector.isUnused(this.selectors.v.slice(), context.unused_symbols, parent_is_unused)) {
                     if (this.rules.v.items.len == 0) {
                         return true;
                     }

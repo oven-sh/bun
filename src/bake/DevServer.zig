@@ -91,7 +91,12 @@ pub const Route = struct {
     pattern: [:0]const u8,
     entry_point: []const u8,
 
-    state: State = .unqueued,
+    server_state: State = .unqueued,
+    /// Generated lazily when the client JS is requested (HTTP GET /_bun/client/*.js),
+    /// which is only needed when a hard-reload is performed.
+    ///
+    /// Freed when a client module updates.
+    client_bundle: ?[]const u8 = null,
     /// Contain the list of serialized failures. Hashmap allows for
     /// efficient lookup and removal of failing files.
     bundler_failure_logs: std.ArrayHashMapUnmanaged(
@@ -100,12 +105,18 @@ pub const Route = struct {
         SerializedFailure.ArrayHashContext,
         false,
     ) = .{},
-    module_name_string: ?bun.String = null,
+    /// When state == .evaluation_failure, this is popualted with that error.
+    evaluate_failure: ?SerializedFailure = null,
+
+    /// Cached to avoid re-creating the string every request
+    module_name_string: JSC.Strong = .{},
 
     /// Assigned in DevServer.init
     dev: *DevServer = undefined,
     client_bundled_url: []u8 = undefined,
 
+    /// A union is not used so that `bundler_failure_logs` can re-use memory, as
+    /// the state frequently changes.
     const State = enum {
         /// In development mode, routes are lazily built. This state implies a
         /// build of this route has never been run. It is possible to bundle the
@@ -116,17 +127,24 @@ pub const Route = struct {
         bundler_failure,
         /// Loading the module at runtime had a failure.
         evaluation_failure,
+        /// Calling the request function may error, but that error will not be
+        /// at fault of bundling.
         loaded,
+    };
+
+    const ClientState = enum {
+        /// If `server` is `.unqueued`, then the client files do not exist.
+        ///
+        /// If `server` is `.loaded`, client files exist in `IncrementalGraph`
+        /// but have not been concatenated into the bundle for the browser.
+        stale,
+        /// .client_bundle is OK to send
+        ready,
     };
 
     pub fn clientPublicPath(route: *const Route) []const u8 {
         return route.client_bundled_url[0 .. route.client_bundled_url.len - "/client.js".len];
     }
-};
-
-const Bundle = struct {
-    /// Backed by default_allocator.
-    client_bundle: []const u8,
 };
 
 /// DevServer is stored on the heap, storing it's allocator.
@@ -399,43 +417,43 @@ fn onServerRequestInit(route: *Route, req: *Request, resp: *Response) void {
     }
 }
 
-fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
-    if (route.bundle == .stale) {
-        var fail: Failure = undefined;
-        route.bundle = bundle: {
-            const success = dev.performBundleAndWaitInner(route, &fail) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                fail.printToConsole(route);
-                break :bundle .{ .fail = fail };
-            };
-            break :bundle .{ .ready = success };
-        };
-    }
-    return switch (route.bundle) {
-        .stale => unreachable,
-        .fail => |fail| .{ .fail = fail },
-        .ready => |ready| .{ .ready = ready },
-    };
-}
+// fn getRouteBundle(dev: *DevServer, route: *Route) BundleState.NonStale {
+//     if (route.bundle == .stale) {
+//         var fail: Failure = undefined;
+//         route.bundle = bundle: {
+//             const success = dev.performBundleAndWaitInner(route, &fail) catch |err| {
+//                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
+//                 fail.printToConsole(route);
+//                 break :bundle .{ .fail = fail };
+//             };
+//             break :bundle .{ .ready = success };
+//         };
+//     }
+//     return switch (route.bundle) {
+//         .stale => unreachable,
+//         .fail => |fail| .{ .fail = fail },
+//         .ready => |ready| .{ .ready = ready },
+//     };
+// }
 
-fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bundle {
-    return dev.theRealBundlingFunction(
-        &.{
-            // TODO: only enqueue these two if they don't exist
-            // tbh it would be easier just to pre-bundle the framework.
-            BakeEntryPoint.init(dev.framework.entry_server.?, .server),
-            BakeEntryPoint.init(dev.framework.entry_client.?, .client),
-            // The route!
-            BakeEntryPoint.route(
-                route.entry_point,
-                Route.Index.init(@intCast(bun.indexOfPointerInSlice(Route, dev.routes, route))),
-            ),
-        },
-        route,
-        .initial_response,
-        fail,
-    );
-}
+// fn performBundleAndWaitInner(dev: *DevServer, route: *Route, fail: *Failure) !Bundle {
+//     return dev.theRealBundlingFunction(
+//         &.{
+//             // TODO: only enqueue these two if they don't exist
+//             // tbh it would be easier just to pre-bundle the framework.
+//             BakeEntryPoint.init(dev.framework.entry_server.?, .server),
+//             BakeEntryPoint.init(dev.framework.entry_client.?, .client),
+//             // The route!
+//             BakeEntryPoint.route(
+//                 route.entry_point,
+//                 Route.Index.init(@intCast(bun.indexOfPointerInSlice(Route, dev.routes, route))),
+//             ),
+//         },
+//         route,
+//         .initial_response,
+//         fail,
+//     );
+// }
 
 /// Error handling is done either by writing to `fail` with a specific failure,
 /// or by appending to `dev.log`. The caller, `getRouteBundle`, will handle the
@@ -445,18 +463,17 @@ fn theRealBundlingFunction(
     files: []const BakeEntryPoint,
     dependant_route: ?*Route,
     comptime client_chunk_kind: ChunkKind,
-    fail: *Failure,
-) !Bundle {
+) !void {
     // Ensure something is written to `fail` if something goes wrong
-    fail.* = .{ .zig_error = error.FileNotFound };
-    errdefer |err| if (fail.* == .zig_error) {
-        if (dev.log.hasAny()) {
-            // todo: clone to recycled
-            fail.* = Failure.fromLog(&dev.log);
-        } else {
-            fail.* = .{ .zig_error = err };
-        }
-    };
+    // fail.* = .{ .zig_error = error.FileNotFound };
+    // errdefer |err| if (fail.* == .zig_error) {
+    //     if (dev.log.hasAny()) {
+    //         // todo: clone to recycled
+    //         fail.* = Failure.fromLog(&dev.log);
+    //     } else {
+    //         fail.* = .{ .zig_error = err };
+    //     }
+    // };
 
     defer dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
 
@@ -590,7 +607,8 @@ fn theRealBundlingFunction(
     if (server_bundle.len > 0) {
         if (is_first_server_chunk) {
             const server_code = c.BakeLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
-                fail.* = Failure.fromJSServerLoad(dev.server_global.js().takeException(err), dev.server_global.js());
+                _ = err; // autofix
+                // fail.* = Failure.fromJSServerLoad(dev.server_global.js().takeException(err), dev.server_global.js());
                 return error.ServerJSLoad;
             };
             dev.vm.waitForPromise(.{ .internal = server_code.promise });
@@ -598,7 +616,8 @@ fn theRealBundlingFunction(
             switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
                 .pending => unreachable, // promise is settled
                 .rejected => |err| {
-                    fail.* = Failure.fromJSServerLoad(err, dev.server_global.js());
+                    _ = err; // autofix
+                    // fail.* = Failure.fromJSServerLoad(err, dev.server_global.js());
                     return error.ServerJSLoad;
                 },
                 .fulfilled => |v| bun.assert(v == .undefined),
@@ -1664,14 +1683,35 @@ pub fn IncrementalGraph(side: bake.Side) type {
 }
 
 const IncrementalResult = struct {
+    /// When tracing a file's dependencies, this is populated with hit routes.
+    ///
+    /// Used for both detecting what routes change, and also which routes are
+    /// affected by an error.
     routes_affected: ArrayListUnmanaged(Route.Index),
+    /// The list of failures which have to be traced to their route.
+    ///
+    /// Populated during `receiveChunk`
+    failures_added: ArrayListUnmanaged(SerializedFailure.Owner.BundlerOnly),
+    /// This list acts sort of like a free list. The contents of these slices
+    /// are valid; they have to be so the affected routes can be cleared
+    /// of the failures and potentially be marked valid. Additionally, at the
+    /// end of an incremental update, the slices are freed.
+    ///
+    /// Populated during `receiveChunk`
+    failures_removed: ArrayListUnmanaged(SerializedFailure),
 
     const empty: IncrementalResult = .{
         .routes_affected = .{},
+        .failures_removed = .{},
+        .failures_added = .{},
     };
 
     fn reset(result: *IncrementalResult) void {
         result.routes_affected.clearRetainingCapacity();
+        for (result.failures_removed.items) |item|
+            item.deinit();
+        result.failures_removed.clearRetainingCapacity();
+        result.failures_added.clearRetainingCapacity();
     }
 };
 
@@ -1926,16 +1966,22 @@ const ChunkKind = enum {
 };
 
 /// Errors sent to the HMR client in the browser are serialized. The same format
-/// is used for thrown JavaScript exceptions as well as bundler errors. Serialized
-/// failures contain a handle on what file or route they came from, which allows
-/// the bundler to dismiss or update stale failures via index.
+/// is used for thrown JavaScript exceptions as well as bundler errors.
+/// Serialized failures contain a handle on what file or route they came from,
+/// which allows the bundler to dismiss or update stale failures via index as
+/// opposed to re-sending a new payload. This also means only changed files are
+/// rebuilt, instead of all of the failed files.
 ///
-/// The hot-reloading API is expected to sort the final list of errors.
-//
+/// The HMR client in the browser is expected to sort the final list of errors
+/// for deterministic output; there is code in DevServer that uses `swapRemove`.
 pub const SerializedFailure = struct {
     /// Serialized data is always owned by default_allocator
     /// The first 32 bits of this slice contain the owner
     data: []u8,
+
+    pub fn deinit(f: *SerializedFailure) void {
+        bun.default_allocator.free(f.data);
+    }
 
     /// The metaphorical owner of an incremental file error. The packed variant
     /// is given to the HMR runtime as an opaque handle.
@@ -1974,8 +2020,8 @@ pub const SerializedFailure = struct {
         };
     };
 
-    pub fn deinit(f: *SerializedFailure) void {
-        bun.default_allocator.free(f.data);
+    fn getOwner(failure: SerializedFailure) Owner {
+        return std.mem.bytesAsValue(Owner.Packed, failure.data[0..4], .little).decode();
     }
 
     const ErrorKind = enum(u8) {
@@ -2011,7 +2057,7 @@ pub const SerializedFailure = struct {
             unreachable; // enough space
         const w = payload.writer();
 
-        w.writeStructEndian(owner, .little);
+        w.writeStructEndian(owner.encode(), .little);
 
         w.writeInt(u32, @intCast(messages.len), .little);
 

@@ -1517,7 +1517,7 @@ pub const FFI = struct {
         };
 
         pub fn ffiHeader() string {
-            return if (Environment.embed_code)
+            return if (Environment.codegen_embed)
                 @embedFile("./FFI.h")
             else
                 bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");

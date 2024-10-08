@@ -275,6 +275,12 @@ describe("napi", () => {
       checkSameOutput("eval_wrapper", ["shouldNotExist"]);
     });
   });
+
+  describe("napi_get_named_property", () => {
+    it("handles edge cases", () => {
+      checkSameOutput("test_get_property", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

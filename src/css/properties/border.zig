@@ -93,6 +93,9 @@ pub const BorderSideWidth = union(enum) {
     thick,
     /// An explicit width.
     length: Length,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
 };
 
 /// A value for the [border-color](https://drafts.csswg.org/css-backgrounds/#propdef-border-color) shorthand property.

@@ -141,7 +141,7 @@ pub const ImageSetOption = struct {
     ) PrintErr!void {
         if (this.image.* == .url and !is_prefixed) {
             const _dep: ?UrlDependency = if (dest.dependencies != null)
-                UrlDependency.new(dest.allocator, &this.image.url.url, dest.filename())
+                UrlDependency.new(dest.allocator, &this.image.url.url, dest.filename(), try dest.getImportRecords())
             else
                 null;
 

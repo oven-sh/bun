@@ -877,7 +877,7 @@ pub const DOMEffect = struct {
         JSMapFields,
         JSSetFields,
         JSWeakMapFields,
-        JSWeakSetFields,
+        WeakSetFields,
         JSInternalFields,
         InternalState,
         CatchLocals,

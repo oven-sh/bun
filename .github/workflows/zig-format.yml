@@ -25,9 +25,6 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Zig Format
-        env:
-          ENABLE_CCACHE: OFF
-          LLVM_VERSION: "ignore"
         run: |
           bun run zig-format:diff
       - name: Commit

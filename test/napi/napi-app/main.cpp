@@ -646,6 +646,46 @@ napi_value eval_wrapper(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+// perform_get(object, key)
+napi_value perform_get(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value obj = info[0];
+  napi_value key = info[1];
+  napi_status status;
+  napi_value value;
+
+  // if key is a string, try napi_get_named_property
+  napi_valuetype type;
+  assert(napi_typeof(env, key, &type) == napi_ok);
+  if (type == napi_string) {
+    char buf[1024];
+    assert(napi_get_value_string_utf8(env, key, buf, 1024, nullptr) == napi_ok);
+    status = napi_get_named_property(env, obj, buf, &value);
+    printf("get_named_property status is pending_exception or generic_failure "
+           "= %d\n",
+           status == napi_pending_exception || status == napi_generic_failure);
+    if (status == napi_ok) {
+      assert(value != nullptr);
+      assert(napi_typeof(env, value, &type) == napi_ok);
+      printf("value type = %d\n", type);
+    } else {
+      return ok(env);
+    }
+  }
+
+  status = napi_get_property(env, obj, key, &value);
+  printf("get_property status is pending_exception or generic_failure  = %d\n",
+         status == napi_pending_exception || status == napi_generic_failure);
+  if (status == napi_ok) {
+    assert(value != nullptr);
+    assert(napi_typeof(env, value, &type) == napi_ok);
+    printf("value type = %d\n", type);
+    return value;
+  } else {
+    return ok(env);
+  }
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -699,6 +739,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("call_and_get_exception",
               Napi::Function::New(env, call_and_get_exception));
   exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
+  exports.Set("perform_get", Napi::Function::New(env, perform_get));
 
   return exports;
 }

@@ -97,10 +97,13 @@ pub const BuildCommand = struct {
         this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
+        this_bundler.options.banner = ctx.bundler_options.banner;
+        this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
+
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.options.output_format = ctx.bundler_options.output_format;
 
-        if (ctx.bundler_options.output_format == .internal_kit_dev) {
+        if (ctx.bundler_options.output_format == .internal_bake_dev) {
             this_bundler.options.tree_shaking = false;
         }
 
@@ -237,8 +240,8 @@ pub const BuildCommand = struct {
                 null,
             );
 
-            try bun.kit.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);
-            try bun.kit.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
+            try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);
+            try bun.bake.addImportMetaDefines(allocator, client_bundler.options.define, .development, .client);
 
             this_bundler.resolver.opts = this_bundler.options;
             client_bundler.resolver.opts = client_bundler.options;

@@ -1212,15 +1212,38 @@ const timeoutTimerSymbol = Symbol("timeoutTimer");
 const fakeSocketSymbol = Symbol("fakeSocket");
 function OutgoingMessage(options) {
   Stream.$call(this, options);
-  this.headersSent = false;
+
   this.sendDate = true;
   this[finishedSymbol] = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kAbortController] = null;
+
+  this.writable = true;
+  this.destroyed = false;
+  this._hasBody = true;
+  this._trailer = "";
+  this._contentLength = null;
+  this._closed = false;
+  this._header = null;
+  this.finished = false;
+  this._headerSent = false;
 }
 const OutgoingMessagePrototype = {
   constructor: OutgoingMessage,
   __proto__: Stream.prototype,
+
+  // These are fields which we do not use in our implementation, but are observable in Node.js.
+  _keepAliveTimeout: 0,
+  _defaultKeepAlive: true,
+  shouldKeepAlive: true,
+  _onPendingData: function nop() {},
+  outputSize: 0,
+  outputData: [],
+  strictContentLength: false,
+  _removedTE: false,
+  _removedContLen: false,
+  _removedConnection: false,
+  usesChunkedEncodingByDefault: true,
 
   appendHeader(name, value) {
     var headers = (this[headersSymbol] ??= new Headers());
@@ -1309,14 +1332,6 @@ const OutgoingMessagePrototype = {
 
   set socket(value) {
     this[fakeSocketSymbol] = value;
-  },
-
-  get usesChunkedEncodingByDefault() {
-    return true;
-  },
-
-  set usesChunkedEncodingByDefault(value) {
-    // noop
   },
 
   get chunkedEncoding() {
@@ -1459,10 +1474,6 @@ function ServerResponse(req, options) {
   this.statusCode = 200;
   this.statusMessage = undefined;
   this._sent100 = false;
-  this._defaultKeepAlive = false;
-  this._removedConnection = false;
-  this._removedContLen = false;
-  this._hasBody = true;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[finishedSymbol] = false;
 
@@ -1489,6 +1500,10 @@ function callWriteHeadIfObservable(self, headerState) {
 const ServerResponsePrototype = {
   constructor: ServerResponse,
   __proto__: OutgoingMessage.prototype,
+
+  // Unused but observable fields:
+  _removedConnection: false,
+  _removedContLen: false,
 
   get headersSent() {
     return this[headerStateSymbol] === NodeHTTPHeaderState.sent;

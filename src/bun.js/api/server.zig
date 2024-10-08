@@ -5808,6 +5808,7 @@ pub const NodeHTTPResponse = struct {
     aborted: bool = false,
     finished: bool = false,
     ended: bool = false,
+    is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
     promise: JSC.Strong = .{},
@@ -5824,13 +5825,46 @@ pub const NodeHTTPResponse = struct {
     };
 
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
-        if (this.finished and this.ended and this.body_read_ref.has and this.body_read_state == .pending and !this.onDataCallback.has()) {
+        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
+            const had_ref = this.body_read_ref.has;
             this.response.clearOnData();
             this.body_read_ref.unref(vm);
             this.body_read_state = .done;
-            const server = this.server;
+
+            if (had_ref) {
+                this.markRequestAsDoneIfNecessary();
+            }
+
             this.deref();
-            server.onRequestComplete();
+        }
+    }
+
+    pub fn shouldRequestBePending(this: *const NodeHTTPResponse) bool {
+        if (this.aborted) {
+            return false;
+        }
+
+        if (this.ended) {
+            return this.body_read_state == .pending;
+        }
+
+        return true;
+    }
+
+    fn markRequestAsDone(this: *NodeHTTPResponse) void {
+        log("markRequestAsDone()", .{});
+        this.is_request_pending = false;
+
+        this.clearJSValues();
+        this.clearOnDataCallback();
+        const server = this.server;
+        this.deref();
+        server.onRequestComplete();
+    }
+
+    fn markRequestAsDoneIfNecessary(this: *NodeHTTPResponse) void {
+        if (this.is_request_pending and !this.shouldRequestBePending()) {
+            this.markRequestAsDone();
         }
     }
 
@@ -6048,12 +6082,12 @@ pub const NodeHTTPResponse = struct {
             return;
         }
 
-        defer if (event == .abort) this.onRequestComplete();
         if (event == .abort) {
             this.aborted = true;
         }
 
         this.ref();
+        defer if (event == .abort) this.markRequestAsDoneIfNecessary();
         defer this.deref();
 
         const js_this: JSValue = brk: {
@@ -6101,11 +6135,8 @@ pub const NodeHTTPResponse = struct {
         this.finished = true;
         this.js_ref.unref(JSC.VirtualMachine.get());
 
-        const server = this.server;
         this.clearJSValues();
-        if (this.body_read_state != .pending) {
-            server.onRequestComplete();
-        }
+        this.markRequestAsDoneIfNecessary();
         this.deref();
     }
 
@@ -6194,14 +6225,13 @@ pub const NodeHTTPResponse = struct {
         }
 
         const was_finished = this.finished;
+        _ = was_finished; // autofix
 
         defer {
             if (last) {
                 if (this.body_read_ref.has) {
                     this.body_read_ref.unref(JSC.VirtualMachine.get());
-                    if (this.finished and !was_finished) {
-                        this.server.onRequestComplete();
-                    }
+                    this.markRequestAsDoneIfNecessary();
                     this.deref();
                 }
 
@@ -6385,10 +6415,13 @@ pub const NodeHTTPResponse = struct {
     fn clearOnDataCallback(this: *NodeHTTPResponse) void {
         if (this.body_read_state != .none) {
             this.onDataCallback.deinit();
-            this.response.clearOnData();
+            if (!this.aborted)
+                this.response.clearOnData();
             if (this.body_read_state != .done) {
                 this.body_read_state = .done;
-                this.deref();
+                if (this.body_read_ref.has) {
+                    this.deref();
+                }
             }
         }
     }
@@ -6496,6 +6529,11 @@ pub const NodeHTTPResponse = struct {
     }
 
     pub fn deinit(this: *NodeHTTPResponse) void {
+        bun.debugAssert(!this.body_read_ref.has);
+        bun.debugAssert(!this.js_ref.has);
+        bun.debugAssert(!this.is_request_pending);
+        bun.debugAssert(this.aborted or this.finished);
+
         this.js_ref.unref(JSC.VirtualMachine.get());
         this.body_read_ref.unref(JSC.VirtualMachine.get());
         this.onAbortedCallback.deinit();
@@ -6503,7 +6541,6 @@ pub const NodeHTTPResponse = struct {
         this.onWritableCallback.deinit();
         this.strong_this.deinit();
         this.promise.deinit();
-
         this.destroy();
     }
 

@@ -11,8 +11,8 @@ const enum NodeHTTPResponseAbortEvent {
   timeout = 2,
 }
 const enum NodeHTTPIncomingRequestType {
-  request,
-  response,
+  FetchRequest,
+  FetchResponse,
   NodeHTTPResponse,
 }
 const enum NodeHTTPHeaderState {
@@ -25,6 +25,37 @@ const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
 const kEmitState = Symbol("emitState");
 
+const abortedSymbol = Symbol("aborted");
+const bodyStreamSymbol = Symbol("bodyStream");
+const closedSymbol = Symbol("closed");
+const controllerSymbol = Symbol("controller");
+const deferredSymbol = Symbol("deferred");
+const eofInProgress = Symbol("eofInProgress");
+const fakeSocketSymbol = Symbol("fakeSocket");
+const finishedSymbol = "finished";
+const firstWriteSymbol = Symbol("firstWrite");
+const headersSymbol = Symbol("headers");
+const isTlsSymbol = Symbol("is_tls");
+const kClearTimeout = Symbol("kClearTimeout");
+const kDeprecatedReplySymbol = Symbol("deprecatedReply");
+const kfakeSocket = Symbol("kfakeSocket");
+const kHandle = Symbol("handle");
+const kRealListen = Symbol("kRealListen");
+const noBodySymbol = Symbol("noBody");
+const optionsSymbol = Symbol("options");
+const reqSymbol = Symbol("req");
+const timeoutTimerSymbol = Symbol("timeoutTimer");
+const tlsSymbol = Symbol("tls");
+const typeSymbol = Symbol("type");
+const webRequestOrResponse = Symbol("FetchAPI");
+const statusCodeSymbol = Symbol("statusCode");
+const kEndCalled = Symbol.for("kEndCalled");
+const kAbortController = Symbol.for("kAbortController");
+const statusMessageSymbol = Symbol("statusMessage");
+const kInternalSocketData = Symbol.for("::bunternal::");
+const serverSymbol = Symbol.for("::bunternal::");
+
+const kEmptyObject = Object.freeze(Object.create(null));
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");
@@ -118,12 +149,6 @@ const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
 
-const kEmptyObject = Object.freeze(Object.create(null));
-const kEndCalled = Symbol.for("kEndCalled");
-const kAbortController = Symbol.for("kAbortController");
-const kClearTimeout = Symbol("kClearTimeout");
-const kRealListen = Symbol("kRealListen");
-
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -134,11 +159,6 @@ const ObjectAssign = Object.assign;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
-
-var kInternalRequest = Symbol("kInternalRequest");
-const kInternalSocketData = Symbol.for("::bunternal::");
-const serverSymbol = Symbol.for("::bunternal::");
-const kfakeSocket = Symbol("kfakeSocket");
 
 const kEmptyBuffer = Buffer.alloc(0);
 
@@ -372,10 +392,6 @@ function emitListeningNextTick(self, hostname, port) {
     self.emit("listening", null, hostname, port);
   }
 }
-
-var tlsSymbol = Symbol("tls");
-var isTlsSymbol = Symbol("is_tls");
-var optionsSymbol = Symbol("options");
 
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -678,15 +694,7 @@ Server.prototype = {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
 
-          const http_req = new RequestClass(
-            kInternalRequest,
-            url,
-            method,
-            headersObject,
-            headersArray,
-            handle,
-            hasBody,
-          );
+          const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody);
           const http_res = new ResponseClass(http_req, {
             [kHandle]: handle,
           });
@@ -764,7 +772,9 @@ Server.prototype = {
 
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
-          const http_req = new RequestClass(req);
+          const http_req = new RequestClass(req, {
+            [typeSymbol]: NodeHTTPIncomingRequestType.FetchRequest,
+          });
           assignEventCallback(req, onRequestEvent.bind(http_req));
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
@@ -893,13 +903,6 @@ function requestHasNoBody(method, req) {
 // This lets us skip some URL parsing
 var isNextIncomingMessageHTTPS = false;
 
-var typeSymbol = Symbol("type");
-var reqSymbol = Symbol("req");
-var bodyStreamSymbol = Symbol("bodyStream");
-var noBodySymbol = Symbol("noBody");
-var abortedSymbol = Symbol("aborted");
-const isInternalRequestSymbol = Symbol("isInternalRequest");
-
 function emitEOFIncomingMessageOuter(self) {
   self.push(null);
   self.complete = true;
@@ -909,8 +912,6 @@ function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
-
-const eofInProgress = Symbol("eofInProgress");
 
 function IncomingMessage(req, defaultIncomingOpts) {
   this[abortedSymbol] = false;
@@ -930,28 +931,26 @@ function IncomingMessage(req, defaultIncomingOpts) {
   }
 
   // (url, method, headers, rawHeaders, handle, hasBody)
-  if (req === kInternalRequest) {
+  if (req === kHandle) {
     this[typeSymbol] = NodeHTTPIncomingRequestType.NodeHTTPResponse;
     this.url = arguments[1];
     this.method = arguments[2];
     this.headers = arguments[3];
     this.rawHeaders = arguments[4];
-    this[kInternalRequest] = arguments[5];
+    this[kHandle] = arguments[5];
     this[noBodySymbol] = !arguments[6];
     Readable.$call(this);
   } else {
-    this.method = null;
     this[noBodySymbol] = false;
     Readable.$call(this);
-    var { [typeSymbol]: type = NodeHTTPIncomingRequestType.request, [kInternalRequest]: nodeReq } =
+    var { [typeSymbol]: type = NodeHTTPIncomingRequestType.FetchRequest, [reqSymbol]: nodeReq } =
       defaultIncomingOpts || {};
 
-    this[reqSymbol] = req;
+    this[webRequestOrResponse] = req;
     this[typeSymbol] = type;
-
     this[bodyStreamSymbol] = undefined;
-
-    this.req = nodeReq;
+    this[statusMessageSymbol] = (req as Response)?.statusText || null;
+    this[statusCodeSymbol] = (req as Response)?.status || 200;
 
     if (!assignHeaders(this, req)) {
       this[fakeSocketSymbol] = req;
@@ -960,7 +959,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
     }
 
     this[noBodySymbol] =
-      type === NodeHTTPIncomingRequestType.request // TODO: Add logic for checking for body on response
+      type === NodeHTTPIncomingRequestType.FetchRequest // TODO: Add logic for checking for body on response
         ? requestHasNoBody(this.method, this)
         : false;
   }
@@ -975,8 +974,8 @@ const IncomingMessagePrototype = {
     // TODO: streaming
     const type = this[typeSymbol];
 
-    if (type === NodeHTTPIncomingRequestType.response) {
-      if (!webRequestOrResponseHasBodyValue(this[reqSymbol])) {
+    if (type === NodeHTTPIncomingRequestType.FetchResponse) {
+      if (!webRequestOrResponseHasBodyValue(this[webRequestOrResponse])) {
         this.complete = true;
         this.push(null);
       }
@@ -1010,7 +1009,7 @@ const IncomingMessagePrototype = {
     if (this[noBodySymbol]) {
       emitEOFIncomingMessage(this);
       return;
-    } else if ((internalRequest = this[kInternalRequest])) {
+    } else if ((internalRequest = this[kHandle])) {
       internalRequest.ondata = (chunk, isLast, aborted: NodeHTTPResponseAbortEvent) => {
         $debug("ondata", chunk, isLast, aborted);
         if (aborted === NodeHTTPResponseAbortEvent.abort) {
@@ -1032,7 +1031,7 @@ const IncomingMessagePrototype = {
       return true;
     } else if (this[bodyStreamSymbol] == null) {
       // If it's all available right now, we skip going through ReadableStream.
-      let completeBody = getCompleteWebRequestOrResponseBodyValueAsArrayBuffer(this[reqSymbol]);
+      let completeBody = getCompleteWebRequestOrResponseBodyValueAsArrayBuffer(this[webRequestOrResponse]);
       if (completeBody) {
         $assert(completeBody instanceof ArrayBuffer, "completeBody is not an ArrayBuffer");
         $assert(completeBody.byteLength > 0, "completeBody should not be empty");
@@ -1045,7 +1044,7 @@ const IncomingMessagePrototype = {
         return;
       }
 
-      const reader = this[reqSymbol].body?.getReader?.() as ReadableStreamDefaultReader;
+      const reader = this[webRequestOrResponse].body?.getReader?.() as ReadableStreamDefaultReader;
       if (!reader) {
         emitEOFIncomingMessage(this);
         return;
@@ -1073,10 +1072,11 @@ const IncomingMessagePrototype = {
       err = undefined;
     }
 
-    var internalRequest = this[kInternalRequest];
-    if (internalRequest) {
-      this[kInternalRequest] = undefined;
-      internalRequest.ondata = undefined;
+    var nodeHTTPResponse = this[kHandle];
+    if (nodeHTTPResponse) {
+      this[kHandle] = undefined;
+      nodeHTTPResponse.ondata = undefined;
+      nodeHTTPResponse.abort();
     } else {
       const stream = this[bodyStreamSymbol];
       this[bodyStreamSymbol] = undefined;
@@ -1106,17 +1106,17 @@ const IncomingMessagePrototype = {
     return (this[fakeSocketSymbol] ??= new FakeSocket());
   },
   get statusCode() {
-    return this[reqSymbol].status;
+    return this[statusCodeSymbol];
   },
   set statusCode(value) {
     if (!(value in STATUS_CODES)) return;
-    this[reqSymbol].status = value;
+    this[statusCodeSymbol] = value;
   },
   get statusMessage() {
-    return STATUS_CODES[this[reqSymbol].status];
+    return this[statusMessageSymbol];
   },
   set statusMessage(value) {
-    // noop
+    this[statusMessageSymbol] = value;
   },
   get httpVersion() {
     return "1.1";
@@ -1150,7 +1150,7 @@ const IncomingMessagePrototype = {
   },
   setTimeout(msecs, callback) {
     this.take;
-    const req = this[reqSymbol] || this[kInternalRequest];
+    const req = this[kHandle] || this[webRequestOrResponse];
 
     if (req) {
       setRequestTimeout(req, Math.ceil(msecs / 1000));
@@ -1206,11 +1206,11 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
   }
 }
 
-const headersSymbol = Symbol("headers");
-const finishedSymbol = Symbol("finished");
-const timeoutTimerSymbol = Symbol("timeoutTimer");
-const fakeSocketSymbol = Symbol("fakeSocket");
 function OutgoingMessage(options) {
+  if (!new.target) {
+    return new OutgoingMessage(options);
+  }
+
   Stream.$call(this, options);
 
   this.sendDate = true;
@@ -1225,7 +1225,6 @@ function OutgoingMessage(options) {
   this._contentLength = null;
   this._closed = false;
   this._header = null;
-  this.finished = false;
   this._headerSent = false;
 }
 const OutgoingMessagePrototype = {
@@ -1258,39 +1257,51 @@ const OutgoingMessagePrototype = {
   getHeader(name) {
     return getHeader(this[headersSymbol], name);
   },
-  getHeaders() {
-    if (!this[headersSymbol]) return kEmptyObject;
-    return this[headersSymbol].toJSON();
-  },
+
   getHeaderNames() {
     var headers = this[headersSymbol];
     if (!headers) return [];
     return Array.from(headers.keys());
   },
-  removeHeader(name) {
-    if (!this[headersSymbol]) return;
-    this[headersSymbol].delete(name);
+
+  getHeaders() {
+    const headers = this[headersSymbol];
+    if (!headers) return kEmptyObject;
+    return headers.toJSON();
   },
+
+  removeHeader(name) {
+    if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+      throw $ERR_HTTP_HEADERS_SENT("Cannot remove header after headers have been sent.");
+    }
+    const headers = this[headersSymbol];
+    if (!headers) return;
+    headers.delete(name);
+  },
+
   setHeader(name, value) {
-    this[headersSymbol] = this[headersSymbol] ?? new Headers();
-    var headers = this[headersSymbol];
-    headers.set(name, value);
+    const headers = (this[headersSymbol] ??= new Headers());
+    setHeader(headers, name, value);
     return this;
   },
+
   hasHeader(name) {
-    if (!this[headersSymbol]) return false;
-    return this[headersSymbol].has(name);
-  },
-  addTrailers(headers) {
-    throw new Error("not implemented");
+    const headers = this[headersSymbol];
+    if (!headers) return false;
+    return headers.has(name);
   },
 
   get headers() {
-    if (!this[headersSymbol]) return kEmptyObject;
-    return this[headersSymbol].toJSON();
+    const headers = this[headersSymbol];
+    if (!headers) return kEmptyObject;
+    return headers.toJSON();
   },
   set headers(value) {
     this[headersSymbol] = new Headers(value);
+  },
+
+  addTrailers(headers) {
+    throw new Error("not implemented");
   },
 
   setTimeout(msecs, callback) {
@@ -1375,6 +1386,15 @@ const OutgoingMessagePrototype = {
   end(chunk, encoding, callback) {
     return this;
   },
+  destroy(err?: Error) {
+    if (this.destroyed) return this;
+    const handle = this[kHandle];
+    this.destroyed = true;
+    if (handle) {
+      handle.abort();
+    }
+    return this;
+  },
 } satisfies typeof import("node:http").OutgoingMessage.prototype;
 OutgoingMessage.prototype = OutgoingMessagePrototype;
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
@@ -1451,14 +1471,12 @@ function onServerResponseClose() {
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
-const controllerSymbol = Symbol("controller");
-const firstWriteSymbol = Symbol("firstWrite");
-const deferredSymbol = Symbol("deferred");
-const kDeprecatedReplySymbol = Symbol("deprecatedReply");
-const kHandle = Symbol("handle");
-const closedSymbol = Symbol("closed");
 
 function ServerResponse(req, options) {
+  if (!new.target) {
+    return new ServerResponse(req, options);
+  }
+
   if ((this[kDeprecatedReplySymbol] = options?.[kDeprecatedReplySymbol])) {
     this[controllerSymbol] = undefined;
     this[firstWriteSymbol] = undefined;
@@ -1471,11 +1489,8 @@ function ServerResponse(req, options) {
 
   this.req = req;
   this.sendDate = true;
-  this.statusCode = 200;
-  this.statusMessage = undefined;
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
-  this[finishedSymbol] = false;
 
   // this is matching node's behaviour
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
@@ -1674,46 +1689,6 @@ const ServerResponsePrototype = {
     }
 
     return true;
-  },
-
-  appendHeader(name, value) {
-    const headers = (this[headersSymbol] ??= new Headers());
-    headers.append(name, value);
-
-    return this;
-  },
-
-  getHeader(name) {
-    return getHeader(this[headersSymbol], name);
-  },
-
-  getHeaders() {
-    const headers = this[headersSymbol];
-    if (!headers) return kEmptyObject;
-    return headers.toJSON();
-  },
-
-  getHeaderNames() {
-    const headers = this[headersSymbol];
-    if (!headers) return [];
-    return Array.from(headers.keys());
-  },
-
-  removeHeader(name) {
-    if (!this[headersSymbol]) return;
-    this[headersSymbol].delete(name);
-  },
-
-  setHeader(name, value) {
-    this[headersSymbol] = this[headersSymbol] ?? new Headers();
-    const headers = this[headersSymbol];
-    setHeader(headers, name, value);
-    return this;
-  },
-
-  hasHeader(name) {
-    if (!this[headersSymbol]) return false;
-    return this[headersSymbol].has(name);
   },
 
   _finish() {
@@ -2201,8 +2176,8 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
           const prevIsHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = response.url.startsWith("https:");
           var res = (this.#res = new IncomingMessage(response, {
-            [typeSymbol]: NodeHTTPIncomingRequestType.response,
-            [kInternalRequest]: this,
+            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+            [reqSymbol]: this,
           }));
           isNextIncomingMessageHTTPS = prevIsHTTPS;
           res.req = this;

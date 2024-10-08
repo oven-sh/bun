@@ -152,8 +152,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
 function generatePropertyImplToCssHelper(property_defs: Record<string, PropertyDef>): string {
   return Object.entries(property_defs)
     .map(([name, meta]) => {
-      const capture = meta.valid_prefixes === undefined ? "" : "|pre|";
-      const prefix = meta.valid_prefixes === undefined ? "VendorPrefix{ .none = true }" : "pre";
+      const capture = meta.valid_prefixes === undefined ? "" : "|*x|";
+      const prefix = meta.valid_prefixes === undefined ? "VendorPrefix{ .none = true }" : 'x.@"1"';
       return `.${escapeIdent(name)} => ${capture} .{"${name}", ${prefix}},`;
     })
     .join("\n");
@@ -246,7 +246,7 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
     };
   }
 
-  pub fn addPrefix(this: *const PropertyId, pre: VendorPrefix) void {
+  pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
     return switch (this.*) {
       ${Object.entries(property_defs)
         .map(([prop_name, def]) => {
@@ -540,22 +540,22 @@ generateCode({
   //   ty: "border.LineStyle",
   //   logical_group: { ty: "border_style", category: "logical" },
   // },
-  // "border-top-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
-  // "border-bottom-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
-  // "border-left-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
-  // "border-right-width": {
-  //   ty: "BorderSideWidth",
-  //   logical_group: { ty: "border_width", category: "physical" },
-  // },
+  "border-top-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
+  "border-bottom-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
+  "border-left-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
+  "border-right-width": {
+    ty: "BorderSideWidth",
+    logical_group: { ty: "border_width", category: "physical" },
+  },
   // "border-block-start-width": {
   //   ty: "BorderSideWidth",
   //   logical_group: { ty: "border_width", category: "logical" },
@@ -717,9 +717,9 @@ generateCode({
   //   ty: "Outline",
   //   shorthand: true,
   // },
-  // "outline-color": {
-  //   ty: "CssColor",
-  // },
+  "outline-color": {
+    ty: "CssColor",
+  },
   // "outline-style": {
   //   ty: "OutlineStyle",
   // },
@@ -1253,10 +1253,10 @@ generateCode({
   //   ty: "TextDecorationStyle",
   //   valid_prefixes: ["webkit", "moz"],
   // },
-  // "text-decoration-color": {
-  //   ty: "CssColor",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
+  "text-decoration-color": {
+    ty: "CssColor",
+    valid_prefixes: ["webkit", "moz"],
+  },
   // "text-decoration-thickness": {
   //   ty: "TextDecorationThickness",
   // },
@@ -1273,10 +1273,10 @@ generateCode({
   //   ty: "TextEmphasisStyle",
   //   valid_prefixes: ["webkit"],
   // },
-  // "text-emphasis-color": {
-  //   ty: "CssColor",
-  //   valid_prefixes: ["webkit"],
-  // },
+  "text-emphasis-color": {
+    ty: "CssColor",
+    valid_prefixes: ["webkit"],
+  },
   // "text-emphasis": {
   //   ty: "TextEmphasis",
   //   valid_prefixes: ["webkit"],
@@ -1626,35 +1626,35 @@ const box_shadow = css.css_properties.box_shadow;
 const size = css.css_properties.size;
 const overflow = css.css_properties.overflow;
 
-// const BorderSideWidth = border.BorderSideWith;
-// const Size2D = css_values.size.Size2D;
-// const BorderRadius = border_radius.BorderRadius;
-// const Rect = css_values.rect.Rect;
-// const LengthOrNumber = css_values.length.LengthOrNumber;
-// const BorderImageRepeat = border_image.BorderImageRepeat;
-// const BorderImageSideWidth = border_image.BorderImageSideWidth;
-// const BorderImageSlice = border_image.BorderImageSlice;
-// const BorderImage = border_image.BorderImage;
-// const BorderColor = border.BorderColor;
-// const BorderStyle = border.BorderStyle;
-// const BorderWidth = border.BorderWidth;
-// const BorderBlockColor = border.BorderBlockColor;
-// const BorderBlockStyle = border.BorderBlockStyle;
-// const BorderBlockWidth = border.BorderBlockWidth;
-// const BorderInlineColor = border.BorderInlineColor;
-// const BorderInlineStyle = border.BorderInlineStyle;
-// const BorderInlineWidth = border.BorderInlineWidth;
-// const Border = border.Border;
-// const BorderTop = border.BorderTop;
-// const BorderRight = border.BorderRight;
-// const BorderLeft = border.BorderLeft;
-// const BorderBottom = border.BorderBottom;
-// const BorderBlockStart = border.BorderBlockStart;
-// const BorderBlockEnd = border.BorderBlockEnd;
-// const BorderInlineStart = border.BorderInlineStart;
-// const BorderInlineEnd = border.BorderInlineEnd;
-// const BorderBlock = border.BorderBlock;
-// const BorderInline = border.BorderInline;
+const BorderSideWidth = border.BorderSideWidth;
+const Size2D = css_values.size.Size2D;
+const BorderRadius = border_radius.BorderRadius;
+const Rect = css_values.rect.Rect;
+const LengthOrNumber = css_values.length.LengthOrNumber;
+const BorderImageRepeat = border_image.BorderImageRepeat;
+const BorderImageSideWidth = border_image.BorderImageSideWidth;
+const BorderImageSlice = border_image.BorderImageSlice;
+const BorderImage = border_image.BorderImage;
+const BorderColor = border.BorderColor;
+const BorderStyle = border.BorderStyle;
+const BorderWidth = border.BorderWidth;
+const BorderBlockColor = border.BorderBlockColor;
+const BorderBlockStyle = border.BorderBlockStyle;
+const BorderBlockWidth = border.BorderBlockWidth;
+const BorderInlineColor = border.BorderInlineColor;
+const BorderInlineStyle = border.BorderInlineStyle;
+const BorderInlineWidth = border.BorderInlineWidth;
+const Border = border.Border;
+const BorderTop = border.BorderTop;
+const BorderRight = border.BorderRight;
+const BorderLeft = border.BorderLeft;
+const BorderBottom = border.BorderBottom;
+const BorderBlockStart = border.BorderBlockStart;
+const BorderBlockEnd = border.BorderBlockEnd;
+const BorderInlineStart = border.BorderInlineStart;
+const BorderInlineEnd = border.BorderInlineEnd;
+const BorderBlock = border.BorderBlock;
+const BorderInline = border.BorderInline;
 // const Outline = outline.Outline;
 // const OutlineStyle = outline.OutlineStyle;
 // const FlexDirection = flex.FlexDirection;

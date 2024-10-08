@@ -384,7 +384,7 @@ pub const Target = enum {
     bun_macro,
     node,
 
-    /// This is used by kit.Framework.ServerComponents.separate_ssr_graph
+    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
     kit_server_components_ssr,
 
     pub const Map = bun.ComptimeStringMap(Target, .{
@@ -441,7 +441,7 @@ pub const Target = enum {
         };
     }
 
-    pub fn kitRenderer(target: Target) bun.kit.Renderer {
+    pub fn bakeRenderer(target: Target) bun.bake.Renderer {
         return switch (target) {
             .browser => .client,
             .kit_server_components_ssr => .ssr,
@@ -580,8 +580,8 @@ pub const Format = enum {
     /// CommonJS
     cjs,
 
-    /// Kit's uses a special module format for Hot-module-reloading. It includes a
-    /// runtime payload, sourced from src/kit/hmr-runtime.ts.
+    /// Bake uses a special module format for Hot-module-reloading. It includes a
+    /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
     ///
     /// ((input_graph, config) => {
     ///   ... runtime code ...
@@ -589,7 +589,7 @@ pub const Format = enum {
     ///   "module1.ts"(module) { ... },
     ///   "module2.ts"(module) { ... },
     /// }, { metadata });
-    internal_kit_dev,
+    internal_bake_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
         return this == .esm;
@@ -599,13 +599,17 @@ pub const Format = enum {
         return this == .esm;
     }
 
+    pub inline fn isAlwaysStrictMode(this: Format) bool {
+        return this == .esm;
+    }
+
     pub const Map = bun.ComptimeStringMap(Format, .{
         .{ "esm", .esm },
         .{ "cjs", .cjs },
         .{ "iife", .iife },
 
         // TODO: Disable this outside of debug builds
-        .{ "internal_kit_dev", .internal_kit_dev },
+        .{ "internal_bake_dev", .internal_bake_dev },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
@@ -652,10 +656,22 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader) bool {
+    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
+        if (experimental_css) {
+            return switch (this) {
+                .file,
+                .css,
+                .napi,
+                .sqlite,
+                .sqlite_embedded,
+                // TODO: loader for reading bytes and creating module or instance
+                .wasm,
+                => true,
+                else => false,
+            };
+        }
         return switch (this) {
             .file,
-            // TODO: CSS
             .css,
             .napi,
             .sqlite,
@@ -1429,7 +1445,6 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     production: bool = false,
-    serve: bool = false,
 
     // only used by bundle_v2
     output_format: Format = .esm,
@@ -1482,17 +1497,22 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
+    experimental_css: bool,
+
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
+    bytecode: bool = false,
 
     code_coverage: bool = false,
     debugger: bool = false,
 
     compile: bool = false,
 
-    /// Set when Kit is bundling. This changes the interface of the bundler
-    /// from emitting OutputFile to emitting the lower level []CompileResult
-    kit: ?*bun.kit.DevServer = null,
+    /// Set when bake.DevServer is bundling. This changes the interface of the
+    /// bundler from emitting OutputFile to only emitting []CompileResult
+    dev_server: ?*bun.bake.DevServer = null,
+    /// Set when Bake is bundling. Affects module resolution.
+    framework: ?*bun.bake.Framework = null,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
@@ -1659,6 +1679,7 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
+            .experimental_css = false,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
@@ -1825,6 +1846,7 @@ pub const OutputFile = struct {
     hash: u64 = 0,
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
+    bytecode_index: u32 = std.math.maxInt(u32),
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
     dest_path: []const u8 = "",
 
@@ -1929,6 +1951,7 @@ pub const OutputFile = struct {
         input_loader: Loader,
         hash: ?u64 = null,
         source_map_index: ?u32 = null,
+        bytecode_index: ?u32 = null,
         output_path: string,
         size: ?usize = null,
         input_path: []const u8 = "",
@@ -1963,6 +1986,7 @@ pub const OutputFile = struct {
             .size_without_sourcemap = options.display_size,
             .hash = options.hash orelse 0,
             .output_kind = options.output_kind,
+            .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
             .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
             .is_executable = options.is_executable,
             .value = switch (options.data) {
@@ -2515,7 +2539,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{(hashFormatter(hash))});
+                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
             }
@@ -2523,34 +2547,6 @@ pub const PathTemplate = struct {
         }
 
         try writeReplacingSlashesOnWindows(writer, remain);
-    }
-
-    pub fn hashFormatter(int: u64) std.fmt.Formatter(hashFormatterImpl) {
-        return .{ .data = int };
-    }
-
-    fn hashFormatterImpl(int: u64, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        // esbuild has an 8 character truncation of a base32 encoded bytes. this
-        // is not exactly that, but it will appear as such. the character list
-        // chosen omits similar characters in the unlikely case someone is
-        // trying to memorize a hash.
-        //
-        // reminder: this cannot be base64 or any encoding which is case
-        // sensitive as these hashes are often used in file paths, in which
-        // Windows and some macOS systems treat as case-insensitive.
-        comptime assert(fmt.len == 0);
-        const in_bytes = std.mem.asBytes(&int);
-        const chars = "0123456789abcdefghjkmnpqrstvwxyz";
-        try writer.writeAll(&.{
-            chars[in_bytes[0] & 31],
-            chars[in_bytes[1] & 31],
-            chars[in_bytes[2] & 31],
-            chars[in_bytes[3] & 31],
-            chars[in_bytes[4] & 31],
-            chars[in_bytes[5] & 31],
-            chars[in_bytes[6] & 31],
-            chars[in_bytes[7] & 31],
-        });
     }
 
     pub const Placeholder = struct {

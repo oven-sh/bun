@@ -374,8 +374,10 @@ struct AsyncWorkData {
   int result;
   napi_deferred deferred;
   napi_async_work work;
+  bool do_throw;
 
-  AsyncWorkData() : result(0), deferred(nullptr), work(nullptr) {}
+  AsyncWorkData()
+      : result(0), deferred(nullptr), work(nullptr), do_throw(false) {}
 
   static void execute(napi_env env, void *data) {
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
@@ -386,21 +388,43 @@ struct AsyncWorkData {
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
     assert(status == napi_ok);
 
-    napi_value result;
-    char buf[64] = {0};
-    snprintf(buf, sizeof(buf), "the number is %d", async_work_data->result);
-    assert(napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result) ==
-           napi_ok);
-    assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
-           napi_ok);
+    if (async_work_data->do_throw) {
+      // still have to resolve/reject otherwise the process times out
+      // we should not see the resolution as our unhandled exception handler
+      // exits the process before that can happen
+      napi_value result;
+      assert(napi_get_undefined(env, &result) == napi_ok);
+      assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
+             napi_ok);
+
+      napi_value err;
+      napi_value msg;
+      assert(napi_create_string_utf8(env, "error from napi", NAPI_AUTO_LENGTH,
+                                     &msg) == napi_ok);
+      assert(napi_create_error(env, nullptr, msg, &err) == napi_ok);
+      assert(napi_throw(env, err) == napi_ok);
+    } else {
+      napi_value result;
+      char buf[64] = {0};
+      snprintf(buf, sizeof(buf), "the number is %d", async_work_data->result);
+      assert(napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result) ==
+             napi_ok);
+      assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
+             napi_ok);
+    }
+
     assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
     delete async_work_data;
   }
 };
 
+// create_promise(void *unused_run_gc_callback, bool do_throw): makes a promise
+// using napi_Async_work that either resolves or throws in the complete callback
 napi_value create_promise(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   auto *data = new AsyncWorkData();
+  // info[0] is a callback to run the GC
+  assert(napi_get_value_bool(env, info[1], &data->do_throw) == napi_ok);
 
   napi_value promise;
 
@@ -452,12 +476,18 @@ struct ThreadsafeFunctionData {
 
     // call our JS function with undefined for this and no arguments
     napi_value js_result;
-    assert(napi_call_function(env, recv, js_callback, 0, nullptr, &js_result) ==
-           napi_ok);
+    napi_status call_result =
+        napi_call_function(env, recv, js_callback, 0, nullptr, &js_result);
+    // assert(call_result == napi_ok || call_result == napi_pending_exception);
 
-    // resolve the promise with the return value of the JS function
-    assert(napi_resolve_deferred(env, tsfn_data->deferred, js_result) ==
-           napi_ok);
+    if (call_result == napi_ok) {
+      // only resolve if js_callback did not return an error
+      // resolve the promise with the return value of the JS function
+      napi_status defer_result =
+          napi_resolve_deferred(env, tsfn_data->deferred, js_result);
+      printf("%d\n", defer_result);
+      assert(defer_result == napi_ok);
+    }
 
     // clean up the threadsafe function
     assert(napi_release_threadsafe_function(tsfn_data->tsfn, napi_tsfn_abort) ==
@@ -555,11 +585,105 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+static const char *napi_valuetype_to_string(napi_valuetype type) {
+  switch (type) {
+  case napi_undefined:
+    return "undefined";
+  case napi_null:
+    return "null";
+  case napi_boolean:
+    return "boolean";
+  case napi_number:
+    return "number";
+  case napi_string:
+    return "string";
+  case napi_symbol:
+    return "symbol";
+  case napi_object:
+    return "object";
+  case napi_function:
+    return "function";
+  case napi_external:
+    return "external";
+  case napi_bigint:
+    return "bigint";
+  default:
+    return "unknown";
+  }
+}
+
+// calls a function (the sole argument) which must throw. catches and returns
+// the thrown error
+napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value fn = info[0];
+  napi_value undefined;
+  assert(napi_get_undefined(env, &undefined) == napi_ok);
+
+  (void)napi_call_function(env, undefined, fn, 0, nullptr, nullptr);
+
+  bool is_pending;
+  assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
+  assert(is_pending);
+
+  napi_value exception;
+  assert(napi_get_and_clear_last_exception(env, &exception) == napi_ok);
+
+  napi_valuetype type;
+  assert(napi_typeof(env, exception, &type) == napi_ok);
+  printf("typeof thrown exception = %s\n", napi_valuetype_to_string(type));
+
+  assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
+  assert(!is_pending);
+
+  return exception;
+}
+
 napi_value eval_wrapper(const Napi::CallbackInfo &info) {
   napi_value ret = nullptr;
   // info[0] is the GC callback
   (void)napi_run_script(info.Env(), info[1], &ret);
   return ret;
+}
+
+// perform_get(object, key)
+napi_value perform_get(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value obj = info[0];
+  napi_value key = info[1];
+  napi_status status;
+  napi_value value;
+
+  // if key is a string, try napi_get_named_property
+  napi_valuetype type;
+  assert(napi_typeof(env, key, &type) == napi_ok);
+  if (type == napi_string) {
+    char buf[1024];
+    assert(napi_get_value_string_utf8(env, key, buf, 1024, nullptr) == napi_ok);
+    status = napi_get_named_property(env, obj, buf, &value);
+    printf("get_named_property status is pending_exception or generic_failure "
+           "= %d\n",
+           status == napi_pending_exception || status == napi_generic_failure);
+    if (status == napi_ok) {
+      assert(value != nullptr);
+      assert(napi_typeof(env, value, &type) == napi_ok);
+      printf("value type = %d\n", type);
+    } else {
+      return ok(env);
+    }
+  }
+
+  status = napi_get_property(env, obj, key, &value);
+  printf("get_property status is pending_exception or generic_failure  = %d\n",
+         status == napi_pending_exception || status == napi_generic_failure);
+  if (status == napi_ok) {
+    assert(value != nullptr);
+    assert(napi_typeof(env, value, &type) == napi_ok);
+    printf("value type = %d\n", type);
+    return value;
+  } else {
+    return ok(env);
+  }
 }
 
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
@@ -612,7 +736,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, create_ref_with_finalizer));
   exports.Set("was_finalize_called",
               Napi::Function::New(env, was_finalize_called));
+  exports.Set("call_and_get_exception",
+              Napi::Function::New(env, call_and_get_exception));
   exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
+  exports.Set("perform_get", Napi::Function::New(env, perform_get));
 
   return exports;
 }

@@ -12156,7 +12156,7 @@ pub fn ShellTask(
     /// Function that is called on the main thread, once the event loop
     /// processes that the task is done
     comptime runFromMainThread_: fn (*Ctx) void,
-    comptime debug: fn (comptime fmt: []const u8, args: anytype) void,
+    comptime debug: bun.Output.LogFunction,
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },

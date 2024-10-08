@@ -70,12 +70,35 @@ pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
     ast: js_ast.Ast,
-    already_bundled: bool = false,
+    already_bundled: AlreadyBundled = .none,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+    pub const AlreadyBundled = union(enum) {
+        none: void,
+        source_code: void,
+        source_code_cjs: void,
+        bytecode: []u8,
+        bytecode_cjs: []u8,
+
+        pub fn bytecodeSlice(this: AlreadyBundled) []u8 {
+            return switch (this) {
+                inline .bytecode, .bytecode_cjs => |slice| slice,
+                else => &.{},
+            };
+        }
+
+        pub fn isBytecode(this: AlreadyBundled) bool {
+            return this == .bytecode or this == .bytecode_cjs;
+        }
+
+        pub fn isCommonJS(this: AlreadyBundled) bool {
+            return this == .source_code_cjs or this == .bytecode_cjs;
+        }
+    };
 
     pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
         const import_record_ids = this.pending_imports.items(.import_record_id);
@@ -143,7 +166,7 @@ pub const PluginRunner = struct {
             bun.String.init(importer),
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.getOwn(global, "path") orelse return null;
+        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             log.addError(null, loc, "Expected \"path\" to be a string") catch unreachable;
@@ -176,7 +199,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.getOwn(global, "namespace")) |namespace_value| {
+            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
                     return null;
@@ -242,7 +265,7 @@ pub const PluginRunner = struct {
             importer,
             target,
         ) orelse return null;
-        const path_value = on_resolve_plugin.getOwn(global, "path") orelse return null;
+        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
             return JSC.ErrorableString.err(
@@ -272,7 +295,7 @@ pub const PluginRunner = struct {
         }
         var static_namespace = true;
         const user_namespace: bun.String = brk: {
-            if (on_resolve_plugin.getOwn(global, "namespace")) |namespace_value| {
+            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     return JSC.ErrorableString.err(
                         error.JSErrorObject,
@@ -378,7 +401,7 @@ pub const Bundler = struct {
     }
 
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
-        return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
+        return bundler.resolver.resolveWithFramework(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             // Relative entry points that were not resolved to a node_modules package are
             // interpreted as relative to the current working directory.
             if (!std.fs.path.isAbsolute(entry_point) and
@@ -911,11 +934,8 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                if (comptime bun.FeatureFlags.css) {
-                    const Arena = @import("../src/mimalloc_arena.zig").Arena;
-
-                    var arena = Arena.init() catch @panic("oopsie arena no good");
-                    const alloc = arena.allocator();
+                if (bundler.options.experimental_css) {
+                    const alloc = bundler.allocator;
 
                     const entry = bundler.resolver.caches.fs.readFileWithAllocator(
                         bundler.allocator,
@@ -930,11 +950,11 @@ pub const Bundler = struct {
                     };
                     const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                     _ = source; //
-                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log))) {
+                    switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| {
                             const result = v.toCss(alloc, bun.css.PrinterOptions{
                                 .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
-                            }) catch |e| {
+                            }, null) catch |e| {
                                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                                 return null;
                             };
@@ -1218,6 +1238,7 @@ pub const Bundler = struct {
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
         keep_json_and_toml_as_one_statement: bool = false,
+        allow_bytecode_cache: bool = false,
     };
 
     pub fn parse(
@@ -1399,9 +1420,26 @@ pub const Bundler = struct {
                         .loader = loader,
                         .input_fd = input_fd,
                     },
-                    .already_bundled => ParseResult{
+                    .already_bundled => |already_bundled| ParseResult{
                         .ast = undefined,
-                        .already_bundled = true,
+                        .already_bundled = switch (already_bundled) {
+                            .bun => .source_code,
+                            .bun_cjs => .source_code_cjs,
+                            .bytecode_cjs, .bytecode => brk: {
+                                const default_value: ParseResult.AlreadyBundled = if (already_bundled == .bytecode_cjs) .source_code_cjs else .source_code;
+                                if (this_parse.virtual_source == null and this_parse.allow_bytecode_cache) {
+                                    var path_buf2: bun.PathBuffer = undefined;
+                                    @memcpy(path_buf2[0..path.text.len], path.text);
+                                    path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
+                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd, path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator).asValue() orelse break :brk default_value;
+                                    if (bytecode.contents.len == 0) {
+                                        break :brk default_value;
+                                    }
+                                    break :brk if (already_bundled == .bytecode_cjs) .{ .bytecode_cjs = @constCast(bytecode.contents) } else .{ .bytecode = @constCast(bytecode.contents) };
+                                }
+                                break :brk default_value;
+                            },
+                        },
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
@@ -1414,9 +1452,9 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.ParseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.ParseJSON(&source, bundler.log, allocator, false) catch return null
+                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, bundler.log, allocator) catch return null
                 else

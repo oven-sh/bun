@@ -17,10 +17,6 @@
 #include <csignal>
 #include <limits>
 
-#ifndef OPENSSL_NO_ENGINE
-#include <openssl/engine.h>
-#endif
-
 #if !defined(_MSC_VER)
 #include <unistd.h>
 #endif
@@ -769,6 +765,10 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_FICLONE"_s)), jsNumber(2));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_COPYFILE_FICLONE_FORCE"_s)), jsNumber(4));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_FICLONE_FORCE"_s)), jsNumber(4));
+
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_WASM"_s)), jsNumber(1));
+
     return object;
 }
 
@@ -784,6 +784,8 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s)), jsNumber(SSL_OP_ALLOW_NO_DHE_KEX));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s)), jsNumber(SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION));
@@ -793,12 +795,18 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_CISCO_ANYCONNECT
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s)), jsNumber(SSL_OP_CISCO_ANYCONNECT));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_COOKIE_EXCHANGE
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s)), jsNumber(SSL_OP_COOKIE_EXCHANGE));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_CRYPTOPRO_TLSEXT_BUG
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s)), jsNumber(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s)), jsNumber(SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS));
@@ -811,6 +819,8 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s)), jsNumber(SSL_OP_NO_ENCRYPT_THEN_MAC));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_NO_QUERY_MTU
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_QUERY_MTU"_s)), jsNumber(SSL_OP_NO_QUERY_MTU));
@@ -844,45 +854,42 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef SSL_OP_PRIORITIZE_CHACHA
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s)), jsNumber(SSL_OP_PRIORITIZE_CHACHA));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s)), jsNumber(0));
 #endif
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_ROLLBACK_BUG"_s)), jsNumber(SSL_OP_TLS_ROLLBACK_BUG));
 #endif
-#ifndef OPENSSL_NO_ENGINE
-#ifdef ENGINE_METHOD_RSA
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s)), jsNumber(ENGINE_METHOD_RSA));
-#endif
-#ifdef ENGINE_METHOD_DSA
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s)), jsNumber(ENGINE_METHOD_DSA));
-#endif
-#ifdef ENGINE_METHOD_DH
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s)), jsNumber(ENGINE_METHOD_DH));
-#endif
-#ifdef ENGINE_METHOD_RAND
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s)), jsNumber(ENGINE_METHOD_RAND));
-#endif
-#ifdef ENGINE_METHOD_EC
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s)), jsNumber(ENGINE_METHOD_EC));
-#endif
-#ifdef ENGINE_METHOD_CIPHERS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s)), jsNumber(ENGINE_METHOD_CIPHERS));
-#endif
-#ifdef ENGINE_METHOD_DIGESTS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s)), jsNumber(ENGINE_METHOD_DIGESTS));
-#endif
-#ifdef ENGINE_METHOD_PKEY_METHS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s)), jsNumber(ENGINE_METHOD_PKEY_METHS));
-#endif
-#ifdef ENGINE_METHOD_PKEY_ASN1_METHS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s)), jsNumber(ENGINE_METHOD_PKEY_ASN1_METHS));
-#endif
-#ifdef ENGINE_METHOD_ALL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s)), jsNumber(ENGINE_METHOD_ALL));
-#endif
-#ifdef ENGINE_METHOD_NONE
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s)), jsNumber(ENGINE_METHOD_NONE));
-#endif
-#endif // !OPENSSL_NO_ENGINE
+    // OBSOLETE OPTIONS retained for compatibility
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MICROSOFT_SESS_ID_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_D5_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_BLOCK_PADDING_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SINGLE_ECDH_USE"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SINGLE_DH_USE"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_EPHEMERAL_RSA"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_SSLv2"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_1"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_2"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CA_DN_BUG"_s)), jsNumber(0));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s)), jsNumber(0));
+    // BoringSSL does not define engine constants in openssl/engine.h
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s)), jsNumber(0x0001));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s)), jsNumber(0x0002));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s)), jsNumber(0x0004));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s)), jsNumber(0x0008));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s)), jsNumber(0x0040));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s)), jsNumber(0x0080));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s)), jsNumber(0x0200));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s)), jsNumber(0x0400));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s)), jsNumber(0x0800));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s)), jsNumber(0xFFFF));
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s)), jsNumber(0x0000));
 #ifdef DH_CHECK_P_NOT_SAFE_PRIME
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DH_CHECK_P_NOT_SAFE_PRIME"_s)), jsNumber(DH_CHECK_P_NOT_SAFE_PRIME));
 #endif
@@ -958,18 +965,10 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
         jsString(vm, cipherList));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "defaultCipherList"_s)),
         jsString(vm, cipherList));
-#ifdef TLS1_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_VERSION"_s)), jsNumber(TLS1_VERSION));
-#endif
-#ifdef TLS1_1_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_1_VERSION"_s)), jsNumber(TLS1_1_VERSION));
-#endif
-#ifdef TLS1_2_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_2_VERSION"_s)), jsNumber(TLS1_2_VERSION));
-#endif
-#ifdef TLS1_3_VERSION
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_3_VERSION"_s)), jsNumber(TLS1_3_VERSION));
-#endif
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_COMPRESSED"_s)), jsNumber(POINT_CONVERSION_COMPRESSED));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_UNCOMPRESSED"_s)), jsNumber(POINT_CONVERSION_UNCOMPRESSED));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_HYBRID"_s)), jsNumber(POINT_CONVERSION_HYBRID));

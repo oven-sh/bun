@@ -395,9 +395,8 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
-    // This is set when doing `require('module')._resolveFilename = ...`
-    // a hack used by Next.js to inject their versions of webpack and react
-    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+    LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
+    LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
 
@@ -585,6 +584,8 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+
+    bool hasOverridenModuleResolveFilenameFunction = false;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

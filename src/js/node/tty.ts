@@ -4,6 +4,8 @@ const {
   getWindowSize: _getWindowSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
+const { validateInteger } = require("internal/validators");
+
 // primordials
 const NumberIsInteger = Number.isInteger;
 
@@ -320,12 +322,6 @@ Object.defineProperty(WriteStream, "prototype", {
   enumerable: true,
   configurable: true,
 });
-
-var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
-  if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value)) throw ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max) throw ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-};
 
 export default { ReadStream, WriteStream, isatty };
 

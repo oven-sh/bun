@@ -91,6 +91,8 @@ if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
 
+optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
+
 if(USE_VALGRIND AND NOT USE_BASELINE)
   message(WARNING "If valgrind is enabled, baseline must also be enabled")
   setx(USE_BASELINE ON)

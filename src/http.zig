@@ -2372,11 +2372,33 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, undefined, redirect_type, .{
-            .http_proxy = http_proxy,
-            .hostname = hostname,
-        });
+    pub fn initSync(
+        allocator: std.mem.Allocator,
+        method: Method,
+        url: URL,
+        headers: Headers.Entries,
+        headers_buf: string,
+        response_buffer: *MutableString,
+        request_body: []const u8,
+        http_proxy: ?URL,
+        hostname: ?[]u8,
+        redirect_type: FetchRedirect,
+    ) AsyncHTTP {
+        return @This().init(
+            allocator,
+            method,
+            url,
+            headers,
+            headers_buf,
+            response_buffer,
+            request_body,
+            undefined,
+            redirect_type,
+            .{
+                .http_proxy = http_proxy,
+                .hostname = hostname,
+            },
+        );
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -2456,7 +2478,7 @@ pub const AsyncHTTP = struct {
         this.channel.writeItem(result) catch unreachable;
     }
 
-    pub fn sendSync(this: *AsyncHTTP, comptime _: bool) anyerror!picohttp.Response {
+    pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
         HTTPThread.init();
 
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
@@ -2469,14 +2491,13 @@ pub const AsyncHTTP = struct {
         var batch = bun.ThreadPool.Batch{};
         this.schedule(bun.default_allocator, &batch);
         http_thread.schedule(batch);
-        while (true) {
-            const result: HTTPClientResult = ctx.channel.readItem() catch unreachable;
-            if (result.fail) |e| return e;
-            assert(result.metadata != null);
-            return result.metadata.?.response;
-        }
 
-        unreachable;
+        const result = ctx.channel.readItem() catch unreachable;
+        if (result.fail) |err| {
+            return err;
+        }
+        assert(result.metadata != null);
+        return result.metadata.?.response;
     }
 
     pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTTPClientResult) void {
@@ -2769,10 +2790,10 @@ pub const HTTPResponseMetadata = struct {
     response: picohttp.Response = .{},
     pub fn deinit(this: *HTTPResponseMetadata, allocator: std.mem.Allocator) void {
         if (this.owned_buf.len > 0) allocator.free(this.owned_buf);
-        if (this.response.headers.len > 0) allocator.free(this.response.headers);
+        if (this.response.headers.list.len > 0) allocator.free(this.response.headers.list);
         this.owned_buf = &.{};
         this.url = "";
-        this.response.headers = &.{};
+        this.response.headers = .{};
         this.response.status = "";
     }
 };
@@ -3183,11 +3204,11 @@ pub fn handleOnDataHeaders(
         return;
     };
 
-    if (this.state.content_encoding_i < response.headers.len and !this.state.flags.did_set_content_encoding) {
+    if (this.state.content_encoding_i < response.headers.list.len and !this.state.flags.did_set_content_encoding) {
         // if it compressed with this header, it is no longer because we will decompress it
-        const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers, .capacity = response.headers.len };
+        const mutable_headers = std.ArrayListUnmanaged(picohttp.Header){ .items = response.headers.list, .capacity = response.headers.list.len };
         this.state.flags.did_set_content_encoding = true;
-        response.headers = mutable_headers.items;
+        response.headers = .{ .list = mutable_headers.items };
         this.state.content_encoding_i = std.math.maxInt(@TypeOf(this.state.content_encoding_i));
         // we need to reset the pending response because we removed a header
         this.state.pending_response = response;
@@ -3369,7 +3390,7 @@ fn cloneMetadata(this: *HTTPClient) void {
         builder.count(this.url.href);
         builder.allocate(this.allocator) catch unreachable;
         // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        const headers_buf = this.allocator.alloc(picohttp.Header, response.headers.len) catch unreachable;
+        const headers_buf = this.allocator.alloc(picohttp.Header, response.headers.list.len) catch unreachable;
         const cloned_response = response.clone(headers_buf, builder);
 
         // we clean the temporary response since cloned_metadata is now the owner
@@ -3695,11 +3716,6 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
         &bytes_decoded,
     );
-    if (comptime Environment.allow_assert) {
-        if (pret == -1) {
-            @breakpoint();
-        }
-    }
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     this.state.total_body_received += bytes_decoded;
 
@@ -3836,7 +3852,7 @@ pub fn handleResponseMetadata(
     var location: string = "";
     var pretend_304 = false;
     var is_server_sent_events = false;
-    for (response.headers, 0..) |header, header_i| {
+    for (response.headers.list, 0..) |header, header_i| {
         switch (hashHeaderName(header.name)) {
             hashHeaderConst("Content-Length") => {
                 const content_length = std.fmt.parseInt(usize, header.value, 10) catch 0;

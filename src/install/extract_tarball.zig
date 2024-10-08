@@ -200,7 +200,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         defer extract_destination.close();
 
-        const Archive = @import("../libarchive/libarchive.zig").Archive;
+        const Archiver = bun.libarchive.Archiver;
         const Zlib = @import("../zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
@@ -278,7 +278,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 var dirname_reader = DirnameReader{ .outdirname = &resolved };
 
                 switch (PackageManager.verbose_install) {
-                    inline else => |log| _ = try Archive.extractToDir(
+                    inline else => |log| _ = try Archiver.extractToDir(
                         zlib_pool.data.list.items,
                         extract_destination,
                         null,
@@ -304,7 +304,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 }
             },
             else => switch (PackageManager.verbose_install) {
-                inline else => |log| _ = try Archive.extractToDir(
+                inline else => |log| _ = try Archiver.extractToDir(
                     zlib_pool.data.list.items,
                     extract_destination,
                     null,

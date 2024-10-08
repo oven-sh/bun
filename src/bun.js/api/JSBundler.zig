@@ -70,6 +70,11 @@ pub const JSBundler = struct {
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         packages: options.PackagesOption = .bundle,
+        format: options.Format = .esm,
+        bytecode: bool = false,
+        banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        experimental_css: bool = false,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -92,6 +97,10 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
+            if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
+                this.experimental_css = if (enable_css.isBoolean()) enable_css.toBoolean() else false;
+            }
+
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
                 var iter = array.arrayIterator(globalThis);
@@ -101,7 +110,7 @@ pub const JSBundler = struct {
                         return error.JSError;
                     }
 
-                    if (plugin.getOwnOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
+                    if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
                             globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
@@ -145,24 +154,50 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (config.getOwnTruthy(globalThis, "macros")) |macros_flag| {
+            if (config.getTruthy(globalThis, "macros")) |macros_flag| {
                 if (!macros_flag.coerce(bool, globalThis)) {
                     this.no_macros = true;
                 }
             }
 
-            if (try config.getOwnOptionalEnum(globalThis, "target", options.Target)) |target| {
+            if (try config.getOptional(globalThis, "bytecode", bool)) |bytecode| {
+                this.bytecode = bytecode;
+
+                if (bytecode) {
+                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    this.format = .cjs;
+                    this.target = .bun;
+                }
+            }
+
+            if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
+
+                if (target != .bun and this.bytecode) {
+                    globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    return error.JSError;
+                }
             }
 
             var has_out_dir = false;
-            if (try config.getOwnOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.outdir.appendSliceExact(slice.slice());
                 has_out_dir = true;
             }
 
-            if (config.getOwnTruthy(globalThis, "sourcemap")) |source_map_js| {
+            if (try config.getOptional(globalThis, "banner", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.banner.appendSliceExact(slice.slice());
+            }
+
+
+            if (try config.getOptional(globalThis, "footer", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.footer.appendSliceExact(slice.slice());
+            }
+
+            if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
@@ -179,42 +214,41 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getOwnOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+            if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
                 this.packages = packages;
             }
 
-            if (try config.getOwnOptionalEnum(globalThis, "format", options.Format)) |format| {
-                switch (format) {
-                    .esm => {},
-                    else => {
-                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
-                        return error.JSError;
-                    },
+            if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
+                this.format = format;
+
+                if (this.bytecode and format != .cjs) {
+                    globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    return error.JSError;
                 }
             }
 
-            // if (try config.getOwnOptional(globalThis, "hot", bool)) |hot| {
+            // if (try config.getOptional(globalThis, "hot", bool)) |hot| {
             //     this.hot = hot;
             // }
 
-            if (try config.getOwnOptional(globalThis, "splitting", bool)) |hot| {
+            if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
                 this.code_splitting = hot;
             }
 
-            if (config.getOwnTruthy(globalThis, "minify")) |hot| {
+            if (config.getTruthy(globalThis, "minify")) |hot| {
                 if (hot.isBoolean()) {
                     const value = hot.coerce(bool, globalThis);
                     this.minify.whitespace = value;
                     this.minify.syntax = value;
                     this.minify.identifiers = value;
                 } else if (hot.isObject()) {
-                    if (try hot.getOwnOptional(globalThis, "whitespace", bool)) |whitespace| {
+                    if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                         this.minify.whitespace = whitespace;
                     }
-                    if (try hot.getOwnOptional(globalThis, "syntax", bool)) |syntax| {
+                    if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
                         this.minify.syntax = syntax;
                     }
-                    if (try hot.getOwnOptional(globalThis, "identifiers", bool)) |syntax| {
+                    if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
                         this.minify.identifiers = syntax;
                     }
                 } else {
@@ -238,19 +272,19 @@ pub const JSBundler = struct {
                 return error.JSError;
             }
 
-            if (config.getOwnTruthy(globalThis, "emitDCEAnnotations")) |flag| {
+            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
                 if (flag.coerce(bool, globalThis)) {
                     this.emit_dce_annotations = true;
                 }
             }
 
-            if (config.getOwnTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
+            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
                 if (flag.coerce(bool, globalThis)) {
                     this.ignore_dce_annotations = true;
                 }
             }
 
-            if (config.getOwnTruthy(globalThis, "conditions")) |conditions_value| {
+            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
                 if (conditions_value.isString()) {
                     var slice = conditions_value.toSliceOrNull(globalThis) orelse {
                         globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
@@ -276,7 +310,7 @@ pub const JSBundler = struct {
 
             {
                 const path: ZigString.Slice = brk: {
-                    if (try config.getOwnOptional(globalThis, "root", ZigString.Slice)) |slice| {
+                    if (try config.getOptional(globalThis, "root", ZigString.Slice)) |slice| {
                         break :brk slice;
                     }
 
@@ -317,21 +351,21 @@ pub const JSBundler = struct {
                 }
             }
 
-            // if (try config.getOwnOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
             //     this.appendSliceExact(globalThis.bunVM().bundler.fs.top_level_dir) catch unreachable;
             // }
 
-            if (try config.getOwnOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.public_path.appendSliceExact(slice.slice());
             }
 
-            if (config.getOwnTruthy(globalThis, "naming")) |naming| {
+            if (config.getTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
-                    if (try config.getOwnOptional(globalThis, "naming", ZigString.Slice)) |slice| {
+                    if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_entry_point.appendSliceExact("./");
@@ -340,7 +374,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
                 } else if (naming.isObject()) {
-                    if (try naming.getOwnOptional(globalThis, "entry", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_entry_point.appendSliceExact("./");
@@ -349,7 +383,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
 
-                    if (try naming.getOwnOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_chunk.appendSliceExact("./");
@@ -358,7 +392,7 @@ pub const JSBundler = struct {
                         this.names.chunk.data = this.names.owned_chunk.list.items;
                     }
 
-                    if (try naming.getOwnOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_asset.appendSliceExact("./");
@@ -1042,6 +1076,11 @@ pub const BuildArtifact = struct {
         @"use client",
         @"use server",
         sourcemap,
+        bytecode,
+
+        pub fn isFileInStandaloneMode(this: OutputKind) bool {
+            return this != .sourcemap and this != .bytecode;
+        }
     };
 
     pub fn deinit(this: *BuildArtifact) void {
@@ -1118,7 +1157,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1202,7 +1241,7 @@ pub const BuildArtifact = struct {
                         "<r>hash<r>: <green>\"{any}\"<r>",
                         enable_ansi_colors,
                     ),
-                    .{options.PathTemplate.hashFormatter(this.hash)},
+                    .{bun.fmt.truncatedHash32(this.hash)},
                 );
             }
 

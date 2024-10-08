@@ -6,6 +6,9 @@ const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
+const ImportRecord = bun.ImportRecord;
+const ImportKind = bun.ImportKind;
+
 pub const prefixes = @import("./prefixes.zig");
 
 pub const dependencies = @import("./dependencies.zig");
@@ -96,6 +99,8 @@ pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
 pub const SelectorError = errors_.SelectorError;
 pub const MinifyErrorKind = errors_.MinifyErrorKind;
 pub const MinifyError = errors_.MinifyError;
+
+pub const ImportConditions = css_rules.import.ImportConditions;
 
 pub const compat = @import("./compat.zig");
 
@@ -504,7 +509,10 @@ pub fn DeriveParse(comptime T: type) type {
             if (comptime maybe_first_void_index == null) {
                 inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index)) {
-                        return generic.parseFor(field.type)(input);
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
                     }
                     if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                         return .{ .result = @unionInit(T, field.name, v) };
@@ -529,7 +537,10 @@ pub fn DeriveParse(comptime T: type) type {
 
                     inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                            return generic.parseFor(field.type)(input);
+                            return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                                .result => |v| @unionInit(T, field.name, v),
+                                .err => |e| return .{ .err = e },
+                            } };
                         }
                         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                             return .{ .result = @unionInit(T, field.name, v) };
@@ -538,7 +549,10 @@ pub fn DeriveParse(comptime T: type) type {
                 } else {
                     inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                            return generic.parseFor(field.type)(input);
+                            return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                                .result => |v| @unionInit(T, field.name, v),
+                                .err => |e| return .{ .err = e },
+                            } };
                         }
                         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                             return .{ .result = @unionInit(T, field.name, v) };
@@ -568,7 +582,10 @@ pub fn DeriveParse(comptime T: type) type {
 
                 inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                        return generic.parseFor(field.type)(input);
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
                     }
                     if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                         return .{ .result = @unionInit(T, field.name, v) };
@@ -577,7 +594,10 @@ pub fn DeriveParse(comptime T: type) type {
             } else if (comptime first_void_index > first_payload_index) {
                 inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
                     if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                        return generic.parseFor(field.type)(input);
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
                     }
                     if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
                         return .{ .result = @unionInit(T, field.name, v) };
@@ -679,13 +699,39 @@ pub fn DeriveParse(comptime T: type) type {
 }
 
 pub fn DeriveToCss(comptime T: type) type {
+    const enum_fields = bun.meta.EnumFields(T);
     // TODO: this has to work for enums and union(enums)
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // to implement this, we need to cargo expand the derive macro
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(todo_stuff.depth);
+            inline for (std.meta.fields(T), 0..) |field, i| {
+                if (@intFromEnum(this.*) == enum_fields[i].value) {
+                    if (comptime field.type == void) {
+                        return dest.writeStr(enum_fields[i].name);
+                    } else if (comptime generic.hasToCss(T)) {
+                        return generic.toCss(field.type, &@field(this, field.name), W, dest);
+                    } else {
+                        const variant_fields = std.meta.fields(field.type);
+                        if (variant_fields.len > 1) {
+                            var optional_count = 0;
+                            inline for (variant_fields) |variant_field| {
+                                if (@typeInfo(variant_field.type) == .Optional) {
+                                    optional_count += 1;
+                                    if (optional_count > 1) @compileError("Not supported for multiple optional fields yet sorry.");
+                                    if (@field(@field(this, field.name), variant_field.name)) |*value| {
+                                        try generic.toCss(@TypeOf(value.*), W, dest);
+                                    }
+                                } else {
+                                    try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
+                                }
+                            }
+                        } else {
+                            const variant_field = variant_fields[0];
+                            try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), W, dest);
+                        }
+                    }
+                }
+            }
+            return;
         }
     };
 }
@@ -748,9 +794,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
         }
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            // return dest.writeStr(asStr(this));
+            return dest.writeStr(asStr(this));
         }
     };
 }
@@ -836,25 +880,35 @@ fn parse_at_rule(
                     .result => |v| v,
                     .err => break :out,
                 };
-                if (tok.* != .open_curly and tok.* != .semicolon) unreachable;
+                if (tok.* != .open_curly and tok.* != .semicolon) bun.unreachablePanic("Should have consumed these delimiters", .{});
                 break :out;
             }
             return .{ .err = e };
         },
     };
     const next = switch (input.next()) {
-        .result => |v| v,
+        .result => |v| v.*,
         .err => {
             return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-                .result => |v| .{ .result = v },
-                .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
             };
         },
     };
-    switch (next.*) {
-        .semicolon => return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-            .result => |v| .{ .result = v },
-            .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+    switch (next) {
+        .semicolon => {
+            switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
+            }
         },
         .open_curly => {
             const AnotherClosure = struct {
@@ -998,6 +1052,7 @@ fn parse_until_before(
                 break :brk block_type;
             } else null,
             .stop_before = delimiters,
+            .import_records = parser.import_records,
         };
         const result = delimited_parser.parseEntirely(T, closure, parse_fn);
         if (error_behavior == .stop and result.isErr()) {
@@ -1072,6 +1127,7 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
     var nested_parser = Parser{
         .input = parser.input,
         .stop_before = closing_delimiter,
+        .import_records = parser.import_records,
     };
     const result = nested_parser.parseEntirely(T, closure, parsefn);
     if (nested_parser.at_start_of) |block_type2| {
@@ -1127,26 +1183,62 @@ pub const DefaultAtRuleParser = struct {
         pub const Prelude = void;
         pub const AtRule = DefaultAtRule;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, options: *const ParserOptions) Result(Prelude) {
-            _ = options; // autofix
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
             return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
-        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, options: *const ParserOptions, is_nested: bool) Result(CustomAtRuleParser.AtRule) {
-            _ = options; // autofix
-            _ = is_nested; // autofix
+        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, _: *const ParserOptions, _: bool) Result(CustomAtRuleParser.AtRule) {
             return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, options: *const ParserOptions, is_nested: bool) Maybe(CustomAtRuleParser.AtRule, void) {
-            _ = options; // autofix
-            _ = is_nested; // autofix
+        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
             return .{ .err = {} };
+        }
+
+        pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
+    };
+};
+
+pub const BundlerAtRuleParser = struct {
+    const This = @This();
+    allocator: Allocator,
+    import_records: *bun.BabyList(ImportRecord),
+
+    pub const CustomAtRuleParser = struct {
+        pub const Prelude = void;
+        pub const AtRule = DefaultAtRule;
+
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
+            return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
+        }
+
+        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, _: *const ParserOptions, _: bool) Result(CustomAtRuleParser.AtRule) {
+            return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
+        }
+
+        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
+            return .{ .err = {} };
+        }
+
+        pub fn onImportRule(this: *This, import_rule: *ImportRule, start_position: u32, end_position: u32) void {
+            const import_record_index = this.import_records.len;
+            import_rule.import_record_idx = import_record_index;
+            this.import_records.push(this.allocator, ImportRecord{
+                .path = bun.fs.Path.init(import_rule.url),
+                .kind = if (import_rule.supports != null) .at_conditional else .at,
+                .range = bun.logger.Range{
+                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .len = @intCast(end_position - start_position),
+                },
+            }) catch bun.outOfMemory();
         }
     };
 };
 
 /// Same as `ValidAtRuleParser` but modified to provide parser options
+///
+/// Also added:
+/// - onImportRule to handle @import rules
 pub fn ValidCustomAtRuleParser(comptime T: type) void {
     // The intermediate representation of prelude of an at-rule.
     _ = T.CustomAtRuleParser.Prelude;
@@ -1194,6 +1286,8 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     //
     // This is only called when a block was found following the prelude.
     _ = T.CustomAtRuleParser.parseBlock;
+
+    _ = T.CustomAtRuleParser.onImportRule;
 }
 
 pub fn ValidAtRuleParser(comptime T: type) void {
@@ -1333,28 +1427,6 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             pub const AtRule = void;
 
             pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
-                // TODO: optimize string switch
-                // So rust does the strategy of:
-                // 1. switch (or if branches) on the length of the input string
-                // 2. then do string comparison by word size (or smaller sometimes)
-                // rust sometimes makes jump table https://godbolt.org/z/63d5vYnsP
-                // sometimes it doesn't make a jump table and just does branching on lengths: https://godbolt.org/z/d8jGPEd56
-                // it looks like it will only make a jump table when it knows it won't be too sparse? If I add a "h" case (to make it go 1, 2, 4, 5) or a  "hzz" case (so it goes 2, 3, 4, 5) it works:
-                // - https://godbolt.org/z/WGTMPxafs (change "hzz" to "h" and it works too, remove it and jump table is gone)
-                //
-                // I tried recreating the jump table (first link) by hand: https://godbolt.org/z/WPM5c5K4b
-                // it worked fairly well. Well I actually just made it match on the length, compiler made the jump table,
-                // so we should let the compiler make the jump table.
-                // Another recreation with some more nuances: https://godbolt.org/z/9Y1eKdY3r
-                // Another recreation where hand written is faster than the Rust compiler: https://godbolt.org/z/sTarKe4Yx
-                // specifically we can make the compiler generate a jump table instead of brancing
-                //
-                // Our ExactSizeMatcher is decent
-                // or comptime string map that calls eqlcomptime function thingy, or std.StaticStringMap
-                // rust-cssparser does a thing where it allocates stack buffer with maximum possible size and
-                // then uses that to do ASCII to lowercase conversion:
-                // https://github.com/servo/rust-cssparser/blob/b75ce6a8df2dbd712fac9d49ba38ee09b96d0d52/src/macros.rs#L168
-                // we could probably do something similar, looks like the max length never goes above 20 bytes
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "import")) {
                     if (@intFromEnum(this.state) > @intFromEnum(State.imports)) {
                         return .{ .err = input.newCustomError(@as(ParserError, ParserError.unexpected_import_rule)) };
@@ -1472,14 +1544,16 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 switch (prelude) {
                     .import => {
                         this.state = State.imports;
+                        var import_rule = ImportRule{
+                            .url = prelude.import[0],
+                            .media = prelude.import[1],
+                            .supports = prelude.import[2],
+                            .layer = if (prelude.import[3]) |v| .{ .v = v.value } else null,
+                            .loc = loc,
+                        };
+                        AtRuleParserT.CustomAtRuleParser.onImportRule(this.at_rule_parser, &import_rule, @intCast(start.position), @intCast(start.position + 1));
                         this.rules.v.append(this.allocator, .{
-                            .import = ImportRule{
-                                .url = prelude.import[0],
-                                .media = prelude.import[1],
-                                .supports = prelude.import[2],
-                                .layer = if (prelude.import[3]) |v| .{ .v = v.value } else null,
-                                .loc = loc,
-                            },
+                            .import = import_rule,
                         }) catch bun.outOfMemory();
                         return .{ .result = {} };
                     },
@@ -2398,6 +2472,18 @@ pub const ToCssResult = struct {
     dependencies: ?ArrayList(Dependency),
 };
 
+pub const ToCssResultInternal = struct {
+    /// A map of CSS module exports, if the `css_modules` option was
+    /// enabled during parsing.
+    exports: ?CssModuleExports,
+    /// A map of CSS module references, if the `css_modules` config
+    /// had `dashed_idents` enabled.
+    references: ?CssModuleReferences,
+    /// A list of dependencies (e.g. `@import` or `url()`) found in
+    /// the style sheet, if the `analyze_dependencies` option is enabled.
+    dependencies: ?ArrayList(Dependency),
+};
+
 pub const MinifyOptions = struct {
     /// Targets to compile the CSS for.
     targets: targets.Targets,
@@ -2412,6 +2498,11 @@ pub const MinifyOptions = struct {
         };
     }
 };
+
+pub const BundlerStyleSheet = StyleSheet(DefaultAtRule);
+pub const BundlerCssRuleList = CssRuleList(DefaultAtRule);
+pub const BundlerCssRule = CssRule(DefaultAtRule);
+pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(DefaultAtRule);
 
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
@@ -2471,14 +2562,10 @@ pub fn StyleSheet(comptime AtRule: type) type {
             // }
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
-            // TODO: this is not necessary
-            // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
-            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
-            const writer = dest.writer(allocator);
+        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
             const W = @TypeOf(writer);
             const project_root = options.project_root;
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
 
             // #[cfg(feature = "sourcemap")]
             // {
@@ -2493,7 +2580,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
             for (this.license_comments.items) |comment| {
                 try printer.writeStr("/*");
                 try printer.writeStr(comment);
-                try printer.writeStr("*/\n");
+                try printer.writeStr("*/");
+                try printer.newline();
             }
 
             if (this.options.css_modules) |*config| {
@@ -2503,31 +2591,53 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 try this.rules.toCss(W, &printer);
                 try printer.newline();
 
-                return ToCssResult{
+                return ToCssResultInternal{
                     .dependencies = printer.dependencies,
                     .exports = exports: {
                         const val = printer.css_module.?.exports_by_source_index.items[0];
                         printer.css_module.?.exports_by_source_index.items[0] = .{};
                         break :exports val;
                     },
-                    .code = dest.items,
+                    // .code = dest.items,
                     .references = references,
                 };
             } else {
                 try this.rules.toCss(W, &printer);
                 try printer.newline();
-                return ToCssResult{
+                return ToCssResultInternal{
                     .dependencies = printer.dependencies,
-                    .code = dest.items,
+                    // .code = dest.items,
                     .exports = null,
                     .references = null,
                 };
             }
         }
 
-        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(This, Err(ParserError)) {
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
+            // TODO: this is not necessary
+            // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
+            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
+            const writer = dest.writer(allocator);
+            const result = try toCssWithWriter(this, allocator, writer, options, import_records);
+            return ToCssResult{
+                .code = dest.items,
+                .dependencies = result.dependencies,
+                .exports = result.exports,
+                .references = result.references,
+            };
+        }
+
+        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: ?*bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
             var default_at_rule_parser = DefaultAtRuleParser{};
-            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser);
+            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser, import_records);
+        }
+
+        pub fn parseBundler(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
+            var at_rule_parser = BundlerAtRuleParser{
+                .import_records = import_records,
+                .allocator = allocator,
+            };
+            return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records);
         }
 
         /// Parse a style sheet from a string.
@@ -2537,9 +2647,10 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: ParserOptions,
             comptime P: type,
             at_rule_parser: *P,
+            import_records: ?*bun.BabyList(ImportRecord),
         ) Maybe(This, Err(ParserError)) {
             var input = ParserInput.new(allocator, code);
-            var parser = Parser.new(&input);
+            var parser = Parser.new(&input, import_records);
 
             var license_comments = ArrayList([]const u8){};
             var state = parser.state();
@@ -2598,9 +2709,9 @@ pub const StyleAttribute = struct {
     declarations: DeclarationBlock,
     sources: ArrayList([]const u8),
 
-    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(StyleAttribute, Err(ParserError)) {
+    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(StyleAttribute, Err(ParserError)) {
         var input = ParserInput.new(allocator, code);
-        var parser = Parser.new(&input);
+        var parser = Parser.new(&input, import_records);
         const sources = sources: {
             var s = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
             s.appendAssumeCapacity(options.filename);
@@ -2615,7 +2726,7 @@ pub const StyleAttribute = struct {
         } };
     }
 
-    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions) PrintErr!ToCssResult {
+    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions, import_records: *bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
         // #[cfg(feature = "sourcemap")]
         // assert!(
         //   options.source_map.is_none(),
@@ -2624,7 +2735,7 @@ pub const StyleAttribute = struct {
 
         var dest = ArrayList(u8){};
         const writer = dest.writer(allocator);
-        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
         printer.sources = &this.sources;
 
         try this.declarations.toCss(@TypeOf(writer), &printer);
@@ -2866,18 +2977,61 @@ const ParseUntilErrorBehavior = enum {
     stop,
 };
 
+// const ImportRecordHandler = union(enum) {
+//     list: *bun.BabyList(ImportRecord),
+//     // dummy: u32,
+
+//     pub fn add(this: *ImportRecordHandler, allocator: Allocator, record: ImportRecord) u32 {
+//         return switch (this.*) {
+//             .list => |list| {
+//                 const len = list.len;
+//                 list.push(allocator, record) catch bun.outOfMemory();
+//                 return len;
+//             },
+//             // .dummy => |*d| {
+//             //     const val = d.*;
+//             //     d.* += 1;
+//             //     return val;
+//             // },
+//         };
+//     }
+// };
+
 pub const Parser = struct {
     input: *ParserInput,
     at_start_of: ?BlockType = null,
     stop_before: Delimiters = Delimiters.NONE,
+    import_records: ?*bun.BabyList(ImportRecord),
+
+    pub fn addImportRecordForUrl(this: *Parser, url: []const u8, start_position: usize) Result(u32) {
+        if (this.import_records) |import_records| {
+            const idx = import_records.len;
+            import_records.push(this.allocator(), ImportRecord{
+                .path = bun.fs.Path.init(url),
+                .kind = .url,
+                .range = bun.logger.Range{
+                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .len = @intCast(url.len), // TODO: technically this is not correct because the url could be escaped
+                },
+            }) catch bun.outOfMemory();
+            return .{ .result = idx };
+        } else {
+            return .{ .err = this.newBasicUnexpectedTokenError(.{ .unquoted_url = url }) };
+        }
+    }
 
     pub inline fn allocator(self: *Parser) Allocator {
         return self.input.tokenizer.allocator;
     }
 
-    pub fn new(input: *ParserInput) Parser {
+    /// Create a new Parser
+    ///
+    /// Pass in `import_records` to track imports (`@import` rules, `url()` tokens). If this
+    /// is `null`, calling `Parser.addImportRecordForUrl` will error.
+    pub fn new(input: *ParserInput, import_records: ?*bun.BabyList(ImportRecord)) Parser {
         return Parser{
             .input = input,
+            .import_records = import_records,
         };
     }
 
@@ -3403,6 +3557,7 @@ pub const Parser = struct {
     pub fn reset(this: *Parser, state_: *const ParserState) void {
         this.input.tokenizer.reset(state_);
         this.at_start_of = state_.at_start_of;
+        if (this.import_records) |import_records| import_records.len = state_.import_record_count;
     }
 
     pub fn state(this: *Parser) ParserState {
@@ -3411,6 +3566,7 @@ pub const Parser = struct {
             .current_line_start_position = this.input.tokenizer.current_line_start_position,
             .current_line_number = @intCast(this.input.tokenizer.current_line_number),
             .at_start_of = this.at_start_of,
+            .import_record_count = if (this.import_records) |import_records| import_records.len else 0,
         };
     }
 
@@ -3548,6 +3704,7 @@ pub const ParserState = struct {
     position: usize,
     current_line_start_position: usize,
     current_line_number: u32,
+    import_record_count: u32,
     at_start_of: ?BlockType,
 
     pub fn sourceLocation(this: *const ParserState) SourceLocation {
@@ -3709,7 +3866,7 @@ pub const nth = struct {
 
     fn parse_number_saturate(allocator: Allocator, string: []const u8) Maybe(i32, void) {
         var input = ParserInput.new(allocator, string);
-        var parser = Parser.new(&input);
+        var parser = Parser.new(&input, null);
         const tok = switch (parser.nextIncludingWhitespaceAndComments()) {
             .result => |v| v,
             .err => {
@@ -3785,6 +3942,7 @@ const Tokenizer = struct {
             .current_line_start_position = this.current_line_start_position,
             .current_line_number = this.current_line_number,
             .at_start_of = null,
+            .import_record_count = 0,
         };
     }
 
@@ -3807,7 +3965,7 @@ const Tokenizer = struct {
     pub fn currentSourceLocation(this: *const Tokenizer) SourceLocation {
         return SourceLocation{
             .line = this.current_line_number,
-            .column = @intCast(this.position - this.current_line_start_position + 1),
+            .column = @intCast((this.position - this.current_line_start_position) + 1),
         };
     }
 
@@ -5102,6 +5260,38 @@ pub const Token = union(TokenKind) {
         };
     }
 
+    pub fn format(
+        this: *const Token,
+        comptime fmt: []const u8,
+        opts: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt; // autofix
+        _ = opts; // autofix
+        return switch (this.*) {
+            inline .ident,
+            .function,
+            .at_keyword,
+            .hash,
+            .idhash,
+            .quoted_string,
+            .bad_string,
+            .unquoted_url,
+            .bad_url,
+            .whitespace,
+            .comment,
+            => |str| {
+                try writer.print("{s} = {s}", .{ @tagName(this.*), str });
+            },
+            .delim => |d| {
+                try writer.print("'{c}'", .{@as(u8, @truncate(d))});
+            },
+            else => {
+                try writer.print("{s}", .{@tagName(this.*)});
+            },
+        };
+    }
+
     pub fn raw(this: Token) []const u8 {
         return switch (this) {
             .ident => this.ident,
@@ -5862,7 +6052,18 @@ pub const generic = struct {
         }.parsefn;
     }
 
+    pub fn hasToCss(comptime T: type) bool {
+        return switch (T) {
+            f32 => true,
+            else => @hasDecl(T, "toCss"),
+        };
+    }
+
     pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        if (@typeInfo(T) == .Pointer) {
+            const TT = std.meta.Child(T);
+            return toCss(TT, this.*, W, dest);
+        }
         return switch (T) {
             f32 => CSSNumberFns.toCss(this, W, dest),
             CSSInteger => CSSIntegerFns.toCss(this, W, dest),
@@ -5989,8 +6190,11 @@ pub const parse_utility = struct {
         input: []const u8,
         comptime parse_one: *const fn (*Parser) Result(T),
     ) Result(T) {
+        // I hope this is okay
+        var import_records = bun.BabyList(bun.ImportRecord){};
+        defer import_records.deinitWithAllocator(allocator);
         var i = ParserInput.new(allocator, input);
-        var parser = Parser.new(&i);
+        var parser = Parser.new(&i, &import_records);
         const result = switch (parse_one(&parser)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
@@ -6004,13 +6208,19 @@ pub const to_css = struct {
     /// Serialize `self` in CSS syntax and return a string.
     ///
     /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
-    pub fn string(allocator: Allocator, comptime T: type, this: *const T, options: PrinterOptions) PrintErr![]const u8 {
+    pub fn string(
+        allocator: Allocator,
+        comptime T: type,
+        this: *const T,
+        options: PrinterOptions,
+        import_records: ?*const bun.BabyList(ImportRecord),
+    ) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         errdefer s.deinit(allocator);
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
         defer printer.deinit();
         switch (T) {
             CSSString => try CSSStringFns.toCss(this, W, &printer),

@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
 const logger = bun.logger;
 const Log = logger.Log;
+const debug = bun.Output.scoped(.css, true);
 
 pub const css = @import("../css_parser.zig");
 const CSSString = css.CSSString;
@@ -72,17 +73,18 @@ pub const serialize = struct {
         var is_relative = __is_relative;
 
         if (comptime bun.Environment.isDebug) {
+            debug("Selector components:", .{});
             for (selector.components.items) |*comp| {
-                std.debug.print("Selector components:\n  {}", .{comp});
+                debug(" {}\n", .{comp});
             }
 
+            debug("Compound selector iters", .{});
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
-                    std.debug.print("  {}, ", .{c});
+                    debug("  {}, ", .{c});
                 }
             }
-            std.debug.print("\n", .{});
         }
 
         // Compound selectors invert the order of their contents, so we need to
@@ -268,7 +270,7 @@ pub const serialize = struct {
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
-                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{});
+                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions{}, dest.import_records);
 
                     if (id.items.len > 0 and id.items.len < s.len) {
                         try dest.writeStr(id.items);
@@ -1144,6 +1146,7 @@ const CompoundSelectorIter = struct {
     ///  .rev() // reverse
     /// ```
     pub inline fn next(this: *@This()) ?[]const parser.Component {
+        // Since we iterating backwards, we convert all indices into "backwards form" by doing `this.sel.components.items.len - 1 - i`
         while (this.i < this.sel.components.items.len) {
             const next_index: ?usize = next_index: {
                 for (this.i..this.sel.components.items.len) |j| {
@@ -1152,7 +1155,7 @@ const CompoundSelectorIter = struct {
                 break :next_index null;
             };
             if (next_index) |combinator_index| {
-                const start = combinator_index - 1;
+                const start = if (combinator_index == 0) 0 else combinator_index - 1;
                 const end = this.i;
                 const slice = this.sel.components.items[this.sel.components.items.len - 1 - start .. this.sel.components.items.len - end];
                 this.i = combinator_index + 1;

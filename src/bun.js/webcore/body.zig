@@ -294,10 +294,10 @@ pub const Body = struct {
         /// Single-use Blob that stores the bytes in the Value itself.
         // InlineBlob: InlineBlob,
         Locked: PendingValue,
-        Used: void,
-        Empty: void,
+        Used,
+        Empty,
         Error: ValueError,
-        Null: void,
+        Null,
 
         pub const heap_breakdown_label = "BodyValue";
         pub const ValueError = union(enum) {

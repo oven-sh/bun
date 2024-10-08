@@ -2,10 +2,11 @@ import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import * as Module from "node:module";
+import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import sync from "./require-json.json";
+import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 
 const { path, dir, dirname, filename } = import.meta;
 
@@ -127,7 +128,12 @@ it("Module._cache", () => {
 });
 
 it("Module._resolveFilename()", () => {
-  expect(Module._resolveFilename).toBeUndefined();
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(false);
+  const original = Module._resolveFilename;
+  Module._resolveFilename = () => {};
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(true);
+  Module._resolveFilename = original;
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(false);
 });
 
 it("Module.createRequire(file://url).resolve(file://url)", () => {

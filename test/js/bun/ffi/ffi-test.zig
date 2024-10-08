@@ -84,9 +84,16 @@ fn exportCallbackIdentity(
     comptime T: type,
 ) void {
     exportAndTrack(function_names, name, struct {
+        fn entrypoint(cb: *const fn () callconv(.C) T, result: *T) void {
+            result.* = purifyNan(cb());
+        }
+
         fn callbackIdentity(cb: *const fn () callconv(.C) T) callconv(.C) T {
             markAsCalled(name);
-            return purifyNan(cb());
+            var result: T = undefined;
+            var thread = std.Thread.spawn(.{}, entrypoint, .{ cb, &result }) catch unreachable;
+            thread.join();
+            return result;
         }
     }.callbackIdentity);
 }
@@ -151,6 +158,7 @@ fn memsetAndMemcpyWork() callconv(.C) bool {
 
 fn returnTrueCallback() callconv(.C) bool {
     markAsCalled("return_true_callback");
+    return true;
 }
 
 fn returnFunctionReturningTrue() callconv(.C) *const fn () callconv(.C) bool {
@@ -197,7 +205,7 @@ var all_function_names = blk: {
 
     exportAndTrack(&function_names, "ptr_should_point_to_42_as_int32_t", returnPointerTo42);
     exportAndTrack(&function_names, "memset_and_memcpy_work", memsetAndMemcpyWork);
-    exportAndTrack(&function_names, "return_true_callback", return_true_callback);
+    exportAndTrack(&function_names, "return_true_callback", returnTrueCallback);
     exportAndTrack(&function_names, "return_a_function_ptr_to_function_that_returns_true", returnFunctionReturningTrue);
     exportAndTrack(&function_names, "does_pointer_equal_42_as_int32_t", pointsTo42);
 

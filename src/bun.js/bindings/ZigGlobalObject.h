@@ -209,6 +209,10 @@ public:
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* NavigatorStructure() const { return m_JSNavigator.getInitializedOnMainThread(this); }
+    JSC::JSObject* Navigator() const { return m_JSNavigator.constructorInitializedOnMainThread(this); }
+    JSC::JSValue NavigatorPrototype() const { return m_JSNavigator.prototypeInitializedOnMainThread(this); }
+
     JSC::Structure* FileSinkStructure() const { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* FileSink() const { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue FileSinkPrototype() const { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }

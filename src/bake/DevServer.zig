@@ -91,41 +91,37 @@ pub const Route = struct {
     pattern: [:0]const u8,
     entry_point: []const u8,
 
-    bundle: BundleState = .stale,
+    state: State = .unqueued,
+    /// Contain the list of serialized failures. Hashmap allows for
+    /// efficient lookup and removal of failing files.
+    bundler_failure_logs: std.ArrayHashMapUnmanaged(
+        SerializedFailure,
+        void,
+        SerializedFailure.ArrayHashContext,
+        false,
+    ) = .{},
     module_name_string: ?bun.String = null,
 
     /// Assigned in DevServer.init
     dev: *DevServer = undefined,
     client_bundled_url: []u8 = undefined,
 
+    const State = enum {
+        /// In development mode, routes are lazily built. This state implies a
+        /// build of this route has never been run. It is possible to bundle the
+        /// route entry point and still have an unqueued route if another route
+        /// imports this one.
+        unqueued,
+        /// A bundling failure happened.
+        bundler_failure,
+        /// Loading the module at runtime had a failure.
+        evaluation_failure,
+        loaded,
+    };
+
     pub fn clientPublicPath(route: *const Route) []const u8 {
         return route.client_bundled_url[0 .. route.client_bundled_url.len - "/client.js".len];
     }
-};
-
-/// Three-way maybe state
-const BundleState = union(enum) {
-    /// Bundled assets are not prepared
-    stale,
-    /// Build failure
-    fail: Failure,
-
-    ready: Bundle,
-
-    fn reset(s: *BundleState) void {
-        switch (s.*) {
-            .stale => return,
-            .fail => |f| f.deinit(),
-            .ready => |b| b.deinit(),
-        }
-        s.* = .stale;
-    }
-
-    const NonStale = union(enum) {
-        /// Build failure
-        fail: Failure,
-        ready: Bundle,
-    };
 };
 
 const Bundle = struct {
@@ -835,11 +831,13 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
             route.module_name_string.?.toJS(dev.server_global.js()),
         },
     ) catch |err| {
-        const exception = global.takeException(err);
-        const fail: Failure = .{ .request_handler = exception };
-        fail.printToConsole(route);
-        fail.sendAsHttpResponse(resp, route);
-        return;
+        // const exception = global.takeException(err);
+        _ = err;
+        @panic("TODO");
+        // const fail: Failure = .{ .request_handler = exception };
+        // fail.printToConsole(route);
+        // fail.sendAsHttpResponse(resp, route);
+        // return;
     };
 
     if (result.asAnyPromise()) |promise| {
@@ -848,10 +846,12 @@ fn onServerRequestWithBundle(route: *Route, bundle: Bundle, req: *Request, resp:
             .pending => unreachable, // was waited for
             .fulfilled => |r| result = r,
             .rejected => |e| {
-                const fail: Failure = .{ .request_handler = e };
-                fail.printToConsole(route);
-                fail.sendAsHttpResponse(resp, route);
-                return;
+                _ = e;
+                @panic("TODO");
+                // const fail: Failure = .{ .request_handler = e };
+                // fail.printToConsole(route);
+                // fail.sendAsHttpResponse(resp, route);
+                // return;
             },
         }
     }
@@ -973,6 +973,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// so garbage collection can run less often.
         edges_free_list: ArrayListUnmanaged(EdgeIndex),
 
+        /// All bundling failures are stored until a file is saved and rebuilt.
+        /// They are stored in the wire format the HMR runtime expects so that
+        /// a hard refresh does not require re-serialization.
+        failures: AutoArrayHashMapUnmanaged(FileIndex, SerializedFailure),
+
         /// Used during an incremental update to determine what "HMR roots"
         /// are affected. Set for all `bundled_files` that have been visited
         /// by the dependency tracing logic.
@@ -1011,8 +1016,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // code because there is only one instance of the server. Instead,
             // it stores which module graphs it is a part of. This makes sure
             // that recompilation knows what bundler options to use.
-            .server => struct {
-                // .server => packed struct(u8) {
+            .server => packed struct(u8) {
                 /// Is this file built for the Server graph.
                 is_rsc: bool,
                 /// Is this file built for the SSR graph.
@@ -1028,7 +1032,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 /// the route list. This also stops dependency propagation.
                 is_route: bool,
 
-                unused: enum(u3) { unused = 0 } = .unused,
+                /// If this file contains an error
+                failed: bool,
+
+                unused: enum(u2) { unused = 0 } = .unused,
 
                 fn stopsPropagation(flags: @This()) bool {
                     return flags.is_special_framework_file or
@@ -1061,7 +1068,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
         };
 
         /// An index into `bundled_files`, `stale_files`, `first_dep`, `first_import`, or `affected_by_update`
-        pub const FileIndex = bun.GenericIndex(u32, File);
+        /// Top bit cannot be relied on due to `SerializedFailure.Owner.Packed`
+        pub const FileIndex = bun.GenericIndex(u30, File);
 
         /// An index into `edges`
         const EdgeIndex = bun.GenericIndex(u32, Edge);
@@ -1917,129 +1925,269 @@ const ChunkKind = enum {
     hmr_chunk,
 };
 
-/// Represents an error from loading or server sided runtime. Information on
-/// what this error is from, such as the associated Route, is inferred from
-/// surrounding context.
+/// Errors sent to the HMR client in the browser are serialized. The same format
+/// is used for thrown JavaScript exceptions as well as bundler errors. Serialized
+/// failures contain a handle on what file or route they came from, which allows
+/// the bundler to dismiss or update stale failures via index.
 ///
-/// In the case a route was not able to fully compile, the `Failure` is stored
-/// so that a browser refreshing the page can display this failure.
-const Failure = union(enum) {
-    zig_error: anyerror,
-    /// Bundler and module resolution use `bun.logger` to report multiple errors at once.
-    bundler: std.ArrayList(bun.logger.Msg),
-    /// Thrown JavaScript exception while loading server code.
-    server_load: JSC.Strong,
-    /// Never stored; the current request handler threw an error.
-    request_handler: JSValue,
+/// The hot-reloading API is expected to sort the final list of errors.
+//
+pub const SerializedFailure = struct {
+    /// Serialized data is always owned by default_allocator
+    /// The first 32 bits of this slice contain the owner
+    data: []u8,
 
-    /// Consumes the Log data, resetting it.
-    pub fn fromLog(log: *Log) Failure {
-        const fail: Failure = .{ .bundler = log.msgs };
-        log.* = .{
-            .msgs = std.ArrayList(bun.logger.Msg).init(log.msgs.allocator),
-            .level = log.level,
+    /// The metaphorical owner of an incremental file error. The packed variant
+    /// is given to the HMR runtime as an opaque handle.
+    pub const Owner = union(enum) {
+        none,
+        route: Route.Index,
+        client_file: IncrementalGraph(.client).FileIndex,
+        server_file: IncrementalGraph(.server).FileIndex,
+
+        /// A route in state bundler_failure can only point to a server or client file failure.
+        pub const BundlerOnly = union(enum) {
+            client_file: IncrementalGraph(.client).FileIndex,
+            server_file: IncrementalGraph(.server).FileIndex,
         };
-        return fail;
+
+        pub fn encode(owner: Owner) Packed {
+            return switch (owner) {
+                .none => .{ .kind = .none, .data = 0 },
+                .client_file => |data| .{ .kind = .client, .data = data.get() },
+                .server_file => |data| .{ .kind = .server, .data = data.get() },
+                .route => |data| .{ .kind = .route, .data = data.get() },
+            };
+        }
+
+        pub const Packed = packed struct(u32) {
+            kind: enum { none, route, client, server },
+            data: u30,
+
+            pub fn decode(owner: Packed) Owner {
+                return switch (owner.kind) {
+                    .client_file => .{ .client_file = IncrementalGraph(.client).FileIndex.init(owner.data) },
+                    .server_file => .{ .server_file = IncrementalGraph(.server).FileIndex.init(owner.data) },
+                    .route => .{ .route = Route.Index.init(owner.data) },
+                };
+            }
+        };
+    };
+
+    pub fn deinit(f: *SerializedFailure) void {
+        bun.default_allocator.free(f.data);
     }
 
-    pub fn fromJSServerLoad(js: JSValue, global: *JSC.JSGlobalObject) Failure {
-        return .{ .server_load = JSC.Strong.create(js, global) };
+    const ErrorKind = enum(u8) {
+        /// new Error(message)
+        js_error,
+        /// new TypeError(message)
+        js_error_type,
+        /// new RangeError(message)
+        js_error_range,
+        /// Other forms of `Error` objects, including when an error has a
+        /// `code`, and other fields.
+        js_error_extra,
+        /// Non-error JS values
+        js_primitive,
+        /// new AggregateError(errors, message)
+        js_aggregate,
+
+        // A log message. The `logger.Kind` is encoded here.
+        bundler_log_err = 0,
+        bundler_log_warn = 1,
+        bundler_log_note = 2,
+        bundler_log_debug = 3,
+        bundler_log_verbose = 4,
+    };
+
+    pub fn initFromLog(owner: Owner, messages: []const bun.logger.Msg) !SerializedFailure {
+        const out = SerializedFailure.new(.{ .data = &.{} });
+        errdefer out.destroy();
+
+        // Avoid small re-allocations without requesting so much from the heap
+        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var payload = std.ArrayList(u8).initCapacity(sfb.get(), comptime sfb.buffer) catch
+            unreachable; // enough space
+        const w = payload.writer();
+
+        w.writeStructEndian(owner, .little);
+
+        w.writeInt(u32, @intCast(messages.len), .little);
+
+        // Avoid-recloning if it is was moved to the hap
+        out.data = if (payload.items.ptr == &sfb.buffer)
+            try bun.default_allocator.dupe(u8, payload.items)
+        else
+            payload.items;
+
+        return out;
     }
 
-    // TODO: deduplicate the two methods here. that isnt trivial because one has to
-    // style with ansi codes, and the other has to style with HTML.
+    // All "write" functions get a corresponding "read" function in ./client/error.ts
 
-    fn printToConsole(fail: *const Failure, route: *const Route) void {
-        // TODO: remove dependency on `route`
-        defer Output.flush();
+    const Writer = std.ArrayList(u8).Writer;
 
-        Output.prettyErrorln("", .{});
-
-        switch (fail.*) {
-            .bundler => |msgs| {
-                Output.prettyErrorln("<red>Errors while bundling '{s}'<r>", .{
-                    route.pattern,
-                });
-                Output.flush();
-
-                var log: Log = .{ .msgs = msgs, .errors = 1, .level = .err };
-                log.printForLogLevelColorsRuntime(
-                    Output.errorWriter(),
-                    Output.enable_ansi_colors_stderr,
-                ) catch {};
-            },
-            .zig_error => |err| {
-                Output.prettyErrorln("<red>Error while bundling '{s}': {s}<r>", .{
-                    route.pattern,
-                    @errorName(err),
-                });
-                Output.flush();
-            },
-            .server_load => |strong| {
-                Output.prettyErrorln("<red>Server route handler for '{s}' threw while loading<r>", .{
-                    route.pattern,
-                });
-                Output.flush();
-
-                const err = strong.get() orelse unreachable;
-                route.dev.vm.printErrorLikeObjectToConsole(err);
-            },
-            .request_handler => |err| {
-                Output.prettyErrorln("<red>Request to handler '{s}' failed SSR<r>", .{
-                    route.pattern,
-                });
-                Output.flush();
-
-                route.dev.vm.printErrorLikeObjectToConsole(err);
-            },
+    fn writeLogMsg(msg: bun.logger.Msg, w: *Writer) !void {
+        try w.writeByte(switch (msg.kind) {
+            inline else => |k| @field(ErrorKind, "bundler_log_" ++ @tagName(k)),
+        });
+        try writeLogData(msg.data);
+        const notes = msg.notes orelse &.{};
+        try w.writeInt(u32, @intCast(notes.len), .little);
+        for (notes) |note| {
+            try writeLogData(note, w);
         }
     }
 
-    fn sendAsHttpResponse(fail: *const Failure, resp: *Response, route: *const Route) void {
-        resp.writeStatus("500 Internal Server Error");
-        var buffer: [32768]u8 = undefined;
+    fn writeLogData(data: bun.logger.Data, w: *Writer) !void {
+        try writeString32(data.text, w);
+        if (data.location) |loc| {
+            assert(loc.line >= 0); // one based and not negative
+            assert(loc.column >= 0); // zero based and not negative
 
-        const message = message: {
-            var fbs = std.io.fixedBufferStream(&buffer);
-            const writer = fbs.writer();
+            try w.writeInt(u32, @intCast(loc.line), .little);
+            try w.writeInt(u32, @intCast(loc.column), .little);
 
-            switch (fail.*) {
-                .bundler => |msgs| {
-                    writer.print("Errors while bundling '{s}'\n\n", .{
-                        route.pattern,
-                    }) catch break :message null;
+            // TODO: improve the encoding of bundler errors so that the file it is
+            // referencing is not repeated per error.
+            try writeString32(loc.namespace, w);
+            try writeString32(loc.file, w);
+            try writeString32(loc.line_text orelse "", w);
+        } else {
+            try w.writeInt(u32, 0, .little);
+        }
+    }
 
-                    var log: Log = .{ .msgs = msgs, .errors = 1, .level = .err };
-                    log.printForLogLevelWithEnableAnsiColors(writer, false) catch
-                        break :message null;
-                },
-                .zig_error => |err| {
-                    writer.print("Error while bundling '{s}': {s}\n", .{ route.pattern, @errorName(err) }) catch break :message null;
-                },
-                .server_load => |strong| {
-                    writer.print("Server route handler for '{s}' threw while loading\n\n", .{
-                        route.pattern,
-                    }) catch break :message null;
-                    const err = strong.get() orelse unreachable;
-                    route.dev.vm.printErrorLikeObjectSimple(err, writer, false);
-                },
-                .request_handler => |err| {
-                    writer.print("Server route handler for '{s}' threw while loading\n\n", .{
-                        route.pattern,
-                    }) catch break :message null;
-                    route.dev.vm.printErrorLikeObjectSimple(err, writer, false);
-                },
-            }
-
-            break :message fbs.getWritten();
-        } orelse message: {
-            const suffix = "...truncated";
-            @memcpy(buffer[buffer.len - suffix.len ..], suffix);
-            break :message &buffer;
-        };
-        resp.end(message, true); // TODO: "You should never call res.end(huge buffer)"
+    fn writeString32(data: []const u8, w: *Writer) !void {
+        try w.writeInt(u32, @intCast(data.len), .little);
+        try w.writeAll(data);
     }
 };
+
+// /// Represents an error from loading or server sided runtime. Information on
+// /// what this error is from, such as the associated Route, is inferred from
+// /// surrounding context.
+// ///
+// /// In the case a route was not able to fully compile, the `Failure` is stored
+// /// so that a browser refreshing the page can display this failure.
+// const Failure = union(enum) {
+//     zig_error: anyerror,
+//     /// Bundler and module resolution use `bun.logger` to report multiple errors at once.
+//     bundler: std.ArrayList(bun.logger.Msg),
+//     /// Thrown JavaScript exception while loading server code.
+//     server_load: JSC.Strong,
+//     /// Never stored; the current request handler threw an error.
+//     request_handler: JSValue,
+
+//     /// Consumes the Log data, resetting it.
+//     pub fn fromLog(log: *Log) Failure {
+//         const fail: Failure = .{ .bundler = log.msgs };
+//         log.* = .{
+//             .msgs = std.ArrayList(bun.logger.Msg).init(log.msgs.allocator),
+//             .level = log.level,
+//         };
+//         return fail;
+//     }
+
+//     pub fn fromJSServerLoad(js: JSValue, global: *JSC.JSGlobalObject) Failure {
+//         return .{ .server_load = JSC.Strong.create(js, global) };
+//     }
+
+//     // TODO: deduplicate the two methods here. that isnt trivial because one has to
+//     // style with ansi codes, and the other has to style with HTML.
+
+//     fn printToConsole(fail: *const Failure, route: *const Route) void {
+//         // TODO: remove dependency on `route`
+//         defer Output.flush();
+
+//         Output.prettyErrorln("", .{});
+
+//         switch (fail.*) {
+//             .bundler => |msgs| {
+//                 Output.prettyErrorln("<red>Errors while bundling '{s}'<r>", .{
+//                     route.pattern,
+//                 });
+//                 Output.flush();
+
+//                 var log: Log = .{ .msgs = msgs, .errors = 1, .level = .err };
+//                 log.printForLogLevelColorsRuntime(
+//                     Output.errorWriter(),
+//                     Output.enable_ansi_colors_stderr,
+//                 ) catch {};
+//             },
+//             .zig_error => |err| {
+//                 Output.prettyErrorln("<red>Error while bundling '{s}': {s}<r>", .{
+//                     route.pattern,
+//                     @errorName(err),
+//                 });
+//                 Output.flush();
+//             },
+//             .server_load => |strong| {
+//                 Output.prettyErrorln("<red>Server route handler for '{s}' threw while loading<r>", .{
+//                     route.pattern,
+//                 });
+//                 Output.flush();
+
+//                 const err = strong.get() orelse unreachable;
+//                 route.dev.vm.printErrorLikeObjectToConsole(err);
+//             },
+//             .request_handler => |err| {
+//                 Output.prettyErrorln("<red>Request to handler '{s}' failed SSR<r>", .{
+//                     route.pattern,
+//                 });
+//                 Output.flush();
+
+//                 route.dev.vm.printErrorLikeObjectToConsole(err);
+//             },
+//         }
+//     }
+
+//     fn sendAsHttpResponse(fail: *const Failure, resp: *Response, route: *const Route) void {
+//         resp.writeStatus("500 Internal Server Error");
+//         var buffer: [32768]u8 = undefined;
+
+//         const message = message: {
+//             var fbs = std.io.fixedBufferStream(&buffer);
+//             const writer = fbs.writer();
+
+//             switch (fail.*) {
+//                 .bundler => |msgs| {
+//                     writer.print("Errors while bundling '{s}'\n\n", .{
+//                         route.pattern,
+//                     }) catch break :message null;
+
+//                     var log: Log = .{ .msgs = msgs, .errors = 1, .level = .err };
+//                     log.printForLogLevelWithEnableAnsiColors(writer, false) catch
+//                         break :message null;
+//                 },
+//                 .zig_error => |err| {
+//                     writer.print("Error while bundling '{s}': {s}\n", .{ route.pattern, @errorName(err) }) catch break :message null;
+//                 },
+//                 .server_load => |strong| {
+//                     writer.print("Server route handler for '{s}' threw while loading\n\n", .{
+//                         route.pattern,
+//                     }) catch break :message null;
+//                     const err = strong.get() orelse unreachable;
+//                     route.dev.vm.printErrorLikeObjectSimple(err, writer, false);
+//                 },
+//                 .request_handler => |err| {
+//                     writer.print("Server route handler for '{s}' threw while loading\n\n", .{
+//                         route.pattern,
+//                     }) catch break :message null;
+//                     route.dev.vm.printErrorLikeObjectSimple(err, writer, false);
+//                 },
+//             }
+
+//             break :message fbs.getWritten();
+//         } orelse message: {
+//             const suffix = "...truncated";
+//             @memcpy(buffer[buffer.len - suffix.len ..], suffix);
+//             break :message &buffer;
+//         };
+//         resp.end(message, true); // TODO: "You should never call res.end(huge buffer)"
+//     }
+// };
 
 // For debugging, it is helpful to be able to see bundles.
 fn dumpBundle(dump_dir: std.fs.Dir, side: bake.Renderer, rel_path: []const u8, chunk: []const u8, wrap: bool) !void {

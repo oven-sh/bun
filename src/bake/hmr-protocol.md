@@ -37,11 +37,18 @@ Hot-module-reloading patch. The entire payload is UTF-8 Encoded JavaScript Paylo
 
 Server-side code has reloaded. Client should either refetch the route or perform a hard reload.
 
-- `u32` Number of updated routes
+- `u32`: Number of updated routes
 - For each route:
-  - `u32` Route ID
-  - `u16` Length of route name.
-  - `[n]u8` Route name in UTF-8 encoded text.
+  - `u32`: Route ID
+  - `u16`: Length of route name.
+  - `[n]u8`: Route name in UTF-8 encoded text.
+
+### `e`
+
+- `u32`: Number of errors
+- For each error:
+  - `u8` representing `ErrorKind`
+  - Depending on kind, metadata is encoded differently
 
 ### `v`
 

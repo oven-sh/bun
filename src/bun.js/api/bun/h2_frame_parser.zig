@@ -722,7 +722,6 @@ pub const H2FrameParser = struct {
     maxOutstandingPings: u64 = 10,
     outStandingPings: u64 = 0,
     lastStreamID: u32 = 0,
-    firstSettingsACK: bool = true,
     isServer: bool = false,
     prefaceReceivedLen: u8 = 0,
     // we buffer requests until we get the first settings ACK
@@ -1477,7 +1476,6 @@ pub const H2FrameParser = struct {
     }
 
     pub fn flush(this: *H2FrameParser) usize {
-        this.flushPending();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -1993,10 +1991,7 @@ pub const H2FrameParser = struct {
     }
     pub fn handleSettingsFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8) usize {
         const isACK = frame.flags & @intFromEnum(SettingsFlags.ACK) != 0;
-        defer if (!this.firstSettingsACK) {
-            this.firstSettingsACK = true;
-            this.flushPending();
-        };
+
         log("handleSettingsFrame {s} isACK {}", .{ if (this.isServer) "server" else "client", isACK });
         if (frame.streamIdentifier != 0) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID, true);
@@ -2017,8 +2012,6 @@ pub const H2FrameParser = struct {
                 log("settings frame ACK", .{});
 
                 // we can now write any request
-                this.firstSettingsACK = true;
-                this.flushPending();
                 this.remoteSettings = this.localSettings;
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             }
@@ -2187,32 +2180,13 @@ pub const H2FrameParser = struct {
 
     const DirectWriterStruct = struct {
         writer: *H2FrameParser,
-        shouldBuffer: bool = true,
         pub fn write(this: *const DirectWriterStruct, data: []const u8) !usize {
-            if (this.shouldBuffer) {
-                return this.writer.pendingBuffer.write(this.writer.allocator, data) catch 0;
-            }
             return if (this.writer.write(data)) data.len else 0;
         }
     };
 
     fn toWriter(this: *H2FrameParser) DirectWriterStruct {
-        return DirectWriterStruct{ .writer = this, .shouldBuffer = false };
-    }
-
-    fn getBufferWriter(this: *H2FrameParser) DirectWriterStruct {
-        return DirectWriterStruct{ .writer = this, .shouldBuffer = true };
-    }
-
-    fn flushPending(this: *H2FrameParser) void {
-        log("flushPending", .{});
-        if (this.pendingBuffer.len > 0 and this.firstSettingsACK) {
-            const slice = this.pendingBuffer.slice();
-            _ = this.write(slice);
-            // we will only flush one time
-            this.pendingBuffer.deinitWithAllocator(this.allocator);
-            _ = this.flushStreamQueue();
-        }
+        return DirectWriterStruct{ .writer = this };
     }
 
     pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -2706,7 +2680,7 @@ pub const H2FrameParser = struct {
     fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
         log("HTTP_FRAME_DATA {s} sendData({}, {}, {})", .{ if (stream.client.isServer) "server" else "client", stream.id, payload.len, close });
 
-        const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
+        const writer = this.toWriter();
         const stream_id = stream.id;
         var enqueued = false;
         defer if (!enqueued) {
@@ -2735,7 +2709,7 @@ pub const H2FrameParser = struct {
                 .streamIdentifier = @intCast(stream_id),
                 .length = 0,
             };
-            if (!this.firstSettingsACK or (this.hasBackpressure() or this.outboundQueueSize > 0)) {
+            if (this.hasBackpressure() or this.outboundQueueSize > 0) {
                 enqueued = true;
                 stream.queueFrame("", callback, close);
             } else {
@@ -2753,7 +2727,7 @@ pub const H2FrameParser = struct {
                 offset += size;
                 const end_stream = offset >= payload.len and can_close;
 
-                if (!this.firstSettingsACK or (this.hasBackpressure() or this.outboundQueueSize > 0)) {
+                if (this.hasBackpressure() or this.outboundQueueSize > 0) {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     stream.queueFrame(slice, callback, offset >= payload.len and close);
@@ -2918,7 +2892,7 @@ pub const H2FrameParser = struct {
             .streamIdentifier = stream.id,
             .length = @intCast(encoded_size),
         };
-        const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
+        const writer = this.toWriter();
         _ = frame.write(@TypeOf(writer), writer);
         _ = writer.write(buffer[0..encoded_size]) catch 0;
         if (stream.state == .HALF_CLOSED_REMOTE) {
@@ -3410,7 +3384,7 @@ pub const H2FrameParser = struct {
             .length = @intCast(payload_size),
         };
 
-        const writer = if (this.firstSettingsACK) this.toWriter() else this.getBufferWriter();
+        const writer = this.toWriter();
         _ = frame.write(@TypeOf(writer), writer);
         //https://datatracker.ietf.org/doc/html/rfc7540#section-6.2
         if (has_priority) {

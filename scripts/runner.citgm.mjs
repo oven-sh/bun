@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
+import { getExecPathFromBuildKite } from "./utils.mjs";
 
 function tmpdirSync(pattern = "bun.citgm.") {
   return fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), pattern));
@@ -23,15 +24,25 @@ const shards = [
   [0, "isarray"],
 ];
 
-const shard_number = parseInt(process.argv[2] ?? process.env["BUILDKITE_PARALLEL_JOB"] ?? "0", 10);
+let exec_path = process.argv[2];
+console.log("exec path:", exec_path);
+if (process.env.BUILDKITE_PARALLEL_JOB != null) {
+  console.log("downloading bun from buildkite");
+  exec_path = getExecPathFromBuildKite("linux-x64-build-bun");
+  console.log("exec path:", exec_path);
+  console.log("---");
+  console.log();
+}
+
+const shard_number = parseInt(process.argv[3] ?? process.env.BUILDKITE_PARALLEL_JOB ?? "0", 10);
 
 let the_shard = shards[shard_number];
 
 console.log("❯", the_shard);
 
 const clone_url = await (async () => {
-  if (shard_number === -1) the_shard = [0, process.argv[3]];
-  if (shard_number === -2) the_shard = [1, process.argv[3]];
+  if (shard_number === -1) the_shard = [0, process.argv[4]];
+  if (shard_number === -2) the_shard = [1, process.argv[4]];
   switch (the_shard[0]) {
     case 0: {
       let result = await fetch(`https://registry.npmjs.org/${the_shard[1]}`);
@@ -75,7 +86,7 @@ const clone_dir = tmpdirSync();
 {
   console.log(`${clone_dir}/package.json`);
   console.log();
-  const cmd = process.argv0;
+  const cmd = exec_path;
   const args = ["install"];
   console.log("❯", [cmd, ...args]);
 
@@ -94,7 +105,7 @@ const clone_dir = tmpdirSync();
 {
   console.log(`${clone_dir}/package.json`);
   console.log();
-  const cmd = process.argv0;
+  const cmd = exec_path;
   const args = ["pm", "trust", "--all"];
   console.log("❯", [cmd, ...args]);
 
@@ -113,7 +124,7 @@ const clone_dir = tmpdirSync();
 {
   console.log(`${clone_dir}/package.json`);
   console.log();
-  const cmd = process.argv0;
+  const cmd = exec_path;
   const args = ["--bun", "run", the_shard[2] ?? "test"];
   console.log("❯", [cmd, ...args]);
 

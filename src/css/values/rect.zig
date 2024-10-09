@@ -36,6 +36,7 @@ fn needsDeinit(comptime T: type) bool {
         CssColor => true,
         css.css_properties.border.LineStyle => false,
         css.css_properties.border.BorderSideWidth => true,
+        css.css_values.length.LengthPercentageOrAuto => true,
         else => @compileError("Don't know if " ++ @typeName(T) ++ " needs deinit. Please add it to this switch statement."),
     };
 }

@@ -98,7 +98,7 @@ const BorderInlineStart = border.BorderInlineStart;
 const BorderInlineEnd = border.BorderInlineEnd;
 const BorderBlock = border.BorderBlock;
 const BorderInline = border.BorderInline;
-// const Outline = outline.Outline;
+const Outline = outline.Outline;
 // const OutlineStyle = outline.OutlineStyle;
 // const FlexDirection = flex.FlexDirection;
 // const FlexWrap = flex.FlexWrap;
@@ -233,7 +233,7 @@ const Composes = css_modules.Composes;
 // const Container = contain.Container;
 // const ContainerNameList = contain.ContainerNameList;
 const CustomPropertyName = custom.CustomPropertyName;
-// const display = css.css_properties.display;
+const display = css.css_properties.display;
 
 const Position = position.Position;
 
@@ -253,7 +253,11 @@ pub const Property = union(PropertyIdTag) {
     @"background-clip": struct { SmallList(background.BackgroundAttachment, 1), VendorPrefix },
     @"background-origin": SmallList(background.BackgroundOrigin, 1),
     background: SmallList(background.Background, 1),
+    @"box-shadow": struct { SmallList(box_shadow.BoxShadow, 1), VendorPrefix },
+    opacity: css.css_values.alpha.AlphaValue,
     color: CssColor,
+    display: display.Display,
+    visibility: display.Visibility,
     width: size.Size,
     height: size.Size,
     @"min-width": size.Size,
@@ -281,6 +285,9 @@ pub const Property = union(PropertyIdTag) {
     @"inset-block-end": LengthPercentageOrAuto,
     @"inset-inline-start": LengthPercentageOrAuto,
     @"inset-inline-end": LengthPercentageOrAuto,
+    @"inset-block": margin_padding.InsetBlock,
+    @"inset-inline": margin_padding.InsetInline,
+    inset: margin_padding.Inset,
     @"border-spacing": css.css_values.size.Size2D(Length),
     @"border-top-color": CssColor,
     @"border-bottom-color": CssColor,
@@ -341,6 +348,7 @@ pub const Property = union(PropertyIdTag) {
     @"border-inline": BorderInline,
     @"border-inline-start": BorderInlineStart,
     @"border-inline-end": BorderInlineEnd,
+    outline: Outline,
     @"outline-color": CssColor,
     @"text-decoration-color": struct { CssColor, VendorPrefix },
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
@@ -387,8 +395,20 @@ pub const Property = union(PropertyIdTag) {
         if (!@hasDecl(SmallList(background.Background, 1), "deepClone")) {
             @compileError("SmallList(background.Background, 1): does not have a deepClone() function.");
         }
+        if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "deepClone")) {
+            @compileError("SmallList(box_shadow.BoxShadow, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(css.css_values.alpha.AlphaValue, "deepClone")) {
+            @compileError("css.css_values.alpha.AlphaValue: does not have a deepClone() function.");
+        }
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(display.Display, "deepClone")) {
+            @compileError("display.Display: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(display.Visibility, "deepClone")) {
+            @compileError("display.Visibility: does not have a deepClone() function.");
         }
         if (!@hasDecl(size.Size, "deepClone")) {
             @compileError("size.Size: does not have a deepClone() function.");
@@ -470,6 +490,15 @@ pub const Property = union(PropertyIdTag) {
         }
         if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
             @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(margin_padding.InsetBlock, "deepClone")) {
+            @compileError("margin_padding.InsetBlock: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(margin_padding.InsetInline, "deepClone")) {
+            @compileError("margin_padding.InsetInline: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(margin_padding.Inset, "deepClone")) {
+            @compileError("margin_padding.Inset: does not have a deepClone() function.");
         }
         if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
             @compileError("css.css_values.size.Size2D(Length): does not have a deepClone() function.");
@@ -651,6 +680,9 @@ pub const Property = union(PropertyIdTag) {
         if (!@hasDecl(BorderInlineEnd, "deepClone")) {
             @compileError("BorderInlineEnd: does not have a deepClone() function.");
         }
+        if (!@hasDecl(Outline, "deepClone")) {
+            @compileError("Outline: does not have a deepClone() function.");
+        }
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
         }
@@ -750,10 +782,38 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"box-shadow" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(box_shadow.BoxShadow, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-shadow" = .{ c, pre } } };
+                    }
+                }
+            },
+            .opacity => {
+                if (css.generic.parseWithOptions(css.css_values.alpha.AlphaValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .opacity = c } };
+                    }
+                }
+            },
             .color => {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .color = c } };
+                    }
+                }
+            },
+            .display => {
+                if (css.generic.parseWithOptions(display.Display, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .display = c } };
+                    }
+                }
+            },
+            .visibility => {
+                if (css.generic.parseWithOptions(display.Visibility, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .visibility = c } };
                     }
                 }
             },
@@ -943,6 +1003,27 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"inset-inline-end" = c } };
+                    }
+                }
+            },
+            .@"inset-block" => {
+                if (css.generic.parseWithOptions(margin_padding.InsetBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-block" = c } };
+                    }
+                }
+            },
+            .@"inset-inline" => {
+                if (css.generic.parseWithOptions(margin_padding.InsetInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-inline" = c } };
+                    }
+                }
+            },
+            .inset => {
+                if (css.generic.parseWithOptions(margin_padding.Inset, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .inset = c } };
                     }
                 }
             },
@@ -1366,6 +1447,13 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .outline => {
+                if (css.generic.parseWithOptions(Outline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .outline = c } };
+                    }
+                }
+            },
             .@"outline-color" => {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -1436,7 +1524,11 @@ pub const Property = union(PropertyIdTag) {
             .@"background-clip" => |*v| PropertyId{ .@"background-clip" = v[1] },
             .@"background-origin" => .@"background-origin",
             .background => .background,
+            .@"box-shadow" => |*v| PropertyId{ .@"box-shadow" = v[1] },
+            .opacity => .opacity,
             .color => .color,
+            .display => .display,
+            .visibility => .visibility,
             .width => .width,
             .height => .height,
             .@"min-width" => .@"min-width",
@@ -1464,6 +1556,9 @@ pub const Property = union(PropertyIdTag) {
             .@"inset-block-end" => .@"inset-block-end",
             .@"inset-inline-start" => .@"inset-inline-start",
             .@"inset-inline-end" => .@"inset-inline-end",
+            .@"inset-block" => .@"inset-block",
+            .@"inset-inline" => .@"inset-inline",
+            .inset => .inset,
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -1524,6 +1619,7 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline" => .@"border-inline",
             .@"border-inline-start" => .@"border-inline-start",
             .@"border-inline-end" => .@"border-inline-end",
+            .outline => .outline,
             .@"outline-color" => .@"outline-color",
             .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
@@ -1548,7 +1644,11 @@ pub const Property = union(PropertyIdTag) {
             .@"background-clip" => |*v| .{ .@"background-clip" = .{ v[0].deepClone(allocator), v[1] } },
             .@"background-origin" => |*v| .{ .@"background-origin" = v.deepClone(allocator) },
             .background => |*v| .{ .background = v.deepClone(allocator) },
+            .@"box-shadow" => |*v| .{ .@"box-shadow" = .{ v[0].deepClone(allocator), v[1] } },
+            .opacity => |*v| .{ .opacity = v.deepClone(allocator) },
             .color => |*v| .{ .color = v.deepClone(allocator) },
+            .display => |*v| .{ .display = v.deepClone(allocator) },
+            .visibility => |*v| .{ .visibility = v.deepClone(allocator) },
             .width => |*v| .{ .width = v.deepClone(allocator) },
             .height => |*v| .{ .height = v.deepClone(allocator) },
             .@"min-width" => |*v| .{ .@"min-width" = v.deepClone(allocator) },
@@ -1576,6 +1676,9 @@ pub const Property = union(PropertyIdTag) {
             .@"inset-block-end" => |*v| .{ .@"inset-block-end" = v.deepClone(allocator) },
             .@"inset-inline-start" => |*v| .{ .@"inset-inline-start" = v.deepClone(allocator) },
             .@"inset-inline-end" => |*v| .{ .@"inset-inline-end" = v.deepClone(allocator) },
+            .@"inset-block" => |*v| .{ .@"inset-block" = v.deepClone(allocator) },
+            .@"inset-inline" => |*v| .{ .@"inset-inline" = v.deepClone(allocator) },
+            .inset => |*v| .{ .inset = v.deepClone(allocator) },
             .@"border-spacing" => |*v| .{ .@"border-spacing" = v.deepClone(allocator) },
             .@"border-top-color" => |*v| .{ .@"border-top-color" = v.deepClone(allocator) },
             .@"border-bottom-color" => |*v| .{ .@"border-bottom-color" = v.deepClone(allocator) },
@@ -1636,6 +1739,7 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline" => |*v| .{ .@"border-inline" = v.deepClone(allocator) },
             .@"border-inline-start" => |*v| .{ .@"border-inline-start" = v.deepClone(allocator) },
             .@"border-inline-end" => |*v| .{ .@"border-inline-end" = v.deepClone(allocator) },
+            .outline => |*v| .{ .outline = v.deepClone(allocator) },
             .@"outline-color" => |*v| .{ .@"outline-color" = v.deepClone(allocator) },
             .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
@@ -1666,7 +1770,11 @@ pub const Property = union(PropertyIdTag) {
             .@"background-clip" => |*x| .{ "background-clip", x.@"1" },
             .@"background-origin" => .{ "background-origin", VendorPrefix{ .none = true } },
             .background => .{ "background", VendorPrefix{ .none = true } },
+            .@"box-shadow" => |*x| .{ "box-shadow", x.@"1" },
+            .opacity => .{ "opacity", VendorPrefix{ .none = true } },
             .color => .{ "color", VendorPrefix{ .none = true } },
+            .display => .{ "display", VendorPrefix{ .none = true } },
+            .visibility => .{ "visibility", VendorPrefix{ .none = true } },
             .width => .{ "width", VendorPrefix{ .none = true } },
             .height => .{ "height", VendorPrefix{ .none = true } },
             .@"min-width" => .{ "min-width", VendorPrefix{ .none = true } },
@@ -1694,6 +1802,9 @@ pub const Property = union(PropertyIdTag) {
             .@"inset-block-end" => .{ "inset-block-end", VendorPrefix{ .none = true } },
             .@"inset-inline-start" => .{ "inset-inline-start", VendorPrefix{ .none = true } },
             .@"inset-inline-end" => .{ "inset-inline-end", VendorPrefix{ .none = true } },
+            .@"inset-block" => .{ "inset-block", VendorPrefix{ .none = true } },
+            .@"inset-inline" => .{ "inset-inline", VendorPrefix{ .none = true } },
+            .inset => .{ "inset", VendorPrefix{ .none = true } },
             .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
             .@"border-top-color" => .{ "border-top-color", VendorPrefix{ .none = true } },
             .@"border-bottom-color" => .{ "border-bottom-color", VendorPrefix{ .none = true } },
@@ -1754,6 +1865,7 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline" => .{ "border-inline", VendorPrefix{ .none = true } },
             .@"border-inline-start" => .{ "border-inline-start", VendorPrefix{ .none = true } },
             .@"border-inline-end" => .{ "border-inline-end", VendorPrefix{ .none = true } },
+            .outline => .{ "outline", VendorPrefix{ .none = true } },
             .@"outline-color" => .{ "outline-color", VendorPrefix{ .none = true } },
             .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
@@ -1785,7 +1897,11 @@ pub const Property = union(PropertyIdTag) {
             .@"background-clip" => |*value| value[0].toCss(W, dest),
             .@"background-origin" => |*value| value.toCss(W, dest),
             .background => |*value| value.toCss(W, dest),
+            .@"box-shadow" => |*value| value[0].toCss(W, dest),
+            .opacity => |*value| value.toCss(W, dest),
             .color => |*value| value.toCss(W, dest),
+            .display => |*value| value.toCss(W, dest),
+            .visibility => |*value| value.toCss(W, dest),
             .width => |*value| value.toCss(W, dest),
             .height => |*value| value.toCss(W, dest),
             .@"min-width" => |*value| value.toCss(W, dest),
@@ -1813,6 +1929,9 @@ pub const Property = union(PropertyIdTag) {
             .@"inset-block-end" => |*value| value.toCss(W, dest),
             .@"inset-inline-start" => |*value| value.toCss(W, dest),
             .@"inset-inline-end" => |*value| value.toCss(W, dest),
+            .@"inset-block" => |*value| value.toCss(W, dest),
+            .@"inset-inline" => |*value| value.toCss(W, dest),
+            .inset => |*value| value.toCss(W, dest),
             .@"border-spacing" => |*value| value.toCss(W, dest),
             .@"border-top-color" => |*value| value.toCss(W, dest),
             .@"border-bottom-color" => |*value| value.toCss(W, dest),
@@ -1873,6 +1992,7 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline" => |*value| value.toCss(W, dest),
             .@"border-inline-start" => |*value| value.toCss(W, dest),
             .@"border-inline-end" => |*value| value.toCss(W, dest),
+            .outline => |*value| value.toCss(W, dest),
             .@"outline-color" => |*value| value.toCss(W, dest),
             .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
@@ -1889,6 +2009,9 @@ pub const Property = union(PropertyIdTag) {
         switch (this.*) {
             .@"background-position" => |*v| return v.longhand(property_id),
             .overflow => |*v| return v.longhand(property_id),
+            .@"inset-block" => |*v| return v.longhand(property_id),
+            .@"inset-inline" => |*v| return v.longhand(property_id),
+            .inset => |*v| return v.longhand(property_id),
             .@"border-radius" => |*v| {
                 if (!v[1].eq(property_id.prefix())) return null;
                 return v[0].longhand(property_id);
@@ -1917,6 +2040,7 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline" => |*v| return v.longhand(property_id),
             .@"border-inline-start" => |*v| return v.longhand(property_id),
             .@"border-inline-end" => |*v| return v.longhand(property_id),
+            .outline => |*v| return v.longhand(property_id),
             else => {},
         }
         return null;
@@ -1934,7 +2058,11 @@ pub const PropertyId = union(PropertyIdTag) {
     @"background-clip": VendorPrefix,
     @"background-origin",
     background,
+    @"box-shadow": VendorPrefix,
+    opacity,
     color,
+    display,
+    visibility,
     width,
     height,
     @"min-width",
@@ -1962,6 +2090,9 @@ pub const PropertyId = union(PropertyIdTag) {
     @"inset-block-end",
     @"inset-inline-start",
     @"inset-inline-end",
+    @"inset-block",
+    @"inset-inline",
+    inset,
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",
@@ -2022,6 +2153,7 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-inline",
     @"border-inline-start",
     @"border-inline-end",
+    outline,
     @"outline-color",
     @"text-decoration-color": VendorPrefix,
     @"text-emphasis-color": VendorPrefix,
@@ -2052,7 +2184,11 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"background-clip" => |p| p,
             .@"background-origin" => VendorPrefix.empty(),
             .background => VendorPrefix.empty(),
+            .@"box-shadow" => |p| p,
+            .opacity => VendorPrefix.empty(),
             .color => VendorPrefix.empty(),
+            .display => VendorPrefix.empty(),
+            .visibility => VendorPrefix.empty(),
             .width => VendorPrefix.empty(),
             .height => VendorPrefix.empty(),
             .@"min-width" => VendorPrefix.empty(),
@@ -2080,6 +2216,9 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"inset-block-end" => VendorPrefix.empty(),
             .@"inset-inline-start" => VendorPrefix.empty(),
             .@"inset-inline-end" => VendorPrefix.empty(),
+            .@"inset-block" => VendorPrefix.empty(),
+            .@"inset-inline" => VendorPrefix.empty(),
+            .inset => VendorPrefix.empty(),
             .@"border-spacing" => VendorPrefix.empty(),
             .@"border-top-color" => VendorPrefix.empty(),
             .@"border-bottom-color" => VendorPrefix.empty(),
@@ -2140,6 +2279,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline" => VendorPrefix.empty(),
             .@"border-inline-start" => VendorPrefix.empty(),
             .@"border-inline-end" => VendorPrefix.empty(),
+            .outline => VendorPrefix.empty(),
             .@"outline-color" => VendorPrefix.empty(),
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
@@ -2184,9 +2324,21 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .background;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-shadow")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-shadow" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "opacity")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .opacity;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .color;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "display")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .display;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "visibility")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .visibility;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "width")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .width;
@@ -2268,6 +2420,15 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline-end")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"inset-inline-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-block")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inset-block";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inset-inline";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .inset;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-spacing";
@@ -2448,6 +2609,9 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-inline-end")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-inline-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .outline;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"outline-color";
@@ -2483,7 +2647,11 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"background-clip" => .{ .@"background-clip" = pre },
             .@"background-origin" => .@"background-origin",
             .background => .background,
+            .@"box-shadow" => .{ .@"box-shadow" = pre },
+            .opacity => .opacity,
             .color => .color,
+            .display => .display,
+            .visibility => .visibility,
             .width => .width,
             .height => .height,
             .@"min-width" => .@"min-width",
@@ -2511,6 +2679,9 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"inset-block-end" => .@"inset-block-end",
             .@"inset-inline-start" => .@"inset-inline-start",
             .@"inset-inline-end" => .@"inset-inline-end",
+            .@"inset-block" => .@"inset-block",
+            .@"inset-inline" => .@"inset-inline",
+            .inset => .inset,
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -2571,6 +2742,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline" => .@"border-inline",
             .@"border-inline-start" => .@"border-inline-start",
             .@"border-inline-end" => .@"border-inline-end",
+            .outline => .outline,
             .@"outline-color" => .@"outline-color",
             .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
@@ -2595,7 +2767,13 @@ pub const PropertyId = union(PropertyIdTag) {
             },
             .@"background-origin" => {},
             .background => {},
+            .@"box-shadow" => |*p| {
+                p.insert(pre);
+            },
+            .opacity => {},
             .color => {},
+            .display => {},
+            .visibility => {},
             .width => {},
             .height => {},
             .@"min-width" => {},
@@ -2627,6 +2805,9 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"inset-block-end" => {},
             .@"inset-inline-start" => {},
             .@"inset-inline-end" => {},
+            .@"inset-block" => {},
+            .@"inset-inline" => {},
+            .inset => {},
             .@"border-spacing" => {},
             .@"border-top-color" => {},
             .@"border-bottom-color" => {},
@@ -2699,6 +2880,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline" => {},
             .@"border-inline-start" => {},
             .@"border-inline-end" => {},
+            .outline => {},
             .@"outline-color" => {},
             .@"text-decoration-color" => |*p| {
                 p.insert(pre);
@@ -2742,7 +2924,11 @@ pub const PropertyIdTag = enum(u16) {
     @"background-clip",
     @"background-origin",
     background,
+    @"box-shadow",
+    opacity,
     color,
+    display,
+    visibility,
     width,
     height,
     @"min-width",
@@ -2770,6 +2956,9 @@ pub const PropertyIdTag = enum(u16) {
     @"inset-block-end",
     @"inset-inline-start",
     @"inset-inline-end",
+    @"inset-block",
+    @"inset-inline",
+    inset,
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",
@@ -2830,6 +3019,7 @@ pub const PropertyIdTag = enum(u16) {
     @"border-inline",
     @"border-inline-start",
     @"border-inline-end",
+    outline,
     @"outline-color",
     @"text-decoration-color",
     @"text-emphasis-color",

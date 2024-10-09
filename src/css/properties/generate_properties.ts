@@ -409,22 +409,22 @@ generateCode({
   background: {
     ty: "SmallList(background.Background, 1)",
   },
-  // "box-shadow": {
-  //   ty: "SmallList(box_shadow.BoxShadow, 1)",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // opacity: {
-  //   ty: "css.css_values.alpha.AlphaValue",
-  // },
+  "box-shadow": {
+    ty: "SmallList(box_shadow.BoxShadow, 1)",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  opacity: {
+    ty: "css.css_values.alpha.AlphaValue",
+  },
   color: {
     ty: "CssColor",
   },
-  // display: {
-  //   ty: "display.Display",
-  // },
-  // visibility: {
-  //   ty: "display.Visibility",
-  // },
+  display: {
+    ty: "display.Display",
+  },
+  visibility: {
+    ty: "display.Visibility",
+  },
   width: {
     ty: "size.Size",
     logical_group: { ty: "size", category: "physical" },
@@ -529,18 +529,18 @@ generateCode({
     ty: "LengthPercentageOrAuto",
     logical_group: { ty: "inset", category: "logical" },
   },
-  // "inset-block": {
-  //   ty: "margin_padding.InsetBlock",
-  //   shorthand: true,
-  // },
-  // "inset-inline": {
-  //   ty: "margin_padding.InsetInline",
-  //   shorthand: true,
-  // },
-  // inset: {
-  //   ty: "margin_padding.Inset",
-  //   shorthand: true,
-  // },
+  "inset-block": {
+    ty: "margin_padding.InsetBlock",
+    shorthand: true,
+  },
+  "inset-inline": {
+    ty: "margin_padding.InsetInline",
+    shorthand: true,
+  },
+  inset: {
+    ty: "margin_padding.Inset",
+    shorthand: true,
+  },
   "border-spacing": {
     ty: "css.css_values.size.Size2D(Length)",
   },
@@ -781,10 +781,10 @@ generateCode({
     ty: "BorderInlineEnd",
     shorthand: true,
   },
-  // outline: {
-  //   ty: "Outline",
-  //   shorthand: true,
-  // },
+  outline: {
+    ty: "Outline",
+    shorthand: true,
+  },
   "outline-color": {
     ty: "CssColor",
   },
@@ -1723,7 +1723,7 @@ const BorderInlineStart = border.BorderInlineStart;
 const BorderInlineEnd = border.BorderInlineEnd;
 const BorderBlock = border.BorderBlock;
 const BorderInline = border.BorderInline;
-// const Outline = outline.Outline;
+const Outline = outline.Outline;
 // const OutlineStyle = outline.OutlineStyle;
 // const FlexDirection = flex.FlexDirection;
 // const FlexWrap = flex.FlexWrap;
@@ -1858,7 +1858,7 @@ const Composes = css_modules.Composes;
 // const Container = contain.Container;
 // const ContainerNameList = contain.ContainerNameList;
 const CustomPropertyName = custom.CustomPropertyName;
-// const display = css.css_properties.display;
+const display = css.css_properties.display;
 
 const Position = position.Position;
 

@@ -73,6 +73,7 @@ const clone_dir = tmpdirSync();
 }
 
 {
+  console.log(`${clone_dir}/package.json`);
   console.log();
   const cmd = process.argv0;
   const args = ["install"];
@@ -91,6 +92,7 @@ const clone_dir = tmpdirSync();
 }
 
 {
+  console.log(`${clone_dir}/package.json`);
   console.log();
   const cmd = process.argv0;
   const args = ["--bun", "run", the_shard[2] ?? "test"];

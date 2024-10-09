@@ -105,6 +105,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>├<r>  <cyan>--destination<r>          the directory the tarball will be saved in
             \\  <d>├<r>  <cyan>--ignore-scripts<r>       don't run pre/postpack and prepare scripts
             \\  <d>└<r>  <cyan>--gzip-level<r>           specify a custom compression level for gzip (0-9, default is 9)
+            \\  <d>└<r>  <cyan>--trust-all<r>            trust all dependencies for this run and allow all lifecycle scripts
             \\  bun pm <b>bin<r>                print the path to bin folder
             \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile

@@ -1580,8 +1580,8 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     if (length > WTF::String::MaxLength) {
         return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
     }
-    if (length > castedThis->length()) {
-        length = castedThis->length();
+    if (length > castedThis->byteLength()) {
+        length = castedThis->byteLength();
     }
 
     JSC::EncodedJSValue ret = 0;
@@ -1597,13 +1597,15 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     case WebCore::BufferEncodingType::ucs2:
     case WebCore::BufferEncodingType::utf16le: {
         UChar* data = nullptr;
-        if (length == 0) {
+        size_t u16length = length / 2;
+        if (u16length == 0) {
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
-            auto str = String::createUninitialized(length / 2, data);
-            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
+            auto str = String::createUninitialized(u16length, data);
+            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
             return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
+
         break;
     }
 
@@ -1635,6 +1637,7 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
         scope.throwException(lexicalGlobalObject, retValue);
         return {};
     }
+
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
 }
 
@@ -1663,8 +1666,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t start = 0;
-    uint32_t end = castedThis->length();
-    uint32_t thisLength = end;
+    uint32_t end = castedThis->byteLength();
+    uint32_t byteLength = end;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     if (end == 0)
@@ -1690,7 +1693,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         fstart = 0;
         goto lstart;
     }
-    if (fstart > thisLength) {
+    if (fstart > byteLength) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
     start = static_cast<uint32_t>(fstart);
@@ -1699,7 +1702,7 @@ lstart:
     if (!arg3.isUndefined()) {
         auto lend = arg3.toLength(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (lend < thisLength) end = lend;
+        if (lend < byteLength) end = lend;
     }
 
     if (end <= start)
@@ -1725,7 +1728,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
         return {};
     }
 
-    const size_t length = castedThis->length();
+    const size_t length = castedThis->byteLength();
     if (UNLIKELY(length == 0)) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
@@ -1773,7 +1776,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
 
 //     auto encoding = encoded.value();
 
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->length(), encoding));
+//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
 // }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L711

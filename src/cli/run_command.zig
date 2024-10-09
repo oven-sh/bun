@@ -1719,3 +1719,149 @@ pub const BunXFastPath = struct {
         };
     }
 };
+
+pub const RunScriptCommand = struct {
+    pub fn exec(ctx: Command.Context) !bool {
+        const positionals = ctx.positionals[1..];
+        var script_name_to_search: string = "";
+
+        if (positionals.len > 0) {
+            script_name_to_search = positionals[0];
+        }
+
+        const passthrough = ctx.passthrough;
+        const force_using_bun = ctx.debug.run_in_bun;
+
+        Global.configureAllocator(.{ .long_running = false });
+
+        var ORIGINAL_PATH: string = "";
+        var this_bundler: bundler.Bundler = undefined;
+        const root_dir_info = try RunCommand.configureEnvForRun(ctx, &this_bundler, null, true, false);
+        try RunCommand.configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
+        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+
+        // Run package.json script
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (package_json.scripts) |scripts| {
+                if (scripts.get(script_name_to_search)) |script_content| {
+                    // allocate enough to hold "post${scriptname}"
+                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
+                    defer ctx.allocator.free(temp_script_buffer);
+
+                    if (scripts.get(temp_script_buffer[1..])) |prescript| {
+                        try RunCommand.runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            prescript,
+                            temp_script_buffer[1..],
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            &.{},
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
+
+                    try RunCommand.runPackageScriptForeground(
+                        ctx,
+                        ctx.allocator,
+                        script_content,
+                        script_name_to_search,
+                        this_bundler.fs.top_level_dir,
+                        this_bundler.env,
+                        passthrough,
+                        ctx.debug.silent,
+                        ctx.debug.use_system_shell,
+                    );
+
+                    temp_script_buffer[0.."post".len].* = "post".*;
+
+                    if (scripts.get(temp_script_buffer)) |postscript| {
+                        try RunCommand.runPackageScriptForeground(
+                            ctx,
+                            ctx.allocator,
+                            postscript,
+                            temp_script_buffer,
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            &.{},
+                            ctx.debug.silent,
+                            ctx.debug.use_system_shell,
+                        );
+                    }
+
+                    return true;
+                }
+            }
+        }
+
+        if (script_name_to_search.len == 0) {
+            if (root_dir_info.enclosing_package_json) |package_json| {
+                printHelp(package_json);
+            } else {
+                printHelp(null);
+                Output.prettyln("\n<r><yellow>No package.json found.<r>\n", .{});
+                Output.flush();
+            }
+            return true;
+        }
+
+        Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
+        Global.exit(1);
+    }
+
+    pub fn printHelp(package_json: ?*PackageJSON) void {
+        const intro_text =
+            \\<b>Usage<r>: <b><green>bun run-script<r> <cyan>[flags]<r> \<script\>
+        ;
+
+        const examples_text =
+            \\<b>Examples:<r>
+            \\  <b><green>bun run-script<r> <blue>dev<r>
+            \\  <b><green>bun run-script<r> <blue>lint<r>
+            \\  <b><green>bun run-script<r> <blue>test<r>
+            \\
+            \\Full documentation is available at <magenta>https://bun.sh/docs/cli/run-script<r>
+            \\
+        ;
+
+        Output.pretty(intro_text ++ "\n\n", .{});
+
+        Output.pretty("<b>Flags:<r>", .{});
+
+        clap.simpleHelp(&Arguments.run_params);
+        Output.pretty("\n\n" ++ examples_text, .{});
+
+        if (package_json) |pkg| {
+            if (pkg.scripts) |scripts| {
+                var display_name = pkg.name;
+
+                if (display_name.len == 0) {
+                    display_name = std.fs.path.basename(pkg.source.path.name.dir);
+                }
+
+                var iterator = scripts.iterator();
+
+                if (scripts.count() > 0) {
+                    Output.pretty("\n<b>package.json scripts ({d} found):<r>", .{scripts.count()});
+                    // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
+                    while (iterator.next()) |entry| {
+                        Output.prettyln("\n", .{});
+                        Output.prettyln("  <d>$</r> bun run-script<r> <blue>{s}<r>\n", .{entry.key_ptr.*});
+                        Output.prettyln("  <d>  {s}<r>\n", .{entry.value_ptr.*});
+                    }
+
+                    // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
+
+                    Output.prettyln("\n", .{});
+                } else {
+                    Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
+                }
+            } else {
+                Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
+            }
+        }
+
+        Output.flush();
+    }
+};

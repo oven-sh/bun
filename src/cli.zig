@@ -33,8 +33,6 @@ const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
-const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
-const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
 const FilterRun = @import("./cli/filter_run.zig");
 
 const fs = @import("fs.zig");
@@ -122,6 +120,7 @@ pub const InstallCompletionsCommand = @import("./cli/install_completions_command
 pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const RunScriptCommand = @import("./cli/run_command.zig").RunScriptCommand;
 pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
@@ -1556,6 +1555,7 @@ pub const Command = struct {
             => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,
+            RootCommandMatcher.case("run-script") => .RunScriptCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
 
             RootCommandMatcher.case("exec") => .ExecCommand,
@@ -2014,6 +2014,24 @@ pub const Command = struct {
                 bun.assert(pretend_to_be_node);
                 try RunCommand.execAsIfNode(ctx);
             },
+            .RunScriptCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunScriptCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .RunScriptCommand);
+
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+                if (ctx.positionals.len > 0) {
+                    if (try RunScriptCommand.exec(ctx)) {
+                        return;
+                    }
+
+                    Global.exit(1);
+                }
+            },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .UpgradeCommand);
@@ -2294,6 +2312,7 @@ pub const Command = struct {
         PatchCommitCommand,
         OutdatedCommand,
         PublishCommand,
+        RunScriptCommand,
 
         /// Used by crash reports.
         ///
@@ -2327,6 +2346,7 @@ pub const Command = struct {
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
                 .PublishCommand => 'k',
+                .RunScriptCommand => 's',
             };
         }
 
@@ -2363,7 +2383,10 @@ pub const Command = struct {
                     HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
                 .RunCommand, .RunAsNodeCommand => {
-                    RunCommand_.printHelp(null);
+                    RunCommand.printHelp(null);
+                },
+                .RunScriptCommand => {
+                    RunScriptCommand.printHelp(null);
                 },
 
                 .InitCommand => {
@@ -2556,7 +2579,16 @@ pub const Command = struct {
                         .PublishCommand => .publish,
                     });
                 },
-                else => {
+                .AddCommand,
+                .DiscordCommand,
+                .InstallCommand,
+                .LinkCommand,
+                .PackageManagerCommand,
+                .RemoveCommand,
+                .UnlinkCommand,
+                .UpdateCommand,
+                .ReservedCommand,
+                => {
                     HelpCommand.printWithReason(.explicit);
                 },
             }

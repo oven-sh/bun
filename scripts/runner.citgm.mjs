@@ -28,7 +28,7 @@ let exec_path = process.argv[2];
 console.log("exec path:", exec_path);
 if (process.env.BUILDKITE_PARALLEL_JOB != null) {
   console.log("downloading bun from buildkite");
-  exec_path = getExecPathFromBuildKite("linux-x64-build-bun");
+  exec_path = await getExecPathFromBuildKite("linux-x64-build-bun");
   console.log("exec path:", exec_path);
   console.log("---");
   console.log();

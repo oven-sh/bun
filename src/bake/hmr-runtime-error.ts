@@ -3,5 +3,7 @@
 // a websocket and listens only for error resolution events, and reloads the
 // page.
 //
-// This is embedded in `error.template.html`. SSR is not needed
+// This is embedded in `DevServer.sendSerializedFailures`. SSR is
+// left unused for simplicity; a flash of unstyled content is
+// stopped by the fact this script runs synchronously.
 const errorPayloadElement = document.getElementById("bun-error-payload")!;

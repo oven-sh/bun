@@ -329,10 +329,10 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 /// Bake needs to specify more information per entry point.
 pub const BakeEntryPoint = struct {
     path: []const u8,
-    graph: bake.Renderer,
+    graph: bake.Graph,
     route_index: bake.DevServer.Route.Index.Optional = .none,
 
-    pub fn init(path: []const u8, graph: bake.Renderer) BakeEntryPoint {
+    pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
     }
 
@@ -382,6 +382,14 @@ pub const BundleV2 = struct {
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
         return &this.linker.loop;
+    }
+
+    pub fn hasErrors(this:*BundleV2) bool {
+        return this.bundler.log.hasErrors() or 
+        if(this.bundler.options.dev_server) |dev|
+            dev.incremental_result.failures_added.items.len > 0 
+        else 
+            false;
     }
 
     /// Most of the time, accessing .bundler directly is OK. This is only
@@ -597,7 +605,7 @@ pub const BundleV2 = struct {
                     dev.directory_watchers.trackResolutionFailure(
                         import_record.source_file,
                         import_record.specifier,
-                        target.bakeRenderer(),
+                        target.bakeGraph(),
                     ) catch bun.outOfMemory();
                 }
             }
@@ -1252,13 +1260,13 @@ pub const BundleV2 = struct {
         var this = try BundleV2.init(bundler, kit_options, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.hasErrors()) {
             return error.BuildFailed;
         }
 
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1267,7 +1275,7 @@ pub const BundleV2 = struct {
         minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
 
-        if (this.bundler.log.hasErrors()) {
+        if (this.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -2145,7 +2153,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const bundler, const renderer: bake.Renderer, const target =
+            const bundler, const renderer: bake.Graph, const target =
                 if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
                 // TODO: consider moving this error into js_parser so it is caught more reliably
@@ -2181,7 +2189,7 @@ pub const BundleV2 = struct {
                 };
             } else .{
                 this.bundlerForTarget(ast.target),
-                ast.target.bakeRenderer(),
+                ast.target.bakeGraph(),
                 ast.target,
             };
 
@@ -2209,7 +2217,7 @@ pub const BundleV2 = struct {
                         dev.directory_watchers.trackResolutionFailure(
                             source.path.text,
                             import_record.path.text,
-                            ast.target.bakeRenderer(), // use the source file target not the altered one
+                            ast.target.bakeGraph(), // use the source file target not the altered one
                         ) catch bun.outOfMemory();
                     }
                 }
@@ -2355,6 +2363,7 @@ pub const BundleV2 = struct {
                     .step = .resolve,
                     .log = Logger.Log.init(bun.default_allocator),
                     .source_index = source.index,
+                    .target = ast.target,
                 },
             };
         }
@@ -2585,7 +2594,9 @@ pub const BundleV2 = struct {
                 }
 
                 if (process_log) {
-                    if (err.log.msgs.items.len > 0) {
+                    if (this.bundler.options.dev_server) |dev_server| {
+                        dev_server.handleFailureLog(err.target.bakeGraph(), this.graph.input_files.items(.source)[err.source_index.get()].path.text,&err.log,) catch bun.outOfMemory();
+                    } else if (err.log.msgs.items.len > 0) {
                         err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
                     } else {
                         this.bundler.log.addErrorFmt(
@@ -2852,6 +2863,7 @@ pub const ParseTask = struct {
             err: anyerror,
             step: Step,
             log: Logger.Log,
+            target: options.Target,
             source_index: Index,
 
             pub const Step = enum {
@@ -3465,6 +3477,7 @@ pub const ParseTask = struct {
                 .step = step,
                 .log = log,
                 .source_index = this.source_index,
+                .target = this.known_target,
             } };
         };
         result.* = .{
@@ -3535,13 +3548,8 @@ pub const ServerComponentParseTask = struct {
                 worker.allocator,
             )) |success|
                 .{ .success = success }
-            else |err| brk: {
-                break :brk .{ .err = .{
-                    .err = err,
-                    .step = .resolve,
-                    .log = log,
-                    .source_index = task.source.index,
-                } };
+            else |err| switch(err) {
+                error.OutOfMemory => bun.outOfMemory(),   
             },
 
             .watcher_data = ParseTask.Result.WatcherData.none,
@@ -3567,7 +3575,7 @@ pub const ServerComponentParseTask = struct {
         task: *ServerComponentParseTask,
         log: *Logger.Log,
         allocator: std.mem.Allocator,
-    ) !ParseTask.Result.Success {
+    ) bun.OOM!ParseTask.Result.Success {
         var ab = try AstBuilder.init(allocator, &task.source, task.ctx.bundler.options.hot_module_reloading);
 
         switch (task.data) {
@@ -4544,6 +4552,13 @@ pub const LinkerContext = struct {
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
 
+    pub fn hasErrors(this:*LinkerContext) bool {
+        return this.log.hasErrors() or if(this.dev_server) |dev|
+            dev.incremental_result.failures_added.items.len > 0 
+        else 
+            false;
+    }
+
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
         ignore_dce_annotations: bool = false,
@@ -4797,7 +4812,7 @@ pub const LinkerContext = struct {
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
-        if (this.log.hasErrors()) {
+        if (this.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -8253,7 +8268,7 @@ pub const LinkerContext = struct {
         // Client bundles for Bake must be globally allocated,
         // as it must outlive the bundle task.
         const use_global_allocator = c.dev_server != null and
-            c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeRenderer() == .client;
+            c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeGraph() == .client;
 
         var arena = &worker.temporary_arena;
         var buffer_writer = js_printer.BufferWriter.init(
@@ -11395,7 +11410,7 @@ pub const LinkerContext = struct {
                                         "Part Range: {s} {s} ({d}..{d})",
                                         .{
                                             c.parse_graph.input_files.items(.source)[part_range.source_index.get()].path.pretty,
-                                            @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeRenderer()),
+                                            @tagName(c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeGraph()),
                                             part_range.part_index_begin,
                                             part_range.part_index_end,
                                         },
@@ -12296,7 +12311,7 @@ pub const LinkerContext = struct {
                 .{
                     entry_points_count,
                     c.parse_graph.input_files.items(.source)[source_index].path.pretty,
-                    @tagName(c.parse_graph.ast.items(.target)[source_index].bakeRenderer()),
+                    @tagName(c.parse_graph.ast.items(.target)[source_index].bakeGraph()),
                     out_dist,
                 },
             );
@@ -12369,7 +12384,7 @@ pub const LinkerContext = struct {
             debugTreeShake("markFileLiveForTreeShaking({d}, {s} {s}) = {s}", .{
                 source_index,
                 c.parse_graph.input_files.get(source_index).source.path.pretty,
-                @tagName(c.parse_graph.ast.items(.target)[source_index].bakeRenderer()),
+                @tagName(c.parse_graph.ast.items(.target)[source_index].bakeGraph()),
                 if (c.graph.files_live.isSet(source_index)) "already seen" else "first seen",
             });
         }

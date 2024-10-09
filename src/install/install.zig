@@ -8419,16 +8419,16 @@ pub const PackageManager = struct {
         switch (err) {
             error.LoadCAFile => {
                 if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
-                    PackageManager.instance.cleanError("HTTPThread", "failed to find CA file: '{s}'", .{opts.abs_ca_file_name});
+                    PackageManager.instance.cleanError("HTTPThread", "could not find CA file: '{s}'", .{opts.abs_ca_file_name});
                 } else {
-                    PackageManager.instance.cleanError("HTTPThread", "failed to load CA file: '{s}'", .{opts.abs_ca_file_name});
+                    PackageManager.instance.cleanError("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
                 }
             },
             error.InvalidCAFile => {
-                PackageManager.instance.cleanError("HTTPThread", "the CA file is invalid: '{s}'", .{opts.abs_ca_file_name});
+                PackageManager.instance.cleanError("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
             },
             error.InvalidCA => {
-                PackageManager.instance.cleanError("HTTPThread", "the provided CA is invalid", .{});
+                PackageManager.instance.cleanError("HTTPThread", "the CA is invalid", .{});
             },
             error.FailedToOpenSocket => {
                 PackageManager.instance.cleanErrorGeneric("failed to start HTTP client thread", .{});

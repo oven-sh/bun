@@ -2402,7 +2402,7 @@ class ServerHttp2Session extends Http2Session {
     write(self: ServerHttp2Session, buffer: Buffer) {
       if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (socket && !socket.writableEnded && self.#connected) {
+      if (socket && /*!socket.writableEnded &&*/ self.#connected) {
         // redirect writes to socket
         return socket.write(buffer);
       }
@@ -2816,7 +2816,7 @@ class ClientHttp2Session extends Http2Session {
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return false;
       const socket = self[bunHTTP2Socket];
-      if (socket && !socket.writableEnded && self.#connected) {
+      if (socket && /*!socket.writableEnded &&*/ self.#connected) {
         // redirect writes to socket
         return socket.write(buffer);
       }

@@ -18,6 +18,8 @@ import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
 const cwd = dirname(import.meta.dirname);
+const spawnTimeout = 5_000;
+const isWindows = process.platform === "win32";
 
 /**
  * @param {string} target

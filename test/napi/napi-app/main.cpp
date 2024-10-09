@@ -698,6 +698,13 @@ napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
   napi_value js_error_kind = info[2];
   char error_kind_buf[256] = {0};
 
+  if (get_typeof(env, js_code) == napi_null) {
+    js_code = nullptr;
+  }
+  if (get_typeof(env, js_msg) == napi_null) {
+    js_msg = nullptr;
+  }
+
   assert(napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
                                     sizeof error_kind_buf, nullptr) == napi_ok);
 
@@ -712,9 +719,10 @@ napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
 
   napi_value err;
   napi_status create_status = create_error_function(env, js_code, js_msg, &err);
-  if (get_typeof(env, js_msg) != napi_string ||
-      get_typeof(env, js_code) != napi_string) {
-    assert(create_status == napi_string_expected);
+  if (!js_msg || get_typeof(env, js_msg) != napi_string ||
+      (js_code && get_typeof(env, js_code) != napi_string)) {
+    assert(create_status == napi_string_expected ||
+           create_status == napi_invalid_arg);
     return ok(env);
   } else {
     assert(create_status == napi_ok);

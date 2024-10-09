@@ -91,29 +91,41 @@ nativeTests.test_get_property = () => {
   }
 };
 
-function loopErrorParams(callback) {
+nativeTests.test_throw_functions_exhaustive = () => {
   for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
     for (const code of [undefined, "", "error code"]) {
       for (const msg of [undefined, "", "error message"]) {
         try {
-          callback(code, msg, errorKind);
-          console.log(`${callback.name}(${code ?? "nullptr"}, ${msg ?? "nullptr"}) did not throw`);
+          nativeTests.throw_error(code, msg, errorKind);
+          console.log(`napi_throw_${errorKind}(${code ?? "nullptr"}, ${msg ?? "nullptr"}) did not throw`);
         } catch (e) {
           console.log(
-            `${callback.name} threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+            `napi_throw_${errorKind} threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
           );
         }
       }
     }
   }
-}
-
-nativeTests.test_throw_functions_exhaustive = () => {
-  loopErrorParams(nativeTests.throw_error);
 };
 
 nativeTests.test_create_error_functions_exhaustive = () => {
-  loopErrorParams(nativeTests.create_and_throw_error);
+  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
+    // null (JavaScript null) is changed to nullptr by the native function
+    for (const code of [undefined, null, "", 42, "error code"]) {
+      for (const msg of [undefined, null, "", 42, "error message"]) {
+        try {
+          nativeTests.create_and_throw_error(code, msg, errorKind);
+          console.log(
+            `napi_create_${errorKind}(${code === null ? "nullptr" : code}, ${msg === null ? "nullptr" : msg}) did not make an error`,
+          );
+        } catch (e) {
+          console.log(
+            `create_and_throw_error(${errorKind}) threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+          );
+        }
+      }
+    }
+  }
 };
 
 module.exports = nativeTests;

@@ -701,8 +701,8 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     auto keyProp = toJS(key);
     JSC::EnsureStillAliveScope ensureAlive2(keyProp);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->getIfPropertyExists(globalObject, keyProp.toPropertyKey(globalObject)), globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    *result = toNapi(target->get(globalObject, keyProp.toPropertyKey(globalObject)), globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;
@@ -886,8 +886,8 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     PROPERTY_NAME_FROM_UTF8(name);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->getIfPropertyExists(globalObject, name), globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    *result = toNapi(target->get(globalObject, name), globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     scope.clearException();
     return napi_ok;
@@ -1584,8 +1584,13 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     }
 
     auto globalObject = toJS(env);
-    *result = toNapi(JSC::JSValue(globalObject->vm().lastException()), globalObject);
-    globalObject->vm().clearLastException();
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    if (scope.exception()) {
+        *result = toNapi(JSC::JSValue(scope.exception()->value()), globalObject);
+    } else {
+        *result = toNapi(JSC::jsUndefined(), globalObject);
+    }
+    scope.clearException();
     return napi_ok;
 }
 
@@ -2593,9 +2598,15 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
-    JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis());
+    NakedPtr<Exception> returnedException;
+    JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
-    if (throwScope.exception() || value.isEmpty()) {
+    if (returnedException) {
+        throwScope.throwException(globalObject, returnedException);
+        RELEASE_AND_RETURN(throwScope, napi_generic_failure);
+    }
+
+    if (value.isEmpty()) {
         return napi_generic_failure;
     }
 

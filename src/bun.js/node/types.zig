@@ -69,7 +69,13 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         err: ErrorType,
         result: ReturnType,
 
-        pub const Tag = enum { err, result };
+        /// NOTE: this has to have a well defined layout (e.g. setting to `u8`)
+        /// experienced a bug with a Maybe(void, void)
+        /// creating the `err` variant of this type
+        /// resulted in Zig incorrectly setting the tag, leading to a switch
+        /// statement to just not work.
+        /// we (Zack, Dylan, Dave, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
+        pub const Tag = enum(u8) { err, result };
 
         pub const retry: @This() = if (hasRetry) .{ .err = ErrorType.retry } else .{ .err = ErrorType{} };
 
@@ -2116,6 +2122,7 @@ pub const Process = struct {
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
+    pub export const Bun__version_with_sha: [*:0]const u8 = "v" ++ bun.Global.package_json_version_with_sha;
     pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
     pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
     pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;

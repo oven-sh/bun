@@ -1,8 +1,7 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`should report error on invalid format for package.json 1`] = `
-"bun install
-1 | foo
+"1 | foo
     ^
 error: Unexpected foo
     at [dir]/package.json:1:1
@@ -11,8 +10,7 @@ ParserError parsing package.json in "[dir]/"
 `;
 
 exports[`should report error on invalid format for dependencies 1`] = `
-"bun install
-1 | {"name":"foo","version":"0.0.1","dependencies":[]}
+"1 | {"name":"foo","version":"0.0.1","dependencies":[]}
                                     ^
 error: dependencies expects a map of specifiers, e.g.
   "dependencies": {
@@ -23,8 +21,7 @@ error: dependencies expects a map of specifiers, e.g.
 `;
 
 exports[`should report error on invalid format for optionalDependencies 1`] = `
-"bun install
-1 | {"name":"foo","version":"0.0.1","optionalDependencies":"bar"}
+"1 | {"name":"foo","version":"0.0.1","optionalDependencies":"bar"}
                                     ^
 error: optionalDependencies expects a map of specifiers, e.g.
   "optionalDependencies": {
@@ -35,8 +32,7 @@ error: optionalDependencies expects a map of specifiers, e.g.
 `;
 
 exports[`should report error on invalid format for workspaces 1`] = `
-"bun install
-1 | {"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}
+"1 | {"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}
                                     ^
 error: Workspaces expects an array of strings, e.g.
   "workspaces": [
@@ -47,8 +43,7 @@ error: Workspaces expects an array of strings, e.g.
 `;
 
 exports[`should report error on duplicated workspace packages 1`] = `
-"bun install
-1 | {"name":"moo","version":"0.0.3"}
+"1 | {"name":"moo","version":"0.0.3"}
             ^
 error: Workspace name "moo" already exists
     at [dir]/baz/package.json:1:9

@@ -272,19 +272,42 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       expect(result).toContain("foo.js");
     });
   }
-  test.skip("can specify a line offset", () => {
-    // TODO: use test.todo
+  test.todo("can specify filename", () => {
+    //
   });
-  test.skip("can specify a column offset", () => {
-    // TODO: use test.todo
+  test.todo("can specify lineOffset", () => {
+    //
   });
-  test.skip("can specify a timeout", () => {
-    const context = createContext({});
-    const result = () =>
-      fn("while (true) {};", context, {
-        timeout: 1,
-      });
-    expect(result).toThrow(); // TODO: does not timeout
+  test.todo("can specify columnOffset", () => {
+    //
+  });
+  test.todo("can specify displayErrors", () => {
+    //
+  });
+  test.todo("can specify timeout", () => {
+    //
+  });
+  test.todo("can specify breakOnSigint", () => {
+    //
+  });
+  test.todo("can specify cachedData", () => {
+    //
+  });
+  test.todo("can specify importModuleDynamically", () => {
+    //
+  });
+
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify contextName", () => {
+    //
+  });
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify contextOrigin", () => {
+    //
+  });
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify microtaskMode", () => {
+    //
   });
 }
 

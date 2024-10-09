@@ -132,17 +132,17 @@ pub const Action = union(enum) {
             .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
                 try writer.print(
                     \\generating bundler chunk
-                    \\  chunk entry point: {s}
-                    \\  source: {s}
+                    \\  chunk entry point: {?s}
+                    \\  source: {?s}
                     \\  part range: {d}..{d}
                 ,
                     .{
-                        data.linkerContext().graph.bundler_graph.input_files
+                        if (data.part_range.source_index.isValid()) data.linkerContext().parse_graph.input_files
                             .items(.source)[data.chunk.entry_point.source_index]
-                            .path.text,
-                        data.linkerContext().graph.bundler_graph.input_files
+                            .path.text else null,
+                        if (data.part_range.source_index.isValid()) data.linkerContext().parse_graph.input_files
                             .items(.source)[data.part_range.source_index.get()]
-                            .path.text,
+                            .path.text else null,
                         data.part_range.part_index_begin,
                         data.part_range.part_index_end,
                     },

@@ -69,35 +69,35 @@ const box_shadow = css.css_properties.box_shadow;
 const size = css.css_properties.size;
 const overflow = css.css_properties.overflow;
 
-// const BorderSideWidth = border.BorderSideWith;
-// const Size2D = css_values.size.Size2D;
-// const BorderRadius = border_radius.BorderRadius;
-// const Rect = css_values.rect.Rect;
-// const LengthOrNumber = css_values.length.LengthOrNumber;
-// const BorderImageRepeat = border_image.BorderImageRepeat;
-// const BorderImageSideWidth = border_image.BorderImageSideWidth;
-// const BorderImageSlice = border_image.BorderImageSlice;
-// const BorderImage = border_image.BorderImage;
-// const BorderColor = border.BorderColor;
-// const BorderStyle = border.BorderStyle;
-// const BorderWidth = border.BorderWidth;
-// const BorderBlockColor = border.BorderBlockColor;
-// const BorderBlockStyle = border.BorderBlockStyle;
-// const BorderBlockWidth = border.BorderBlockWidth;
-// const BorderInlineColor = border.BorderInlineColor;
-// const BorderInlineStyle = border.BorderInlineStyle;
-// const BorderInlineWidth = border.BorderInlineWidth;
-// const Border = border.Border;
-// const BorderTop = border.BorderTop;
-// const BorderRight = border.BorderRight;
-// const BorderLeft = border.BorderLeft;
-// const BorderBottom = border.BorderBottom;
-// const BorderBlockStart = border.BorderBlockStart;
-// const BorderBlockEnd = border.BorderBlockEnd;
-// const BorderInlineStart = border.BorderInlineStart;
-// const BorderInlineEnd = border.BorderInlineEnd;
-// const BorderBlock = border.BorderBlock;
-// const BorderInline = border.BorderInline;
+const BorderSideWidth = border.BorderSideWidth;
+const Size2D = css_values.size.Size2D;
+const BorderRadius = border_radius.BorderRadius;
+const Rect = css_values.rect.Rect;
+const LengthOrNumber = css_values.length.LengthOrNumber;
+const BorderImageRepeat = border_image.BorderImageRepeat;
+const BorderImageSideWidth = border_image.BorderImageSideWidth;
+const BorderImageSlice = border_image.BorderImageSlice;
+const BorderImage = border_image.BorderImage;
+const BorderColor = border.BorderColor;
+const BorderStyle = border.BorderStyle;
+const BorderWidth = border.BorderWidth;
+const BorderBlockColor = border.BorderBlockColor;
+const BorderBlockStyle = border.BorderBlockStyle;
+const BorderBlockWidth = border.BorderBlockWidth;
+const BorderInlineColor = border.BorderInlineColor;
+const BorderInlineStyle = border.BorderInlineStyle;
+const BorderInlineWidth = border.BorderInlineWidth;
+const Border = border.Border;
+const BorderTop = border.BorderTop;
+const BorderRight = border.BorderRight;
+const BorderLeft = border.BorderLeft;
+const BorderBottom = border.BorderBottom;
+const BorderBlockStart = border.BorderBlockStart;
+const BorderBlockEnd = border.BorderBlockEnd;
+const BorderInlineStart = border.BorderInlineStart;
+const BorderInlineEnd = border.BorderInlineEnd;
+const BorderBlock = border.BorderBlock;
+const BorderInline = border.BorderInline;
 // const Outline = outline.Outline;
 // const OutlineStyle = outline.OutlineStyle;
 // const FlexDirection = flex.FlexDirection;
@@ -259,6 +259,13 @@ pub const Property = union(PropertyIdTag) {
     @"border-right-style": border.LineStyle,
     @"border-block-start-style": border.LineStyle,
     @"border-block-end-style": border.LineStyle,
+    @"border-top-width": BorderSideWidth,
+    @"border-bottom-width": BorderSideWidth,
+    @"border-left-width": BorderSideWidth,
+    @"border-right-width": BorderSideWidth,
+    @"outline-color": CssColor,
+    @"text-decoration-color": struct { CssColor, VendorPrefix },
+    @"text-emphasis-color": struct { CssColor, VendorPrefix },
     composes: Composes,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
@@ -389,6 +396,55 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"border-top-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-top-width" = c } };
+                    }
+                }
+            },
+            .@"border-bottom-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-bottom-width" = c } };
+                    }
+                }
+            },
+            .@"border-left-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-left-width" = c } };
+                    }
+                }
+            },
+            .@"border-right-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"border-right-width" = c } };
+                    }
+                }
+            },
+            .@"outline-color" => {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-color" = c } };
+                    }
+                }
+            },
+            .@"text-decoration-color" => |pre| {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-decoration-color" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"text-emphasis-color" => |pre| {
+                if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-emphasis-color" = .{ c, pre } } };
+                    }
+                }
+            },
             .composes => {
                 if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -437,6 +493,13 @@ pub const Property = union(PropertyIdTag) {
             .@"border-right-style" => .{ "border-right-style", VendorPrefix{ .none = true } },
             .@"border-block-start-style" => .{ "border-block-start-style", VendorPrefix{ .none = true } },
             .@"border-block-end-style" => .{ "border-block-end-style", VendorPrefix{ .none = true } },
+            .@"border-top-width" => .{ "border-top-width", VendorPrefix{ .none = true } },
+            .@"border-bottom-width" => .{ "border-bottom-width", VendorPrefix{ .none = true } },
+            .@"border-left-width" => .{ "border-left-width", VendorPrefix{ .none = true } },
+            .@"border-right-width" => .{ "border-right-width", VendorPrefix{ .none = true } },
+            .@"outline-color" => .{ "outline-color", VendorPrefix{ .none = true } },
+            .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
+            .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
@@ -470,6 +533,13 @@ pub const Property = union(PropertyIdTag) {
             .@"border-right-style" => |*value| value.toCss(W, dest),
             .@"border-block-start-style" => |*value| value.toCss(W, dest),
             .@"border-block-end-style" => |*value| value.toCss(W, dest),
+            .@"border-top-width" => |*value| value.toCss(W, dest),
+            .@"border-bottom-width" => |*value| value.toCss(W, dest),
+            .@"border-left-width" => |*value| value.toCss(W, dest),
+            .@"border-right-width" => |*value| value.toCss(W, dest),
+            .@"outline-color" => |*value| value.toCss(W, dest),
+            .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
+            .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
@@ -504,6 +574,13 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-right-style",
     @"border-block-start-style",
     @"border-block-end-style",
+    @"border-top-width",
+    @"border-bottom-width",
+    @"border-left-width",
+    @"border-right-width",
+    @"outline-color",
+    @"text-decoration-color": VendorPrefix,
+    @"text-emphasis-color": VendorPrefix,
     composes,
     all,
     unparsed,
@@ -536,6 +613,13 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => VendorPrefix.empty(),
             .@"border-block-start-style" => VendorPrefix.empty(),
             .@"border-block-end-style" => VendorPrefix.empty(),
+            .@"border-top-width" => VendorPrefix.empty(),
+            .@"border-bottom-width" => VendorPrefix.empty(),
+            .@"border-left-width" => VendorPrefix.empty(),
+            .@"border-right-width" => VendorPrefix.empty(),
+            .@"outline-color" => VendorPrefix.empty(),
+            .@"text-decoration-color" => |p| p,
+            .@"text-emphasis-color" => |p| p,
             .composes => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
@@ -594,6 +678,27 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-block-end-style")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-block-end-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-top-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-bottom-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-left-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-left-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-right-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"border-right-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-color")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"outline-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-decoration-color")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-emphasis-color")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
@@ -605,7 +710,6 @@ pub const PropertyId = union(PropertyIdTag) {
     }
 
     pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
-        _ = pre; // autofix
         return switch (this.*) {
             .@"background-color" => .@"background-color",
             .color => .color,
@@ -624,13 +728,19 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => .@"border-right-style",
             .@"border-block-start-style" => .@"border-block-start-style",
             .@"border-block-end-style" => .@"border-block-end-style",
+            .@"border-top-width" => .@"border-top-width",
+            .@"border-bottom-width" => .@"border-bottom-width",
+            .@"border-left-width" => .@"border-left-width",
+            .@"border-right-width" => .@"border-right-width",
+            .@"outline-color" => .@"outline-color",
+            .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
+            .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
             .composes => .composes,
             else => this.*,
         };
     }
 
-    pub fn addPrefix(this: *const PropertyId, pre: VendorPrefix) void {
-        _ = pre; // autofix
+    pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
         return switch (this.*) {
             .@"background-color" => {},
             .color => {},
@@ -649,6 +759,17 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-right-style" => {},
             .@"border-block-start-style" => {},
             .@"border-block-end-style" => {},
+            .@"border-top-width" => {},
+            .@"border-bottom-width" => {},
+            .@"border-left-width" => {},
+            .@"border-right-width" => {},
+            .@"outline-color" => {},
+            .@"text-decoration-color" => |*p| {
+                p.insert(pre);
+            },
+            .@"text-emphasis-color" => |*p| {
+                p.insert(pre);
+            },
             .composes => {},
             else => {},
         };
@@ -672,6 +793,13 @@ pub const PropertyIdTag = enum(u16) {
     @"border-right-style",
     @"border-block-start-style",
     @"border-block-end-style",
+    @"border-top-width",
+    @"border-bottom-width",
+    @"border-left-width",
+    @"border-right-width",
+    @"outline-color",
+    @"text-decoration-color",
+    @"text-emphasis-color",
     composes,
     all,
     unparsed,

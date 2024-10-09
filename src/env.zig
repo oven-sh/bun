@@ -41,10 +41,8 @@ pub const dump_source = isDebug and !isTest;
 pub const base_path = build_options.base_path;
 pub const enable_logs = build_options.enable_logs or isDebug;
 
-/// See -Dforce_embed_code
-pub const embed_code = build_options.embed_code;
-
 pub const codegen_path = build_options.codegen_path;
+pub const codegen_embed = build_options.codegen_embed;
 
 pub const version: std.SemanticVersion = build_options.version;
 pub const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });

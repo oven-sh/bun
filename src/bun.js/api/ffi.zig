@@ -655,7 +655,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.getOwnTruthy(globalThis, "flags")) |flags_value| {
+        if (object.getTruthy(globalThis, "flags")) |flags_value| {
             if (flags_value.isArray()) {
                 var iter = flags_value.arrayIterator(globalThis);
 
@@ -692,7 +692,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.getOwnTruthy(globalThis, "define")) |define_value| {
+        if (object.getTruthy(globalThis, "define")) |define_value| {
             if (define_value.isObject()) {
                 const Iter = JSC.JSPropertyIterator(.{ .include_value = true, .skip_empty_name = true });
                 var iter = Iter.init(globalThis, define_value);
@@ -722,7 +722,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.getOwnTruthy(globalThis, "include")) |include_value| {
+        if (object.getTruthy(globalThis, "include")) |include_value| {
             compile_c.include_dirs = StringArray.fromJS(globalThis, include_value, "include");
         }
 
@@ -1347,11 +1347,11 @@ pub const FFI = struct {
 
         var threadsafe = false;
 
-        if (value.getOwnTruthy(global, "threadsafe")) |threadsafe_value| {
+        if (value.getTruthy(global, "threadsafe")) |threadsafe_value| {
             threadsafe = threadsafe_value.toBoolean();
         }
 
-        if (value.getOwnTruthy(global, "returns")) |ret_value| brk: {
+        if (value.getTruthy(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {
@@ -1517,7 +1517,7 @@ pub const FFI = struct {
         };
 
         pub fn ffiHeader() string {
-            return if (Environment.embed_code)
+            return if (Environment.codegen_embed)
                 @embedFile("./FFI.h")
             else
                 bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
@@ -1800,7 +1800,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  void* handleScope = NapiHandleScope__push(JS_GLOBAL_OBJECT, false);
+                    \\  void* handleScope = NapiHandleScope__open(JS_GLOBAL_OBJECT, false);
                     \\
                 );
             }
@@ -1913,7 +1913,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  NapiHandleScope__pop(JS_GLOBAL_OBJECT, handleScope);
+                    \\  NapiHandleScope__close(JS_GLOBAL_OBJECT, handleScope);
                     \\
                 );
             }
@@ -2487,8 +2487,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.TCCState) void {
         _ = TCC.tcc_add_symbol(state, "memset", &memset);
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close);
 
         _ = TCC.tcc_add_symbol(
             state,

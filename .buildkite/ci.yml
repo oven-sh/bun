@@ -13,7 +13,7 @@ steps:
     group: ":darwin: aarch64"
     steps:
       - key: "darwin-aarch64-build-deps"
-        label: ":darwin: aarch64 - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -22,7 +22,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "darwin-aarch64-build-cpp"
-        label: ":darwin: aarch64 - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -33,14 +33,14 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "darwin-aarch64-build-zig"
-        label: ":darwin: aarch64 - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain darwin-aarch64"
 
       - key: "darwin-aarch64-build-bun"
-        label: ":darwin: aarch64 - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -115,7 +115,7 @@ steps:
     group: ":darwin: x64"
     steps:
       - key: "darwin-x64-build-deps"
-        label: ":darwin: x64 - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -124,7 +124,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "darwin-x64-build-cpp"
-        label: ":darwin: x64 - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -135,14 +135,14 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "darwin-x64-build-zig"
-        label: ":darwin: x64 - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain darwin-x64"
 
       - key: "darwin-x64-build-bun"
-        label: ":darwin: x64 - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -217,7 +217,7 @@ steps:
     group: ":linux: x64"
     steps:
       - key: "linux-x64-build-deps"
-        label: ":linux: x64 - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -226,7 +226,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "linux-x64-build-cpp"
-        label: ":linux: x64 - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -237,14 +237,14 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "linux-x64-build-zig"
-        label: ":linux: x64 - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain linux-x64"
 
       - key: "linux-x64-build-bun"
-        label: ":linux: x64 - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -350,7 +350,7 @@ steps:
     group: ":linux: x64-baseline"
     steps:
       - key: "linux-x64-baseline-build-deps"
-        label: ":linux: x64-baseline - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -361,7 +361,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "linux-x64-baseline-build-cpp"
-        label: ":linux: x64-baseline - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -373,7 +373,7 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "linux-x64-baseline-build-zig"
-        label: ":linux: x64-baseline - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         env:
@@ -382,7 +382,7 @@ steps:
           - "bun run build:ci --target bun-zig --toolchain linux-x64-baseline"
 
       - key: "linux-x64-baseline-build-bun"
-        label: ":linux: x64-baseline - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -489,7 +489,7 @@ steps:
     group: ":linux: aarch64"
     steps:
       - key: "linux-aarch64-build-deps"
-        label: ":linux: aarch64 - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -498,7 +498,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "linux-aarch64-build-cpp"
-        label: ":linux: aarch64 - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -509,14 +509,14 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "linux-aarch64-build-zig"
-        label: ":linux: aarch64 - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain linux-aarch64"
 
       - key: "linux-aarch64-build-bun"
-        label: ":linux: aarch64 - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -622,7 +622,7 @@ steps:
     group: ":windows: x64"
     steps:
       - key: "windows-x64-build-deps"
-        label: ":windows: x64 - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -635,7 +635,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "windows-x64-build-cpp"
-        label: ":windows: x64 - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -650,14 +650,14 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "windows-x64-build-zig"
-        label: ":windows: x64 - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         command:
           - "bun run build:ci --target bun-zig --toolchain windows-x64"
 
       - key: "windows-x64-build-bun"
-        label: ":windows: x64 - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -705,7 +705,7 @@ steps:
     group: ":windows: x64-baseline"
     steps:
       - key: "windows-x64-baseline-build-deps"
-        label: ":windows: x64-baseline - build-deps"
+        label: "build-deps"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -720,7 +720,7 @@ steps:
           - "bun run build:ci --target dependencies"
 
       - key: "windows-x64-baseline-build-cpp"
-        label: ":windows: x64-baseline - build-cpp"
+        label: "build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -736,7 +736,7 @@ steps:
           - "bun run build:ci --target bun"
 
       - key: "windows-x64-baseline-build-zig"
-        label: ":windows: x64-baseline - build-zig"
+        label: "build-zig"
         agents:
           queue: "build-zig"
         env:
@@ -745,7 +745,7 @@ steps:
           - "bun run build:ci --target bun-zig --toolchain windows-x64-baseline"
 
       - key: "windows-x64-baseline-build-bun"
-        label: ":windows: x64-baseline - build-bun"
+        label: "build-bun"
         agents:
           queue: "build-windows"
           os: "windows"

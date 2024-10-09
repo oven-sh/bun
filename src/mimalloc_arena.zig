@@ -150,9 +150,9 @@ pub const Arena = struct {
     }
 
     pub fn deinit(this: *Arena) void {
-        if (comptime Environment.isDebug) {
-            ArenaRegistry.unregister(this.*);
-        }
+        // if (comptime Environment.isDebug) {
+        //     ArenaRegistry.unregister(this.*);
+        // }
         mimalloc.mi_heap_destroy(this.heap.?);
 
         this.heap = null;
@@ -187,9 +187,9 @@ pub const Arena = struct {
 
     pub fn init() !Arena {
         const arena = Arena{ .heap = mimalloc.mi_heap_new() orelse return error.OutOfMemory };
-        if (comptime Environment.isDebug) {
-            ArenaRegistry.register(arena);
-        }
+        // if (comptime Environment.isDebug) {
+        //     ArenaRegistry.register(arena);
+        // }
         return arena;
     }
 

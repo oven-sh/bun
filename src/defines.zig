@@ -127,7 +127,7 @@ pub const DefineData = struct {
                 .path = defines_path,
                 .key_path = fs.Path.initWithNamespace("defines", "internal"),
             };
-            const expr = try json_parser.ParseEnvJSON(&source, _log, allocator);
+            const expr = try json_parser.parseEnvJSON(&source, _log, allocator);
             const cloned = try expr.data.deepClone(allocator);
             user_defines.putAssumeCapacity(entry.key_ptr.*, DefineData{
                 .value = cloned,
@@ -236,7 +236,7 @@ pub const Define = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) std.mem.Allocator.Error!*@This() {
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) bun.OOM!*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);

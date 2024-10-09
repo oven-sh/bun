@@ -828,7 +828,7 @@ pub const PseudoClass = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -1663,6 +1663,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
                 .combinator => return try writer.print("combinator={}", .{this.combinator}),
+                .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -2104,6 +2105,10 @@ pub const PseudoElement = union(enum) {
         arguments: css.TokenList,
     },
 
+    pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}", .{@tagName(this.*)});
+    }
+
     pub fn validAfterSlotted(this: *const PseudoElement) bool {
         return switch (this.*) {
             .before, .after, .marker, .placeholder, .file_selector_button => true,
@@ -2141,7 +2146,7 @@ pub const PseudoElement = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{});
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions{}, dest.import_records);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }

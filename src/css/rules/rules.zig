@@ -316,6 +316,14 @@ pub const Location = struct {
     /// The column number within a line, starting at 1 for first the character of the line.
     /// Column numbers are counted in UTF-16 code units.
     column: u32,
+
+    pub fn dummy() Location {
+        return .{
+            .source_index = std.math.maxInt(u32),
+            .line = std.math.maxInt(u32),
+            .column = std.math.maxInt(u32),
+        };
+    }
 };
 
 pub const StyleContext = struct {

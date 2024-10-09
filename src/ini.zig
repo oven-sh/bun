@@ -242,7 +242,7 @@ pub const Parser = struct {
             var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
             // Try to parse it and it if fails will just treat it as a string
-            const json_val: Expr = bun.JSON.ParseJSONUTF8Impl(&src, &log, arena_allocator, true) catch {
+            const json_val: Expr = bun.JSON.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
                 break :out;
             };
 
@@ -439,16 +439,13 @@ pub const Parser = struct {
             }
 
             const env_var = val[i + 2 .. j];
-            const expanded = this.expandEnvVar(env_var);
+            // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
+            const expanded = this.env.get(env_var) orelse return null;
             unesc.appendSlice(expanded) catch bun.outOfMemory();
 
             return j;
         }
         return null;
-    }
-
-    fn expandEnvVar(this: *Parser, name: []const u8) []const u8 {
-        return this.env.get(name) orelse "";
     }
 
     fn singleStrRope(ropealloc: Allocator, str: []const u8) *Rope {
@@ -882,28 +879,11 @@ pub fn loadNpmrcFromFile(
 ) void {
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
-    const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), npmrc_path, bun.O.RDONLY, 0)) {
-        .result => |fd| fd,
-        .err => |err| {
-            if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening .npmrc \"{s}\"", .{
-                err,
-                npmrc_path,
-            });
-            Global.exit(1);
-        },
-    };
-    defer _ = bun.sys.close(npmrc_file);
 
-    const source = switch (bun.sys.File.toSource(npmrc_path, allocator)) {
-        .result => |s| s,
-        .err => |e| {
-            Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
-                e,
-                npmrc_path,
-            });
-            Global.exit(1);
-        },
+    const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+        if (auto_loaded) return;
+        Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
+        Global.crash();
     };
     defer allocator.free(source.contents);
 

@@ -899,7 +899,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathResult;
     // std::unique_ptr<IsoSubspace> m_subspaceForXSLTProcessor;
     
-    std::unique_ptr<IsoSubspace> m_subspaceForKitGlobalScope;
+    std::unique_ptr<IsoSubspace> m_subspaceForBakeGlobalScope;
 
     std::unique_ptr<IsoSubspace> m_subspaceForAbortController;
     std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;

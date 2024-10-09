@@ -2293,7 +2293,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/")) {
+        } else if (strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path)) {
             ret.result = null;
             ret.path = specifier;
             return;

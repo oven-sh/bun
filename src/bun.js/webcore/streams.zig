@@ -533,7 +533,7 @@ pub const StreamStart = union(Tag) {
             return .{ .empty = {} };
         }
 
-        if (value.getOwn(globalThis, "chunkSize")) |chunkSize| {
+        if (value.get(globalThis, "chunkSize")) |chunkSize| {
             if (chunkSize.isNumber())
                 return .{ .chunk_size = @as(Blob.SizeType, @intCast(@as(i52, @truncate(chunkSize.toInt64())))) };
         }

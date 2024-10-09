@@ -159,6 +159,12 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 ---
 
+- `--footer`
+- `--footer`
+- Only applies to js bundles
+
+---
+
 - `--certfile`
 - n/a
 - Not applicable
@@ -192,12 +198,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 - `--entry-names`
 - `--entry-naming`
 - Renamed for consistency with `naming` in JS API
-
----
-
-- `--footer`
-- n/a
-- Not supported
 
 ---
 

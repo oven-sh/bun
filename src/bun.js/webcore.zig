@@ -403,7 +403,7 @@ pub const Crypto = struct {
                 return .zero;
             }
 
-            if (options_value.getOwnTruthy(globalThis, "cost") orelse options_value.getOwnTruthy(globalThis, "N")) |N_value| {
+            if (options_value.getTruthy(globalThis, "cost") orelse options_value.getTruthy(globalThis, "N")) |N_value| {
                 if (cost != null) return throwInvalidParameter(globalThis);
                 const N_int = N_value.to(i64);
                 if (N_int < 0 or !N_value.isNumber()) {
@@ -418,7 +418,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getOwnTruthy(globalThis, "blockSize") orelse options_value.getOwn(globalThis, "r")) |r_value| {
+            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.getTruthy(globalThis, "r")) |r_value| {
                 if (blockSize != null) return throwInvalidParameter(globalThis);
                 const r_int = r_value.to(i64);
                 if (r_int < 0 or !r_value.isNumber()) {
@@ -433,7 +433,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getOwnTruthy(globalThis, "parallelization") orelse options_value.getOwn(globalThis, "p")) |p_value| {
+            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.getTruthy(globalThis, "p")) |p_value| {
                 if (parallelization != null) return throwInvalidParameter(globalThis);
                 const p_int = p_value.to(i64);
                 if (p_int < 0 or !p_value.isNumber()) {
@@ -448,7 +448,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getOwnTruthy(globalThis, "maxmem")) |value| {
+            if (options_value.getTruthy(globalThis, "maxmem")) |value| {
                 const p_int = value.to(i64);
                 if (p_int < 0 or !value.isNumber()) {
                     return throwInvalidParams(

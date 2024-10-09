@@ -146,6 +146,7 @@ export interface BundlerTestInput {
   alias?: Record<string, string>;
   assetNaming?: string;
   banner?: string;
+  footer?: string;
   define?: Record<string, string | number>;
 
   /** Use for resolve custom conditions */
@@ -416,6 +417,7 @@ function expectBundled(
     external,
     packages,
     files,
+    footer,
     format,
     globalName,
     inject,
@@ -666,6 +668,7 @@ function expectBundled(
               serverComponents && "--server-components",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
+              footer && `--footer="${footer}"`,
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
@@ -710,6 +713,7 @@ function expectBundled(
               metafile && `--metafile=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               banner && `--banner:js=${banner}`,
+              footer && `--footer:js=${footer}`,
               legalComments && `--legal-comments=${legalComments}`,
               ignoreDCEAnnotations && `--ignore-annotations`,
               splitting && `--splitting`,

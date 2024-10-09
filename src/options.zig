@@ -2539,7 +2539,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{(hashFormatter(hash))});
+                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
             }
@@ -2547,34 +2547,6 @@ pub const PathTemplate = struct {
         }
 
         try writeReplacingSlashesOnWindows(writer, remain);
-    }
-
-    pub fn hashFormatter(int: u64) std.fmt.Formatter(hashFormatterImpl) {
-        return .{ .data = int };
-    }
-
-    fn hashFormatterImpl(int: u64, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        // esbuild has an 8 character truncation of a base32 encoded bytes. this
-        // is not exactly that, but it will appear as such. the character list
-        // chosen omits similar characters in the unlikely case someone is
-        // trying to memorize a hash.
-        //
-        // reminder: this cannot be base64 or any encoding which is case
-        // sensitive as these hashes are often used in file paths, in which
-        // Windows and some macOS systems treat as case-insensitive.
-        comptime assert(fmt.len == 0);
-        const in_bytes = std.mem.asBytes(&int);
-        const chars = "0123456789abcdefghjkmnpqrstvwxyz";
-        try writer.writeAll(&.{
-            chars[in_bytes[0] & 31],
-            chars[in_bytes[1] & 31],
-            chars[in_bytes[2] & 31],
-            chars[in_bytes[3] & 31],
-            chars[in_bytes[4] & 31],
-            chars[in_bytes[5] & 31],
-            chars[in_bytes[6] & 31],
-            chars[in_bytes[7] & 31],
-        });
     }
 
     pub const Placeholder = struct {

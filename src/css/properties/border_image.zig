@@ -141,7 +141,7 @@ pub const BorderImage = struct {
         return toCssInternal(&this.source, &this.slice, &this.width, &this.outset, &this.repeat, W, dest);
     }
 
-    fn toCssInternal(
+    pub fn toCssInternal(
         source: *const Image,
         slice: *const BorderImageSlice,
         width: *const Rect(BorderImageSideWidth),
@@ -190,6 +190,16 @@ pub const BorderImage = struct {
             this.width.eql(&other.width) and
             this.outset.eql(&other.outset) and
             this.repeat.eql(&other.repeat);
+    }
+
+    pub fn default() BorderImage {
+        return BorderImage{
+            .source = Image.default(),
+            .slice = BorderImageSlice.default(),
+            .width = Rect(BorderImageSideWidth).all(BorderImageSideWidth.default()),
+            .outset = Rect(LengthOrNumber).all(LengthOrNumber.default()),
+            .repeat = BorderImageRepeat.default(),
+        };
     }
 };
 

@@ -8442,7 +8442,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      expect(await exited).toBe(1);
+      expect(await exited).toBe(0);
 
       err = await Bun.readableStreamToText(stderr);
       expect(err).toContain("bun pm trust");

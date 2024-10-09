@@ -1306,7 +1306,7 @@ static void throwErrorWithCode(JSC::JSGlobalObject* globalObject, const char* ms
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto message = msg_utf8 ? WTF::String::fromUTF8(msg_utf8) : String();
-    auto code = msg_utf8 ? WTF::String::fromUTF8(code_utf8) : String();
+    auto code = code_utf8 ? WTF::String::fromUTF8(code_utf8) : String();
 
     auto* error = createError(globalObject, message);
     if (!code.isEmpty()) {

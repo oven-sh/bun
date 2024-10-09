@@ -639,6 +639,36 @@ napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
   return exception;
 }
 
+// takes an integer "mode" parameter which should be bitwise OR of one constant
+// for message and one for code
+// clang-format off
+static constexpr uint32_t THROW_CODE_NULLPTR         = 1 << 0;
+static constexpr uint32_t THROW_CODE_EMPTY_STRING    = 1 << 1;
+static constexpr uint32_t THROW_CODE_NORMAL          = 1 << 2;
+static constexpr uint32_t THROW_MESSAGE_NULLPTR      = 1 << 3;
+static constexpr uint32_t THROW_MESSAGE_EMPTY_STRING = 1 << 4;
+static constexpr uint32_t THROW_MESSAGE_NORMAL       = 1 << 5;
+// clang-format on
+
+napi_value throw_weird_error(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // info[0] is GC callback
+  napi_value napi_mode = info[1];
+  uint32_t mode;
+  assert(napi_get_value_uint32(env, napi_mode, &mode) == napi_ok);
+
+  const char *code = mode & THROW_CODE_NULLPTR
+                         ? nullptr
+                         : (mode & THROW_CODE_EMPTY_STRING ? "" : "code");
+  const char *message =
+      mode & THROW_MESSAGE_NULLPTR
+          ? nullptr
+          : (mode & THROW_MESSAGE_EMPTY_STRING ? "" : "message");
+
+  napi_throw_error(env, code, message);
+  return nullptr;
+}
+
 napi_value eval_wrapper(const Napi::CallbackInfo &info) {
   napi_value ret = nullptr;
   // info[0] is the GC callback
@@ -740,6 +770,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, call_and_get_exception));
   exports.Set("eval_wrapper", Napi::Function::New(env, eval_wrapper));
   exports.Set("perform_get", Napi::Function::New(env, perform_get));
+  exports.Set("throw_weird_error", Napi::Function::New(env, throw_weird_error));
 
   return exports;
 }

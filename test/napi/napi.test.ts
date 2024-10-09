@@ -271,14 +271,49 @@ describe("napi", () => {
       checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("cannot see locals from around its invocation", () => {
-      // variable is declared on main.js:18, but it should not be in scope for the eval'd code
-      checkSameOutput("eval_wrapper", ["shouldNotExist"]);
+      // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
+      // this doesn't use checkSameOutput because V8 and JSC use different error messages for a missing variable
+      let bunResult = runOn(bunExe(), "eval_wrapper", ["shouldNotExist"]);
+      // remove all debug logs
+      bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+      expect(bunResult).toBe(
+        `synchronously threw ReferenceError: message "Can't find variable: shouldNotExist", code undefined`,
+      );
     });
   });
 
   describe("napi_get_named_property", () => {
     it("handles edge cases", () => {
       checkSameOutput("test_get_property", []);
+    });
+  });
+
+  describe("napi_throw_error", () => {
+    const THROW_CODE_NULLPTR = 1 << 0;
+    const THROW_CODE_EMPTY_STRING = 1 << 1;
+    const THROW_CODE_NORMAL = 1 << 2;
+    const THROW_MESSAGE_NULLPTR = 1 << 3;
+    const THROW_MESSAGE_EMPTY_STRING = 1 << 4;
+    const THROW_MESSAGE_NORMAL = 1 << 5;
+
+    const errorCodeModes = {
+      nullptr: 1 << 0,
+      emptyString: 1 << 1,
+      normal: 1 << 2,
+    };
+    const errorMessageModes = {
+      nullptr: 1 << 3,
+      emptyString: 1 << 4,
+      normal: 1 << 5,
+    };
+    const modes = Object.keys(errorCodeModes) as Array<keyof typeof errorCodeModes>;
+
+    describe.each(modes)("when code is %s", codeMode => {
+      describe.each(modes)("when message is %s", messageMode => {
+        it("has the right code and message", () => {
+          checkSameOutput("throw_weird_error", [errorCodeModes[codeMode] | errorMessageModes[messageMode]]);
+        });
+      });
     });
   });
 });

@@ -17,6 +17,8 @@ import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
+const cwd = dirname(import.meta.dirname);
+
 /**
  * @param {string} target
  * @returns {Promise<string>}

@@ -123,18 +123,18 @@ const Outline = outline.Outline;
 // const PlaceItems = @"align".PlaceItems;
 // const GapValue = @"align".GapValue;
 // const Gap = @"align".Gap;
-// const MarginBlock = margin_padding.MarginBlock;
-// const Margin = margin_padding.Margin;
-// const MarginInline = margin_padding.MarginInline;
-// const PaddingBlock = margin_padding.PaddingBlock;
-// const PaddingInline = margin_padding.PaddingInline;
-// const Padding = margin_padding.Padding;
-// const ScrollMarginBlock = margin_padding.ScrollMarginBlock;
-// const ScrollMarginInline = margin_padding.ScrollMarginInline;
-// const ScrollMargin = margin_padding.ScrollMargin;
-// const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
-// const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
-// const ScrollPadding = margin_padding.ScrollPadding;
+const MarginBlock = margin_padding.MarginBlock;
+const Margin = margin_padding.Margin;
+const MarginInline = margin_padding.MarginInline;
+const PaddingBlock = margin_padding.PaddingBlock;
+const PaddingInline = margin_padding.PaddingInline;
+const Padding = margin_padding.Padding;
+const ScrollMarginBlock = margin_padding.ScrollMarginBlock;
+const ScrollMarginInline = margin_padding.ScrollMarginInline;
+const ScrollMargin = margin_padding.ScrollMargin;
+const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
+const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
+const ScrollPadding = margin_padding.ScrollPadding;
 // const FontWeight = font.FontWeight;
 // const FontSize = font.FontSize;
 // const FontStretch = font.FontStretch;
@@ -350,6 +350,50 @@ pub const Property = union(PropertyIdTag) {
     @"border-inline-end": BorderInlineEnd,
     outline: Outline,
     @"outline-color": CssColor,
+    @"margin-top": LengthPercentageOrAuto,
+    @"margin-bottom": LengthPercentageOrAuto,
+    @"margin-left": LengthPercentageOrAuto,
+    @"margin-right": LengthPercentageOrAuto,
+    @"margin-block-start": LengthPercentageOrAuto,
+    @"margin-block-end": LengthPercentageOrAuto,
+    @"margin-inline-start": LengthPercentageOrAuto,
+    @"margin-inline-end": LengthPercentageOrAuto,
+    @"margin-block": MarginBlock,
+    @"margin-inline": MarginInline,
+    margin: Margin,
+    @"padding-top": LengthPercentageOrAuto,
+    @"padding-bottom": LengthPercentageOrAuto,
+    @"padding-left": LengthPercentageOrAuto,
+    @"padding-right": LengthPercentageOrAuto,
+    @"padding-block-start": LengthPercentageOrAuto,
+    @"padding-block-end": LengthPercentageOrAuto,
+    @"padding-inline-start": LengthPercentageOrAuto,
+    @"padding-inline-end": LengthPercentageOrAuto,
+    @"padding-block": PaddingBlock,
+    @"padding-inline": PaddingInline,
+    padding: Padding,
+    @"scroll-margin-top": LengthPercentageOrAuto,
+    @"scroll-margin-bottom": LengthPercentageOrAuto,
+    @"scroll-margin-left": LengthPercentageOrAuto,
+    @"scroll-margin-right": LengthPercentageOrAuto,
+    @"scroll-margin-block-start": LengthPercentageOrAuto,
+    @"scroll-margin-block-end": LengthPercentageOrAuto,
+    @"scroll-margin-inline-start": LengthPercentageOrAuto,
+    @"scroll-margin-inline-end": LengthPercentageOrAuto,
+    @"scroll-margin-block": ScrollMarginBlock,
+    @"scroll-margin-inline": ScrollMarginInline,
+    @"scroll-margin": ScrollMargin,
+    @"scroll-padding-top": LengthPercentageOrAuto,
+    @"scroll-padding-bottom": LengthPercentageOrAuto,
+    @"scroll-padding-left": LengthPercentageOrAuto,
+    @"scroll-padding-right": LengthPercentageOrAuto,
+    @"scroll-padding-block-start": LengthPercentageOrAuto,
+    @"scroll-padding-block-end": LengthPercentageOrAuto,
+    @"scroll-padding-inline-start": LengthPercentageOrAuto,
+    @"scroll-padding-inline-end": LengthPercentageOrAuto,
+    @"scroll-padding-block": ScrollPaddingBlock,
+    @"scroll-padding-inline": ScrollPaddingInline,
+    @"scroll-padding": ScrollPadding,
     @"text-decoration-color": struct { CssColor, VendorPrefix },
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
     direction: Direction,
@@ -685,6 +729,138 @@ pub const Property = union(PropertyIdTag) {
         }
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(MarginBlock, "deepClone")) {
+            @compileError("MarginBlock: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(MarginInline, "deepClone")) {
+            @compileError("MarginInline: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Margin, "deepClone")) {
+            @compileError("Margin: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(PaddingBlock, "deepClone")) {
+            @compileError("PaddingBlock: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(PaddingInline, "deepClone")) {
+            @compileError("PaddingInline: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(Padding, "deepClone")) {
+            @compileError("Padding: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(ScrollMarginBlock, "deepClone")) {
+            @compileError("ScrollMarginBlock: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(ScrollMarginInline, "deepClone")) {
+            @compileError("ScrollMarginInline: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(ScrollMargin, "deepClone")) {
+            @compileError("ScrollMargin: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(ScrollPaddingBlock, "deepClone")) {
+            @compileError("ScrollPaddingBlock: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(ScrollPaddingInline, "deepClone")) {
+            @compileError("ScrollPaddingInline: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(ScrollPadding, "deepClone")) {
+            @compileError("ScrollPadding: does not have a deepClone() function.");
         }
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
@@ -1461,6 +1637,314 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"margin-top" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-top" = c } };
+                    }
+                }
+            },
+            .@"margin-bottom" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-bottom" = c } };
+                    }
+                }
+            },
+            .@"margin-left" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-left" = c } };
+                    }
+                }
+            },
+            .@"margin-right" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-right" = c } };
+                    }
+                }
+            },
+            .@"margin-block-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-block-start" = c } };
+                    }
+                }
+            },
+            .@"margin-block-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-block-end" = c } };
+                    }
+                }
+            },
+            .@"margin-inline-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-inline-start" = c } };
+                    }
+                }
+            },
+            .@"margin-inline-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-inline-end" = c } };
+                    }
+                }
+            },
+            .@"margin-block" => {
+                if (css.generic.parseWithOptions(MarginBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-block" = c } };
+                    }
+                }
+            },
+            .@"margin-inline" => {
+                if (css.generic.parseWithOptions(MarginInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"margin-inline" = c } };
+                    }
+                }
+            },
+            .margin => {
+                if (css.generic.parseWithOptions(Margin, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .margin = c } };
+                    }
+                }
+            },
+            .@"padding-top" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-top" = c } };
+                    }
+                }
+            },
+            .@"padding-bottom" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-bottom" = c } };
+                    }
+                }
+            },
+            .@"padding-left" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-left" = c } };
+                    }
+                }
+            },
+            .@"padding-right" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-right" = c } };
+                    }
+                }
+            },
+            .@"padding-block-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-block-start" = c } };
+                    }
+                }
+            },
+            .@"padding-block-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-block-end" = c } };
+                    }
+                }
+            },
+            .@"padding-inline-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-inline-start" = c } };
+                    }
+                }
+            },
+            .@"padding-inline-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-inline-end" = c } };
+                    }
+                }
+            },
+            .@"padding-block" => {
+                if (css.generic.parseWithOptions(PaddingBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-block" = c } };
+                    }
+                }
+            },
+            .@"padding-inline" => {
+                if (css.generic.parseWithOptions(PaddingInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"padding-inline" = c } };
+                    }
+                }
+            },
+            .padding => {
+                if (css.generic.parseWithOptions(Padding, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .padding = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-top" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-top" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-bottom" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-bottom" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-left" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-left" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-right" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-right" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-block-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-block-start" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-block-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-block-end" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-inline-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-inline-start" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-inline-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-inline-end" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-block" => {
+                if (css.generic.parseWithOptions(ScrollMarginBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-block" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin-inline" => {
+                if (css.generic.parseWithOptions(ScrollMarginInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin-inline" = c } };
+                    }
+                }
+            },
+            .@"scroll-margin" => {
+                if (css.generic.parseWithOptions(ScrollMargin, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-margin" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-top" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-top" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-bottom" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-bottom" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-left" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-left" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-right" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-right" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-block-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-block-start" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-block-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-block-end" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-inline-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-inline-start" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-inline-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-inline-end" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-block" => {
+                if (css.generic.parseWithOptions(ScrollPaddingBlock, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-block" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding-inline" => {
+                if (css.generic.parseWithOptions(ScrollPaddingInline, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding-inline" = c } };
+                    }
+                }
+            },
+            .@"scroll-padding" => {
+                if (css.generic.parseWithOptions(ScrollPadding, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"scroll-padding" = c } };
+                    }
+                }
+            },
             .@"text-decoration-color" => |pre| {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -1621,6 +2105,50 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => .@"border-inline-end",
             .outline => .outline,
             .@"outline-color" => .@"outline-color",
+            .@"margin-top" => .@"margin-top",
+            .@"margin-bottom" => .@"margin-bottom",
+            .@"margin-left" => .@"margin-left",
+            .@"margin-right" => .@"margin-right",
+            .@"margin-block-start" => .@"margin-block-start",
+            .@"margin-block-end" => .@"margin-block-end",
+            .@"margin-inline-start" => .@"margin-inline-start",
+            .@"margin-inline-end" => .@"margin-inline-end",
+            .@"margin-block" => .@"margin-block",
+            .@"margin-inline" => .@"margin-inline",
+            .margin => .margin,
+            .@"padding-top" => .@"padding-top",
+            .@"padding-bottom" => .@"padding-bottom",
+            .@"padding-left" => .@"padding-left",
+            .@"padding-right" => .@"padding-right",
+            .@"padding-block-start" => .@"padding-block-start",
+            .@"padding-block-end" => .@"padding-block-end",
+            .@"padding-inline-start" => .@"padding-inline-start",
+            .@"padding-inline-end" => .@"padding-inline-end",
+            .@"padding-block" => .@"padding-block",
+            .@"padding-inline" => .@"padding-inline",
+            .padding => .padding,
+            .@"scroll-margin-top" => .@"scroll-margin-top",
+            .@"scroll-margin-bottom" => .@"scroll-margin-bottom",
+            .@"scroll-margin-left" => .@"scroll-margin-left",
+            .@"scroll-margin-right" => .@"scroll-margin-right",
+            .@"scroll-margin-block-start" => .@"scroll-margin-block-start",
+            .@"scroll-margin-block-end" => .@"scroll-margin-block-end",
+            .@"scroll-margin-inline-start" => .@"scroll-margin-inline-start",
+            .@"scroll-margin-inline-end" => .@"scroll-margin-inline-end",
+            .@"scroll-margin-block" => .@"scroll-margin-block",
+            .@"scroll-margin-inline" => .@"scroll-margin-inline",
+            .@"scroll-margin" => .@"scroll-margin",
+            .@"scroll-padding-top" => .@"scroll-padding-top",
+            .@"scroll-padding-bottom" => .@"scroll-padding-bottom",
+            .@"scroll-padding-left" => .@"scroll-padding-left",
+            .@"scroll-padding-right" => .@"scroll-padding-right",
+            .@"scroll-padding-block-start" => .@"scroll-padding-block-start",
+            .@"scroll-padding-block-end" => .@"scroll-padding-block-end",
+            .@"scroll-padding-inline-start" => .@"scroll-padding-inline-start",
+            .@"scroll-padding-inline-end" => .@"scroll-padding-inline-end",
+            .@"scroll-padding-block" => .@"scroll-padding-block",
+            .@"scroll-padding-inline" => .@"scroll-padding-inline",
+            .@"scroll-padding" => .@"scroll-padding",
             .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
             .direction => .direction,
@@ -1741,6 +2269,50 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => |*v| .{ .@"border-inline-end" = v.deepClone(allocator) },
             .outline => |*v| .{ .outline = v.deepClone(allocator) },
             .@"outline-color" => |*v| .{ .@"outline-color" = v.deepClone(allocator) },
+            .@"margin-top" => |*v| .{ .@"margin-top" = v.deepClone(allocator) },
+            .@"margin-bottom" => |*v| .{ .@"margin-bottom" = v.deepClone(allocator) },
+            .@"margin-left" => |*v| .{ .@"margin-left" = v.deepClone(allocator) },
+            .@"margin-right" => |*v| .{ .@"margin-right" = v.deepClone(allocator) },
+            .@"margin-block-start" => |*v| .{ .@"margin-block-start" = v.deepClone(allocator) },
+            .@"margin-block-end" => |*v| .{ .@"margin-block-end" = v.deepClone(allocator) },
+            .@"margin-inline-start" => |*v| .{ .@"margin-inline-start" = v.deepClone(allocator) },
+            .@"margin-inline-end" => |*v| .{ .@"margin-inline-end" = v.deepClone(allocator) },
+            .@"margin-block" => |*v| .{ .@"margin-block" = v.deepClone(allocator) },
+            .@"margin-inline" => |*v| .{ .@"margin-inline" = v.deepClone(allocator) },
+            .margin => |*v| .{ .margin = v.deepClone(allocator) },
+            .@"padding-top" => |*v| .{ .@"padding-top" = v.deepClone(allocator) },
+            .@"padding-bottom" => |*v| .{ .@"padding-bottom" = v.deepClone(allocator) },
+            .@"padding-left" => |*v| .{ .@"padding-left" = v.deepClone(allocator) },
+            .@"padding-right" => |*v| .{ .@"padding-right" = v.deepClone(allocator) },
+            .@"padding-block-start" => |*v| .{ .@"padding-block-start" = v.deepClone(allocator) },
+            .@"padding-block-end" => |*v| .{ .@"padding-block-end" = v.deepClone(allocator) },
+            .@"padding-inline-start" => |*v| .{ .@"padding-inline-start" = v.deepClone(allocator) },
+            .@"padding-inline-end" => |*v| .{ .@"padding-inline-end" = v.deepClone(allocator) },
+            .@"padding-block" => |*v| .{ .@"padding-block" = v.deepClone(allocator) },
+            .@"padding-inline" => |*v| .{ .@"padding-inline" = v.deepClone(allocator) },
+            .padding => |*v| .{ .padding = v.deepClone(allocator) },
+            .@"scroll-margin-top" => |*v| .{ .@"scroll-margin-top" = v.deepClone(allocator) },
+            .@"scroll-margin-bottom" => |*v| .{ .@"scroll-margin-bottom" = v.deepClone(allocator) },
+            .@"scroll-margin-left" => |*v| .{ .@"scroll-margin-left" = v.deepClone(allocator) },
+            .@"scroll-margin-right" => |*v| .{ .@"scroll-margin-right" = v.deepClone(allocator) },
+            .@"scroll-margin-block-start" => |*v| .{ .@"scroll-margin-block-start" = v.deepClone(allocator) },
+            .@"scroll-margin-block-end" => |*v| .{ .@"scroll-margin-block-end" = v.deepClone(allocator) },
+            .@"scroll-margin-inline-start" => |*v| .{ .@"scroll-margin-inline-start" = v.deepClone(allocator) },
+            .@"scroll-margin-inline-end" => |*v| .{ .@"scroll-margin-inline-end" = v.deepClone(allocator) },
+            .@"scroll-margin-block" => |*v| .{ .@"scroll-margin-block" = v.deepClone(allocator) },
+            .@"scroll-margin-inline" => |*v| .{ .@"scroll-margin-inline" = v.deepClone(allocator) },
+            .@"scroll-margin" => |*v| .{ .@"scroll-margin" = v.deepClone(allocator) },
+            .@"scroll-padding-top" => |*v| .{ .@"scroll-padding-top" = v.deepClone(allocator) },
+            .@"scroll-padding-bottom" => |*v| .{ .@"scroll-padding-bottom" = v.deepClone(allocator) },
+            .@"scroll-padding-left" => |*v| .{ .@"scroll-padding-left" = v.deepClone(allocator) },
+            .@"scroll-padding-right" => |*v| .{ .@"scroll-padding-right" = v.deepClone(allocator) },
+            .@"scroll-padding-block-start" => |*v| .{ .@"scroll-padding-block-start" = v.deepClone(allocator) },
+            .@"scroll-padding-block-end" => |*v| .{ .@"scroll-padding-block-end" = v.deepClone(allocator) },
+            .@"scroll-padding-inline-start" => |*v| .{ .@"scroll-padding-inline-start" = v.deepClone(allocator) },
+            .@"scroll-padding-inline-end" => |*v| .{ .@"scroll-padding-inline-end" = v.deepClone(allocator) },
+            .@"scroll-padding-block" => |*v| .{ .@"scroll-padding-block" = v.deepClone(allocator) },
+            .@"scroll-padding-inline" => |*v| .{ .@"scroll-padding-inline" = v.deepClone(allocator) },
+            .@"scroll-padding" => |*v| .{ .@"scroll-padding" = v.deepClone(allocator) },
             .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
             .direction => |*v| .{ .direction = v.deepClone(allocator) },
@@ -1867,6 +2439,50 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => .{ "border-inline-end", VendorPrefix{ .none = true } },
             .outline => .{ "outline", VendorPrefix{ .none = true } },
             .@"outline-color" => .{ "outline-color", VendorPrefix{ .none = true } },
+            .@"margin-top" => .{ "margin-top", VendorPrefix{ .none = true } },
+            .@"margin-bottom" => .{ "margin-bottom", VendorPrefix{ .none = true } },
+            .@"margin-left" => .{ "margin-left", VendorPrefix{ .none = true } },
+            .@"margin-right" => .{ "margin-right", VendorPrefix{ .none = true } },
+            .@"margin-block-start" => .{ "margin-block-start", VendorPrefix{ .none = true } },
+            .@"margin-block-end" => .{ "margin-block-end", VendorPrefix{ .none = true } },
+            .@"margin-inline-start" => .{ "margin-inline-start", VendorPrefix{ .none = true } },
+            .@"margin-inline-end" => .{ "margin-inline-end", VendorPrefix{ .none = true } },
+            .@"margin-block" => .{ "margin-block", VendorPrefix{ .none = true } },
+            .@"margin-inline" => .{ "margin-inline", VendorPrefix{ .none = true } },
+            .margin => .{ "margin", VendorPrefix{ .none = true } },
+            .@"padding-top" => .{ "padding-top", VendorPrefix{ .none = true } },
+            .@"padding-bottom" => .{ "padding-bottom", VendorPrefix{ .none = true } },
+            .@"padding-left" => .{ "padding-left", VendorPrefix{ .none = true } },
+            .@"padding-right" => .{ "padding-right", VendorPrefix{ .none = true } },
+            .@"padding-block-start" => .{ "padding-block-start", VendorPrefix{ .none = true } },
+            .@"padding-block-end" => .{ "padding-block-end", VendorPrefix{ .none = true } },
+            .@"padding-inline-start" => .{ "padding-inline-start", VendorPrefix{ .none = true } },
+            .@"padding-inline-end" => .{ "padding-inline-end", VendorPrefix{ .none = true } },
+            .@"padding-block" => .{ "padding-block", VendorPrefix{ .none = true } },
+            .@"padding-inline" => .{ "padding-inline", VendorPrefix{ .none = true } },
+            .padding => .{ "padding", VendorPrefix{ .none = true } },
+            .@"scroll-margin-top" => .{ "scroll-margin-top", VendorPrefix{ .none = true } },
+            .@"scroll-margin-bottom" => .{ "scroll-margin-bottom", VendorPrefix{ .none = true } },
+            .@"scroll-margin-left" => .{ "scroll-margin-left", VendorPrefix{ .none = true } },
+            .@"scroll-margin-right" => .{ "scroll-margin-right", VendorPrefix{ .none = true } },
+            .@"scroll-margin-block-start" => .{ "scroll-margin-block-start", VendorPrefix{ .none = true } },
+            .@"scroll-margin-block-end" => .{ "scroll-margin-block-end", VendorPrefix{ .none = true } },
+            .@"scroll-margin-inline-start" => .{ "scroll-margin-inline-start", VendorPrefix{ .none = true } },
+            .@"scroll-margin-inline-end" => .{ "scroll-margin-inline-end", VendorPrefix{ .none = true } },
+            .@"scroll-margin-block" => .{ "scroll-margin-block", VendorPrefix{ .none = true } },
+            .@"scroll-margin-inline" => .{ "scroll-margin-inline", VendorPrefix{ .none = true } },
+            .@"scroll-margin" => .{ "scroll-margin", VendorPrefix{ .none = true } },
+            .@"scroll-padding-top" => .{ "scroll-padding-top", VendorPrefix{ .none = true } },
+            .@"scroll-padding-bottom" => .{ "scroll-padding-bottom", VendorPrefix{ .none = true } },
+            .@"scroll-padding-left" => .{ "scroll-padding-left", VendorPrefix{ .none = true } },
+            .@"scroll-padding-right" => .{ "scroll-padding-right", VendorPrefix{ .none = true } },
+            .@"scroll-padding-block-start" => .{ "scroll-padding-block-start", VendorPrefix{ .none = true } },
+            .@"scroll-padding-block-end" => .{ "scroll-padding-block-end", VendorPrefix{ .none = true } },
+            .@"scroll-padding-inline-start" => .{ "scroll-padding-inline-start", VendorPrefix{ .none = true } },
+            .@"scroll-padding-inline-end" => .{ "scroll-padding-inline-end", VendorPrefix{ .none = true } },
+            .@"scroll-padding-block" => .{ "scroll-padding-block", VendorPrefix{ .none = true } },
+            .@"scroll-padding-inline" => .{ "scroll-padding-inline", VendorPrefix{ .none = true } },
+            .@"scroll-padding" => .{ "scroll-padding", VendorPrefix{ .none = true } },
             .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
             .direction => .{ "direction", VendorPrefix{ .none = true } },
@@ -1994,6 +2610,50 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => |*value| value.toCss(W, dest),
             .outline => |*value| value.toCss(W, dest),
             .@"outline-color" => |*value| value.toCss(W, dest),
+            .@"margin-top" => |*value| value.toCss(W, dest),
+            .@"margin-bottom" => |*value| value.toCss(W, dest),
+            .@"margin-left" => |*value| value.toCss(W, dest),
+            .@"margin-right" => |*value| value.toCss(W, dest),
+            .@"margin-block-start" => |*value| value.toCss(W, dest),
+            .@"margin-block-end" => |*value| value.toCss(W, dest),
+            .@"margin-inline-start" => |*value| value.toCss(W, dest),
+            .@"margin-inline-end" => |*value| value.toCss(W, dest),
+            .@"margin-block" => |*value| value.toCss(W, dest),
+            .@"margin-inline" => |*value| value.toCss(W, dest),
+            .margin => |*value| value.toCss(W, dest),
+            .@"padding-top" => |*value| value.toCss(W, dest),
+            .@"padding-bottom" => |*value| value.toCss(W, dest),
+            .@"padding-left" => |*value| value.toCss(W, dest),
+            .@"padding-right" => |*value| value.toCss(W, dest),
+            .@"padding-block-start" => |*value| value.toCss(W, dest),
+            .@"padding-block-end" => |*value| value.toCss(W, dest),
+            .@"padding-inline-start" => |*value| value.toCss(W, dest),
+            .@"padding-inline-end" => |*value| value.toCss(W, dest),
+            .@"padding-block" => |*value| value.toCss(W, dest),
+            .@"padding-inline" => |*value| value.toCss(W, dest),
+            .padding => |*value| value.toCss(W, dest),
+            .@"scroll-margin-top" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-bottom" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-left" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-right" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-block-start" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-block-end" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-inline-start" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-inline-end" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-block" => |*value| value.toCss(W, dest),
+            .@"scroll-margin-inline" => |*value| value.toCss(W, dest),
+            .@"scroll-margin" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-top" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-bottom" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-left" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-right" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-block-start" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-block-end" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-inline-start" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-inline-end" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-block" => |*value| value.toCss(W, dest),
+            .@"scroll-padding-inline" => |*value| value.toCss(W, dest),
+            .@"scroll-padding" => |*value| value.toCss(W, dest),
             .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
             .direction => |*value| value.toCss(W, dest),
@@ -2041,6 +2701,18 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-start" => |*v| return v.longhand(property_id),
             .@"border-inline-end" => |*v| return v.longhand(property_id),
             .outline => |*v| return v.longhand(property_id),
+            .@"margin-block" => |*v| return v.longhand(property_id),
+            .@"margin-inline" => |*v| return v.longhand(property_id),
+            .margin => |*v| return v.longhand(property_id),
+            .@"padding-block" => |*v| return v.longhand(property_id),
+            .@"padding-inline" => |*v| return v.longhand(property_id),
+            .padding => |*v| return v.longhand(property_id),
+            .@"scroll-margin-block" => |*v| return v.longhand(property_id),
+            .@"scroll-margin-inline" => |*v| return v.longhand(property_id),
+            .@"scroll-margin" => |*v| return v.longhand(property_id),
+            .@"scroll-padding-block" => |*v| return v.longhand(property_id),
+            .@"scroll-padding-inline" => |*v| return v.longhand(property_id),
+            .@"scroll-padding" => |*v| return v.longhand(property_id),
             else => {},
         }
         return null;
@@ -2155,6 +2827,50 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-inline-end",
     outline,
     @"outline-color",
+    @"margin-top",
+    @"margin-bottom",
+    @"margin-left",
+    @"margin-right",
+    @"margin-block-start",
+    @"margin-block-end",
+    @"margin-inline-start",
+    @"margin-inline-end",
+    @"margin-block",
+    @"margin-inline",
+    margin,
+    @"padding-top",
+    @"padding-bottom",
+    @"padding-left",
+    @"padding-right",
+    @"padding-block-start",
+    @"padding-block-end",
+    @"padding-inline-start",
+    @"padding-inline-end",
+    @"padding-block",
+    @"padding-inline",
+    padding,
+    @"scroll-margin-top",
+    @"scroll-margin-bottom",
+    @"scroll-margin-left",
+    @"scroll-margin-right",
+    @"scroll-margin-block-start",
+    @"scroll-margin-block-end",
+    @"scroll-margin-inline-start",
+    @"scroll-margin-inline-end",
+    @"scroll-margin-block",
+    @"scroll-margin-inline",
+    @"scroll-margin",
+    @"scroll-padding-top",
+    @"scroll-padding-bottom",
+    @"scroll-padding-left",
+    @"scroll-padding-right",
+    @"scroll-padding-block-start",
+    @"scroll-padding-block-end",
+    @"scroll-padding-inline-start",
+    @"scroll-padding-inline-end",
+    @"scroll-padding-block",
+    @"scroll-padding-inline",
+    @"scroll-padding",
     @"text-decoration-color": VendorPrefix,
     @"text-emphasis-color": VendorPrefix,
     direction,
@@ -2281,6 +2997,50 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline-end" => VendorPrefix.empty(),
             .outline => VendorPrefix.empty(),
             .@"outline-color" => VendorPrefix.empty(),
+            .@"margin-top" => VendorPrefix.empty(),
+            .@"margin-bottom" => VendorPrefix.empty(),
+            .@"margin-left" => VendorPrefix.empty(),
+            .@"margin-right" => VendorPrefix.empty(),
+            .@"margin-block-start" => VendorPrefix.empty(),
+            .@"margin-block-end" => VendorPrefix.empty(),
+            .@"margin-inline-start" => VendorPrefix.empty(),
+            .@"margin-inline-end" => VendorPrefix.empty(),
+            .@"margin-block" => VendorPrefix.empty(),
+            .@"margin-inline" => VendorPrefix.empty(),
+            .margin => VendorPrefix.empty(),
+            .@"padding-top" => VendorPrefix.empty(),
+            .@"padding-bottom" => VendorPrefix.empty(),
+            .@"padding-left" => VendorPrefix.empty(),
+            .@"padding-right" => VendorPrefix.empty(),
+            .@"padding-block-start" => VendorPrefix.empty(),
+            .@"padding-block-end" => VendorPrefix.empty(),
+            .@"padding-inline-start" => VendorPrefix.empty(),
+            .@"padding-inline-end" => VendorPrefix.empty(),
+            .@"padding-block" => VendorPrefix.empty(),
+            .@"padding-inline" => VendorPrefix.empty(),
+            .padding => VendorPrefix.empty(),
+            .@"scroll-margin-top" => VendorPrefix.empty(),
+            .@"scroll-margin-bottom" => VendorPrefix.empty(),
+            .@"scroll-margin-left" => VendorPrefix.empty(),
+            .@"scroll-margin-right" => VendorPrefix.empty(),
+            .@"scroll-margin-block-start" => VendorPrefix.empty(),
+            .@"scroll-margin-block-end" => VendorPrefix.empty(),
+            .@"scroll-margin-inline-start" => VendorPrefix.empty(),
+            .@"scroll-margin-inline-end" => VendorPrefix.empty(),
+            .@"scroll-margin-block" => VendorPrefix.empty(),
+            .@"scroll-margin-inline" => VendorPrefix.empty(),
+            .@"scroll-margin" => VendorPrefix.empty(),
+            .@"scroll-padding-top" => VendorPrefix.empty(),
+            .@"scroll-padding-bottom" => VendorPrefix.empty(),
+            .@"scroll-padding-left" => VendorPrefix.empty(),
+            .@"scroll-padding-right" => VendorPrefix.empty(),
+            .@"scroll-padding-block-start" => VendorPrefix.empty(),
+            .@"scroll-padding-block-end" => VendorPrefix.empty(),
+            .@"scroll-padding-inline-start" => VendorPrefix.empty(),
+            .@"scroll-padding-inline-end" => VendorPrefix.empty(),
+            .@"scroll-padding-block" => VendorPrefix.empty(),
+            .@"scroll-padding-inline" => VendorPrefix.empty(),
+            .@"scroll-padding" => VendorPrefix.empty(),
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
             .direction => VendorPrefix.empty(),
@@ -2615,6 +3375,138 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"outline-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-top")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-top";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-bottom")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-bottom";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-left")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-left";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-right")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-right";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-block-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-block-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-block-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-block-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-inline-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-inline-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-inline-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-inline-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-block")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-block";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-inline")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"margin-inline";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .margin;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-top")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-top";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-bottom")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-bottom";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-left")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-left";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-right")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-right";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-block-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-block-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-block-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-block-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-inline-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-inline-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-inline-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-inline-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-block")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-block";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding-inline")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"padding-inline";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "padding")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .padding;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-top")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-top";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-bottom")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-bottom";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-left")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-left";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-right")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-right";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-block-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-block-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-inline-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-inline-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-block")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-block";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin-inline")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin-inline";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-margin")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-margin";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-top")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-top";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-bottom")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-bottom";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-left")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-left";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-right")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-right";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-block-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-block-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-inline-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-inline-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-block")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-block";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding-inline")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding-inline";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"scroll-padding";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-decoration-color")) {
             const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
@@ -2744,6 +3636,50 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline-end" => .@"border-inline-end",
             .outline => .outline,
             .@"outline-color" => .@"outline-color",
+            .@"margin-top" => .@"margin-top",
+            .@"margin-bottom" => .@"margin-bottom",
+            .@"margin-left" => .@"margin-left",
+            .@"margin-right" => .@"margin-right",
+            .@"margin-block-start" => .@"margin-block-start",
+            .@"margin-block-end" => .@"margin-block-end",
+            .@"margin-inline-start" => .@"margin-inline-start",
+            .@"margin-inline-end" => .@"margin-inline-end",
+            .@"margin-block" => .@"margin-block",
+            .@"margin-inline" => .@"margin-inline",
+            .margin => .margin,
+            .@"padding-top" => .@"padding-top",
+            .@"padding-bottom" => .@"padding-bottom",
+            .@"padding-left" => .@"padding-left",
+            .@"padding-right" => .@"padding-right",
+            .@"padding-block-start" => .@"padding-block-start",
+            .@"padding-block-end" => .@"padding-block-end",
+            .@"padding-inline-start" => .@"padding-inline-start",
+            .@"padding-inline-end" => .@"padding-inline-end",
+            .@"padding-block" => .@"padding-block",
+            .@"padding-inline" => .@"padding-inline",
+            .padding => .padding,
+            .@"scroll-margin-top" => .@"scroll-margin-top",
+            .@"scroll-margin-bottom" => .@"scroll-margin-bottom",
+            .@"scroll-margin-left" => .@"scroll-margin-left",
+            .@"scroll-margin-right" => .@"scroll-margin-right",
+            .@"scroll-margin-block-start" => .@"scroll-margin-block-start",
+            .@"scroll-margin-block-end" => .@"scroll-margin-block-end",
+            .@"scroll-margin-inline-start" => .@"scroll-margin-inline-start",
+            .@"scroll-margin-inline-end" => .@"scroll-margin-inline-end",
+            .@"scroll-margin-block" => .@"scroll-margin-block",
+            .@"scroll-margin-inline" => .@"scroll-margin-inline",
+            .@"scroll-margin" => .@"scroll-margin",
+            .@"scroll-padding-top" => .@"scroll-padding-top",
+            .@"scroll-padding-bottom" => .@"scroll-padding-bottom",
+            .@"scroll-padding-left" => .@"scroll-padding-left",
+            .@"scroll-padding-right" => .@"scroll-padding-right",
+            .@"scroll-padding-block-start" => .@"scroll-padding-block-start",
+            .@"scroll-padding-block-end" => .@"scroll-padding-block-end",
+            .@"scroll-padding-inline-start" => .@"scroll-padding-inline-start",
+            .@"scroll-padding-inline-end" => .@"scroll-padding-inline-end",
+            .@"scroll-padding-block" => .@"scroll-padding-block",
+            .@"scroll-padding-inline" => .@"scroll-padding-inline",
+            .@"scroll-padding" => .@"scroll-padding",
             .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
             .direction => .direction,
@@ -2882,6 +3818,50 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline-end" => {},
             .outline => {},
             .@"outline-color" => {},
+            .@"margin-top" => {},
+            .@"margin-bottom" => {},
+            .@"margin-left" => {},
+            .@"margin-right" => {},
+            .@"margin-block-start" => {},
+            .@"margin-block-end" => {},
+            .@"margin-inline-start" => {},
+            .@"margin-inline-end" => {},
+            .@"margin-block" => {},
+            .@"margin-inline" => {},
+            .margin => {},
+            .@"padding-top" => {},
+            .@"padding-bottom" => {},
+            .@"padding-left" => {},
+            .@"padding-right" => {},
+            .@"padding-block-start" => {},
+            .@"padding-block-end" => {},
+            .@"padding-inline-start" => {},
+            .@"padding-inline-end" => {},
+            .@"padding-block" => {},
+            .@"padding-inline" => {},
+            .padding => {},
+            .@"scroll-margin-top" => {},
+            .@"scroll-margin-bottom" => {},
+            .@"scroll-margin-left" => {},
+            .@"scroll-margin-right" => {},
+            .@"scroll-margin-block-start" => {},
+            .@"scroll-margin-block-end" => {},
+            .@"scroll-margin-inline-start" => {},
+            .@"scroll-margin-inline-end" => {},
+            .@"scroll-margin-block" => {},
+            .@"scroll-margin-inline" => {},
+            .@"scroll-margin" => {},
+            .@"scroll-padding-top" => {},
+            .@"scroll-padding-bottom" => {},
+            .@"scroll-padding-left" => {},
+            .@"scroll-padding-right" => {},
+            .@"scroll-padding-block-start" => {},
+            .@"scroll-padding-block-end" => {},
+            .@"scroll-padding-inline-start" => {},
+            .@"scroll-padding-inline-end" => {},
+            .@"scroll-padding-block" => {},
+            .@"scroll-padding-inline" => {},
+            .@"scroll-padding" => {},
             .@"text-decoration-color" => |*p| {
                 p.insert(pre);
             },
@@ -3021,6 +4001,50 @@ pub const PropertyIdTag = enum(u16) {
     @"border-inline-end",
     outline,
     @"outline-color",
+    @"margin-top",
+    @"margin-bottom",
+    @"margin-left",
+    @"margin-right",
+    @"margin-block-start",
+    @"margin-block-end",
+    @"margin-inline-start",
+    @"margin-inline-end",
+    @"margin-block",
+    @"margin-inline",
+    margin,
+    @"padding-top",
+    @"padding-bottom",
+    @"padding-left",
+    @"padding-right",
+    @"padding-block-start",
+    @"padding-block-end",
+    @"padding-inline-start",
+    @"padding-inline-end",
+    @"padding-block",
+    @"padding-inline",
+    padding,
+    @"scroll-margin-top",
+    @"scroll-margin-bottom",
+    @"scroll-margin-left",
+    @"scroll-margin-right",
+    @"scroll-margin-block-start",
+    @"scroll-margin-block-end",
+    @"scroll-margin-inline-start",
+    @"scroll-margin-inline-end",
+    @"scroll-margin-block",
+    @"scroll-margin-inline",
+    @"scroll-margin",
+    @"scroll-padding-top",
+    @"scroll-padding-bottom",
+    @"scroll-padding-left",
+    @"scroll-padding-right",
+    @"scroll-padding-block-start",
+    @"scroll-padding-block-end",
+    @"scroll-padding-inline-start",
+    @"scroll-padding-inline-end",
+    @"scroll-padding-block",
+    @"scroll-padding-inline",
+    @"scroll-padding",
     @"text-decoration-color",
     @"text-emphasis-color",
     direction,

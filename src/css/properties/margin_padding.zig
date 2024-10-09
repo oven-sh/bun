@@ -36,7 +36,8 @@ pub const Inset = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.inset);
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.inset);
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -58,7 +59,8 @@ pub const InsetBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -83,7 +85,8 @@ pub const InsetInline = struct {
         .inline_end = css.PropertyIdTag.@"inset-inline-end",
     };
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -98,7 +101,8 @@ pub const MarginBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -118,7 +122,8 @@ pub const MarginInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -138,7 +143,8 @@ pub const Margin = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.margin);
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.margin);
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -160,7 +166,8 @@ pub const PaddingBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -180,7 +187,8 @@ pub const PaddingInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -200,7 +208,8 @@ pub const Padding = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.padding);
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.padding);
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -222,7 +231,8 @@ pub const ScrollMarginBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -242,7 +252,8 @@ pub const ScrollMarginInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -262,7 +273,8 @@ pub const ScrollMargin = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -284,7 +296,8 @@ pub const ScrollPaddingBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -304,7 +317,8 @@ pub const ScrollPaddingInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -324,7 +338,8 @@ pub const ScrollPadding = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{

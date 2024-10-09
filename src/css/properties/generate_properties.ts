@@ -952,182 +952,182 @@ generateCode({
   //   valid_prefixes: ["ms"],
   //   unprefixed: false,
   // },
-  // "margin-top": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "physical" },
-  // },
-  // "margin-bottom": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "physical" },
-  // },
-  // "margin-left": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "physical" },
-  // },
-  // "margin-right": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "physical" },
-  // },
-  // "margin-block-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "logical" },
-  // },
-  // "margin-block-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "logical" },
-  // },
-  // "margin-inline-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "logical" },
-  // },
-  // "margin-inline-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "margin", category: "logical" },
-  // },
-  // "margin-block": {
-  //   ty: "MarginBlock",
-  //   shorthand: true,
-  // },
-  // "margin-inline": {
-  //   ty: "MarginInline",
-  //   shorthand: true,
-  // },
-  // margin: {
-  //   ty: "Margin",
-  //   shorthand: true,
-  // },
-  // "padding-top": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "physical" },
-  // },
-  // "padding-bottom": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "physical" },
-  // },
-  // "padding-left": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "physical" },
-  // },
-  // "padding-right": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "physical" },
-  // },
-  // "padding-block-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "logical" },
-  // },
-  // "padding-block-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "logical" },
-  // },
-  // "padding-inline-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "logical" },
-  // },
-  // "padding-inline-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "padding", category: "logical" },
-  // },
-  // "padding-block": {
-  //   ty: "PaddingBlock",
-  //   shorthand: true,
-  // },
-  // "padding-inline": {
-  //   ty: "PaddingInline",
-  //   shorthand: true,
-  // },
-  // padding: {
-  //   ty: "Padding",
-  //   shorthand: true,
-  // },
-  // "scroll-margin-top": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "physical" },
-  // },
-  // "scroll-margin-bottom": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "physical" },
-  // },
-  // "scroll-margin-left": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "physical" },
-  // },
-  // "scroll-margin-right": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "physical" },
-  // },
-  // "scroll-margin-block-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "logical" },
-  // },
-  // "scroll-margin-block-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "logical" },
-  // },
-  // "scroll-margin-inline-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "logical" },
-  // },
-  // "scroll-margin-inline-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_margin", category: "logical" },
-  // },
-  // "scroll-margin-block": {
-  //   ty: "ScrollMarginBlock",
-  //   shorthand: true,
-  // },
-  // "scroll-margin-inline": {
-  //   ty: "ScrollMarginInline",
-  //   shorthand: true,
-  // },
-  // "scroll-margin": {
-  //   ty: "ScrollMargin",
-  //   shorthand: true,
-  // },
-  // "scroll-padding-top": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "physical" },
-  // },
-  // "scroll-padding-bottom": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "physical" },
-  // },
-  // "scroll-padding-left": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "physical" },
-  // },
-  // "scroll-padding-right": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "physical" },
-  // },
-  // "scroll-padding-block-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "logical" },
-  // },
-  // "scroll-padding-block-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "logical" },
-  // },
-  // "scroll-padding-inline-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "logical" },
-  // },
-  // "scroll-padding-inline-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "scroll_padding", category: "logical" },
-  // },
-  // "scroll-padding-block": {
-  //   ty: "ScrollPaddingBlock",
-  //   shorthand: true,
-  // },
-  // "scroll-padding-inline": {
-  //   ty: "ScrollPaddingInline",
-  //   shorthand: true,
-  // },
-  // "scroll-padding": {
-  //   ty: "ScrollPadding",
-  //   shorthand: true,
-  // },
+  "margin-top": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "physical" },
+  },
+  "margin-bottom": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "physical" },
+  },
+  "margin-left": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "physical" },
+  },
+  "margin-right": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "physical" },
+  },
+  "margin-block-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "logical" },
+  },
+  "margin-block-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "logical" },
+  },
+  "margin-inline-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "logical" },
+  },
+  "margin-inline-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "margin", category: "logical" },
+  },
+  "margin-block": {
+    ty: "MarginBlock",
+    shorthand: true,
+  },
+  "margin-inline": {
+    ty: "MarginInline",
+    shorthand: true,
+  },
+  margin: {
+    ty: "Margin",
+    shorthand: true,
+  },
+  "padding-top": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "physical" },
+  },
+  "padding-bottom": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "physical" },
+  },
+  "padding-left": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "physical" },
+  },
+  "padding-right": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "physical" },
+  },
+  "padding-block-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "logical" },
+  },
+  "padding-block-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "logical" },
+  },
+  "padding-inline-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "logical" },
+  },
+  "padding-inline-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "padding", category: "logical" },
+  },
+  "padding-block": {
+    ty: "PaddingBlock",
+    shorthand: true,
+  },
+  "padding-inline": {
+    ty: "PaddingInline",
+    shorthand: true,
+  },
+  padding: {
+    ty: "Padding",
+    shorthand: true,
+  },
+  "scroll-margin-top": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "physical" },
+  },
+  "scroll-margin-bottom": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "physical" },
+  },
+  "scroll-margin-left": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "physical" },
+  },
+  "scroll-margin-right": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "physical" },
+  },
+  "scroll-margin-block-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "logical" },
+  },
+  "scroll-margin-block-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "logical" },
+  },
+  "scroll-margin-inline-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "logical" },
+  },
+  "scroll-margin-inline-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_margin", category: "logical" },
+  },
+  "scroll-margin-block": {
+    ty: "ScrollMarginBlock",
+    shorthand: true,
+  },
+  "scroll-margin-inline": {
+    ty: "ScrollMarginInline",
+    shorthand: true,
+  },
+  "scroll-margin": {
+    ty: "ScrollMargin",
+    shorthand: true,
+  },
+  "scroll-padding-top": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "physical" },
+  },
+  "scroll-padding-bottom": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "physical" },
+  },
+  "scroll-padding-left": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "physical" },
+  },
+  "scroll-padding-right": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "physical" },
+  },
+  "scroll-padding-block-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "logical" },
+  },
+  "scroll-padding-block-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "logical" },
+  },
+  "scroll-padding-inline-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "logical" },
+  },
+  "scroll-padding-inline-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "scroll_padding", category: "logical" },
+  },
+  "scroll-padding-block": {
+    ty: "ScrollPaddingBlock",
+    shorthand: true,
+  },
+  "scroll-padding-inline": {
+    ty: "ScrollPaddingInline",
+    shorthand: true,
+  },
+  "scroll-padding": {
+    ty: "ScrollPadding",
+    shorthand: true,
+  },
   // "font-weight": {
   //   ty: "FontWeight",
   // },
@@ -1748,18 +1748,18 @@ const Outline = outline.Outline;
 // const PlaceItems = @"align".PlaceItems;
 // const GapValue = @"align".GapValue;
 // const Gap = @"align".Gap;
-// const MarginBlock = margin_padding.MarginBlock;
-// const Margin = margin_padding.Margin;
-// const MarginInline = margin_padding.MarginInline;
-// const PaddingBlock = margin_padding.PaddingBlock;
-// const PaddingInline = margin_padding.PaddingInline;
-// const Padding = margin_padding.Padding;
-// const ScrollMarginBlock = margin_padding.ScrollMarginBlock;
-// const ScrollMarginInline = margin_padding.ScrollMarginInline;
-// const ScrollMargin = margin_padding.ScrollMargin;
-// const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
-// const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
-// const ScrollPadding = margin_padding.ScrollPadding;
+const MarginBlock = margin_padding.MarginBlock;
+const Margin = margin_padding.Margin;
+const MarginInline = margin_padding.MarginInline;
+const PaddingBlock = margin_padding.PaddingBlock;
+const PaddingInline = margin_padding.PaddingInline;
+const Padding = margin_padding.Padding;
+const ScrollMarginBlock = margin_padding.ScrollMarginBlock;
+const ScrollMarginInline = margin_padding.ScrollMarginInline;
+const ScrollMargin = margin_padding.ScrollMargin;
+const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
+const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
+const ScrollPadding = margin_padding.ScrollPadding;
 // const FontWeight = font.FontWeight;
 // const FontSize = font.FontSize;
 // const FontStretch = font.FontStretch;

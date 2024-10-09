@@ -78,9 +78,11 @@ _subcommand_comp_reply() {
 
 
 _bun_completions() {
-    declare -A GLOBAL_OPTIONS;
-    declare -A PACKAGE_OPTIONS;
-    declare -A PM_OPTIONS;
+    if [[ ! "$OSTYPE" == "darwin"* ]]; then
+        declare -A GLOBAL_OPTIONS;
+        declare -A PACKAGE_OPTIONS;
+        declare -A PM_OPTIONS;
+    fi
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
 

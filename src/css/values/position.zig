@@ -20,23 +20,6 @@ pub const Position = struct {
     /// The y-position.
     y: VerticalPosition,
 
-    /// Returns whether both the x and y positions are centered.
-    pub fn isCenter(this: *const @This()) bool {
-        return this.x.isCenter() and this.y.isCenter();
-    }
-
-    pub fn center() Position {
-        return .{ .x = .center, .y = .center };
-    }
-
-    pub fn eql(this: *const Position, other: *const Position) bool {
-        return this.x.eql(&other.x) and this.y.eql(&other.y);
-    }
-
-    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
-        return css.implementDeepClone(@This(), this, allocator);
-    }
-
     pub fn parse(input: *css.Parser) Result(Position) {
         // Try parsing a horizontal position first
         if (input.tryParse(HorizontalPosition.parse, .{}).asValue()) |horizontal_pos| {
@@ -255,6 +238,34 @@ pub const Position = struct {
             }
         }
     }
+
+    pub fn default() @This() {
+        return .{
+            .x = HorizontalPosition{ .length = LengthPercentage{ .percentage = .{ .v = 0.0 } } },
+            .y = VerticalPosition{ .length = LengthPercentage{ .percentage = .{ .v = 0.0 } } },
+        };
+    }
+
+    /// Returns whether both the x and y positions are centered.
+    pub fn isCenter(this: *const @This()) bool {
+        return this.x.isCenter() and this.y.isCenter();
+    }
+
+    pub fn center() Position {
+        return .{ .x = .center, .y = .center };
+    }
+
+    pub fn eql(this: *const Position, other: *const Position) bool {
+        return this.x.eql(&other.x) and this.y.eql(&other.y);
+    }
+
+    pub fn isZero(this: *const Position) bool {
+        return this.x.isZero() and this.y.isZero();
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub fn PositionComponent(comptime S: type) type {
@@ -276,6 +287,11 @@ pub fn PositionComponent(comptime S: type) type {
         },
 
         const This = @This();
+
+        pub fn isZero(this: *const This) bool {
+            if (this.* == .length and this.length.isZero()) return true;
+            return false;
+        }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);

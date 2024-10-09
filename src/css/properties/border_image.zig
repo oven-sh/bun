@@ -286,10 +286,6 @@ pub const BorderImageRepeatKeyword = enum {
     space,
 
     pub usingnamespace css.DefineEnumProperty(@This());
-
-    pub fn eql(this: *const BorderImageRepeatKeyword, other: *const BorderImageRepeatKeyword) bool {
-        return this.* == other.*;
-    }
 };
 
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.

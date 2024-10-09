@@ -44,6 +44,17 @@ pub const LengthPercentageOrAuto = union(enum) {
     auto,
     /// A [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage).
     length: LengthPercentage,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub inline fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 const PX_PER_IN: f32 = 96.0;

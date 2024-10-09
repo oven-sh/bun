@@ -174,10 +174,6 @@ pub const LineStyle = enum {
 
     pub usingnamespace css.DefineEnumProperty(@This());
 
-    pub inline fn eql(this: *const @This(), other: *const @This()) bool {
-        return this.* == other.*;
-    }
-
     pub fn default() LineStyle {
         return .none;
     }

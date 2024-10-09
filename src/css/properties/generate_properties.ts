@@ -377,38 +377,38 @@ generateCode({
   "background-color": {
     ty: "CssColor",
   },
-  // "background-image": {
-  //   ty: "SmallList(Image, 1)",
-  // },
-  // "background-position-x": {
-  //   ty: "SmallList(css_values.position.HorizontalPosition, 1)",
-  // },
-  // "background-position-y": {
-  //   ty: "SmallList(css_values.position.HorizontalPosition, 1)",
-  // },
-  // "background-position": {
-  //   ty: "SmallList(background.BackgroundPosition, 1)",
-  //   shorthand: true,
-  // },
-  // "background-size": {
-  //   ty: "SmallList(background.BackgroundSize, 1)",
-  // },
-  // "background-repeat": {
-  //   ty: "SmallList(background.BackgroundSize, 1)",
-  // },
-  // "background-attachment": {
-  //   ty: "SmallList(background.BackgroundAttachment, 1)",
-  // },
-  // "background-clip": {
-  //   ty: "SmallList(background.BackgroundAttachment, 1)",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // "background-origin": {
-  //   ty: "SmallList(background.BackgroundOrigin, 1)",
-  // },
-  // background: {
-  //   ty: "SmallList(background.Background, 1)",
-  // },
+  "background-image": {
+    ty: "SmallList(Image, 1)",
+  },
+  "background-position-x": {
+    ty: "SmallList(css_values.position.HorizontalPosition, 1)",
+  },
+  "background-position-y": {
+    ty: "SmallList(css_values.position.HorizontalPosition, 1)",
+  },
+  "background-position": {
+    ty: "SmallList(background.BackgroundPosition, 1)",
+    shorthand: true,
+  },
+  "background-size": {
+    ty: "SmallList(background.BackgroundSize, 1)",
+  },
+  "background-repeat": {
+    ty: "SmallList(background.BackgroundSize, 1)",
+  },
+  "background-attachment": {
+    ty: "SmallList(background.BackgroundAttachment, 1)",
+  },
+  "background-clip": {
+    ty: "SmallList(background.BackgroundAttachment, 1)",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  "background-origin": {
+    ty: "SmallList(background.BackgroundOrigin, 1)",
+  },
+  background: {
+    ty: "SmallList(background.Background, 1)",
+  },
   // "box-shadow": {
   //   ty: "SmallList(box_shadow.BoxShadow, 1)",
   //   valid_prefixes: ["webkit", "moz"],

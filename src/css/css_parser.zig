@@ -163,7 +163,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             unreachable;
         }
 
-        pub fn toCss(this: *@This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
             const length = this.len();
             for (this.slice(), 0..) |*val, idx| {
                 try val.toCss(W, dest);
@@ -1091,6 +1091,10 @@ pub fn DefineEnumProperty(comptime T: type) type {
     const fields: []const std.builtin.Type.EnumField = std.meta.fields(T);
 
     return struct {
+        pub fn eql(lhs: *const T, rhs: *const T) bool {
+            return @intFromEnum(lhs.*) == @intFromEnum(rhs.*);
+        }
+
         pub fn asStr(this: *const T) []const u8 {
             const tag = @intFromEnum(this.*);
             inline for (fields) |field| {

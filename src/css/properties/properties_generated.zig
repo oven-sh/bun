@@ -243,6 +243,16 @@ const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
+    @"background-image": SmallList(Image, 1),
+    @"background-position-x": SmallList(css_values.position.HorizontalPosition, 1),
+    @"background-position-y": SmallList(css_values.position.HorizontalPosition, 1),
+    @"background-position": SmallList(background.BackgroundPosition, 1),
+    @"background-size": SmallList(background.BackgroundSize, 1),
+    @"background-repeat": SmallList(background.BackgroundSize, 1),
+    @"background-attachment": SmallList(background.BackgroundAttachment, 1),
+    @"background-clip": struct { SmallList(background.BackgroundAttachment, 1), VendorPrefix },
+    @"background-origin": SmallList(background.BackgroundOrigin, 1),
+    background: SmallList(background.Background, 1),
     color: CssColor,
     @"border-spacing": css.css_values.size.Size2D(Length),
     @"border-top-color": CssColor,
@@ -319,6 +329,36 @@ pub const Property = union(PropertyIdTag) {
     comptime {
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(Image, 1), "deepClone")) {
+            @compileError("SmallList(Image, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
+            @compileError("SmallList(css_values.position.HorizontalPosition, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
+            @compileError("SmallList(css_values.position.HorizontalPosition, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "deepClone")) {
+            @compileError("SmallList(background.BackgroundPosition, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
+            @compileError("SmallList(background.BackgroundSize, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
+            @compileError("SmallList(background.BackgroundSize, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
+            @compileError("SmallList(background.BackgroundAttachment, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
+            @compileError("SmallList(background.BackgroundAttachment, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "deepClone")) {
+            @compileError("SmallList(background.BackgroundOrigin, 1): does not have a deepClone() function.");
+        }
+        if (!@hasDecl(SmallList(background.Background, 1), "deepClone")) {
+            @compileError("SmallList(background.Background, 1): does not have a deepClone() function.");
         }
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
@@ -529,6 +569,76 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-color" = c } };
+                    }
+                }
+            },
+            .@"background-image" => {
+                if (css.generic.parseWithOptions(SmallList(Image, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-image" = c } };
+                    }
+                }
+            },
+            .@"background-position-x" => {
+                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-position-x" = c } };
+                    }
+                }
+            },
+            .@"background-position-y" => {
+                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-position-y" = c } };
+                    }
+                }
+            },
+            .@"background-position" => {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-position" = c } };
+                    }
+                }
+            },
+            .@"background-size" => {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-size" = c } };
+                    }
+                }
+            },
+            .@"background-repeat" => {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-repeat" = c } };
+                    }
+                }
+            },
+            .@"background-attachment" => {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-attachment" = c } };
+                    }
+                }
+            },
+            .@"background-clip" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-clip" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"background-origin" => {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundOrigin, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"background-origin" = c } };
+                    }
+                }
+            },
+            .background => {
+                if (css.generic.parseWithOptions(SmallList(background.Background, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .background = c } };
                     }
                 }
             },
@@ -1019,6 +1129,16 @@ pub const Property = union(PropertyIdTag) {
     pub fn propertyId(this: *const Property) PropertyId {
         return switch (this.*) {
             .@"background-color" => .@"background-color",
+            .@"background-image" => .@"background-image",
+            .@"background-position-x" => .@"background-position-x",
+            .@"background-position-y" => .@"background-position-y",
+            .@"background-position" => .@"background-position",
+            .@"background-size" => .@"background-size",
+            .@"background-repeat" => .@"background-repeat",
+            .@"background-attachment" => .@"background-attachment",
+            .@"background-clip" => |*v| PropertyId{ .@"background-clip" = v[1] },
+            .@"background-origin" => .@"background-origin",
+            .background => .background,
             .color => .color,
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
@@ -1094,6 +1214,16 @@ pub const Property = union(PropertyIdTag) {
     pub fn deepClone(this: *const Property, allocator: std.mem.Allocator) Property {
         return switch (this.*) {
             .@"background-color" => |*v| .{ .@"background-color" = v.deepClone(allocator) },
+            .@"background-image" => |*v| .{ .@"background-image" = v.deepClone(allocator) },
+            .@"background-position-x" => |*v| .{ .@"background-position-x" = v.deepClone(allocator) },
+            .@"background-position-y" => |*v| .{ .@"background-position-y" = v.deepClone(allocator) },
+            .@"background-position" => |*v| .{ .@"background-position" = v.deepClone(allocator) },
+            .@"background-size" => |*v| .{ .@"background-size" = v.deepClone(allocator) },
+            .@"background-repeat" => |*v| .{ .@"background-repeat" = v.deepClone(allocator) },
+            .@"background-attachment" => |*v| .{ .@"background-attachment" = v.deepClone(allocator) },
+            .@"background-clip" => |*v| .{ .@"background-clip" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"background-origin" => |*v| .{ .@"background-origin" = v.deepClone(allocator) },
+            .background => |*v| .{ .background = v.deepClone(allocator) },
             .color => |*v| .{ .color = v.deepClone(allocator) },
             .@"border-spacing" => |*v| .{ .@"border-spacing" = v.deepClone(allocator) },
             .@"border-top-color" => |*v| .{ .@"border-top-color" = v.deepClone(allocator) },
@@ -1175,6 +1305,16 @@ pub const Property = union(PropertyIdTag) {
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {
         return switch (this.*) {
             .@"background-color" => .{ "background-color", VendorPrefix{ .none = true } },
+            .@"background-image" => .{ "background-image", VendorPrefix{ .none = true } },
+            .@"background-position-x" => .{ "background-position-x", VendorPrefix{ .none = true } },
+            .@"background-position-y" => .{ "background-position-y", VendorPrefix{ .none = true } },
+            .@"background-position" => .{ "background-position", VendorPrefix{ .none = true } },
+            .@"background-size" => .{ "background-size", VendorPrefix{ .none = true } },
+            .@"background-repeat" => .{ "background-repeat", VendorPrefix{ .none = true } },
+            .@"background-attachment" => .{ "background-attachment", VendorPrefix{ .none = true } },
+            .@"background-clip" => |*x| .{ "background-clip", x.@"1" },
+            .@"background-origin" => .{ "background-origin", VendorPrefix{ .none = true } },
+            .background => .{ "background", VendorPrefix{ .none = true } },
             .color => .{ "color", VendorPrefix{ .none = true } },
             .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
             .@"border-top-color" => .{ "border-top-color", VendorPrefix{ .none = true } },
@@ -1257,6 +1397,16 @@ pub const Property = union(PropertyIdTag) {
     pub fn valueToCss(this: *const Property, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
         return switch (this.*) {
             .@"background-color" => |*value| value.toCss(W, dest),
+            .@"background-image" => |*value| value.toCss(W, dest),
+            .@"background-position-x" => |*value| value.toCss(W, dest),
+            .@"background-position-y" => |*value| value.toCss(W, dest),
+            .@"background-position" => |*value| value.toCss(W, dest),
+            .@"background-size" => |*value| value.toCss(W, dest),
+            .@"background-repeat" => |*value| value.toCss(W, dest),
+            .@"background-attachment" => |*value| value.toCss(W, dest),
+            .@"background-clip" => |*value| value[0].toCss(W, dest),
+            .@"background-origin" => |*value| value.toCss(W, dest),
+            .background => |*value| value.toCss(W, dest),
             .color => |*value| value.toCss(W, dest),
             .@"border-spacing" => |*value| value.toCss(W, dest),
             .@"border-top-color" => |*value| value.toCss(W, dest),
@@ -1332,6 +1482,7 @@ pub const Property = union(PropertyIdTag) {
     /// Returns the given longhand property for a shorthand.
     pub fn longhand(this: *const Property, property_id: *const PropertyId) ?Property {
         switch (this.*) {
+            .@"background-position" => |*v| return v.longhand(property_id),
             .@"border-radius" => |*v| {
                 if (!v[1].eq(property_id.prefix())) return null;
                 return v[0].longhand(property_id);
@@ -1367,6 +1518,16 @@ pub const Property = union(PropertyIdTag) {
 };
 pub const PropertyId = union(PropertyIdTag) {
     @"background-color",
+    @"background-image",
+    @"background-position-x",
+    @"background-position-y",
+    @"background-position",
+    @"background-size",
+    @"background-repeat",
+    @"background-attachment",
+    @"background-clip": VendorPrefix,
+    @"background-origin",
+    background,
     color,
     @"border-spacing",
     @"border-top-color",
@@ -1448,6 +1609,16 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn prefix(this: *const PropertyId) VendorPrefix {
         return switch (this.*) {
             .@"background-color" => VendorPrefix.empty(),
+            .@"background-image" => VendorPrefix.empty(),
+            .@"background-position-x" => VendorPrefix.empty(),
+            .@"background-position-y" => VendorPrefix.empty(),
+            .@"background-position" => VendorPrefix.empty(),
+            .@"background-size" => VendorPrefix.empty(),
+            .@"background-repeat" => VendorPrefix.empty(),
+            .@"background-attachment" => VendorPrefix.empty(),
+            .@"background-clip" => |p| p,
+            .@"background-origin" => VendorPrefix.empty(),
+            .background => VendorPrefix.empty(),
             .color => VendorPrefix.empty(),
             .@"border-spacing" => VendorPrefix.empty(),
             .@"border-top-color" => VendorPrefix.empty(),
@@ -1523,6 +1694,36 @@ pub const PropertyId = union(PropertyIdTag) {
         if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"background-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-image")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-image";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-position-x")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-position-x";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-position-y")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-position-y";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-position")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-position";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-repeat")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-repeat";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-attachment")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-attachment";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-clip")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"background-clip" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-origin")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"background-origin";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .background;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .color;
@@ -1731,6 +1932,16 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn withPrefix(this: *const PropertyId, pre: VendorPrefix) PropertyId {
         return switch (this.*) {
             .@"background-color" => .@"background-color",
+            .@"background-image" => .@"background-image",
+            .@"background-position-x" => .@"background-position-x",
+            .@"background-position-y" => .@"background-position-y",
+            .@"background-position" => .@"background-position",
+            .@"background-size" => .@"background-size",
+            .@"background-repeat" => .@"background-repeat",
+            .@"background-attachment" => .@"background-attachment",
+            .@"background-clip" => .{ .@"background-clip" = pre },
+            .@"background-origin" => .@"background-origin",
+            .background => .background,
             .color => .color,
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
@@ -1804,6 +2015,18 @@ pub const PropertyId = union(PropertyIdTag) {
     pub fn addPrefix(this: *PropertyId, pre: VendorPrefix) void {
         return switch (this.*) {
             .@"background-color" => {},
+            .@"background-image" => {},
+            .@"background-position-x" => {},
+            .@"background-position-y" => {},
+            .@"background-position" => {},
+            .@"background-size" => {},
+            .@"background-repeat" => {},
+            .@"background-attachment" => {},
+            .@"background-clip" => |*p| {
+                p.insert(pre);
+            },
+            .@"background-origin" => {},
+            .background => {},
             .color => {},
             .@"border-spacing" => {},
             .@"border-top-color" => {},
@@ -1910,6 +2133,16 @@ pub const PropertyId = union(PropertyIdTag) {
 };
 pub const PropertyIdTag = enum(u16) {
     @"background-color",
+    @"background-image",
+    @"background-position-x",
+    @"background-position-y",
+    @"background-position",
+    @"background-size",
+    @"background-repeat",
+    @"background-attachment",
+    @"background-clip",
+    @"background-origin",
+    background,
     color,
     @"border-spacing",
     @"border-top-color",

@@ -1661,6 +1661,7 @@ bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalO
 }
 
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L834
+// using byteLength and byte offsets here is intentional
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

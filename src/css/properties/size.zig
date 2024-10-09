@@ -311,7 +311,7 @@ pub const AspectRatio = struct {
             auto = input.tryParse(css.Parser.expectIdentMatching, .{"auto"});
         }
         if (auto.isErr() and ratio.isErr()) {
-            return .{ .err = location.newCustomError(css.ParserError.invalid_value) };
+            return .{ .err = location.newCustomError(css.ParserError{ .invalid_value = {} }) };
         }
 
         return .{

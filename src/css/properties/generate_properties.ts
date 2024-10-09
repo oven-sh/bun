@@ -449,86 +449,86 @@ generateCode({
     ty: "size.MaxSize",
     logical_group: { ty: "max_size", category: "physical" },
   },
-  // "block-size": {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "size", category: "logical" },
-  // },
-  // "inline-size": {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "size", category: "logical" },
-  // },
-  // "min-block-size": {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "min_size", category: "logical" },
-  // },
-  // "min-inline-size": {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "min_size", category: "logical" },
-  // },
-  // "max-block-size": {
-  //   ty: "size.MaxSize",
-  //   logical_group: { ty: "max_size", category: "logical" },
-  // },
-  // "max-inline-size": {
-  //   ty: "size.MaxSize",
-  //   logical_group: { ty: "max_size", category: "logical" },
-  // },
-  // "box-sizing": {
-  //   ty: "size.BoxSizing",
-  //   valid_prefixes: ["webkit", "moz"],
-  // },
-  // "aspect-ratio": {
-  //   ty: "size.AspectRatio",
-  // },
-  // overflow: {
-  //   ty: "overflow.Overflow",
-  //   shorthand: true,
-  // },
-  // "overflow-x": {
-  //   ty: "overflow.OverflowKeyword",
-  // },
-  // "overflow-y": {
-  //   ty: "overflow.OverflowKeyword",
-  // },
-  // "text-overflow": {
-  //   ty: "overflow.TextOverflow",
-  //   valid_prefixes: ["o"],
-  // },
-  // position: {
-  //   ty: "position.Position",
-  // },
-  // top: {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "physical" },
-  // },
-  // bottom: {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "physical" },
-  // },
-  // left: {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "physical" },
-  // },
-  // right: {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "physical" },
-  // },
-  // "inset-block-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "logical" },
-  // },
-  // "inset-block-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "logical" },
-  // },
-  // "inset-inline-start": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "logical" },
-  // },
-  // "inset-inline-end": {
-  //   ty: "LengthPercentageOrAuto",
-  //   logical_group: { ty: "inset", category: "logical" },
-  // },
+  "block-size": {
+    ty: "size.Size",
+    logical_group: { ty: "size", category: "logical" },
+  },
+  "inline-size": {
+    ty: "size.Size",
+    logical_group: { ty: "size", category: "logical" },
+  },
+  "min-block-size": {
+    ty: "size.Size",
+    logical_group: { ty: "min_size", category: "logical" },
+  },
+  "min-inline-size": {
+    ty: "size.Size",
+    logical_group: { ty: "min_size", category: "logical" },
+  },
+  "max-block-size": {
+    ty: "size.MaxSize",
+    logical_group: { ty: "max_size", category: "logical" },
+  },
+  "max-inline-size": {
+    ty: "size.MaxSize",
+    logical_group: { ty: "max_size", category: "logical" },
+  },
+  "box-sizing": {
+    ty: "size.BoxSizing",
+    valid_prefixes: ["webkit", "moz"],
+  },
+  "aspect-ratio": {
+    ty: "size.AspectRatio",
+  },
+  overflow: {
+    ty: "overflow.Overflow",
+    shorthand: true,
+  },
+  "overflow-x": {
+    ty: "overflow.OverflowKeyword",
+  },
+  "overflow-y": {
+    ty: "overflow.OverflowKeyword",
+  },
+  "text-overflow": {
+    ty: "overflow.TextOverflow",
+    valid_prefixes: ["o"],
+  },
+  position: {
+    ty: "position.Position",
+  },
+  top: {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "physical" },
+  },
+  bottom: {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "physical" },
+  },
+  left: {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "physical" },
+  },
+  right: {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "physical" },
+  },
+  "inset-block-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "logical" },
+  },
+  "inset-block-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "logical" },
+  },
+  "inset-inline-start": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "logical" },
+  },
+  "inset-inline-end": {
+    ty: "LengthPercentageOrAuto",
+    logical_group: { ty: "inset", category: "logical" },
+  },
   // "inset-block": {
   //   ty: "margin_padding.InsetBlock",
   //   shorthand: true,

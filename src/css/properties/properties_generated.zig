@@ -260,6 +260,27 @@ pub const Property = union(PropertyIdTag) {
     @"min-height": size.Size,
     @"max-width": size.MaxSize,
     @"max-height": size.MaxSize,
+    @"block-size": size.Size,
+    @"inline-size": size.Size,
+    @"min-block-size": size.Size,
+    @"min-inline-size": size.Size,
+    @"max-block-size": size.MaxSize,
+    @"max-inline-size": size.MaxSize,
+    @"box-sizing": struct { size.BoxSizing, VendorPrefix },
+    @"aspect-ratio": size.AspectRatio,
+    overflow: overflow.Overflow,
+    @"overflow-x": overflow.OverflowKeyword,
+    @"overflow-y": overflow.OverflowKeyword,
+    @"text-overflow": struct { overflow.TextOverflow, VendorPrefix },
+    position: position.Position,
+    top: LengthPercentageOrAuto,
+    bottom: LengthPercentageOrAuto,
+    left: LengthPercentageOrAuto,
+    right: LengthPercentageOrAuto,
+    @"inset-block-start": LengthPercentageOrAuto,
+    @"inset-block-end": LengthPercentageOrAuto,
+    @"inset-inline-start": LengthPercentageOrAuto,
+    @"inset-inline-end": LengthPercentageOrAuto,
     @"border-spacing": css.css_values.size.Size2D(Length),
     @"border-top-color": CssColor,
     @"border-bottom-color": CssColor,
@@ -386,6 +407,69 @@ pub const Property = union(PropertyIdTag) {
         }
         if (!@hasDecl(size.MaxSize, "deepClone")) {
             @compileError("size.MaxSize: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.MaxSize, "deepClone")) {
+            @compileError("size.MaxSize: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.MaxSize, "deepClone")) {
+            @compileError("size.MaxSize: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.BoxSizing, "deepClone")) {
+            @compileError("size.BoxSizing: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.AspectRatio, "deepClone")) {
+            @compileError("size.AspectRatio: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(overflow.Overflow, "deepClone")) {
+            @compileError("overflow.Overflow: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
+            @compileError("overflow.OverflowKeyword: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
+            @compileError("overflow.OverflowKeyword: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(overflow.TextOverflow, "deepClone")) {
+            @compileError("overflow.TextOverflow: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(position.Position, "deepClone")) {
+            @compileError("position.Position: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
         }
         if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
             @compileError("css.css_values.size.Size2D(Length): does not have a deepClone() function.");
@@ -712,6 +796,153 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"max-height" = c } };
+                    }
+                }
+            },
+            .@"block-size" => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"block-size" = c } };
+                    }
+                }
+            },
+            .@"inline-size" => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inline-size" = c } };
+                    }
+                }
+            },
+            .@"min-block-size" => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-block-size" = c } };
+                    }
+                }
+            },
+            .@"min-inline-size" => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-inline-size" = c } };
+                    }
+                }
+            },
+            .@"max-block-size" => {
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-block-size" = c } };
+                    }
+                }
+            },
+            .@"max-inline-size" => {
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-inline-size" = c } };
+                    }
+                }
+            },
+            .@"box-sizing" => |pre| {
+                if (css.generic.parseWithOptions(size.BoxSizing, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-sizing" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"aspect-ratio" => {
+                if (css.generic.parseWithOptions(size.AspectRatio, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"aspect-ratio" = c } };
+                    }
+                }
+            },
+            .overflow => {
+                if (css.generic.parseWithOptions(overflow.Overflow, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .overflow = c } };
+                    }
+                }
+            },
+            .@"overflow-x" => {
+                if (css.generic.parseWithOptions(overflow.OverflowKeyword, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"overflow-x" = c } };
+                    }
+                }
+            },
+            .@"overflow-y" => {
+                if (css.generic.parseWithOptions(overflow.OverflowKeyword, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"overflow-y" = c } };
+                    }
+                }
+            },
+            .@"text-overflow" => |pre| {
+                if (css.generic.parseWithOptions(overflow.TextOverflow, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-overflow" = .{ c, pre } } };
+                    }
+                }
+            },
+            .position => {
+                if (css.generic.parseWithOptions(position.Position, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .position = c } };
+                    }
+                }
+            },
+            .top => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .top = c } };
+                    }
+                }
+            },
+            .bottom => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .bottom = c } };
+                    }
+                }
+            },
+            .left => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .left = c } };
+                    }
+                }
+            },
+            .right => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .right = c } };
+                    }
+                }
+            },
+            .@"inset-block-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-block-start" = c } };
+                    }
+                }
+            },
+            .@"inset-block-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-block-end" = c } };
+                    }
+                }
+            },
+            .@"inset-inline-start" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-inline-start" = c } };
+                    }
+                }
+            },
+            .@"inset-inline-end" => {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"inset-inline-end" = c } };
                     }
                 }
             },
@@ -1212,6 +1443,27 @@ pub const Property = union(PropertyIdTag) {
             .@"min-height" => .@"min-height",
             .@"max-width" => .@"max-width",
             .@"max-height" => .@"max-height",
+            .@"block-size" => .@"block-size",
+            .@"inline-size" => .@"inline-size",
+            .@"min-block-size" => .@"min-block-size",
+            .@"min-inline-size" => .@"min-inline-size",
+            .@"max-block-size" => .@"max-block-size",
+            .@"max-inline-size" => .@"max-inline-size",
+            .@"box-sizing" => |*v| PropertyId{ .@"box-sizing" = v[1] },
+            .@"aspect-ratio" => .@"aspect-ratio",
+            .overflow => .overflow,
+            .@"overflow-x" => .@"overflow-x",
+            .@"overflow-y" => .@"overflow-y",
+            .@"text-overflow" => |*v| PropertyId{ .@"text-overflow" = v[1] },
+            .position => .position,
+            .top => .top,
+            .bottom => .bottom,
+            .left => .left,
+            .right => .right,
+            .@"inset-block-start" => .@"inset-block-start",
+            .@"inset-block-end" => .@"inset-block-end",
+            .@"inset-inline-start" => .@"inset-inline-start",
+            .@"inset-inline-end" => .@"inset-inline-end",
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -1303,6 +1555,27 @@ pub const Property = union(PropertyIdTag) {
             .@"min-height" => |*v| .{ .@"min-height" = v.deepClone(allocator) },
             .@"max-width" => |*v| .{ .@"max-width" = v.deepClone(allocator) },
             .@"max-height" => |*v| .{ .@"max-height" = v.deepClone(allocator) },
+            .@"block-size" => |*v| .{ .@"block-size" = v.deepClone(allocator) },
+            .@"inline-size" => |*v| .{ .@"inline-size" = v.deepClone(allocator) },
+            .@"min-block-size" => |*v| .{ .@"min-block-size" = v.deepClone(allocator) },
+            .@"min-inline-size" => |*v| .{ .@"min-inline-size" = v.deepClone(allocator) },
+            .@"max-block-size" => |*v| .{ .@"max-block-size" = v.deepClone(allocator) },
+            .@"max-inline-size" => |*v| .{ .@"max-inline-size" = v.deepClone(allocator) },
+            .@"box-sizing" => |*v| .{ .@"box-sizing" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"aspect-ratio" => |*v| .{ .@"aspect-ratio" = v.deepClone(allocator) },
+            .overflow => |*v| .{ .overflow = v.deepClone(allocator) },
+            .@"overflow-x" => |*v| .{ .@"overflow-x" = v.deepClone(allocator) },
+            .@"overflow-y" => |*v| .{ .@"overflow-y" = v.deepClone(allocator) },
+            .@"text-overflow" => |*v| .{ .@"text-overflow" = .{ v[0].deepClone(allocator), v[1] } },
+            .position => |*v| .{ .position = v.deepClone(allocator) },
+            .top => |*v| .{ .top = v.deepClone(allocator) },
+            .bottom => |*v| .{ .bottom = v.deepClone(allocator) },
+            .left => |*v| .{ .left = v.deepClone(allocator) },
+            .right => |*v| .{ .right = v.deepClone(allocator) },
+            .@"inset-block-start" => |*v| .{ .@"inset-block-start" = v.deepClone(allocator) },
+            .@"inset-block-end" => |*v| .{ .@"inset-block-end" = v.deepClone(allocator) },
+            .@"inset-inline-start" => |*v| .{ .@"inset-inline-start" = v.deepClone(allocator) },
+            .@"inset-inline-end" => |*v| .{ .@"inset-inline-end" = v.deepClone(allocator) },
             .@"border-spacing" => |*v| .{ .@"border-spacing" = v.deepClone(allocator) },
             .@"border-top-color" => |*v| .{ .@"border-top-color" = v.deepClone(allocator) },
             .@"border-bottom-color" => |*v| .{ .@"border-bottom-color" = v.deepClone(allocator) },
@@ -1400,6 +1673,27 @@ pub const Property = union(PropertyIdTag) {
             .@"min-height" => .{ "min-height", VendorPrefix{ .none = true } },
             .@"max-width" => .{ "max-width", VendorPrefix{ .none = true } },
             .@"max-height" => .{ "max-height", VendorPrefix{ .none = true } },
+            .@"block-size" => .{ "block-size", VendorPrefix{ .none = true } },
+            .@"inline-size" => .{ "inline-size", VendorPrefix{ .none = true } },
+            .@"min-block-size" => .{ "min-block-size", VendorPrefix{ .none = true } },
+            .@"min-inline-size" => .{ "min-inline-size", VendorPrefix{ .none = true } },
+            .@"max-block-size" => .{ "max-block-size", VendorPrefix{ .none = true } },
+            .@"max-inline-size" => .{ "max-inline-size", VendorPrefix{ .none = true } },
+            .@"box-sizing" => |*x| .{ "box-sizing", x.@"1" },
+            .@"aspect-ratio" => .{ "aspect-ratio", VendorPrefix{ .none = true } },
+            .overflow => .{ "overflow", VendorPrefix{ .none = true } },
+            .@"overflow-x" => .{ "overflow-x", VendorPrefix{ .none = true } },
+            .@"overflow-y" => .{ "overflow-y", VendorPrefix{ .none = true } },
+            .@"text-overflow" => |*x| .{ "text-overflow", x.@"1" },
+            .position => .{ "position", VendorPrefix{ .none = true } },
+            .top => .{ "top", VendorPrefix{ .none = true } },
+            .bottom => .{ "bottom", VendorPrefix{ .none = true } },
+            .left => .{ "left", VendorPrefix{ .none = true } },
+            .right => .{ "right", VendorPrefix{ .none = true } },
+            .@"inset-block-start" => .{ "inset-block-start", VendorPrefix{ .none = true } },
+            .@"inset-block-end" => .{ "inset-block-end", VendorPrefix{ .none = true } },
+            .@"inset-inline-start" => .{ "inset-inline-start", VendorPrefix{ .none = true } },
+            .@"inset-inline-end" => .{ "inset-inline-end", VendorPrefix{ .none = true } },
             .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
             .@"border-top-color" => .{ "border-top-color", VendorPrefix{ .none = true } },
             .@"border-bottom-color" => .{ "border-bottom-color", VendorPrefix{ .none = true } },
@@ -1498,6 +1792,27 @@ pub const Property = union(PropertyIdTag) {
             .@"min-height" => |*value| value.toCss(W, dest),
             .@"max-width" => |*value| value.toCss(W, dest),
             .@"max-height" => |*value| value.toCss(W, dest),
+            .@"block-size" => |*value| value.toCss(W, dest),
+            .@"inline-size" => |*value| value.toCss(W, dest),
+            .@"min-block-size" => |*value| value.toCss(W, dest),
+            .@"min-inline-size" => |*value| value.toCss(W, dest),
+            .@"max-block-size" => |*value| value.toCss(W, dest),
+            .@"max-inline-size" => |*value| value.toCss(W, dest),
+            .@"box-sizing" => |*value| value[0].toCss(W, dest),
+            .@"aspect-ratio" => |*value| value.toCss(W, dest),
+            .overflow => |*value| value.toCss(W, dest),
+            .@"overflow-x" => |*value| value.toCss(W, dest),
+            .@"overflow-y" => |*value| value.toCss(W, dest),
+            .@"text-overflow" => |*value| value[0].toCss(W, dest),
+            .position => |*value| value.toCss(W, dest),
+            .top => |*value| value.toCss(W, dest),
+            .bottom => |*value| value.toCss(W, dest),
+            .left => |*value| value.toCss(W, dest),
+            .right => |*value| value.toCss(W, dest),
+            .@"inset-block-start" => |*value| value.toCss(W, dest),
+            .@"inset-block-end" => |*value| value.toCss(W, dest),
+            .@"inset-inline-start" => |*value| value.toCss(W, dest),
+            .@"inset-inline-end" => |*value| value.toCss(W, dest),
             .@"border-spacing" => |*value| value.toCss(W, dest),
             .@"border-top-color" => |*value| value.toCss(W, dest),
             .@"border-bottom-color" => |*value| value.toCss(W, dest),
@@ -1573,6 +1888,7 @@ pub const Property = union(PropertyIdTag) {
     pub fn longhand(this: *const Property, property_id: *const PropertyId) ?Property {
         switch (this.*) {
             .@"background-position" => |*v| return v.longhand(property_id),
+            .overflow => |*v| return v.longhand(property_id),
             .@"border-radius" => |*v| {
                 if (!v[1].eq(property_id.prefix())) return null;
                 return v[0].longhand(property_id);
@@ -1625,6 +1941,27 @@ pub const PropertyId = union(PropertyIdTag) {
     @"min-height",
     @"max-width",
     @"max-height",
+    @"block-size",
+    @"inline-size",
+    @"min-block-size",
+    @"min-inline-size",
+    @"max-block-size",
+    @"max-inline-size",
+    @"box-sizing": VendorPrefix,
+    @"aspect-ratio",
+    overflow,
+    @"overflow-x",
+    @"overflow-y",
+    @"text-overflow": VendorPrefix,
+    position,
+    top,
+    bottom,
+    left,
+    right,
+    @"inset-block-start",
+    @"inset-block-end",
+    @"inset-inline-start",
+    @"inset-inline-end",
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",
@@ -1722,6 +2059,27 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"min-height" => VendorPrefix.empty(),
             .@"max-width" => VendorPrefix.empty(),
             .@"max-height" => VendorPrefix.empty(),
+            .@"block-size" => VendorPrefix.empty(),
+            .@"inline-size" => VendorPrefix.empty(),
+            .@"min-block-size" => VendorPrefix.empty(),
+            .@"min-inline-size" => VendorPrefix.empty(),
+            .@"max-block-size" => VendorPrefix.empty(),
+            .@"max-inline-size" => VendorPrefix.empty(),
+            .@"box-sizing" => |p| p,
+            .@"aspect-ratio" => VendorPrefix.empty(),
+            .overflow => VendorPrefix.empty(),
+            .@"overflow-x" => VendorPrefix.empty(),
+            .@"overflow-y" => VendorPrefix.empty(),
+            .@"text-overflow" => |p| p,
+            .position => VendorPrefix.empty(),
+            .top => VendorPrefix.empty(),
+            .bottom => VendorPrefix.empty(),
+            .left => VendorPrefix.empty(),
+            .right => VendorPrefix.empty(),
+            .@"inset-block-start" => VendorPrefix.empty(),
+            .@"inset-block-end" => VendorPrefix.empty(),
+            .@"inset-inline-start" => VendorPrefix.empty(),
+            .@"inset-inline-end" => VendorPrefix.empty(),
             .@"border-spacing" => VendorPrefix.empty(),
             .@"border-top-color" => VendorPrefix.empty(),
             .@"border-bottom-color" => VendorPrefix.empty(),
@@ -1847,6 +2205,69 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-height")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"max-height";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "block-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"block-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inline-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inline-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-block-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"min-block-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-inline-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"min-inline-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-block-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"max-block-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-inline-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"max-inline-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-sizing")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-sizing" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "aspect-ratio")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"aspect-ratio";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "overflow")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .overflow;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "overflow-x")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"overflow-x";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "overflow-y")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"overflow-y";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-overflow")) {
+            const allowed_prefixes = VendorPrefix{ .o = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"text-overflow" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "position")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .position;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "top")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .top;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "bottom")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .bottom;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "left")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .left;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "right")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .right;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-block-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inset-block-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-block-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inset-block-end";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline-start")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inset-inline-start";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "inset-inline-end")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"inset-inline-end";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-spacing";
@@ -2069,6 +2490,27 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"min-height" => .@"min-height",
             .@"max-width" => .@"max-width",
             .@"max-height" => .@"max-height",
+            .@"block-size" => .@"block-size",
+            .@"inline-size" => .@"inline-size",
+            .@"min-block-size" => .@"min-block-size",
+            .@"min-inline-size" => .@"min-inline-size",
+            .@"max-block-size" => .@"max-block-size",
+            .@"max-inline-size" => .@"max-inline-size",
+            .@"box-sizing" => .{ .@"box-sizing" = pre },
+            .@"aspect-ratio" => .@"aspect-ratio",
+            .overflow => .overflow,
+            .@"overflow-x" => .@"overflow-x",
+            .@"overflow-y" => .@"overflow-y",
+            .@"text-overflow" => .{ .@"text-overflow" = pre },
+            .position => .position,
+            .top => .top,
+            .bottom => .bottom,
+            .left => .left,
+            .right => .right,
+            .@"inset-block-start" => .@"inset-block-start",
+            .@"inset-block-end" => .@"inset-block-end",
+            .@"inset-inline-start" => .@"inset-inline-start",
+            .@"inset-inline-end" => .@"inset-inline-end",
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -2160,6 +2602,31 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"min-height" => {},
             .@"max-width" => {},
             .@"max-height" => {},
+            .@"block-size" => {},
+            .@"inline-size" => {},
+            .@"min-block-size" => {},
+            .@"min-inline-size" => {},
+            .@"max-block-size" => {},
+            .@"max-inline-size" => {},
+            .@"box-sizing" => |*p| {
+                p.insert(pre);
+            },
+            .@"aspect-ratio" => {},
+            .overflow => {},
+            .@"overflow-x" => {},
+            .@"overflow-y" => {},
+            .@"text-overflow" => |*p| {
+                p.insert(pre);
+            },
+            .position => {},
+            .top => {},
+            .bottom => {},
+            .left => {},
+            .right => {},
+            .@"inset-block-start" => {},
+            .@"inset-block-end" => {},
+            .@"inset-inline-start" => {},
+            .@"inset-inline-end" => {},
             .@"border-spacing" => {},
             .@"border-top-color" => {},
             .@"border-bottom-color" => {},
@@ -2282,6 +2749,27 @@ pub const PropertyIdTag = enum(u16) {
     @"min-height",
     @"max-width",
     @"max-height",
+    @"block-size",
+    @"inline-size",
+    @"min-block-size",
+    @"min-inline-size",
+    @"max-block-size",
+    @"max-inline-size",
+    @"box-sizing",
+    @"aspect-ratio",
+    overflow,
+    @"overflow-x",
+    @"overflow-y",
+    @"text-overflow",
+    position,
+    top,
+    bottom,
+    left,
+    right,
+    @"inset-block-start",
+    @"inset-block-end",
+    @"inset-inline-start",
+    @"inset-inline-end",
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",

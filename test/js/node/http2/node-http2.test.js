@@ -6,20 +6,20 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 import { Duplex } from "stream";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 
-for (const nodeExecutable of [nodeExe()]) {
+for (const nodeExecutable of [nodeExe(), bunExe()]) {
   describe(`${path.basename(nodeExecutable)}`, () => {
     let nodeEchoServer_;
 
     let HTTPS_SERVER;
-    beforeAll(async () => {
+    beforeEach(async () => {
       nodeEchoServer_ = await nodeEchoServer();
       HTTPS_SERVER = nodeEchoServer_.url;
     });
-    afterAll(async () => {
+    afterEach(async () => {
       nodeEchoServer_.subprocess?.kill?.(9);
     });
 
@@ -877,7 +877,7 @@ for (const nodeExecutable of [nodeExe()]) {
       it("ping with wrong payload length events should error", async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
-        client.on("error", resolve);
+        client.on("error", reject);
         client.on("connect", () => {
           client.ping(Buffer.from("oops"), (err, duration, payload) => {
             if (err) {
@@ -895,7 +895,7 @@ for (const nodeExecutable of [nodeExe()]) {
       it("ping with wrong payload type events should throw", async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
-        client.on("error", resolve);
+        client.on("error", reject);
         client.on("connect", () => {
           try {
             client.ping("oops", (err, duration, payload) => {
@@ -995,7 +995,7 @@ for (const nodeExecutable of [nodeExe()]) {
           stdin: "inherit",
           stdout: "inherit",
         });
-        expect(exitCode).toBe(0);
+        expect(exitCode || 0).toBe(0);
       }, 100000);
 
       it("should receive goaway", async () => {

@@ -728,7 +728,6 @@ pub const H2FrameParser = struct {
     writeBuffer: bun.ByteList = .{},
     writeBufferOffset: usize = 0,
     // TODO: this will be removed when I re-add header and data priorization
-    pendingBuffer: bun.ByteList = .{},
     outboundQueueSize: usize = 0,
 
     streams: bun.U32HashMap(Stream),
@@ -1460,8 +1459,6 @@ pub const H2FrameParser = struct {
 
     fn flushStreamQueue(this: *H2FrameParser) usize {
         log("flushStreamQueue {}", .{this.outboundQueueSize});
-        // we still need to wait the first ACK before sending the data frames.
-        if (this.pendingBuffer.len > 0) return 0;
         var written: usize = 0;
         // try to send as much as we can until we reach backpressure
         while (this.outboundQueueSize > 0) {
@@ -1512,7 +1509,7 @@ pub const H2FrameParser = struct {
     }
 
     fn hasBackpressure(this: *H2FrameParser) bool {
-        return this.pendingBuffer.len > 0 or this.writeBuffer.len > 0 or this.has_nonnative_backpressure;
+        return this.writeBuffer.len > 0 or this.has_nonnative_backpressure;
     }
 
     fn flushCorked(this: *H2FrameParser) void {
@@ -2669,12 +2666,12 @@ pub const H2FrameParser = struct {
     };
     // get memory usage in MB
     fn getSessionMemoryUsage(this: *H2FrameParser) usize {
-        return (this.pendingBuffer.len + this.writeBuffer.len + this.queuedDataSize) / 1024 / 1024;
+        return (this.writeBuffer.len + this.queuedDataSize) / 1024 / 1024;
     }
     // get memory in bytes
     pub fn getBufferSize(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
-        return JSC.JSValue.jsNumber(this.pendingBuffer.len + this.writeBuffer.len + this.queuedDataSize);
+        return JSC.JSValue.jsNumber(this.writeBuffer.len + this.queuedDataSize);
     }
 
     fn sendData(this: *H2FrameParser, stream: *Stream, payload: []const u8, close: bool, callback: JSC.JSValue) void {
@@ -3636,11 +3633,6 @@ pub const H2FrameParser = struct {
             writeBuffer.deinitWithAllocator(this.allocator);
         }
         this.writeBufferOffset = 0;
-        {
-            var pendingBuffer = this.pendingBuffer;
-            this.pendingBuffer = .{};
-            pendingBuffer.deinitWithAllocator(this.allocator);
-        }
         if (this.hpack) |hpack| {
             hpack.deinit();
             this.hpack = null;

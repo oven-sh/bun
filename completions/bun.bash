@@ -50,7 +50,11 @@ _read_scripts_in_package_json() {
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
         scripts="${scripts//@(\"|\')/}";
-        readarray -td, scripts <<<"${scripts}";
+        if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+            readarray -td, scripts <<<"${scripts}";
+        else
+            IFS= read -r -d '' -a scripts <<<"${scripts}";
+        fi
         for completion in "${scripts[@]}"; do
             package_json_compreply+=( "${completion%:*}" );
         done

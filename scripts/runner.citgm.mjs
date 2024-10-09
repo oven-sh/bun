@@ -95,6 +95,25 @@ const clone_dir = tmpdirSync();
   console.log(`${clone_dir}/package.json`);
   console.log();
   const cmd = process.argv0;
+  const args = ["pm", "trust", "--all"];
+  console.log("❯", [cmd, ...args]);
+
+  const result = spawnSync(cmd, args, { stdio: ["ignore", "inherit", "inherit"], cwd: clone_dir });
+  if (result.signal) {
+    console.log("-", "command exited with abnormal signal:", result.signal);
+    process.exit(1);
+  }
+  if (result.status) {
+    console.log("-", "command exited with non-zero status:", result.status);
+    process.exit(1);
+  }
+  console.log("---");
+}
+
+{
+  console.log(`${clone_dir}/package.json`);
+  console.log();
+  const cmd = process.argv0;
   const args = ["--bun", "run", the_shard[2] ?? "test"];
   console.log("❯", [cmd, ...args]);
 

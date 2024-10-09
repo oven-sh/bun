@@ -3274,30 +3274,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
 }
 
-JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
-{
-    auto globalObject = jsCast<Zig::GlobalObject*>(thisObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSC::MarkedArgumentBuffer args;
-
-    JSC::CallData callData = JSC::getCallData(getSourceEvent);
-
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (returnedException) {
-        throwException(globalObject, scope, returnedException.get());
-        return jsUndefined();
-    }
-
-    RELEASE_AND_RETURN(scope, result);
-}
-
 // `console.Console` or `import { Console } from 'console';`
 JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {

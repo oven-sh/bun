@@ -91,4 +91,29 @@ nativeTests.test_get_property = () => {
   }
 };
 
+function loopErrorParams(callback) {
+  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
+    for (const code of [undefined, "", "error code"]) {
+      for (const msg of [undefined, "", "error message"]) {
+        try {
+          callback(code, msg, errorKind);
+          console.log(`${callback.name}(${code ?? "nullptr"}, ${msg ?? "nullptr"}) did not throw`);
+        } catch (e) {
+          console.log(
+            `${callback.name} threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+          );
+        }
+      }
+    }
+  }
+}
+
+nativeTests.test_throw_functions_exhaustive = () => {
+  loopErrorParams(nativeTests.throw_error);
+};
+
+nativeTests.test_create_error_functions_exhaustive = () => {
+  loopErrorParams(nativeTests.create_and_throw_error);
+};
+
 module.exports = nativeTests;

@@ -1300,20 +1300,26 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     return napi_ok;
 }
 
-static void throwErrorWithCode(JSC::JSGlobalObject* globalObject, const char* msg_utf8, const char* code_utf8, const WTF::Function<JSObject*(JSC::JSGlobalObject*, const WTF::String&)>& createError)
+// used to implement napi_throw_*_error
+static napi_status throwErrorWithCStrings(JSC::JSGlobalObject* globalObject, const char* code_utf8, const char* msg_utf8, JSC::ErrorType type)
 {
+    if (msg_utf8 == nullptr) {
+        return napi_invalid_arg;
+    }
+
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto message = msg_utf8 ? WTF::String::fromUTF8(msg_utf8) : String();
+    auto message = WTF::String::fromUTF8(msg_utf8);
     auto code = code_utf8 ? WTF::String::fromUTF8(code_utf8) : String();
 
-    auto* error = createError(globalObject, message);
-    if (!code.isEmpty()) {
+    auto* error = JSC::ErrorInstance::create(globalObject->vm(), globalObject->errorStructure(type), message, JSValue(), nullptr, RuntimeType::TypeNothing, type);
+    if (!code.isNull()) {
         error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code), 0);
     }
 
     scope.throwException(globalObject, Exception::create(vm, error));
+    return napi_ok;
 }
 
 static JSValue createErrorForNapi(napi_env env, napi_value code, napi_value msg, const WTF::Function<JSObject*(JSC::JSGlobalObject*, const WTF::String&)>& constructor)
@@ -1354,12 +1360,7 @@ extern "C" napi_status napi_throw_error(napi_env env,
 {
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
-
-    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
-        return JSC::createError(globalObject, message);
-    });
-
-    return napi_ok;
+    return throwErrorWithCStrings(globalObject, code, msg, JSC::ErrorType::Error);
 }
 
 extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
@@ -1671,14 +1672,8 @@ extern "C" napi_status node_api_throw_syntax_error(napi_env env,
     const char* msg)
 {
     NAPI_PREMABLE
-
-    auto globalObject = toJS(env);
-
-    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
-        return JSC::createSyntaxError(globalObject, message);
-    });
-
-    return napi_ok;
+    Zig::GlobalObject* globalObject = toJS(env);
+    return throwErrorWithCStrings(globalObject, code, msg, JSC::ErrorType::SyntaxError);
 }
 
 extern "C" napi_status napi_throw_type_error(napi_env env, const char* code,
@@ -1686,12 +1681,7 @@ extern "C" napi_status napi_throw_type_error(napi_env env, const char* code,
 {
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
-
-    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
-        return JSC::createTypeError(globalObject, message);
-    });
-
-    return napi_ok;
+    return throwErrorWithCStrings(globalObject, code, msg, JSC::ErrorType::TypeError);
 }
 
 extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
@@ -1748,12 +1738,7 @@ extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
 {
     NAPI_PREMABLE
     Zig::GlobalObject* globalObject = toJS(env);
-
-    throwErrorWithCode(globalObject, msg, code, [](JSC::JSGlobalObject* globalObject, const WTF::String& message) {
-        return JSC::createRangeError(globalObject, message);
-    });
-
-    return napi_ok;
+    return throwErrorWithCStrings(globalObject, code, msg, JSC::ErrorType::RangeError);
 }
 
 extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)

@@ -288,32 +288,14 @@ describe("napi", () => {
     });
   });
 
-  describe("napi_throw_error", () => {
-    const THROW_CODE_NULLPTR = 1 << 0;
-    const THROW_CODE_EMPTY_STRING = 1 << 1;
-    const THROW_CODE_NORMAL = 1 << 2;
-    const THROW_MESSAGE_NULLPTR = 1 << 3;
-    const THROW_MESSAGE_EMPTY_STRING = 1 << 4;
-    const THROW_MESSAGE_NORMAL = 1 << 5;
-
-    const errorCodeModes = {
-      nullptr: 1 << 0,
-      emptyString: 1 << 1,
-      normal: 1 << 2,
-    };
-    const errorMessageModes = {
-      nullptr: 1 << 3,
-      emptyString: 1 << 4,
-      normal: 1 << 5,
-    };
-    const modes = Object.keys(errorCodeModes) as Array<keyof typeof errorCodeModes>;
-
-    describe.each(modes)("when code is %s", codeMode => {
-      describe.each(modes)("when message is %s", messageMode => {
-        it("has the right code and message", () => {
-          checkSameOutput("throw_weird_error", [errorCodeModes[codeMode] | errorMessageModes[messageMode]]);
-        });
-      });
+  describe("napi_throw functions", () => {
+    it("has the right code and message", () => {
+      checkSameOutput("test_throw_functions_exhaustive", []);
+    });
+  });
+  describe("napi_create_error functions", () => {
+    it("has the right code and message", () => {
+      checkSameOutput("test_create_error_functions_exhaustive", []);
     });
   });
 });

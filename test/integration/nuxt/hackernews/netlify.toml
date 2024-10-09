@@ -1,0 +1,7 @@
+[build.environment]
+  # bypass npm auto install
+  NPM_FLAGS = "--version"
+  NODE_VERSION = "16"
+
+[build]
+  command = "npx pnpm i --store=node_modules/.pnpm-store && npx pnpm run build"

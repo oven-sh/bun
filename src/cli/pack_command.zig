@@ -1959,7 +1959,7 @@ pub const PackCommand = struct {
                                         }
 
                                         // only produce this error only when we need to get the workspace version
-                                        Output.errGeneric("Failed to resolve workspace version for \"{s}\" in `{s}`. Run <cyan>`bun install`<r> and try again.", .{
+                                        Output.errGeneric("Failed to resolve workspace version for \"{s}\" in `{s}`. Run `<cyan>bun install<r>` and try again.", .{
                                             dependency_name,
                                             dependency_group,
                                         });

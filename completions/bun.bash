@@ -1,8 +1,12 @@
 #/usr/bin/env bash
 
+if [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+    _old_bash_version=${BASH_VERSION}
+fi
+
 _file_arguments() {
     local extensions="${1}"
-    if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+    if [[ -z "${_old_bash_version}" ]]; then
         local reset=$(shopt -p globstar)
         shopt -s globstar
     fi
@@ -13,7 +17,7 @@ _file_arguments() {
         COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
     fi
     
-    if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+    if [[ -z "${_old_bash_version}" ]]; then
         $reset
     fi
 }
@@ -50,7 +54,7 @@ _read_scripts_in_package_json() {
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
         scripts="${scripts//@(\"|\')/}";
-        if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+        if [[ -z "${_old_bash_version}" ]]; then
             readarray -td, scripts <<<"${scripts}";
         else
             IFS= read -r -d '' -a scripts <<<"${scripts}";
@@ -86,7 +90,7 @@ _subcommand_comp_reply() {
 
 
 _bun_completions() {
-    if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+    if [[ -z "${_old_bash_version}" ]]; then
         declare -A GLOBAL_OPTIONS;
         declare -A PACKAGE_OPTIONS;
         declare -A PM_OPTIONS;

@@ -1580,8 +1580,8 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     if (length > WTF::String::MaxLength) {
         return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
     }
-    if (length > castedThis->byteLength()) {
-        length = castedThis->byteLength();
+    if (length > castedThis->length()) {
+        length = castedThis->length();
     }
 
     JSC::EncodedJSValue ret = 0;
@@ -1597,15 +1597,13 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
     case WebCore::BufferEncodingType::ucs2:
     case WebCore::BufferEncodingType::utf16le: {
         UChar* data = nullptr;
-        size_t u16length = length / 2;
-        if (u16length == 0) {
+        if (length == 0) {
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
-            auto str = String::createUninitialized(u16length, data);
-            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
+            auto str = String::createUninitialized(length / 2, data);
+            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
             return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
-
         break;
     }
 
@@ -1637,7 +1635,6 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
         scope.throwException(lexicalGlobalObject, retValue);
         return {};
     }
-
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
 }
 
@@ -1666,8 +1663,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t start = 0;
-    uint32_t end = castedThis->byteLength();
-    uint32_t byteLength = end;
+    uint32_t end = castedThis->length();
+    uint32_t thisLength = end;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     if (end == 0)
@@ -1693,7 +1690,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         fstart = 0;
         goto lstart;
     }
-    if (fstart > byteLength) {
+    if (fstart > thisLength) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
     start = static_cast<uint32_t>(fstart);
@@ -1703,16 +1700,16 @@ lstart:
         if (arg3.isNumber()) {
             auto fend = arg3.asNumber();
             if (std::isnan(fend)) fend = 0;
-            if (fend == std::numeric_limits<double>::infinity()) fend = byteLength;
+            if (fend == std::numeric_limits<double>::infinity()) fend = thisLength;
             if (fend == -std::numeric_limits<double>::infinity()) fend = 0;
-            if (fend < byteLength) {
+            if (fend < thisLength) {
                 end = static_cast<uint32_t>(fend);
             }
         } else {
             auto fend = arg3.toNumber(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (std::isnan(fend)) fend = 0;
-            if (fend == std::numeric_limits<double>::infinity()) fend = byteLength;
+            if (fend == std::numeric_limits<double>::infinity()) fend = thisLength;
             if (fend == -std::numeric_limits<double>::infinity()) fend = 0;
             fend = std::trunc(fend);
             end = static_cast<uint32_t>(fend);
@@ -1742,7 +1739,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
         return {};
     }
 
-    const size_t length = castedThis->byteLength();
+    const size_t length = castedThis->length();
     if (UNLIKELY(length == 0)) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
@@ -1790,7 +1787,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JS
 
 //     auto encoding = encoded.value();
 
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
+//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->length(), encoding));
 // }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L711

@@ -1153,7 +1153,14 @@ pub const HTTPThread = struct {
                     requested_config.deinit();
                     bun.default_allocator.destroy(requested_config);
                     bun.default_allocator.destroy(custom_context);
-                    return err;
+
+                    // TODO: these error names reach js. figure out how they should be handled
+                    return switch (err) {
+                        error.FailedToOpenSocket => |e| e,
+                        error.InvalidCA => error.FailedToOpenSocket,
+                        error.InvalidCAFile => error.FailedToOpenSocket,
+                        error.LoadCAFile => error.FailedToOpenSocket,
+                    };
                 };
                 try custom_ssl_context_map.put(requested_config, custom_context);
                 // We might deinit the socket context, so we disable keepalive to make sure we don't

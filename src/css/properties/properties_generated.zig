@@ -254,6 +254,12 @@ pub const Property = union(PropertyIdTag) {
     @"background-origin": SmallList(background.BackgroundOrigin, 1),
     background: SmallList(background.Background, 1),
     color: CssColor,
+    width: size.Size,
+    height: size.Size,
+    @"min-width": size.Size,
+    @"min-height": size.Size,
+    @"max-width": size.MaxSize,
+    @"max-height": size.MaxSize,
     @"border-spacing": css.css_values.size.Size2D(Length),
     @"border-top-color": CssColor,
     @"border-bottom-color": CssColor,
@@ -362,6 +368,24 @@ pub const Property = union(PropertyIdTag) {
         }
         if (!@hasDecl(CssColor, "deepClone")) {
             @compileError("CssColor: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.Size, "deepClone")) {
+            @compileError("size.Size: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.MaxSize, "deepClone")) {
+            @compileError("size.MaxSize: does not have a deepClone() function.");
+        }
+        if (!@hasDecl(size.MaxSize, "deepClone")) {
+            @compileError("size.MaxSize: does not have a deepClone() function.");
         }
         if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
             @compileError("css.css_values.size.Size2D(Length): does not have a deepClone() function.");
@@ -646,6 +670,48 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .color = c } };
+                    }
+                }
+            },
+            .width => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .width = c } };
+                    }
+                }
+            },
+            .height => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .height = c } };
+                    }
+                }
+            },
+            .@"min-width" => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-width" = c } };
+                    }
+                }
+            },
+            .@"min-height" => {
+                if (css.generic.parseWithOptions(size.Size, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"min-height" = c } };
+                    }
+                }
+            },
+            .@"max-width" => {
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-width" = c } };
+                    }
+                }
+            },
+            .@"max-height" => {
+                if (css.generic.parseWithOptions(size.MaxSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"max-height" = c } };
                     }
                 }
             },
@@ -1140,6 +1206,12 @@ pub const Property = union(PropertyIdTag) {
             .@"background-origin" => .@"background-origin",
             .background => .background,
             .color => .color,
+            .width => .width,
+            .height => .height,
+            .@"min-width" => .@"min-width",
+            .@"min-height" => .@"min-height",
+            .@"max-width" => .@"max-width",
+            .@"max-height" => .@"max-height",
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -1225,6 +1297,12 @@ pub const Property = union(PropertyIdTag) {
             .@"background-origin" => |*v| .{ .@"background-origin" = v.deepClone(allocator) },
             .background => |*v| .{ .background = v.deepClone(allocator) },
             .color => |*v| .{ .color = v.deepClone(allocator) },
+            .width => |*v| .{ .width = v.deepClone(allocator) },
+            .height => |*v| .{ .height = v.deepClone(allocator) },
+            .@"min-width" => |*v| .{ .@"min-width" = v.deepClone(allocator) },
+            .@"min-height" => |*v| .{ .@"min-height" = v.deepClone(allocator) },
+            .@"max-width" => |*v| .{ .@"max-width" = v.deepClone(allocator) },
+            .@"max-height" => |*v| .{ .@"max-height" = v.deepClone(allocator) },
             .@"border-spacing" => |*v| .{ .@"border-spacing" = v.deepClone(allocator) },
             .@"border-top-color" => |*v| .{ .@"border-top-color" = v.deepClone(allocator) },
             .@"border-bottom-color" => |*v| .{ .@"border-bottom-color" = v.deepClone(allocator) },
@@ -1316,6 +1394,12 @@ pub const Property = union(PropertyIdTag) {
             .@"background-origin" => .{ "background-origin", VendorPrefix{ .none = true } },
             .background => .{ "background", VendorPrefix{ .none = true } },
             .color => .{ "color", VendorPrefix{ .none = true } },
+            .width => .{ "width", VendorPrefix{ .none = true } },
+            .height => .{ "height", VendorPrefix{ .none = true } },
+            .@"min-width" => .{ "min-width", VendorPrefix{ .none = true } },
+            .@"min-height" => .{ "min-height", VendorPrefix{ .none = true } },
+            .@"max-width" => .{ "max-width", VendorPrefix{ .none = true } },
+            .@"max-height" => .{ "max-height", VendorPrefix{ .none = true } },
             .@"border-spacing" => .{ "border-spacing", VendorPrefix{ .none = true } },
             .@"border-top-color" => .{ "border-top-color", VendorPrefix{ .none = true } },
             .@"border-bottom-color" => .{ "border-bottom-color", VendorPrefix{ .none = true } },
@@ -1408,6 +1492,12 @@ pub const Property = union(PropertyIdTag) {
             .@"background-origin" => |*value| value.toCss(W, dest),
             .background => |*value| value.toCss(W, dest),
             .color => |*value| value.toCss(W, dest),
+            .width => |*value| value.toCss(W, dest),
+            .height => |*value| value.toCss(W, dest),
+            .@"min-width" => |*value| value.toCss(W, dest),
+            .@"min-height" => |*value| value.toCss(W, dest),
+            .@"max-width" => |*value| value.toCss(W, dest),
+            .@"max-height" => |*value| value.toCss(W, dest),
             .@"border-spacing" => |*value| value.toCss(W, dest),
             .@"border-top-color" => |*value| value.toCss(W, dest),
             .@"border-bottom-color" => |*value| value.toCss(W, dest),
@@ -1529,6 +1619,12 @@ pub const PropertyId = union(PropertyIdTag) {
     @"background-origin",
     background,
     color,
+    width,
+    height,
+    @"min-width",
+    @"min-height",
+    @"max-width",
+    @"max-height",
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",
@@ -1620,6 +1716,12 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"background-origin" => VendorPrefix.empty(),
             .background => VendorPrefix.empty(),
             .color => VendorPrefix.empty(),
+            .width => VendorPrefix.empty(),
+            .height => VendorPrefix.empty(),
+            .@"min-width" => VendorPrefix.empty(),
+            .@"min-height" => VendorPrefix.empty(),
+            .@"max-width" => VendorPrefix.empty(),
+            .@"max-height" => VendorPrefix.empty(),
             .@"border-spacing" => VendorPrefix.empty(),
             .@"border-top-color" => VendorPrefix.empty(),
             .@"border-bottom-color" => VendorPrefix.empty(),
@@ -1727,6 +1829,24 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .color;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .width;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "height")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .height;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"min-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "min-height")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"min-height";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"max-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "max-height")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"max-height";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-spacing")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-spacing";
@@ -1943,6 +2063,12 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"background-origin" => .@"background-origin",
             .background => .background,
             .color => .color,
+            .width => .width,
+            .height => .height,
+            .@"min-width" => .@"min-width",
+            .@"min-height" => .@"min-height",
+            .@"max-width" => .@"max-width",
+            .@"max-height" => .@"max-height",
             .@"border-spacing" => .@"border-spacing",
             .@"border-top-color" => .@"border-top-color",
             .@"border-bottom-color" => .@"border-bottom-color",
@@ -2028,6 +2154,12 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"background-origin" => {},
             .background => {},
             .color => {},
+            .width => {},
+            .height => {},
+            .@"min-width" => {},
+            .@"min-height" => {},
+            .@"max-width" => {},
+            .@"max-height" => {},
             .@"border-spacing" => {},
             .@"border-top-color" => {},
             .@"border-bottom-color" => {},
@@ -2144,6 +2276,12 @@ pub const PropertyIdTag = enum(u16) {
     @"background-origin",
     background,
     color,
+    width,
+    height,
+    @"min-width",
+    @"min-height",
+    @"max-width",
+    @"max-height",
     @"border-spacing",
     @"border-top-color",
     @"border-bottom-color",

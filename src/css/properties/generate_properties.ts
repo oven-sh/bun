@@ -425,30 +425,30 @@ generateCode({
   // visibility: {
   //   ty: "display.Visibility",
   // },
-  // width: {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "size", category: "physical" },
-  // },
-  // height: {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "size", category: "physical" },
-  // },
-  // "min-width": {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "min_size", category: "physical" },
-  // },
-  // "min-height": {
-  //   ty: "size.Size",
-  //   logical_group: { ty: "min_size", category: "physical" },
-  // },
-  // "max-width": {
-  //   ty: "size.MaxSize",
-  //   logical_group: { ty: "max_size", category: "physical" },
-  // },
-  // "max-height": {
-  //   ty: "size.MaxSize",
-  //   logical_group: { ty: "max_size", category: "physical" },
-  // },
+  width: {
+    ty: "size.Size",
+    logical_group: { ty: "size", category: "physical" },
+  },
+  height: {
+    ty: "size.Size",
+    logical_group: { ty: "size", category: "physical" },
+  },
+  "min-width": {
+    ty: "size.Size",
+    logical_group: { ty: "min_size", category: "physical" },
+  },
+  "min-height": {
+    ty: "size.Size",
+    logical_group: { ty: "min_size", category: "physical" },
+  },
+  "max-width": {
+    ty: "size.MaxSize",
+    logical_group: { ty: "max_size", category: "physical" },
+  },
+  "max-height": {
+    ty: "size.MaxSize",
+    logical_group: { ty: "max_size", category: "physical" },
+  },
   // "block-size": {
   //   ty: "size.Size",
   //   logical_group: { ty: "size", category: "logical" },

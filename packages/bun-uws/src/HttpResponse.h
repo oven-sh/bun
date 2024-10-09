@@ -647,6 +647,17 @@ public:
         data->received_bytes_per_timeout = 0;
     }
 
+    void* getSocketData() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        return httpResponseData->socketData;
+    }
+
+    void setSocketData(void* socketData) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->socketData = socketData;
+    }
 
     void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

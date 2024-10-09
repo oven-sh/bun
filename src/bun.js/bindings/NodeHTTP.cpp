@@ -21,6 +21,141 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+// Create a static hash table of values containing an onclose DOMAttributeGetterSetter and a close function
+static const struct HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
+    { "onclose"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterOnClose, setterOnClose } },
+    { "close"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionNodeHTTPServerSocket_close, 0 } },
+};
+
+class JSNodeHTTPServerSocketPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSNodeHTTPServerSocketPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    {
+        JSNodeHTTPServerSocketPrototype* prototype = new (NotNull, allocateCell<JSNodeHTTPServerSocketPrototype>(vm)) JSNodeHTTPServerSocketPrototype(vm, structure);
+        prototype->finishCreation(vm, globalObject);
+        return prototype;
+    }
+
+    DECLARE_INFO;
+
+    static constexpr bool needsDestruction = false;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeHTTPServerSocketPrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+private:
+    JSNodeHTTPServerSocketPrototype(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(VM& vm, JSGlobalObject* globalObject)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+    }
+};
+
+class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
+    using Base = JSC::JSDestructibleObject;
+
+public:
+    static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl)
+    {
+        return new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl);
+    }
+
+    static JSNodeHTTPServerSocket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl)
+    {
+        auto* structure = globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject);
+        return create(vm, structure, socket, is_ssl);
+    }
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSNodeHTTPServerSocket*>(cell)->JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket();
+    }
+
+    template<bool SSL>
+    static void clearSocketData(us_socket_t* socket)
+    {
+        auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
+        if (httpResponseData->socketData) {
+            httpResponseData->socketData = nullptr;
+        }
+    }
+
+    ~JSNodeHTTPServerSocket()
+    {
+        if (socket) {
+            if (is_ssl) {
+                clearSocketData<true>(socket);
+            } else {
+                clearSocketData<false>(socket);
+            }
+        }
+    }
+
+    JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl)
+        : JSC::JSDestructibleObject(vm, structure)
+        , socket(socket)
+        , is_ssl(is_ssl)
+    {
+    }
+
+    mutable WriteBarrier<JSObject> functionToCallOnClose;
+    mutable WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
+    unsigned is_ssl : 1;
+    us_socket_t* socket;
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+
+        return WebCore::subspaceForImpl<JSNodeHTTPServerSocket, UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSNodeHTTPServerSocket.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNodeHTTPServerSocket = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSNodeHTTPServerSocket.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodeHTTPServerSocket = std::forward<decltype(space)>(space); });
+    }
+
+    void onClose()
+    {
+        this->socket = nullptr;
+    }
+
+    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue onClose(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+    {
+        auto* thisObject = jsDynamicCast<JSNodeHTTPServerSocket*>(callFrame->thisValue());
+        if (!thisObject) {
+            return JSValue::encode(JSC::jsUndefined());
+        }
+
+        thisObject->onClose();
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        JSC::JSObject* prototype = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        prototype->structure()->setMayBePrototype(true);
+
+        return JSC::Structure::create(vm, globalObject, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+};
+
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer);
 extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);

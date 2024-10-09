@@ -587,6 +587,8 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
 
+    LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
+
     bool hasOverridenModuleResolveFilenameFunction = false;
 
 private:

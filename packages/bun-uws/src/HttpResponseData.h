@@ -85,6 +85,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* Shared context pointer */
     void* userData = nullptr;
+    void* socketData = nullptr;
 
     /* Per socket event handlers */
     OnWritableCallback onWritable = nullptr;
@@ -109,3 +110,5 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 }
 
 #endif // UWS_HTTPRESPONSEDATA_H
+
+static_assert(sizeof(uWS::HttpResponseData<true>) == 128, "HttpResponseData size is incorrect");

@@ -2687,7 +2687,10 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
-
+    m_JSNodeHTTPServerSocketStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm));
+        });
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {
             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
@@ -3632,6 +3635,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSNodeHTTPServerSocketStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);

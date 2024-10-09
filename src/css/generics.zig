@@ -26,7 +26,7 @@ const Ident = css.Ident;
 const IdentFns = css.IdentFns;
 
 pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
-    if (@hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
+    if (T != f32 and T != i32 and @hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
     return switch (T) {
         f32 => CSSNumberFns.parse(input),
         CSSInteger => CSSIntegerFns.parse(input),
@@ -44,6 +44,10 @@ pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
             .result => |v| .{ .result = bun.create(input.allocator(), TT, v) },
             .err => |e| .{ .err = e },
         };
+    }
+    if (comptime @typeInfo(T) == .Optional) {
+        const TT = std.meta.Child(T);
+        return .{ .result = parse(TT, input).asValue() };
     }
     return switch (T) {
         f32 => CSSNumberFns.parse(input),
@@ -68,6 +72,12 @@ pub inline fn parseFor(comptime T: type) @TypeOf(struct {
 }
 
 pub fn hasToCss(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    if (comptime T == []const u8) return false;
+    if (tyinfo == .Pointer) {
+        const TT = std.meta.Child(T);
+        return hasToCss(TT);
+    }
     return switch (T) {
         f32 => true,
         else => @hasDecl(T, "toCss"),

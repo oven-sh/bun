@@ -820,6 +820,82 @@ pub fn DeriveParse(comptime T: type) type {
 
     // TODO: this has to work for enums and union(enums)
     return struct {
+        pub fn parse(input: *Parser) Result(T) {
+            if (comptime is_union_enum) {
+                const payload_count, const first_payload_index, const void_count, const first_void_index = comptime counts: {
+                    var first_void_index: ?usize = null;
+                    var first_payload_index: ?usize = null;
+                    var payload_count: usize = 0;
+                    var void_count: usize = 0;
+                    for (tyinfo.Union.fields, 0..) |field, i| {
+                        if (field.type == void) {
+                            void_count += 1;
+                            if (first_void_index == null) first_void_index = i;
+                        } else {
+                            payload_count += 1;
+                            if (first_payload_index == null) first_payload_index = i;
+                        }
+                    }
+                    if (first_payload_index == null) {
+                        @compileError("Type defined as `union(enum)` but no variant carries a payload. Make it an `enum` instead.");
+                    }
+                    if (first_void_index) |void_index| {
+                        // Check if they overlap
+                        if (first_payload_index.? < void_index and void_index < first_payload_index.? + payload_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
+                        if (first_payload_index.? > void_index and first_payload_index.? < void_index + void_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
+                    }
+                    break :counts .{ payload_count, first_payload_index.?, void_count, first_void_index };
+                };
+
+                return gnerateCode(input, first_payload_index, first_void_index, void_count, payload_count);
+            }
+
+            const location = input.currentSourceLocation();
+            const ident = switch (input.expectIdent()) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            };
+            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
+                inline for (bun.meta.EnumFields(enum_type)) |field| {
+                    if (field.value == @intFromEnum(matched)) {
+                        if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
+                        return .{ .result = @enumFromInt(field.value) };
+                    }
+                }
+                unreachable;
+            }
+            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+        }
+
+        /// Comptime code which constructs the parsing code for a union(enum) which could contain
+        /// void fields (fields with no associated data) and payload fields (fields which carry data),
+        /// for example:
+        ///
+        /// ```zig
+        /// /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
+        /// pub const BorderSideWidth = union(enum) {
+        ///     /// A UA defined `thin` value.
+        ///     thin,
+        ///     /// A UA defined `medium` value.
+        ///     medium,
+        ///     /// A UA defined `thick` value.
+        ///     thick,
+        ///     /// An explicit width.
+        ///     length: Length,
+        /// }
+        /// ```
+        ///
+        /// During parsing, we can check if it is one of the void fields (in this case `thin`, `medium`, or `thick`) by reading a single
+        /// identifier from the Parser, and checking if it matches any of the void field names. We already constructed a ComptimeEnumMap (see above)
+        /// to make this super cheap.
+        ///
+        /// If we don't get an identifier that matches any of the void fields, we can then try to parse the payload fields.
+        ///
+        /// This function is made more complicated by the fact that it tries to parse in order of the fields that were declared in the union(enum).
+        /// If, for example, all the void fields were declared after the `length: Length` field, this function will try to parse the `length` field first,
+        /// and then try to parse the void fields.
+        ///
+        /// This parsing order is a detail copied from LightningCSS. I'm not sure if it is necessary. But it could be.
         inline fn gnerateCode(
             input: *Parser,
             comptime first_payload_index: usize,
@@ -964,53 +1040,6 @@ pub fn DeriveParse(comptime T: type) type {
         //     unreachable;
         // }
 
-        pub fn parse(input: *Parser) Result(T) {
-            if (comptime is_union_enum) {
-                const payload_count, const first_payload_index, const void_count, const first_void_index = comptime counts: {
-                    var first_void_index: ?usize = null;
-                    var first_payload_index: ?usize = null;
-                    var payload_count: usize = 0;
-                    var void_count: usize = 0;
-                    for (tyinfo.Union.fields, 0..) |field, i| {
-                        if (field.type == void) {
-                            void_count += 1;
-                            if (first_void_index == null) first_void_index = i;
-                        } else {
-                            payload_count += 1;
-                            if (first_payload_index == null) first_payload_index = i;
-                        }
-                    }
-                    if (first_payload_index == null) {
-                        @compileError("Type defined as `union(enum)` but no variant carries a payload. Make it an `enum` instead.");
-                    }
-                    if (first_void_index) |void_index| {
-                        // Check if they overlap
-                        if (first_payload_index.? < void_index and void_index < first_payload_index.? + payload_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
-                        if (first_payload_index.? > void_index and first_payload_index.? < void_index + void_count) @compileError("Please put all the fields with data together and all the fields with no data together.");
-                    }
-                    break :counts .{ payload_count, first_payload_index.?, void_count, first_void_index };
-                };
-
-                return gnerateCode(input, first_payload_index, first_void_index, void_count, payload_count);
-            }
-
-            const location = input.currentSourceLocation();
-            const ident = switch (input.expectIdent()) {
-                .result => |v| v,
-                .err => |e| return .{ .err = e },
-            };
-            if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
-                inline for (bun.meta.EnumFields(enum_type)) |field| {
-                    if (field.value == @intFromEnum(matched)) {
-                        if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
-                        return .{ .result = @enumFromInt(field.value) };
-                    }
-                }
-                unreachable;
-            }
-            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
-        }
-
         // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         //     // to implement this, we need to cargo expand the derive macro
         //     _ = this; // autofix
@@ -1021,37 +1050,60 @@ pub fn DeriveParse(comptime T: type) type {
 }
 
 pub fn DeriveToCss(comptime T: type) type {
+    const tyinfo = @typeInfo(T);
     const enum_fields = bun.meta.EnumFields(T);
+    const is_enum_or_union_enum = tyinfo == .Union or tyinfo == .Enum;
+
     // TODO: this has to work for enums and union(enums)
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            inline for (std.meta.fields(T), 0..) |field, i| {
-                if (@intFromEnum(this.*) == enum_fields[i].value) {
-                    if (comptime field.type == void) {
-                        return dest.writeStr(enum_fields[i].name);
-                    } else if (comptime generic.hasToCss(T)) {
-                        return generic.toCss(field.type, &@field(this, field.name), W, dest);
-                    } else {
-                        const variant_fields = std.meta.fields(field.type);
-                        if (variant_fields.len > 1) {
-                            var optional_count = 0;
-                            inline for (variant_fields) |variant_field| {
-                                if (@typeInfo(variant_field.type) == .Optional) {
-                                    optional_count += 1;
-                                    if (optional_count > 1) @compileError("Not supported for multiple optional fields yet sorry.");
-                                    if (@field(@field(this, field.name), variant_field.name)) |*value| {
-                                        try generic.toCss(@TypeOf(value.*), W, dest);
+            if (comptime is_enum_or_union_enum) {
+                inline for (std.meta.fields(T), 0..) |field, i| {
+                    if (@intFromEnum(this.*) == enum_fields[i].value) {
+                        if (comptime field.type == void) {
+                            return dest.writeStr(enum_fields[i].name);
+                        } else if (comptime generic.hasToCss(field.type)) {
+                            return generic.toCss(field.type, &@field(this, field.name), W, dest);
+                        } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .Struct) {
+                            const variant_fields = std.meta.fields(field.type);
+                            if (variant_fields.len > 1) {
+                                const last = variant_fields.len - 1;
+                                inline for (variant_fields, 0..) |variant_field, j| {
+                                    // if (@typeInfo(variant_field.type) == .Optional) {
+                                    //     optional_count += 1;
+                                    //     if (optional_count > 1) @compileError("Not supported for multiple optional fields yet sorry.");
+                                    //     if (@field(@field(this, field.name), variant_field.name)) |*value| {
+                                    //         try generic.toCss(@TypeOf(value.*), W, dest);
+                                    //     }
+                                    // } else {
+                                    //     try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
+                                    // }
+
+                                    // Unwrap it from the optional
+                                    if (@typeInfo(variant_field.type) == .Optional) {
+                                        if (@field(@field(this, field.name), variant_field.name)) |*value| {
+                                            try value.toCss(W, dest);
+                                        }
+                                    } else {
+                                        try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
                                     }
-                                } else {
-                                    try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
+
+                                    // Emit a space if there are more fields after
+                                    if (comptime j != last) {
+                                        try dest.writeChar(' ');
+                                    }
                                 }
+                            } else {
+                                const variant_field = variant_fields[0];
+                                try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), W, dest);
                             }
                         } else {
-                            const variant_field = variant_fields[0];
-                            try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), W, dest);
+                            @compileError("Don't know how to serialize this variant: " ++ @typeName(field.type) ++ ", on " ++ @typeName(T) ++ ".\n\nYou probably want to implement a `toCss` function for this type, or add a dummy `fn __generateToCss() void {}` to the type signal that it is okay for it to be auto-generated by this function..");
                         }
                     }
                 }
+            } else {
+                @compileError("Unsupported type: " ++ @typeName(T));
             }
             return;
         }

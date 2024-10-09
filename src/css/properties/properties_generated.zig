@@ -25,7 +25,9 @@ const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
 const PropertyCategory = css.PropertyCategory;
 const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
+const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const Percentage = css.css_values.percentage.Percentage;
 const Angle = css.css_values.angle.Angle;
@@ -99,30 +101,30 @@ const BorderInlineEnd = border.BorderInlineEnd;
 const BorderBlock = border.BorderBlock;
 const BorderInline = border.BorderInline;
 const Outline = outline.Outline;
-// const OutlineStyle = outline.OutlineStyle;
-// const FlexDirection = flex.FlexDirection;
-// const FlexWrap = flex.FlexWrap;
-// const FlexFlow = flex.FlexFlow;
-// const Flex = flex.Flex;
-// const BoxOrient = flex.BoxOrient;
-// const BoxDirection = flex.BoxDirection;
-// const BoxAlign = flex.BoxAlign;
-// const BoxPack = flex.BoxPack;
-// const BoxLines = flex.BoxLines;
-// const FlexPack = flex.FlexPack;
-// const FlexItemAlign = flex.FlexItemAlign;
-// const FlexLinePack = flex.FlexLinePack;
-// const AlignContent = @"align".AlignContent;
-// const JustifyContent = @"align".JustifyContent;
-// const PlaceContent = @"align".PlaceContent;
-// const AlignSelf = @"align".AlignSelf;
-// const JustifySelf = @"align".JustifySelf;
-// const PlaceSelf = @"align".PlaceSelf;
-// const AlignItems = @"align".AlignItems;
-// const JustifyItems = @"align".JustifyItems;
-// const PlaceItems = @"align".PlaceItems;
-// const GapValue = @"align".GapValue;
-// const Gap = @"align".Gap;
+const OutlineStyle = outline.OutlineStyle;
+const FlexDirection = flex.FlexDirection;
+const FlexWrap = flex.FlexWrap;
+const FlexFlow = flex.FlexFlow;
+const Flex = flex.Flex;
+const BoxOrient = flex.BoxOrient;
+const BoxDirection = flex.BoxDirection;
+const BoxAlign = flex.BoxAlign;
+const BoxPack = flex.BoxPack;
+const BoxLines = flex.BoxLines;
+const FlexPack = flex.FlexPack;
+const FlexItemAlign = flex.FlexItemAlign;
+const FlexLinePack = flex.FlexLinePack;
+const AlignContent = @"align".AlignContent;
+const JustifyContent = @"align".JustifyContent;
+const PlaceContent = @"align".PlaceContent;
+const AlignSelf = @"align".AlignSelf;
+const JustifySelf = @"align".JustifySelf;
+const PlaceSelf = @"align".PlaceSelf;
+const AlignItems = @"align".AlignItems;
+const JustifyItems = @"align".JustifyItems;
+const PlaceItems = @"align".PlaceItems;
+const GapValue = @"align".GapValue;
+const Gap = @"align".Gap;
 const MarginBlock = margin_padding.MarginBlock;
 const Margin = margin_padding.Margin;
 const MarginInline = margin_padding.MarginInline;
@@ -215,19 +217,19 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
-// const ClipPath = masking.ClipPath;
-// const MaskMode = masking.MaskMode;
-// const MaskClip = masking.MaskClip;
-// const GeometryBox = masking.GeometryBox;
-// const MaskComposite = masking.MaskComposite;
-// const MaskType = masking.MaskType;
-// const Mask = masking.Mask;
-// const MaskBorderMode = masking.MaskBorderMode;
-// const MaskBorder = masking.MaskBorder;
-// const WebKitMaskComposite = masking.WebKitMaskComposite;
-// const WebKitMaskSourceType = masking.WebKitMaskSourceType;
-// const BackgroundRepeat = background.BackgroundRepeat;
-// const BackgroundSize = background.BackgroundSize;
+const ClipPath = masking.ClipPath;
+const MaskMode = masking.MaskMode;
+const MaskClip = masking.MaskClip;
+const GeometryBox = masking.GeometryBox;
+const MaskComposite = masking.MaskComposite;
+const MaskType = masking.MaskType;
+const Mask = masking.Mask;
+const MaskBorderMode = masking.MaskBorderMode;
+const MaskBorder = masking.MaskBorder;
+const WebKitMaskComposite = masking.WebKitMaskComposite;
+const WebKitMaskSourceType = masking.WebKitMaskSourceType;
+const BackgroundRepeat = background.BackgroundRepeat;
+const BackgroundSize = background.BackgroundSize;
 // const FilterList = effects.FilterList;
 // const ContainerType = contain.ContainerType;
 // const Container = contain.Container;
@@ -350,6 +352,44 @@ pub const Property = union(PropertyIdTag) {
     @"border-inline-end": BorderInlineEnd,
     outline: Outline,
     @"outline-color": CssColor,
+    @"outline-style": OutlineStyle,
+    @"outline-width": BorderSideWidth,
+    @"flex-direction": struct { FlexDirection, VendorPrefix },
+    @"flex-wrap": struct { FlexWrap, VendorPrefix },
+    @"flex-flow": struct { FlexFlow, VendorPrefix },
+    @"flex-grow": struct { CSSNumber, VendorPrefix },
+    @"flex-shrink": struct { CSSNumber, VendorPrefix },
+    @"flex-basis": struct { LengthPercentageOrAuto, VendorPrefix },
+    flex: struct { Flex, VendorPrefix },
+    order: struct { CSSInteger, VendorPrefix },
+    @"align-content": struct { AlignContent, VendorPrefix },
+    @"justify-content": struct { JustifyContent, VendorPrefix },
+    @"place-content": PlaceContent,
+    @"align-self": struct { AlignSelf, VendorPrefix },
+    @"justify-self": JustifySelf,
+    @"place-self": PlaceSelf,
+    @"align-items": struct { AlignItems, VendorPrefix },
+    @"justify-items": JustifyItems,
+    @"place-items": PlaceItems,
+    @"row-gap": GapValue,
+    @"column-gap": GapValue,
+    gap: Gap,
+    @"box-orient": struct { BoxOrient, VendorPrefix },
+    @"box-direction": struct { BoxDirection, VendorPrefix },
+    @"box-ordinal-group": struct { CSSInteger, VendorPrefix },
+    @"box-align": struct { BoxAlign, VendorPrefix },
+    @"box-flex": struct { CSSNumber, VendorPrefix },
+    @"box-flex-group": struct { CSSInteger, VendorPrefix },
+    @"box-pack": struct { BoxPack, VendorPrefix },
+    @"box-lines": struct { BoxLines, VendorPrefix },
+    @"flex-pack": struct { FlexPack, VendorPrefix },
+    @"flex-order": struct { CSSInteger, VendorPrefix },
+    @"flex-align": struct { BoxAlign, VendorPrefix },
+    @"flex-item-align": struct { FlexItemAlign, VendorPrefix },
+    @"flex-line-pack": struct { FlexLinePack, VendorPrefix },
+    @"flex-positive": struct { CSSNumber, VendorPrefix },
+    @"flex-negative": struct { CSSNumber, VendorPrefix },
+    @"flex-preferred-size": struct { LengthPercentageOrAuto, VendorPrefix },
     @"margin-top": LengthPercentageOrAuto,
     @"margin-bottom": LengthPercentageOrAuto,
     @"margin-left": LengthPercentageOrAuto,
@@ -398,481 +438,2600 @@ pub const Property = union(PropertyIdTag) {
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
     direction: Direction,
     composes: Composes,
+    @"mask-image": struct { SmallList(Image, 1), VendorPrefix },
+    @"mask-mode": SmallList(MaskMode, 1),
+    @"mask-repeat": struct { SmallList(BackgroundRepeat, 1), VendorPrefix },
+    @"mask-position-x": SmallList(HorizontalPosition, 1),
+    @"mask-position-y": SmallList(VerticalPosition, 1),
+    @"mask-position": struct { SmallList(Position, 1), VendorPrefix },
+    @"mask-clip": struct { SmallList(MaskClip, 1), VendorPrefix },
+    @"mask-origin": struct { SmallList(GeometryBox, 1), VendorPrefix },
+    @"mask-size": struct { SmallList(BackgroundSize, 1), VendorPrefix },
+    @"mask-composite": SmallList(MaskComposite, 1),
+    @"mask-type": MaskType,
+    mask: struct { SmallList(Mask, 1), VendorPrefix },
+    @"mask-border-source": Image,
+    @"mask-border-mode": MaskBorderMode,
+    @"mask-border-slice": BorderImageSlice,
+    @"mask-border-width": Rect(BorderImageSideWidth),
+    @"mask-border-outset": Rect(LengthOrNumber),
+    @"mask-border-repeat": BorderImageRepeat,
+    @"mask-border": MaskBorder,
+    @"-webkit-mask-composite": SmallList(WebKitMaskComposite, 1),
+    @"mask-source-type": struct { SmallList(WebKitMaskSourceType, 1), VendorPrefix },
+    @"mask-box-image": struct { BorderImage, VendorPrefix },
+    @"mask-box-image-source": struct { Image, VendorPrefix },
+    @"mask-box-image-slice": struct { BorderImageSlice, VendorPrefix },
+    @"mask-box-image-width": struct { Rect(BorderImageSideWidth), VendorPrefix },
+    @"mask-box-image-outset": struct { Rect(LengthOrNumber), VendorPrefix },
+    @"mask-box-image-repeat": struct { BorderImageRepeat, VendorPrefix },
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
     custom: CustomProperty,
 
     pub usingnamespace PropertyImpl();
 
-    // SANITY CHECK!
+    // Sanity check to make sure all types have the following functions:
+    // - deepClone()
+    // - eql()
+    // - parse()
+    // - toCss()
+    //
+    // We do this string concatenation thing so we get all the errors at once,
+    // instead of relying on Zig semantic analysis which usualy stops at the first error.
     comptime {
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(Image, 1), "deepClone")) {
-            @compileError("SmallList(Image, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
-            @compileError("SmallList(css_values.position.HorizontalPosition, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
-            @compileError("SmallList(css_values.position.HorizontalPosition, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "deepClone")) {
-            @compileError("SmallList(background.BackgroundPosition, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
-            @compileError("SmallList(background.BackgroundSize, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
-            @compileError("SmallList(background.BackgroundSize, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
-            @compileError("SmallList(background.BackgroundAttachment, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
-            @compileError("SmallList(background.BackgroundAttachment, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "deepClone")) {
-            @compileError("SmallList(background.BackgroundOrigin, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(background.Background, 1), "deepClone")) {
-            @compileError("SmallList(background.Background, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "deepClone")) {
-            @compileError("SmallList(box_shadow.BoxShadow, 1): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(css.css_values.alpha.AlphaValue, "deepClone")) {
-            @compileError("css.css_values.alpha.AlphaValue: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(display.Display, "deepClone")) {
-            @compileError("display.Display: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(display.Visibility, "deepClone")) {
-            @compileError("display.Visibility: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.MaxSize, "deepClone")) {
-            @compileError("size.MaxSize: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.MaxSize, "deepClone")) {
-            @compileError("size.MaxSize: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.Size, "deepClone")) {
-            @compileError("size.Size: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.MaxSize, "deepClone")) {
-            @compileError("size.MaxSize: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.MaxSize, "deepClone")) {
-            @compileError("size.MaxSize: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.BoxSizing, "deepClone")) {
-            @compileError("size.BoxSizing: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(size.AspectRatio, "deepClone")) {
-            @compileError("size.AspectRatio: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(overflow.Overflow, "deepClone")) {
-            @compileError("overflow.Overflow: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
-            @compileError("overflow.OverflowKeyword: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
-            @compileError("overflow.OverflowKeyword: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(overflow.TextOverflow, "deepClone")) {
-            @compileError("overflow.TextOverflow: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(position.Position, "deepClone")) {
-            @compileError("position.Position: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(margin_padding.InsetBlock, "deepClone")) {
-            @compileError("margin_padding.InsetBlock: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(margin_padding.InsetInline, "deepClone")) {
-            @compileError("margin_padding.InsetInline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(margin_padding.Inset, "deepClone")) {
-            @compileError("margin_padding.Inset: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
-            @compileError("css.css_values.size.Size2D(Length): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(border.LineStyle, "deepClone")) {
-            @compileError("border.LineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderSideWidth, "deepClone")) {
-            @compileError("BorderSideWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-            @compileError("Size2D(LengthPercentage): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderRadius, "deepClone")) {
-            @compileError("BorderRadius: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Image, "deepClone")) {
-            @compileError("Image: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
-            @compileError("Rect(LengthOrNumber): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderImageRepeat, "deepClone")) {
-            @compileError("BorderImageRepeat: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
-            @compileError("Rect(BorderImageSideWidth): does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderImageSlice, "deepClone")) {
-            @compileError("BorderImageSlice: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderImage, "deepClone")) {
-            @compileError("BorderImage: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderColor, "deepClone")) {
-            @compileError("BorderColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderStyle, "deepClone")) {
-            @compileError("BorderStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderWidth, "deepClone")) {
-            @compileError("BorderWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBlockColor, "deepClone")) {
-            @compileError("BorderBlockColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBlockStyle, "deepClone")) {
-            @compileError("BorderBlockStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBlockWidth, "deepClone")) {
-            @compileError("BorderBlockWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderInlineColor, "deepClone")) {
-            @compileError("BorderInlineColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderInlineStyle, "deepClone")) {
-            @compileError("BorderInlineStyle: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderInlineWidth, "deepClone")) {
-            @compileError("BorderInlineWidth: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Border, "deepClone")) {
-            @compileError("Border: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderTop, "deepClone")) {
-            @compileError("BorderTop: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBottom, "deepClone")) {
-            @compileError("BorderBottom: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderLeft, "deepClone")) {
-            @compileError("BorderLeft: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderRight, "deepClone")) {
-            @compileError("BorderRight: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBlock, "deepClone")) {
-            @compileError("BorderBlock: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBlockStart, "deepClone")) {
-            @compileError("BorderBlockStart: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderBlockEnd, "deepClone")) {
-            @compileError("BorderBlockEnd: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderInline, "deepClone")) {
-            @compileError("BorderInline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderInlineStart, "deepClone")) {
-            @compileError("BorderInlineStart: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(BorderInlineEnd, "deepClone")) {
-            @compileError("BorderInlineEnd: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Outline, "deepClone")) {
-            @compileError("Outline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(MarginBlock, "deepClone")) {
-            @compileError("MarginBlock: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(MarginInline, "deepClone")) {
-            @compileError("MarginInline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Margin, "deepClone")) {
-            @compileError("Margin: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(PaddingBlock, "deepClone")) {
-            @compileError("PaddingBlock: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(PaddingInline, "deepClone")) {
-            @compileError("PaddingInline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Padding, "deepClone")) {
-            @compileError("Padding: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(ScrollMarginBlock, "deepClone")) {
-            @compileError("ScrollMarginBlock: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(ScrollMarginInline, "deepClone")) {
-            @compileError("ScrollMarginInline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(ScrollMargin, "deepClone")) {
-            @compileError("ScrollMargin: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-            @compileError("LengthPercentageOrAuto: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(ScrollPaddingBlock, "deepClone")) {
-            @compileError("ScrollPaddingBlock: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(ScrollPaddingInline, "deepClone")) {
-            @compileError("ScrollPaddingInline: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(ScrollPadding, "deepClone")) {
-            @compileError("ScrollPadding: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(CssColor, "deepClone")) {
-            @compileError("CssColor: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Direction, "deepClone")) {
-            @compileError("Direction: does not have a deepClone() function.");
-        }
-        if (!@hasDecl(Composes, "deepClone")) {
-            @compileError("Composes: does not have a deepClone() function.");
+        const compile_error: []const u8 = compile_error: {
+            var compile_error: []const u8 = "";
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Image, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Image, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Image, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundPosition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundOrigin, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundOrigin, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundOrigin, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.Background, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.Background, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.Background, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.Background, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.Background, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.Background, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(box_shadow.BoxShadow, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(box_shadow.BoxShadow, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(box_shadow.BoxShadow, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(css.css_values.alpha.AlphaValue, "deepClone")) {
+                compile_error = compile_error ++ @typeName(css.css_values.alpha.AlphaValue) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(css.css_values.alpha.AlphaValue, "parse")) {
+                compile_error = compile_error ++ @typeName(css.css_values.alpha.AlphaValue) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(css.css_values.alpha.AlphaValue, "toCss")) {
+                compile_error = compile_error ++ @typeName(css.css_values.alpha.AlphaValue) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(display.Display, "deepClone")) {
+                compile_error = compile_error ++ @typeName(display.Display) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(display.Display, "parse")) {
+                compile_error = compile_error ++ @typeName(display.Display) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(display.Display, "toCss")) {
+                compile_error = compile_error ++ @typeName(display.Display) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(display.Visibility, "deepClone")) {
+                compile_error = compile_error ++ @typeName(display.Visibility) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(display.Visibility, "parse")) {
+                compile_error = compile_error ++ @typeName(display.Visibility) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(display.Visibility, "toCss")) {
+                compile_error = compile_error ++ @typeName(display.Visibility) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "parse")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "parse")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "parse")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "parse")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.BoxSizing, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.BoxSizing) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.BoxSizing, "parse")) {
+                compile_error = compile_error ++ @typeName(size.BoxSizing) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.BoxSizing, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.BoxSizing) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.AspectRatio, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.AspectRatio) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.AspectRatio, "parse")) {
+                compile_error = compile_error ++ @typeName(size.AspectRatio) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.AspectRatio, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.AspectRatio) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(overflow.Overflow, "deepClone")) {
+                compile_error = compile_error ++ @typeName(overflow.Overflow) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(overflow.Overflow, "parse")) {
+                compile_error = compile_error ++ @typeName(overflow.Overflow) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(overflow.Overflow, "toCss")) {
+                compile_error = compile_error ++ @typeName(overflow.Overflow) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "parse")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "toCss")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "parse")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "toCss")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(overflow.TextOverflow, "deepClone")) {
+                compile_error = compile_error ++ @typeName(overflow.TextOverflow) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(overflow.TextOverflow, "parse")) {
+                compile_error = compile_error ++ @typeName(overflow.TextOverflow) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(overflow.TextOverflow, "toCss")) {
+                compile_error = compile_error ++ @typeName(overflow.TextOverflow) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(position.Position, "deepClone")) {
+                compile_error = compile_error ++ @typeName(position.Position) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(position.Position, "parse")) {
+                compile_error = compile_error ++ @typeName(position.Position) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(position.Position, "toCss")) {
+                compile_error = compile_error ++ @typeName(position.Position) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetBlock, "deepClone")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetBlock) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetBlock, "parse")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetBlock) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetBlock, "toCss")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetBlock) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetInline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetInline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetInline, "parse")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetInline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetInline, "toCss")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.Inset, "deepClone")) {
+                compile_error = compile_error ++ @typeName(margin_padding.Inset) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.Inset, "parse")) {
+                compile_error = compile_error ++ @typeName(margin_padding.Inset) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.Inset, "toCss")) {
+                compile_error = compile_error ++ @typeName(margin_padding.Inset) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
+                compile_error = compile_error ++ @typeName(css.css_values.size.Size2D(Length)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(css.css_values.size.Size2D(Length), "parse")) {
+                compile_error = compile_error ++ @typeName(css.css_values.size.Size2D(Length)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(css.css_values.size.Size2D(Length), "toCss")) {
+                compile_error = compile_error ++ @typeName(css.css_values.size.Size2D(Length)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderRadius, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderRadius) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderRadius, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderRadius) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderRadius, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderRadius) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Image, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Image, "parse")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Image, "toCss")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "parse")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "toCss")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "parse")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "toCss")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderColor, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBlockColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockColor, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBlockColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBlockColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBlockWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBlockWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBlockWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderInlineColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineColor, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderInlineColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderInlineColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderInlineWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderInlineWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderInlineWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Border, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Border) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Border, "parse")) {
+                compile_error = compile_error ++ @typeName(Border) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Border, "toCss")) {
+                compile_error = compile_error ++ @typeName(Border) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderTop, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderTop) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderTop, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderTop) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderTop, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderTop) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBottom, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBottom) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBottom, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBottom) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBottom, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBottom) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderLeft, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderLeft) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderLeft, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderLeft) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderLeft, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderLeft) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderRight, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderRight) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderRight, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderRight) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderRight, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderRight) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlock, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBlock) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlock, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBlock) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlock, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBlock) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStart, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStart) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStart, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStart) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStart, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStart) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockEnd, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderBlockEnd) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockEnd, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderBlockEnd) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockEnd, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderBlockEnd) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderInline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderInline, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderInline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderInline, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStart, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStart) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStart, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStart) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStart, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStart) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineEnd, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderInlineEnd) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineEnd, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderInlineEnd) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineEnd, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderInlineEnd) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Outline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Outline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Outline, "parse")) {
+                compile_error = compile_error ++ @typeName(Outline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Outline, "toCss")) {
+                compile_error = compile_error ++ @typeName(Outline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(OutlineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(OutlineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(OutlineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(OutlineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(OutlineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(OutlineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexDirection, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FlexDirection) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FlexDirection, "parse")) {
+                compile_error = compile_error ++ @typeName(FlexDirection) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FlexDirection, "toCss")) {
+                compile_error = compile_error ++ @typeName(FlexDirection) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexWrap, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FlexWrap) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FlexWrap, "parse")) {
+                compile_error = compile_error ++ @typeName(FlexWrap) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FlexWrap, "toCss")) {
+                compile_error = compile_error ++ @typeName(FlexWrap) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexFlow, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FlexFlow) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FlexFlow, "parse")) {
+                compile_error = compile_error ++ @typeName(FlexFlow) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FlexFlow, "toCss")) {
+                compile_error = compile_error ++ @typeName(FlexFlow) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Flex, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Flex) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Flex, "parse")) {
+                compile_error = compile_error ++ @typeName(Flex) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Flex, "toCss")) {
+                compile_error = compile_error ++ @typeName(Flex) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(AlignContent, "deepClone")) {
+                compile_error = compile_error ++ @typeName(AlignContent) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(AlignContent, "parse")) {
+                compile_error = compile_error ++ @typeName(AlignContent) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(AlignContent, "toCss")) {
+                compile_error = compile_error ++ @typeName(AlignContent) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(JustifyContent, "deepClone")) {
+                compile_error = compile_error ++ @typeName(JustifyContent) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(JustifyContent, "parse")) {
+                compile_error = compile_error ++ @typeName(JustifyContent) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(JustifyContent, "toCss")) {
+                compile_error = compile_error ++ @typeName(JustifyContent) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PlaceContent, "deepClone")) {
+                compile_error = compile_error ++ @typeName(PlaceContent) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(PlaceContent, "parse")) {
+                compile_error = compile_error ++ @typeName(PlaceContent) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(PlaceContent, "toCss")) {
+                compile_error = compile_error ++ @typeName(PlaceContent) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(AlignSelf, "deepClone")) {
+                compile_error = compile_error ++ @typeName(AlignSelf) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(AlignSelf, "parse")) {
+                compile_error = compile_error ++ @typeName(AlignSelf) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(AlignSelf, "toCss")) {
+                compile_error = compile_error ++ @typeName(AlignSelf) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(JustifySelf, "deepClone")) {
+                compile_error = compile_error ++ @typeName(JustifySelf) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(JustifySelf, "parse")) {
+                compile_error = compile_error ++ @typeName(JustifySelf) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(JustifySelf, "toCss")) {
+                compile_error = compile_error ++ @typeName(JustifySelf) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PlaceSelf, "deepClone")) {
+                compile_error = compile_error ++ @typeName(PlaceSelf) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(PlaceSelf, "parse")) {
+                compile_error = compile_error ++ @typeName(PlaceSelf) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(PlaceSelf, "toCss")) {
+                compile_error = compile_error ++ @typeName(PlaceSelf) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(AlignItems, "deepClone")) {
+                compile_error = compile_error ++ @typeName(AlignItems) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(AlignItems, "parse")) {
+                compile_error = compile_error ++ @typeName(AlignItems) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(AlignItems, "toCss")) {
+                compile_error = compile_error ++ @typeName(AlignItems) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(JustifyItems, "deepClone")) {
+                compile_error = compile_error ++ @typeName(JustifyItems) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(JustifyItems, "parse")) {
+                compile_error = compile_error ++ @typeName(JustifyItems) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(JustifyItems, "toCss")) {
+                compile_error = compile_error ++ @typeName(JustifyItems) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PlaceItems, "deepClone")) {
+                compile_error = compile_error ++ @typeName(PlaceItems) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(PlaceItems, "parse")) {
+                compile_error = compile_error ++ @typeName(PlaceItems) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(PlaceItems, "toCss")) {
+                compile_error = compile_error ++ @typeName(PlaceItems) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "deepClone")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "parse")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "toCss")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "deepClone")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "parse")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "toCss")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Gap, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Gap) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Gap, "parse")) {
+                compile_error = compile_error ++ @typeName(Gap) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Gap, "toCss")) {
+                compile_error = compile_error ++ @typeName(Gap) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxOrient, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BoxOrient) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BoxOrient, "parse")) {
+                compile_error = compile_error ++ @typeName(BoxOrient) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BoxOrient, "toCss")) {
+                compile_error = compile_error ++ @typeName(BoxOrient) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxDirection, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BoxDirection) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BoxDirection, "parse")) {
+                compile_error = compile_error ++ @typeName(BoxDirection) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BoxDirection, "toCss")) {
+                compile_error = compile_error ++ @typeName(BoxDirection) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "parse")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "toCss")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxPack, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BoxPack) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BoxPack, "parse")) {
+                compile_error = compile_error ++ @typeName(BoxPack) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BoxPack, "toCss")) {
+                compile_error = compile_error ++ @typeName(BoxPack) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxLines, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BoxLines) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BoxLines, "parse")) {
+                compile_error = compile_error ++ @typeName(BoxLines) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BoxLines, "toCss")) {
+                compile_error = compile_error ++ @typeName(BoxLines) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexPack, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FlexPack) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FlexPack, "parse")) {
+                compile_error = compile_error ++ @typeName(FlexPack) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FlexPack, "toCss")) {
+                compile_error = compile_error ++ @typeName(FlexPack) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "parse")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "toCss")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexItemAlign, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FlexItemAlign) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FlexItemAlign, "parse")) {
+                compile_error = compile_error ++ @typeName(FlexItemAlign) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FlexItemAlign, "toCss")) {
+                compile_error = compile_error ++ @typeName(FlexItemAlign) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexLinePack, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FlexLinePack) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FlexLinePack, "parse")) {
+                compile_error = compile_error ++ @typeName(FlexLinePack) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FlexLinePack, "toCss")) {
+                compile_error = compile_error ++ @typeName(FlexLinePack) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(MarginBlock, "deepClone")) {
+                compile_error = compile_error ++ @typeName(MarginBlock) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(MarginBlock, "parse")) {
+                compile_error = compile_error ++ @typeName(MarginBlock) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(MarginBlock, "toCss")) {
+                compile_error = compile_error ++ @typeName(MarginBlock) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(MarginInline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(MarginInline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(MarginInline, "parse")) {
+                compile_error = compile_error ++ @typeName(MarginInline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(MarginInline, "toCss")) {
+                compile_error = compile_error ++ @typeName(MarginInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Margin, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Margin) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Margin, "parse")) {
+                compile_error = compile_error ++ @typeName(Margin) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Margin, "toCss")) {
+                compile_error = compile_error ++ @typeName(Margin) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PaddingBlock, "deepClone")) {
+                compile_error = compile_error ++ @typeName(PaddingBlock) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(PaddingBlock, "parse")) {
+                compile_error = compile_error ++ @typeName(PaddingBlock) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(PaddingBlock, "toCss")) {
+                compile_error = compile_error ++ @typeName(PaddingBlock) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PaddingInline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(PaddingInline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(PaddingInline, "parse")) {
+                compile_error = compile_error ++ @typeName(PaddingInline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(PaddingInline, "toCss")) {
+                compile_error = compile_error ++ @typeName(PaddingInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Padding, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Padding) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Padding, "parse")) {
+                compile_error = compile_error ++ @typeName(Padding) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Padding, "toCss")) {
+                compile_error = compile_error ++ @typeName(Padding) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginBlock, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginBlock) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginBlock, "parse")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginBlock) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginBlock, "toCss")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginBlock) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginInline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginInline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginInline, "parse")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginInline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginInline, "toCss")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMargin, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ScrollMargin) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMargin, "parse")) {
+                compile_error = compile_error ++ @typeName(ScrollMargin) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMargin, "toCss")) {
+                compile_error = compile_error ++ @typeName(ScrollMargin) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingBlock, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingBlock) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingBlock, "parse")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingBlock) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingBlock, "toCss")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingBlock) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingInline, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingInline) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingInline, "parse")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingInline) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingInline, "toCss")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPadding, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ScrollPadding) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPadding, "parse")) {
+                compile_error = compile_error ++ @typeName(ScrollPadding) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPadding, "toCss")) {
+                compile_error = compile_error ++ @typeName(ScrollPadding) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Direction, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Direction, "parse")) {
+                compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Direction, "toCss")) {
+                compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Composes, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Composes) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Composes, "parse")) {
+                compile_error = compile_error ++ @typeName(Composes) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Composes, "toCss")) {
+                compile_error = compile_error ++ @typeName(Composes) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Image, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Image, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Image, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskMode, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskMode, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskMode, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskMode, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskMode, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskMode, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(BackgroundRepeat, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundRepeat, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(BackgroundRepeat, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundRepeat, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(BackgroundRepeat, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundRepeat, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(HorizontalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(HorizontalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(HorizontalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(VerticalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(VerticalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(VerticalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(VerticalPosition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(VerticalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(VerticalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Position, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Position, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Position, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Position, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Position, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Position, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskClip, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskClip, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskClip, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskClip, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskClip, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskClip, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(GeometryBox, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(GeometryBox, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(GeometryBox, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(GeometryBox, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(GeometryBox, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(GeometryBox, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(BackgroundSize, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(BackgroundSize, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(BackgroundSize, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskComposite, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskComposite, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskComposite, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskComposite, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskComposite, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskComposite, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(MaskType, "deepClone")) {
+                compile_error = compile_error ++ @typeName(MaskType) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(MaskType, "parse")) {
+                compile_error = compile_error ++ @typeName(MaskType) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(MaskType, "toCss")) {
+                compile_error = compile_error ++ @typeName(MaskType) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Mask, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(Mask, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Mask, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(Mask, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Mask, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(Mask, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Image, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Image, "parse")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Image, "toCss")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(MaskBorderMode, "deepClone")) {
+                compile_error = compile_error ++ @typeName(MaskBorderMode) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(MaskBorderMode, "parse")) {
+                compile_error = compile_error ++ @typeName(MaskBorderMode) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(MaskBorderMode, "toCss")) {
+                compile_error = compile_error ++ @typeName(MaskBorderMode) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "parse")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "toCss")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "parse")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "toCss")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(MaskBorder, "deepClone")) {
+                compile_error = compile_error ++ @typeName(MaskBorder) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(MaskBorder, "parse")) {
+                compile_error = compile_error ++ @typeName(MaskBorder) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(MaskBorder, "toCss")) {
+                compile_error = compile_error ++ @typeName(MaskBorder) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskComposite, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskComposite, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskComposite, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskComposite, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskComposite, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskComposite, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskSourceType, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskSourceType, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskSourceType, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskSourceType, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskSourceType, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskSourceType, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Image, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Image, "parse")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Image, "toCss")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "parse")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rect(BorderImageSideWidth), "toCss")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "parse")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Rect(LengthOrNumber), "toCss")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a toCss() function.\n";
+            }
+
+            const final_compile_error = compile_error;
+            break :compile_error final_compile_error;
+        };
+        if (compile_error.len > 0) {
+            @compileError(compile_error);
         }
     }
 
@@ -1637,6 +3796,272 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"outline-style" => {
+                if (css.generic.parseWithOptions(OutlineStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-style" = c } };
+                    }
+                }
+            },
+            .@"outline-width" => {
+                if (css.generic.parseWithOptions(BorderSideWidth, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"outline-width" = c } };
+                    }
+                }
+            },
+            .@"flex-direction" => |pre| {
+                if (css.generic.parseWithOptions(FlexDirection, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-direction" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-wrap" => |pre| {
+                if (css.generic.parseWithOptions(FlexWrap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-wrap" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-flow" => |pre| {
+                if (css.generic.parseWithOptions(FlexFlow, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-flow" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-grow" => |pre| {
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-grow" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-shrink" => |pre| {
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-shrink" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-basis" => |pre| {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-basis" = .{ c, pre } } };
+                    }
+                }
+            },
+            .flex => |pre| {
+                if (css.generic.parseWithOptions(Flex, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .flex = .{ c, pre } } };
+                    }
+                }
+            },
+            .order => |pre| {
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .order = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"align-content" => |pre| {
+                if (css.generic.parseWithOptions(AlignContent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"align-content" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"justify-content" => |pre| {
+                if (css.generic.parseWithOptions(JustifyContent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"justify-content" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"place-content" => {
+                if (css.generic.parseWithOptions(PlaceContent, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"place-content" = c } };
+                    }
+                }
+            },
+            .@"align-self" => |pre| {
+                if (css.generic.parseWithOptions(AlignSelf, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"align-self" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"justify-self" => {
+                if (css.generic.parseWithOptions(JustifySelf, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"justify-self" = c } };
+                    }
+                }
+            },
+            .@"place-self" => {
+                if (css.generic.parseWithOptions(PlaceSelf, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"place-self" = c } };
+                    }
+                }
+            },
+            .@"align-items" => |pre| {
+                if (css.generic.parseWithOptions(AlignItems, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"align-items" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"justify-items" => {
+                if (css.generic.parseWithOptions(JustifyItems, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"justify-items" = c } };
+                    }
+                }
+            },
+            .@"place-items" => {
+                if (css.generic.parseWithOptions(PlaceItems, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"place-items" = c } };
+                    }
+                }
+            },
+            .@"row-gap" => {
+                if (css.generic.parseWithOptions(GapValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"row-gap" = c } };
+                    }
+                }
+            },
+            .@"column-gap" => {
+                if (css.generic.parseWithOptions(GapValue, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"column-gap" = c } };
+                    }
+                }
+            },
+            .gap => {
+                if (css.generic.parseWithOptions(Gap, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .gap = c } };
+                    }
+                }
+            },
+            .@"box-orient" => |pre| {
+                if (css.generic.parseWithOptions(BoxOrient, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-orient" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-direction" => |pre| {
+                if (css.generic.parseWithOptions(BoxDirection, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-direction" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-ordinal-group" => |pre| {
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-ordinal-group" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-align" => |pre| {
+                if (css.generic.parseWithOptions(BoxAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-align" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-flex" => |pre| {
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-flex" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-flex-group" => |pre| {
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-flex-group" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-pack" => |pre| {
+                if (css.generic.parseWithOptions(BoxPack, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-pack" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"box-lines" => |pre| {
+                if (css.generic.parseWithOptions(BoxLines, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"box-lines" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-pack" => |pre| {
+                if (css.generic.parseWithOptions(FlexPack, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-pack" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-order" => |pre| {
+                if (css.generic.parseWithOptions(CSSInteger, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-order" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-align" => |pre| {
+                if (css.generic.parseWithOptions(BoxAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-align" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-item-align" => |pre| {
+                if (css.generic.parseWithOptions(FlexItemAlign, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-item-align" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-line-pack" => |pre| {
+                if (css.generic.parseWithOptions(FlexLinePack, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-line-pack" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-positive" => |pre| {
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-positive" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-negative" => |pre| {
+                if (css.generic.parseWithOptions(CSSNumber, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-negative" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"flex-preferred-size" => |pre| {
+                if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"flex-preferred-size" = .{ c, pre } } };
+                    }
+                }
+            },
             .@"margin-top" => {
                 if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
@@ -1973,6 +4398,196 @@ pub const Property = union(PropertyIdTag) {
                     }
                 }
             },
+            .@"mask-image" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(Image, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-image" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-mode" => {
+                if (css.generic.parseWithOptions(SmallList(MaskMode, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-mode" = c } };
+                    }
+                }
+            },
+            .@"mask-repeat" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(BackgroundRepeat, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-repeat" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-position-x" => {
+                if (css.generic.parseWithOptions(SmallList(HorizontalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-position-x" = c } };
+                    }
+                }
+            },
+            .@"mask-position-y" => {
+                if (css.generic.parseWithOptions(SmallList(VerticalPosition, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-position-y" = c } };
+                    }
+                }
+            },
+            .@"mask-position" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(Position, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-position" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-clip" => |pre| {
+                @setEvalBranchQuota(5000);
+                if (css.generic.parseWithOptions(SmallList(MaskClip, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-clip" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-origin" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(GeometryBox, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-origin" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-size" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(BackgroundSize, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-size" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-composite" => {
+                if (css.generic.parseWithOptions(SmallList(MaskComposite, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-composite" = c } };
+                    }
+                }
+            },
+            .@"mask-type" => {
+                if (css.generic.parseWithOptions(MaskType, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-type" = c } };
+                    }
+                }
+            },
+            .mask => |pre| {
+                if (css.generic.parseWithOptions(SmallList(Mask, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .mask = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-border-source" => {
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-source" = c } };
+                    }
+                }
+            },
+            .@"mask-border-mode" => {
+                if (css.generic.parseWithOptions(MaskBorderMode, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-mode" = c } };
+                    }
+                }
+            },
+            .@"mask-border-slice" => {
+                if (css.generic.parseWithOptions(BorderImageSlice, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-slice" = c } };
+                    }
+                }
+            },
+            .@"mask-border-width" => {
+                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-width" = c } };
+                    }
+                }
+            },
+            .@"mask-border-outset" => {
+                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-outset" = c } };
+                    }
+                }
+            },
+            .@"mask-border-repeat" => {
+                if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border-repeat" = c } };
+                    }
+                }
+            },
+            .@"mask-border" => {
+                if (css.generic.parseWithOptions(MaskBorder, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-border" = c } };
+                    }
+                }
+            },
+            .@"-webkit-mask-composite" => {
+                if (css.generic.parseWithOptions(SmallList(WebKitMaskComposite, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"-webkit-mask-composite" = c } };
+                    }
+                }
+            },
+            .@"mask-source-type" => |pre| {
+                if (css.generic.parseWithOptions(SmallList(WebKitMaskSourceType, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-source-type" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-box-image" => |pre| {
+                if (css.generic.parseWithOptions(BorderImage, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-box-image-source" => |pre| {
+                if (css.generic.parseWithOptions(Image, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-source" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-box-image-slice" => |pre| {
+                if (css.generic.parseWithOptions(BorderImageSlice, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-slice" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-box-image-width" => |pre| {
+                if (css.generic.parseWithOptions(Rect(BorderImageSideWidth), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-width" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-box-image-outset" => |pre| {
+                if (css.generic.parseWithOptions(Rect(LengthOrNumber), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-outset" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"mask-box-image-repeat" => |pre| {
+                if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"mask-box-image-repeat" = .{ c, pre } } };
+                    }
+                }
+            },
             .all => return .{ .result = .{ .all = switch (CSSWideKeyword.parse(input)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
@@ -2105,6 +4720,44 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => .@"border-inline-end",
             .outline => .outline,
             .@"outline-color" => .@"outline-color",
+            .@"outline-style" => .@"outline-style",
+            .@"outline-width" => .@"outline-width",
+            .@"flex-direction" => |*v| PropertyId{ .@"flex-direction" = v[1] },
+            .@"flex-wrap" => |*v| PropertyId{ .@"flex-wrap" = v[1] },
+            .@"flex-flow" => |*v| PropertyId{ .@"flex-flow" = v[1] },
+            .@"flex-grow" => |*v| PropertyId{ .@"flex-grow" = v[1] },
+            .@"flex-shrink" => |*v| PropertyId{ .@"flex-shrink" = v[1] },
+            .@"flex-basis" => |*v| PropertyId{ .@"flex-basis" = v[1] },
+            .flex => |*v| PropertyId{ .flex = v[1] },
+            .order => |*v| PropertyId{ .order = v[1] },
+            .@"align-content" => |*v| PropertyId{ .@"align-content" = v[1] },
+            .@"justify-content" => |*v| PropertyId{ .@"justify-content" = v[1] },
+            .@"place-content" => .@"place-content",
+            .@"align-self" => |*v| PropertyId{ .@"align-self" = v[1] },
+            .@"justify-self" => .@"justify-self",
+            .@"place-self" => .@"place-self",
+            .@"align-items" => |*v| PropertyId{ .@"align-items" = v[1] },
+            .@"justify-items" => .@"justify-items",
+            .@"place-items" => .@"place-items",
+            .@"row-gap" => .@"row-gap",
+            .@"column-gap" => .@"column-gap",
+            .gap => .gap,
+            .@"box-orient" => |*v| PropertyId{ .@"box-orient" = v[1] },
+            .@"box-direction" => |*v| PropertyId{ .@"box-direction" = v[1] },
+            .@"box-ordinal-group" => |*v| PropertyId{ .@"box-ordinal-group" = v[1] },
+            .@"box-align" => |*v| PropertyId{ .@"box-align" = v[1] },
+            .@"box-flex" => |*v| PropertyId{ .@"box-flex" = v[1] },
+            .@"box-flex-group" => |*v| PropertyId{ .@"box-flex-group" = v[1] },
+            .@"box-pack" => |*v| PropertyId{ .@"box-pack" = v[1] },
+            .@"box-lines" => |*v| PropertyId{ .@"box-lines" = v[1] },
+            .@"flex-pack" => |*v| PropertyId{ .@"flex-pack" = v[1] },
+            .@"flex-order" => |*v| PropertyId{ .@"flex-order" = v[1] },
+            .@"flex-align" => |*v| PropertyId{ .@"flex-align" = v[1] },
+            .@"flex-item-align" => |*v| PropertyId{ .@"flex-item-align" = v[1] },
+            .@"flex-line-pack" => |*v| PropertyId{ .@"flex-line-pack" = v[1] },
+            .@"flex-positive" => |*v| PropertyId{ .@"flex-positive" = v[1] },
+            .@"flex-negative" => |*v| PropertyId{ .@"flex-negative" = v[1] },
+            .@"flex-preferred-size" => |*v| PropertyId{ .@"flex-preferred-size" = v[1] },
             .@"margin-top" => .@"margin-top",
             .@"margin-bottom" => .@"margin-bottom",
             .@"margin-left" => .@"margin-left",
@@ -2153,6 +4806,33 @@ pub const Property = union(PropertyIdTag) {
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
             .direction => .direction,
             .composes => .composes,
+            .@"mask-image" => |*v| PropertyId{ .@"mask-image" = v[1] },
+            .@"mask-mode" => .@"mask-mode",
+            .@"mask-repeat" => |*v| PropertyId{ .@"mask-repeat" = v[1] },
+            .@"mask-position-x" => .@"mask-position-x",
+            .@"mask-position-y" => .@"mask-position-y",
+            .@"mask-position" => |*v| PropertyId{ .@"mask-position" = v[1] },
+            .@"mask-clip" => |*v| PropertyId{ .@"mask-clip" = v[1] },
+            .@"mask-origin" => |*v| PropertyId{ .@"mask-origin" = v[1] },
+            .@"mask-size" => |*v| PropertyId{ .@"mask-size" = v[1] },
+            .@"mask-composite" => .@"mask-composite",
+            .@"mask-type" => .@"mask-type",
+            .mask => |*v| PropertyId{ .mask = v[1] },
+            .@"mask-border-source" => .@"mask-border-source",
+            .@"mask-border-mode" => .@"mask-border-mode",
+            .@"mask-border-slice" => .@"mask-border-slice",
+            .@"mask-border-width" => .@"mask-border-width",
+            .@"mask-border-outset" => .@"mask-border-outset",
+            .@"mask-border-repeat" => .@"mask-border-repeat",
+            .@"mask-border" => .@"mask-border",
+            .@"-webkit-mask-composite" => .@"-webkit-mask-composite",
+            .@"mask-source-type" => |*v| PropertyId{ .@"mask-source-type" = v[1] },
+            .@"mask-box-image" => |*v| PropertyId{ .@"mask-box-image" = v[1] },
+            .@"mask-box-image-source" => |*v| PropertyId{ .@"mask-box-image-source" = v[1] },
+            .@"mask-box-image-slice" => |*v| PropertyId{ .@"mask-box-image-slice" = v[1] },
+            .@"mask-box-image-width" => |*v| PropertyId{ .@"mask-box-image-width" = v[1] },
+            .@"mask-box-image-outset" => |*v| PropertyId{ .@"mask-box-image-outset" = v[1] },
+            .@"mask-box-image-repeat" => |*v| PropertyId{ .@"mask-box-image-repeat" = v[1] },
             .all => PropertyId.all,
             .unparsed => |unparsed| unparsed.property_id,
             .custom => |c| .{ .custom = c.name },
@@ -2269,6 +4949,44 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => |*v| .{ .@"border-inline-end" = v.deepClone(allocator) },
             .outline => |*v| .{ .outline = v.deepClone(allocator) },
             .@"outline-color" => |*v| .{ .@"outline-color" = v.deepClone(allocator) },
+            .@"outline-style" => |*v| .{ .@"outline-style" = v.deepClone(allocator) },
+            .@"outline-width" => |*v| .{ .@"outline-width" = v.deepClone(allocator) },
+            .@"flex-direction" => |*v| .{ .@"flex-direction" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-wrap" => |*v| .{ .@"flex-wrap" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-flow" => |*v| .{ .@"flex-flow" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-grow" => |*v| .{ .@"flex-grow" = .{ v[0], v[1] } },
+            .@"flex-shrink" => |*v| .{ .@"flex-shrink" = .{ v[0], v[1] } },
+            .@"flex-basis" => |*v| .{ .@"flex-basis" = .{ v[0].deepClone(allocator), v[1] } },
+            .flex => |*v| .{ .flex = .{ v[0].deepClone(allocator), v[1] } },
+            .order => |*v| .{ .order = .{ v[0], v[1] } },
+            .@"align-content" => |*v| .{ .@"align-content" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"justify-content" => |*v| .{ .@"justify-content" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"place-content" => |*v| .{ .@"place-content" = v.deepClone(allocator) },
+            .@"align-self" => |*v| .{ .@"align-self" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"justify-self" => |*v| .{ .@"justify-self" = v.deepClone(allocator) },
+            .@"place-self" => |*v| .{ .@"place-self" = v.deepClone(allocator) },
+            .@"align-items" => |*v| .{ .@"align-items" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"justify-items" => |*v| .{ .@"justify-items" = v.deepClone(allocator) },
+            .@"place-items" => |*v| .{ .@"place-items" = v.deepClone(allocator) },
+            .@"row-gap" => |*v| .{ .@"row-gap" = v.deepClone(allocator) },
+            .@"column-gap" => |*v| .{ .@"column-gap" = v.deepClone(allocator) },
+            .gap => |*v| .{ .gap = v.deepClone(allocator) },
+            .@"box-orient" => |*v| .{ .@"box-orient" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"box-direction" => |*v| .{ .@"box-direction" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"box-ordinal-group" => |*v| .{ .@"box-ordinal-group" = .{ v[0], v[1] } },
+            .@"box-align" => |*v| .{ .@"box-align" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"box-flex" => |*v| .{ .@"box-flex" = .{ v[0], v[1] } },
+            .@"box-flex-group" => |*v| .{ .@"box-flex-group" = .{ v[0], v[1] } },
+            .@"box-pack" => |*v| .{ .@"box-pack" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"box-lines" => |*v| .{ .@"box-lines" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-pack" => |*v| .{ .@"flex-pack" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-order" => |*v| .{ .@"flex-order" = .{ v[0], v[1] } },
+            .@"flex-align" => |*v| .{ .@"flex-align" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-item-align" => |*v| .{ .@"flex-item-align" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-line-pack" => |*v| .{ .@"flex-line-pack" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"flex-positive" => |*v| .{ .@"flex-positive" = .{ v[0], v[1] } },
+            .@"flex-negative" => |*v| .{ .@"flex-negative" = .{ v[0], v[1] } },
+            .@"flex-preferred-size" => |*v| .{ .@"flex-preferred-size" = .{ v[0].deepClone(allocator), v[1] } },
             .@"margin-top" => |*v| .{ .@"margin-top" = v.deepClone(allocator) },
             .@"margin-bottom" => |*v| .{ .@"margin-bottom" = v.deepClone(allocator) },
             .@"margin-left" => |*v| .{ .@"margin-left" = v.deepClone(allocator) },
@@ -2317,6 +5035,33 @@ pub const Property = union(PropertyIdTag) {
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
             .direction => |*v| .{ .direction = v.deepClone(allocator) },
             .composes => |*v| .{ .composes = v.deepClone(allocator) },
+            .@"mask-image" => |*v| .{ .@"mask-image" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-mode" => |*v| .{ .@"mask-mode" = v.deepClone(allocator) },
+            .@"mask-repeat" => |*v| .{ .@"mask-repeat" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-position-x" => |*v| .{ .@"mask-position-x" = v.deepClone(allocator) },
+            .@"mask-position-y" => |*v| .{ .@"mask-position-y" = v.deepClone(allocator) },
+            .@"mask-position" => |*v| .{ .@"mask-position" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-clip" => |*v| .{ .@"mask-clip" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-origin" => |*v| .{ .@"mask-origin" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-size" => |*v| .{ .@"mask-size" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-composite" => |*v| .{ .@"mask-composite" = v.deepClone(allocator) },
+            .@"mask-type" => |*v| .{ .@"mask-type" = v.deepClone(allocator) },
+            .mask => |*v| .{ .mask = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-border-source" => |*v| .{ .@"mask-border-source" = v.deepClone(allocator) },
+            .@"mask-border-mode" => |*v| .{ .@"mask-border-mode" = v.deepClone(allocator) },
+            .@"mask-border-slice" => |*v| .{ .@"mask-border-slice" = v.deepClone(allocator) },
+            .@"mask-border-width" => |*v| .{ .@"mask-border-width" = v.deepClone(allocator) },
+            .@"mask-border-outset" => |*v| .{ .@"mask-border-outset" = v.deepClone(allocator) },
+            .@"mask-border-repeat" => |*v| .{ .@"mask-border-repeat" = v.deepClone(allocator) },
+            .@"mask-border" => |*v| .{ .@"mask-border" = v.deepClone(allocator) },
+            .@"-webkit-mask-composite" => |*v| .{ .@"-webkit-mask-composite" = v.deepClone(allocator) },
+            .@"mask-source-type" => |*v| .{ .@"mask-source-type" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-box-image" => |*v| .{ .@"mask-box-image" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-box-image-source" => |*v| .{ .@"mask-box-image-source" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-box-image-slice" => |*v| .{ .@"mask-box-image-slice" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-box-image-width" => |*v| .{ .@"mask-box-image-width" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-box-image-outset" => |*v| .{ .@"mask-box-image-outset" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"mask-box-image-repeat" => |*v| .{ .@"mask-box-image-repeat" = .{ v[0].deepClone(allocator), v[1] } },
             .all => |*a| return .{ .all = a.deepClone(allocator) },
             .unparsed => |*u| return .{ .unparsed = u.deepClone(allocator) },
             .custom => |*c| return .{ .custom = c.deepClone(allocator) },
@@ -2439,6 +5184,44 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => .{ "border-inline-end", VendorPrefix{ .none = true } },
             .outline => .{ "outline", VendorPrefix{ .none = true } },
             .@"outline-color" => .{ "outline-color", VendorPrefix{ .none = true } },
+            .@"outline-style" => .{ "outline-style", VendorPrefix{ .none = true } },
+            .@"outline-width" => .{ "outline-width", VendorPrefix{ .none = true } },
+            .@"flex-direction" => |*x| .{ "flex-direction", x.@"1" },
+            .@"flex-wrap" => |*x| .{ "flex-wrap", x.@"1" },
+            .@"flex-flow" => |*x| .{ "flex-flow", x.@"1" },
+            .@"flex-grow" => |*x| .{ "flex-grow", x.@"1" },
+            .@"flex-shrink" => |*x| .{ "flex-shrink", x.@"1" },
+            .@"flex-basis" => |*x| .{ "flex-basis", x.@"1" },
+            .flex => |*x| .{ "flex", x.@"1" },
+            .order => |*x| .{ "order", x.@"1" },
+            .@"align-content" => |*x| .{ "align-content", x.@"1" },
+            .@"justify-content" => |*x| .{ "justify-content", x.@"1" },
+            .@"place-content" => .{ "place-content", VendorPrefix{ .none = true } },
+            .@"align-self" => |*x| .{ "align-self", x.@"1" },
+            .@"justify-self" => .{ "justify-self", VendorPrefix{ .none = true } },
+            .@"place-self" => .{ "place-self", VendorPrefix{ .none = true } },
+            .@"align-items" => |*x| .{ "align-items", x.@"1" },
+            .@"justify-items" => .{ "justify-items", VendorPrefix{ .none = true } },
+            .@"place-items" => .{ "place-items", VendorPrefix{ .none = true } },
+            .@"row-gap" => .{ "row-gap", VendorPrefix{ .none = true } },
+            .@"column-gap" => .{ "column-gap", VendorPrefix{ .none = true } },
+            .gap => .{ "gap", VendorPrefix{ .none = true } },
+            .@"box-orient" => |*x| .{ "box-orient", x.@"1" },
+            .@"box-direction" => |*x| .{ "box-direction", x.@"1" },
+            .@"box-ordinal-group" => |*x| .{ "box-ordinal-group", x.@"1" },
+            .@"box-align" => |*x| .{ "box-align", x.@"1" },
+            .@"box-flex" => |*x| .{ "box-flex", x.@"1" },
+            .@"box-flex-group" => |*x| .{ "box-flex-group", x.@"1" },
+            .@"box-pack" => |*x| .{ "box-pack", x.@"1" },
+            .@"box-lines" => |*x| .{ "box-lines", x.@"1" },
+            .@"flex-pack" => |*x| .{ "flex-pack", x.@"1" },
+            .@"flex-order" => |*x| .{ "flex-order", x.@"1" },
+            .@"flex-align" => |*x| .{ "flex-align", x.@"1" },
+            .@"flex-item-align" => |*x| .{ "flex-item-align", x.@"1" },
+            .@"flex-line-pack" => |*x| .{ "flex-line-pack", x.@"1" },
+            .@"flex-positive" => |*x| .{ "flex-positive", x.@"1" },
+            .@"flex-negative" => |*x| .{ "flex-negative", x.@"1" },
+            .@"flex-preferred-size" => |*x| .{ "flex-preferred-size", x.@"1" },
             .@"margin-top" => .{ "margin-top", VendorPrefix{ .none = true } },
             .@"margin-bottom" => .{ "margin-bottom", VendorPrefix{ .none = true } },
             .@"margin-left" => .{ "margin-left", VendorPrefix{ .none = true } },
@@ -2487,6 +5270,33 @@ pub const Property = union(PropertyIdTag) {
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
             .direction => .{ "direction", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
+            .@"mask-image" => |*x| .{ "mask-image", x.@"1" },
+            .@"mask-mode" => .{ "mask-mode", VendorPrefix{ .none = true } },
+            .@"mask-repeat" => |*x| .{ "mask-repeat", x.@"1" },
+            .@"mask-position-x" => .{ "mask-position-x", VendorPrefix{ .none = true } },
+            .@"mask-position-y" => .{ "mask-position-y", VendorPrefix{ .none = true } },
+            .@"mask-position" => |*x| .{ "mask-position", x.@"1" },
+            .@"mask-clip" => |*x| .{ "mask-clip", x.@"1" },
+            .@"mask-origin" => |*x| .{ "mask-origin", x.@"1" },
+            .@"mask-size" => |*x| .{ "mask-size", x.@"1" },
+            .@"mask-composite" => .{ "mask-composite", VendorPrefix{ .none = true } },
+            .@"mask-type" => .{ "mask-type", VendorPrefix{ .none = true } },
+            .mask => |*x| .{ "mask", x.@"1" },
+            .@"mask-border-source" => .{ "mask-border-source", VendorPrefix{ .none = true } },
+            .@"mask-border-mode" => .{ "mask-border-mode", VendorPrefix{ .none = true } },
+            .@"mask-border-slice" => .{ "mask-border-slice", VendorPrefix{ .none = true } },
+            .@"mask-border-width" => .{ "mask-border-width", VendorPrefix{ .none = true } },
+            .@"mask-border-outset" => .{ "mask-border-outset", VendorPrefix{ .none = true } },
+            .@"mask-border-repeat" => .{ "mask-border-repeat", VendorPrefix{ .none = true } },
+            .@"mask-border" => .{ "mask-border", VendorPrefix{ .none = true } },
+            .@"-webkit-mask-composite" => .{ "-webkit-mask-composite", VendorPrefix{ .none = true } },
+            .@"mask-source-type" => |*x| .{ "mask-source-type", x.@"1" },
+            .@"mask-box-image" => |*x| .{ "mask-box-image", x.@"1" },
+            .@"mask-box-image-source" => |*x| .{ "mask-box-image-source", x.@"1" },
+            .@"mask-box-image-slice" => |*x| .{ "mask-box-image-slice", x.@"1" },
+            .@"mask-box-image-width" => |*x| .{ "mask-box-image-width", x.@"1" },
+            .@"mask-box-image-outset" => |*x| .{ "mask-box-image-outset", x.@"1" },
+            .@"mask-box-image-repeat" => |*x| .{ "mask-box-image-repeat", x.@"1" },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
                 var prefix = unparsed.property_id.prefix();
@@ -2610,6 +5420,44 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-end" => |*value| value.toCss(W, dest),
             .outline => |*value| value.toCss(W, dest),
             .@"outline-color" => |*value| value.toCss(W, dest),
+            .@"outline-style" => |*value| value.toCss(W, dest),
+            .@"outline-width" => |*value| value.toCss(W, dest),
+            .@"flex-direction" => |*value| value[0].toCss(W, dest),
+            .@"flex-wrap" => |*value| value[0].toCss(W, dest),
+            .@"flex-flow" => |*value| value[0].toCss(W, dest),
+            .@"flex-grow" => |*value| CSSNumberFns.toCss(&value[0], W, dest),
+            .@"flex-shrink" => |*value| CSSNumberFns.toCss(&value[0], W, dest),
+            .@"flex-basis" => |*value| value[0].toCss(W, dest),
+            .flex => |*value| value[0].toCss(W, dest),
+            .order => |*value| CSSIntegerFns.toCss(&value[0], W, dest),
+            .@"align-content" => |*value| value[0].toCss(W, dest),
+            .@"justify-content" => |*value| value[0].toCss(W, dest),
+            .@"place-content" => |*value| value.toCss(W, dest),
+            .@"align-self" => |*value| value[0].toCss(W, dest),
+            .@"justify-self" => |*value| value.toCss(W, dest),
+            .@"place-self" => |*value| value.toCss(W, dest),
+            .@"align-items" => |*value| value[0].toCss(W, dest),
+            .@"justify-items" => |*value| value.toCss(W, dest),
+            .@"place-items" => |*value| value.toCss(W, dest),
+            .@"row-gap" => |*value| value.toCss(W, dest),
+            .@"column-gap" => |*value| value.toCss(W, dest),
+            .gap => |*value| value.toCss(W, dest),
+            .@"box-orient" => |*value| value[0].toCss(W, dest),
+            .@"box-direction" => |*value| value[0].toCss(W, dest),
+            .@"box-ordinal-group" => |*value| CSSIntegerFns.toCss(&value[0], W, dest),
+            .@"box-align" => |*value| value[0].toCss(W, dest),
+            .@"box-flex" => |*value| CSSNumberFns.toCss(&value[0], W, dest),
+            .@"box-flex-group" => |*value| CSSIntegerFns.toCss(&value[0], W, dest),
+            .@"box-pack" => |*value| value[0].toCss(W, dest),
+            .@"box-lines" => |*value| value[0].toCss(W, dest),
+            .@"flex-pack" => |*value| value[0].toCss(W, dest),
+            .@"flex-order" => |*value| CSSIntegerFns.toCss(&value[0], W, dest),
+            .@"flex-align" => |*value| value[0].toCss(W, dest),
+            .@"flex-item-align" => |*value| value[0].toCss(W, dest),
+            .@"flex-line-pack" => |*value| value[0].toCss(W, dest),
+            .@"flex-positive" => |*value| CSSNumberFns.toCss(&value[0], W, dest),
+            .@"flex-negative" => |*value| CSSNumberFns.toCss(&value[0], W, dest),
+            .@"flex-preferred-size" => |*value| value[0].toCss(W, dest),
             .@"margin-top" => |*value| value.toCss(W, dest),
             .@"margin-bottom" => |*value| value.toCss(W, dest),
             .@"margin-left" => |*value| value.toCss(W, dest),
@@ -2658,6 +5506,33 @@ pub const Property = union(PropertyIdTag) {
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
             .direction => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
+            .@"mask-image" => |*value| value[0].toCss(W, dest),
+            .@"mask-mode" => |*value| value.toCss(W, dest),
+            .@"mask-repeat" => |*value| value[0].toCss(W, dest),
+            .@"mask-position-x" => |*value| value.toCss(W, dest),
+            .@"mask-position-y" => |*value| value.toCss(W, dest),
+            .@"mask-position" => |*value| value[0].toCss(W, dest),
+            .@"mask-clip" => |*value| value[0].toCss(W, dest),
+            .@"mask-origin" => |*value| value[0].toCss(W, dest),
+            .@"mask-size" => |*value| value[0].toCss(W, dest),
+            .@"mask-composite" => |*value| value.toCss(W, dest),
+            .@"mask-type" => |*value| value.toCss(W, dest),
+            .mask => |*value| value[0].toCss(W, dest),
+            .@"mask-border-source" => |*value| value.toCss(W, dest),
+            .@"mask-border-mode" => |*value| value.toCss(W, dest),
+            .@"mask-border-slice" => |*value| value.toCss(W, dest),
+            .@"mask-border-width" => |*value| value.toCss(W, dest),
+            .@"mask-border-outset" => |*value| value.toCss(W, dest),
+            .@"mask-border-repeat" => |*value| value.toCss(W, dest),
+            .@"mask-border" => |*value| value.toCss(W, dest),
+            .@"-webkit-mask-composite" => |*value| value.toCss(W, dest),
+            .@"mask-source-type" => |*value| value[0].toCss(W, dest),
+            .@"mask-box-image" => |*value| value[0].toCss(W, dest),
+            .@"mask-box-image-source" => |*value| value[0].toCss(W, dest),
+            .@"mask-box-image-slice" => |*value| value[0].toCss(W, dest),
+            .@"mask-box-image-width" => |*value| value[0].toCss(W, dest),
+            .@"mask-box-image-outset" => |*value| value[0].toCss(W, dest),
+            .@"mask-box-image-repeat" => |*value| value[0].toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
             .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
@@ -2701,6 +5576,18 @@ pub const Property = union(PropertyIdTag) {
             .@"border-inline-start" => |*v| return v.longhand(property_id),
             .@"border-inline-end" => |*v| return v.longhand(property_id),
             .outline => |*v| return v.longhand(property_id),
+            .@"flex-flow" => |*v| {
+                if (!v[1].eq(property_id.prefix())) return null;
+                return v[0].longhand(property_id);
+            },
+            .flex => |*v| {
+                if (!v[1].eq(property_id.prefix())) return null;
+                return v[0].longhand(property_id);
+            },
+            .@"place-content" => |*v| return v.longhand(property_id),
+            .@"place-self" => |*v| return v.longhand(property_id),
+            .@"place-items" => |*v| return v.longhand(property_id),
+            .gap => |*v| return v.longhand(property_id),
             .@"margin-block" => |*v| return v.longhand(property_id),
             .@"margin-inline" => |*v| return v.longhand(property_id),
             .margin => |*v| return v.longhand(property_id),
@@ -2713,6 +5600,11 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-block" => |*v| return v.longhand(property_id),
             .@"scroll-padding-inline" => |*v| return v.longhand(property_id),
             .@"scroll-padding" => |*v| return v.longhand(property_id),
+            .mask => |*v| {
+                if (!v[1].eq(property_id.prefix())) return null;
+                return v[0].longhand(property_id);
+            },
+            .@"mask-border" => |*v| return v.longhand(property_id),
             else => {},
         }
         return null;
@@ -2827,6 +5719,44 @@ pub const PropertyId = union(PropertyIdTag) {
     @"border-inline-end",
     outline,
     @"outline-color",
+    @"outline-style",
+    @"outline-width",
+    @"flex-direction": VendorPrefix,
+    @"flex-wrap": VendorPrefix,
+    @"flex-flow": VendorPrefix,
+    @"flex-grow": VendorPrefix,
+    @"flex-shrink": VendorPrefix,
+    @"flex-basis": VendorPrefix,
+    flex: VendorPrefix,
+    order: VendorPrefix,
+    @"align-content": VendorPrefix,
+    @"justify-content": VendorPrefix,
+    @"place-content",
+    @"align-self": VendorPrefix,
+    @"justify-self",
+    @"place-self",
+    @"align-items": VendorPrefix,
+    @"justify-items",
+    @"place-items",
+    @"row-gap",
+    @"column-gap",
+    gap,
+    @"box-orient": VendorPrefix,
+    @"box-direction": VendorPrefix,
+    @"box-ordinal-group": VendorPrefix,
+    @"box-align": VendorPrefix,
+    @"box-flex": VendorPrefix,
+    @"box-flex-group": VendorPrefix,
+    @"box-pack": VendorPrefix,
+    @"box-lines": VendorPrefix,
+    @"flex-pack": VendorPrefix,
+    @"flex-order": VendorPrefix,
+    @"flex-align": VendorPrefix,
+    @"flex-item-align": VendorPrefix,
+    @"flex-line-pack": VendorPrefix,
+    @"flex-positive": VendorPrefix,
+    @"flex-negative": VendorPrefix,
+    @"flex-preferred-size": VendorPrefix,
     @"margin-top",
     @"margin-bottom",
     @"margin-left",
@@ -2875,6 +5805,33 @@ pub const PropertyId = union(PropertyIdTag) {
     @"text-emphasis-color": VendorPrefix,
     direction,
     composes,
+    @"mask-image": VendorPrefix,
+    @"mask-mode",
+    @"mask-repeat": VendorPrefix,
+    @"mask-position-x",
+    @"mask-position-y",
+    @"mask-position": VendorPrefix,
+    @"mask-clip": VendorPrefix,
+    @"mask-origin": VendorPrefix,
+    @"mask-size": VendorPrefix,
+    @"mask-composite",
+    @"mask-type",
+    mask: VendorPrefix,
+    @"mask-border-source",
+    @"mask-border-mode",
+    @"mask-border-slice",
+    @"mask-border-width",
+    @"mask-border-outset",
+    @"mask-border-repeat",
+    @"mask-border",
+    @"-webkit-mask-composite",
+    @"mask-source-type": VendorPrefix,
+    @"mask-box-image": VendorPrefix,
+    @"mask-box-image-source": VendorPrefix,
+    @"mask-box-image-slice": VendorPrefix,
+    @"mask-box-image-width": VendorPrefix,
+    @"mask-box-image-outset": VendorPrefix,
+    @"mask-box-image-repeat": VendorPrefix,
     all,
     unparsed,
     custom: CustomPropertyName,
@@ -2997,6 +5954,44 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline-end" => VendorPrefix.empty(),
             .outline => VendorPrefix.empty(),
             .@"outline-color" => VendorPrefix.empty(),
+            .@"outline-style" => VendorPrefix.empty(),
+            .@"outline-width" => VendorPrefix.empty(),
+            .@"flex-direction" => |p| p,
+            .@"flex-wrap" => |p| p,
+            .@"flex-flow" => |p| p,
+            .@"flex-grow" => |p| p,
+            .@"flex-shrink" => |p| p,
+            .@"flex-basis" => |p| p,
+            .flex => |p| p,
+            .order => |p| p,
+            .@"align-content" => |p| p,
+            .@"justify-content" => |p| p,
+            .@"place-content" => VendorPrefix.empty(),
+            .@"align-self" => |p| p,
+            .@"justify-self" => VendorPrefix.empty(),
+            .@"place-self" => VendorPrefix.empty(),
+            .@"align-items" => |p| p,
+            .@"justify-items" => VendorPrefix.empty(),
+            .@"place-items" => VendorPrefix.empty(),
+            .@"row-gap" => VendorPrefix.empty(),
+            .@"column-gap" => VendorPrefix.empty(),
+            .gap => VendorPrefix.empty(),
+            .@"box-orient" => |p| p,
+            .@"box-direction" => |p| p,
+            .@"box-ordinal-group" => |p| p,
+            .@"box-align" => |p| p,
+            .@"box-flex" => |p| p,
+            .@"box-flex-group" => |p| p,
+            .@"box-pack" => |p| p,
+            .@"box-lines" => |p| p,
+            .@"flex-pack" => |p| p,
+            .@"flex-order" => |p| p,
+            .@"flex-align" => |p| p,
+            .@"flex-item-align" => |p| p,
+            .@"flex-line-pack" => |p| p,
+            .@"flex-positive" => |p| p,
+            .@"flex-negative" => |p| p,
+            .@"flex-preferred-size" => |p| p,
             .@"margin-top" => VendorPrefix.empty(),
             .@"margin-bottom" => VendorPrefix.empty(),
             .@"margin-left" => VendorPrefix.empty(),
@@ -3045,6 +6040,33 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"text-emphasis-color" => |p| p,
             .direction => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
+            .@"mask-image" => |p| p,
+            .@"mask-mode" => VendorPrefix.empty(),
+            .@"mask-repeat" => |p| p,
+            .@"mask-position-x" => VendorPrefix.empty(),
+            .@"mask-position-y" => VendorPrefix.empty(),
+            .@"mask-position" => |p| p,
+            .@"mask-clip" => |p| p,
+            .@"mask-origin" => |p| p,
+            .@"mask-size" => |p| p,
+            .@"mask-composite" => VendorPrefix.empty(),
+            .@"mask-type" => VendorPrefix.empty(),
+            .mask => |p| p,
+            .@"mask-border-source" => VendorPrefix.empty(),
+            .@"mask-border-mode" => VendorPrefix.empty(),
+            .@"mask-border-slice" => VendorPrefix.empty(),
+            .@"mask-border-width" => VendorPrefix.empty(),
+            .@"mask-border-outset" => VendorPrefix.empty(),
+            .@"mask-border-repeat" => VendorPrefix.empty(),
+            .@"mask-border" => VendorPrefix.empty(),
+            .@"-webkit-mask-composite" => VendorPrefix.empty(),
+            .@"mask-source-type" => |p| p,
+            .@"mask-box-image" => |p| p,
+            .@"mask-box-image-source" => |p| p,
+            .@"mask-box-image-slice" => |p| p,
+            .@"mask-box-image-width" => |p| p,
+            .@"mask-box-image-outset" => |p| p,
+            .@"mask-box-image-repeat" => |p| p,
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
     }
@@ -3375,6 +6397,120 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"outline-color";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"outline-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "outline-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"outline-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-direction")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-direction" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-wrap")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-wrap" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-flow")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-flow" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-grow")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-grow" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-shrink")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-shrink" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-basis")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-basis" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .flex = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "order")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .order = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-content")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"align-content" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-content")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"justify-content" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-content")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"place-content";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-self")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"align-self" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-self")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"justify-self";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-self")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"place-self";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-items")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"align-items" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-items")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"justify-items";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-items")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"place-items";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "row-gap")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"row-gap";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "column-gap")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"column-gap";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "gap")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .gap;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-orient")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-orient" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-direction")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-direction" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-ordinal-group")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-ordinal-group" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-align")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-align" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-flex")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-flex" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-flex-group")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-flex-group" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-pack")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-pack" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-lines")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"box-lines" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-pack")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-pack" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-order")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-order" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-align")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-align" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-item-align")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-item-align" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-line-pack")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-line-pack" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-positive")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-positive" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-negative")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-negative" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-preferred-size")) {
+            const allowed_prefixes = VendorPrefix{ .ms = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"flex-preferred-size" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-top")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"margin-top";
@@ -3519,6 +6655,87 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "composes")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-image")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-image" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-mode")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-mode";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-repeat")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-repeat" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position-x")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-position-x";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position-y")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-position-y";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-position" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-clip")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-clip" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-origin")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-origin" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-size")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-size" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-composite")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-composite";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-type")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-type";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .mask = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-source")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border-source";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-mode")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border-mode";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-slice")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border-slice";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-width")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border-width";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-outset")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border-outset";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-repeat")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border-repeat";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"mask-border";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "-webkit-mask-composite")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"-webkit-mask-composite";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-source-type")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-source-type" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-source")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-source" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-slice")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-slice" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-width")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-width" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-outset")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-outset" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-repeat")) {
+            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {} else {
             return null;
         }
@@ -3636,6 +6853,44 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline-end" => .@"border-inline-end",
             .outline => .outline,
             .@"outline-color" => .@"outline-color",
+            .@"outline-style" => .@"outline-style",
+            .@"outline-width" => .@"outline-width",
+            .@"flex-direction" => .{ .@"flex-direction" = pre },
+            .@"flex-wrap" => .{ .@"flex-wrap" = pre },
+            .@"flex-flow" => .{ .@"flex-flow" = pre },
+            .@"flex-grow" => .{ .@"flex-grow" = pre },
+            .@"flex-shrink" => .{ .@"flex-shrink" = pre },
+            .@"flex-basis" => .{ .@"flex-basis" = pre },
+            .flex => .{ .flex = pre },
+            .order => .{ .order = pre },
+            .@"align-content" => .{ .@"align-content" = pre },
+            .@"justify-content" => .{ .@"justify-content" = pre },
+            .@"place-content" => .@"place-content",
+            .@"align-self" => .{ .@"align-self" = pre },
+            .@"justify-self" => .@"justify-self",
+            .@"place-self" => .@"place-self",
+            .@"align-items" => .{ .@"align-items" = pre },
+            .@"justify-items" => .@"justify-items",
+            .@"place-items" => .@"place-items",
+            .@"row-gap" => .@"row-gap",
+            .@"column-gap" => .@"column-gap",
+            .gap => .gap,
+            .@"box-orient" => .{ .@"box-orient" = pre },
+            .@"box-direction" => .{ .@"box-direction" = pre },
+            .@"box-ordinal-group" => .{ .@"box-ordinal-group" = pre },
+            .@"box-align" => .{ .@"box-align" = pre },
+            .@"box-flex" => .{ .@"box-flex" = pre },
+            .@"box-flex-group" => .{ .@"box-flex-group" = pre },
+            .@"box-pack" => .{ .@"box-pack" = pre },
+            .@"box-lines" => .{ .@"box-lines" = pre },
+            .@"flex-pack" => .{ .@"flex-pack" = pre },
+            .@"flex-order" => .{ .@"flex-order" = pre },
+            .@"flex-align" => .{ .@"flex-align" = pre },
+            .@"flex-item-align" => .{ .@"flex-item-align" = pre },
+            .@"flex-line-pack" => .{ .@"flex-line-pack" = pre },
+            .@"flex-positive" => .{ .@"flex-positive" = pre },
+            .@"flex-negative" => .{ .@"flex-negative" = pre },
+            .@"flex-preferred-size" => .{ .@"flex-preferred-size" = pre },
             .@"margin-top" => .@"margin-top",
             .@"margin-bottom" => .@"margin-bottom",
             .@"margin-left" => .@"margin-left",
@@ -3684,6 +6939,33 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
             .direction => .direction,
             .composes => .composes,
+            .@"mask-image" => .{ .@"mask-image" = pre },
+            .@"mask-mode" => .@"mask-mode",
+            .@"mask-repeat" => .{ .@"mask-repeat" = pre },
+            .@"mask-position-x" => .@"mask-position-x",
+            .@"mask-position-y" => .@"mask-position-y",
+            .@"mask-position" => .{ .@"mask-position" = pre },
+            .@"mask-clip" => .{ .@"mask-clip" = pre },
+            .@"mask-origin" => .{ .@"mask-origin" = pre },
+            .@"mask-size" => .{ .@"mask-size" = pre },
+            .@"mask-composite" => .@"mask-composite",
+            .@"mask-type" => .@"mask-type",
+            .mask => .{ .mask = pre },
+            .@"mask-border-source" => .@"mask-border-source",
+            .@"mask-border-mode" => .@"mask-border-mode",
+            .@"mask-border-slice" => .@"mask-border-slice",
+            .@"mask-border-width" => .@"mask-border-width",
+            .@"mask-border-outset" => .@"mask-border-outset",
+            .@"mask-border-repeat" => .@"mask-border-repeat",
+            .@"mask-border" => .@"mask-border",
+            .@"-webkit-mask-composite" => .@"-webkit-mask-composite",
+            .@"mask-source-type" => .{ .@"mask-source-type" = pre },
+            .@"mask-box-image" => .{ .@"mask-box-image" = pre },
+            .@"mask-box-image-source" => .{ .@"mask-box-image-source" = pre },
+            .@"mask-box-image-slice" => .{ .@"mask-box-image-slice" = pre },
+            .@"mask-box-image-width" => .{ .@"mask-box-image-width" = pre },
+            .@"mask-box-image-outset" => .{ .@"mask-box-image-outset" = pre },
+            .@"mask-box-image-repeat" => .{ .@"mask-box-image-repeat" = pre },
             else => this.*,
         };
     }
@@ -3818,6 +7100,100 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"border-inline-end" => {},
             .outline => {},
             .@"outline-color" => {},
+            .@"outline-style" => {},
+            .@"outline-width" => {},
+            .@"flex-direction" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-wrap" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-flow" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-grow" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-shrink" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-basis" => |*p| {
+                p.insert(pre);
+            },
+            .flex => |*p| {
+                p.insert(pre);
+            },
+            .order => |*p| {
+                p.insert(pre);
+            },
+            .@"align-content" => |*p| {
+                p.insert(pre);
+            },
+            .@"justify-content" => |*p| {
+                p.insert(pre);
+            },
+            .@"place-content" => {},
+            .@"align-self" => |*p| {
+                p.insert(pre);
+            },
+            .@"justify-self" => {},
+            .@"place-self" => {},
+            .@"align-items" => |*p| {
+                p.insert(pre);
+            },
+            .@"justify-items" => {},
+            .@"place-items" => {},
+            .@"row-gap" => {},
+            .@"column-gap" => {},
+            .gap => {},
+            .@"box-orient" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-direction" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-ordinal-group" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-align" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-flex" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-flex-group" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-pack" => |*p| {
+                p.insert(pre);
+            },
+            .@"box-lines" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-pack" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-order" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-align" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-item-align" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-line-pack" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-positive" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-negative" => |*p| {
+                p.insert(pre);
+            },
+            .@"flex-preferred-size" => |*p| {
+                p.insert(pre);
+            },
             .@"margin-top" => {},
             .@"margin-bottom" => {},
             .@"margin-left" => {},
@@ -3870,6 +7246,61 @@ pub const PropertyId = union(PropertyIdTag) {
             },
             .direction => {},
             .composes => {},
+            .@"mask-image" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-mode" => {},
+            .@"mask-repeat" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-position-x" => {},
+            .@"mask-position-y" => {},
+            .@"mask-position" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-clip" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-origin" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-size" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-composite" => {},
+            .@"mask-type" => {},
+            .mask => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-border-source" => {},
+            .@"mask-border-mode" => {},
+            .@"mask-border-slice" => {},
+            .@"mask-border-width" => {},
+            .@"mask-border-outset" => {},
+            .@"mask-border-repeat" => {},
+            .@"mask-border" => {},
+            .@"-webkit-mask-composite" => {},
+            .@"mask-source-type" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-box-image" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-box-image-source" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-box-image-slice" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-box-image-width" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-box-image-outset" => |*p| {
+                p.insert(pre);
+            },
+            .@"mask-box-image-repeat" => |*p| {
+                p.insert(pre);
+            },
             else => {},
         };
     }
@@ -4001,6 +7432,44 @@ pub const PropertyIdTag = enum(u16) {
     @"border-inline-end",
     outline,
     @"outline-color",
+    @"outline-style",
+    @"outline-width",
+    @"flex-direction",
+    @"flex-wrap",
+    @"flex-flow",
+    @"flex-grow",
+    @"flex-shrink",
+    @"flex-basis",
+    flex,
+    order,
+    @"align-content",
+    @"justify-content",
+    @"place-content",
+    @"align-self",
+    @"justify-self",
+    @"place-self",
+    @"align-items",
+    @"justify-items",
+    @"place-items",
+    @"row-gap",
+    @"column-gap",
+    gap,
+    @"box-orient",
+    @"box-direction",
+    @"box-ordinal-group",
+    @"box-align",
+    @"box-flex",
+    @"box-flex-group",
+    @"box-pack",
+    @"box-lines",
+    @"flex-pack",
+    @"flex-order",
+    @"flex-align",
+    @"flex-item-align",
+    @"flex-line-pack",
+    @"flex-positive",
+    @"flex-negative",
+    @"flex-preferred-size",
     @"margin-top",
     @"margin-bottom",
     @"margin-left",
@@ -4049,6 +7518,33 @@ pub const PropertyIdTag = enum(u16) {
     @"text-emphasis-color",
     direction,
     composes,
+    @"mask-image",
+    @"mask-mode",
+    @"mask-repeat",
+    @"mask-position-x",
+    @"mask-position-y",
+    @"mask-position",
+    @"mask-clip",
+    @"mask-origin",
+    @"mask-size",
+    @"mask-composite",
+    @"mask-type",
+    mask,
+    @"mask-border-source",
+    @"mask-border-mode",
+    @"mask-border-slice",
+    @"mask-border-width",
+    @"mask-border-outset",
+    @"mask-border-repeat",
+    @"mask-border",
+    @"-webkit-mask-composite",
+    @"mask-source-type",
+    @"mask-box-image",
+    @"mask-box-image-source",
+    @"mask-box-image-slice",
+    @"mask-box-image-width",
+    @"mask-box-image-outset",
+    @"mask-box-image-repeat",
     all,
     unparsed,
     custom,

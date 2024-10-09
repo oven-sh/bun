@@ -29,11 +29,17 @@ type PropertyDef = {
   conditional?: {
     css_modules: boolean;
   };
+  eval_branch_quota?: number;
 };
 
 const OUTPUT_FILE = "src/css/properties/properties_generated.zig";
 
 async function generateCode(property_defs: Record<string, PropertyDef>) {
+  const EMIT_COMPLETED_MD_FILE = false;
+  if (EMIT_COMPLETED_MD_FILE) {
+    const completed = Object.entries(property_defs).map(([name, meta]) => `- [x] \`${name}\``).join("\n");
+    await Bun.$`echo ${completed} > completed.md`
+  }
   await Bun.$`echo ${prelude()} > ${OUTPUT_FILE}`;
   await Bun.$`echo ${generateProperty(property_defs)} >> ${OUTPUT_FILE}`;
   await Bun.$`echo ${generatePropertyId(property_defs)} >> ${OUTPUT_FILE}`;
@@ -66,21 +72,44 @@ ${Object.entries(property_defs)
 }
 
 function generatePropertyImpl(property_defs: Record<string, PropertyDef>): string {
+  const required_functions = [
+    "deepClone",
+    "parse",
+    "toCss",
+  ];
+
   return `
   pub usingnamespace PropertyImpl();
 
-  // SANITY CHECK!
+  // Sanity check to make sure all types have the following functions:
+  // - deepClone()
+  // - eql()
+  // - parse()
+  // - toCss()
+  //
+  // We do this string concatenation thing so we get all the errors at once,
+  // instead of relying on Zig semantic analysis which usualy stops at the first error.
   comptime {
-  ${Object.entries(property_defs)
-    .map(([name, meta]) => {
-      if (meta.ty != "void") {
-        return `if (!@hasDecl(${meta.ty}, "deepClone")) {
-          @compileError("${meta.ty}: does not have a deepClone() function.");
-        }`;
-      }
-      return "";
-    })
-    .join("\n")}
+  const compile_error: []const u8 = compile_error: {
+      var compile_error: []const u8 = "";
+      ${Object.entries(property_defs)
+        .map(([name, meta]) => {
+          if (meta.ty != "void" && meta.ty != "CSSNumber" && meta.ty != "CSSInteger") {
+            return required_functions.map(fn => `
+            if (!@hasDecl(${meta.ty}, "${fn}")) {
+              compile_error = compile_error ++ @typeName(${meta.ty}) ++ ": does not have a ${fn}() function.\\n";
+            }
+            `).join("\n");
+          }
+          return "";
+        })
+        .join("\n")}
+      const final_compile_error = compile_error;
+      break :compile_error final_compile_error;
+    };
+    if (compile_error.len > 0) {
+      @compileError(compile_error);
+    }
   }
 
   /// Parses a CSS property by name.
@@ -132,9 +161,11 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined) {
-            return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = .{ v[0].deepClone(allocator), v[1] } },`;
+            const clone_value = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v[0]" : "v[0].deepClone(allocator)";
+            return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = .{ ${clone_value}, v[1] } },`;
           }
-          return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = v.deepClone(allocator) },`;
+          const clone_value = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v.*" : "v.deepClone(allocator)";
+          return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = ${clone_value} },`;
         })
         .join("\n")}
       .all => |*a| return .{ .all = a.deepClone(allocator) },
@@ -168,7 +199,8 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           const value = meta.valid_prefixes === undefined ? "value" : "value[0]";
-          return `.${escapeIdent(name)} => |*value| ${value}.toCss(W, dest),`;
+          const to_css = meta.ty === "CSSNumber" ? `CSSNumberFns.toCss(&${value}, W, dest)` : meta.ty === "CSSInteger" ? `CSSIntegerFns.toCss(&${value}, W, dest)` : `${value}.toCss(W, dest)`;
+          return `.${escapeIdent(name)} => |*value| ${to_css},`;
         })
         .join("\n")}
       .all => |*keyword| keyword.toCss(W, dest),
@@ -219,6 +251,7 @@ function generatePropertyImplParseCases(property_defs: Record<string, PropertyDe
           ? `.{ .${escapeIdent(name)} = c }`
           : `.{ .${escapeIdent(name)} = .{ c, pre } }`;
       return `.${escapeIdent(name)} => ${capture} {
+    ${meta.eval_branch_quota !== undefined ? `@setEvalBranchQuota(${meta.eval_branch_quota});` : ""}
   if (css.generic.parseWithOptions(${meta.ty}, input, options).asValue()) |c| {
     if (input.expectExhausted().isOk()) {
       return .{ .result = ${ret} };
@@ -788,170 +821,170 @@ generateCode({
   "outline-color": {
     ty: "CssColor",
   },
-  // "outline-style": {
-  //   ty: "OutlineStyle",
-  // },
-  // "outline-width": {
-  //   ty: "BorderSideWidth",
-  // },
-  // "flex-direction": {
-  //   ty: "FlexDirection",
-  //   valid_prefixes: ["webkit", "ms"],
-  // },
-  // "flex-wrap": {
-  //   ty: "FlexWrap",
-  //   valid_prefixes: ["webkit", "ms"],
-  // },
-  // "flex-flow": {
-  //   ty: "FlexFlow",
-  //   valid_prefixes: ["webkit", "ms"],
-  //   shorthand: true,
-  // },
-  // "flex-grow": {
-  //   ty: "CSSNumber",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "flex-shrink": {
-  //   ty: "CSSNumber",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "flex-basis": {
-  //   ty: "LengthPercentageOrAuto",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // flex: {
-  //   ty: "Flex",
-  //   valid_prefixes: ["webkit", "ms"],
-  //   shorthand: true,
-  // },
-  // order: {
-  //   ty: "CSSInteger",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "align-content": {
-  //   ty: "AlignContent",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "justify-content": {
-  //   ty: "JustifyContent",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "place-content": {
-  //   ty: "PlaceContent",
-  //   shorthand: true,
-  // },
-  // "align-self": {
-  //   ty: "AlignSelf",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "justify-self": {
-  //   ty: "JustifySelf",
-  // },
-  // "place-self": {
-  //   ty: "PlaceSelf",
-  //   shorthand: true,
-  // },
-  // "align-items": {
-  //   ty: "AlignItems",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "justify-items": {
-  //   ty: "JustifyItems",
-  // },
-  // "place-items": {
-  //   ty: "PlaceItems",
-  //   shorthand: true,
-  // },
-  // "row-gap": {
-  //   ty: "GapValue",
-  // },
-  // "column-gap": {
-  //   ty: "GapValue",
-  // },
-  // gap: {
-  //   ty: "Gap",
-  //   shorthand: true,
-  // },
-  // "box-orient": {
-  //   ty: "BoxOrient",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "box-direction": {
-  //   ty: "BoxDirection",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "box-ordinal-group": {
-  //   ty: "CSSInteger",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "box-align": {
-  //   ty: "BoxAlign",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "box-flex": {
-  //   ty: "CSSNumber",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "box-flex-group": {
-  //   ty: "CSSInteger",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "box-pack": {
-  //   ty: "BoxPack",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "box-lines": {
-  //   ty: "BoxLines",
-  //   valid_prefixes: ["webkit", "moz"],
-  //   unprefixed: false,
-  // },
-  // "flex-pack": {
-  //   ty: "FlexPack",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-order": {
-  //   ty: "CSSInteger",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-align": {
-  //   ty: "BoxAlign",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-item-align": {
-  //   ty: "FlexItemAlign",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-line-pack": {
-  //   ty: "FlexLinePack",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-positive": {
-  //   ty: "CSSNumber",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-negative": {
-  //   ty: "CSSNumber",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
-  // "flex-preferred-size": {
-  //   ty: "LengthPercentageOrAuto",
-  //   valid_prefixes: ["ms"],
-  //   unprefixed: false,
-  // },
+  "outline-style": {
+    ty: "OutlineStyle",
+  },
+  "outline-width": {
+    ty: "BorderSideWidth",
+  },
+  "flex-direction": {
+    ty: "FlexDirection",
+    valid_prefixes: ["webkit", "ms"],
+  },
+  "flex-wrap": {
+    ty: "FlexWrap",
+    valid_prefixes: ["webkit", "ms"],
+  },
+  "flex-flow": {
+    ty: "FlexFlow",
+    valid_prefixes: ["webkit", "ms"],
+    shorthand: true,
+  },
+  "flex-grow": {
+    ty: "CSSNumber",
+    valid_prefixes: ["webkit"],
+  },
+  "flex-shrink": {
+    ty: "CSSNumber",
+    valid_prefixes: ["webkit"],
+  },
+  "flex-basis": {
+    ty: "LengthPercentageOrAuto",
+    valid_prefixes: ["webkit"],
+  },
+  flex: {
+    ty: "Flex",
+    valid_prefixes: ["webkit", "ms"],
+    shorthand: true,
+  },
+  order: {
+    ty: "CSSInteger",
+    valid_prefixes: ["webkit"],
+  },
+  "align-content": {
+    ty: "AlignContent",
+    valid_prefixes: ["webkit"],
+  },
+  "justify-content": {
+    ty: "JustifyContent",
+    valid_prefixes: ["webkit"],
+  },
+  "place-content": {
+    ty: "PlaceContent",
+    shorthand: true,
+  },
+  "align-self": {
+    ty: "AlignSelf",
+    valid_prefixes: ["webkit"],
+  },
+  "justify-self": {
+    ty: "JustifySelf",
+  },
+  "place-self": {
+    ty: "PlaceSelf",
+    shorthand: true,
+  },
+  "align-items": {
+    ty: "AlignItems",
+    valid_prefixes: ["webkit"],
+  },
+  "justify-items": {
+    ty: "JustifyItems",
+  },
+  "place-items": {
+    ty: "PlaceItems",
+    shorthand: true,
+  },
+  "row-gap": {
+    ty: "GapValue",
+  },
+  "column-gap": {
+    ty: "GapValue",
+  },
+  gap: {
+    ty: "Gap",
+    shorthand: true,
+  },
+  "box-orient": {
+    ty: "BoxOrient",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "box-direction": {
+    ty: "BoxDirection",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "box-ordinal-group": {
+    ty: "CSSInteger",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "box-align": {
+    ty: "BoxAlign",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "box-flex": {
+    ty: "CSSNumber",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "box-flex-group": {
+    ty: "CSSInteger",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "box-pack": {
+    ty: "BoxPack",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "box-lines": {
+    ty: "BoxLines",
+    valid_prefixes: ["webkit", "moz"],
+    unprefixed: false,
+  },
+  "flex-pack": {
+    ty: "FlexPack",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-order": {
+    ty: "CSSInteger",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-align": {
+    ty: "BoxAlign",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-item-align": {
+    ty: "FlexItemAlign",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-line-pack": {
+    ty: "FlexLinePack",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-positive": {
+    ty: "CSSNumber",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-negative": {
+    ty: "CSSNumber",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
+  "flex-preferred-size": {
+    ty: "LengthPercentageOrAuto",
+    valid_prefixes: ["ms"],
+    unprefixed: false,
+  },
   "margin-top": {
     ty: "LengthPercentageOrAuto",
     logical_group: { ty: "margin", category: "physical" },
@@ -1488,110 +1521,111 @@ generateCode({
   // "clip-rule": {
   //   ty: "FillRule",
   // },
-  // "mask-image": {
-  //   ty: "SmallList(Image, 1)",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "mask-mode": {
-  //   ty: "SmallList(MaskMode, 1)",
-  // },
-  // "mask-repeat": {
-  //   ty: "SmallList(BackgroundRepeat, 1)",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "mask-position-x": {
-  //   ty: "SmallList(HorizontalPosition, 1)",
-  // },
-  // "mask-position-y": {
-  //   ty: "SmallList(VerticalPosition, 1)",
-  // },
-  // "mask-position": {
-  //   ty: "SmallList(Position, 1)",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "mask-clip": {
-  //   ty: "SmallList(MaskClip, 1)",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "mask-origin": {
-  //   ty: "SmallList(GeometryBox, 1)",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "mask-size": {
-  //   ty: "SmallList(BackgroundSize, 1)",
-  //   valid_prefixes: ["webkit"],
-  // },
-  // "mask-composite": {
-  //   ty: "SmallList(MaskComposite, 1)",
-  // },
-  // "mask-type": {
-  //   ty: "MaskType",
-  // },
-  // mask: {
-  //   ty: "SmallList(Mask, 1)",
-  //   valid_prefixes: ["webkit"],
-  //   shorthand: true,
-  // },
-  // "mask-border-source": {
-  //   ty: "Image",
-  // },
-  // "mask-border-mode": {
-  //   ty: "MaskBorderMode",
-  // },
-  // "mask-border-slice": {
-  //   ty: "BorderImageSlice",
-  // },
-  // "mask-border-width": {
-  //   ty: "Rect(BorderImageSideWidth)",
-  // },
-  // "mask-border-outset": {
-  //   ty: "Rect(LengthOrNumber)",
-  // },
-  // "mask-border-repeat": {
-  //   ty: "BorderImageRepeat",
-  // },
-  // "mask-border": {
-  //   ty: "MaskBorder",
-  //   shorthand: true,
-  // },
-  // "-webkit-mask-composite": {
-  //   ty: "SmallList(WebKitMaskComposite, 1)",
-  // },
-  // "mask-source-type": {
-  //   ty: "SmallList(WebKitMaskSourceType, 1)",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "mask-box-image": {
-  //   ty: "BorderImage",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "mask-box-image-source": {
-  //   ty: "Image",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "mask-box-image-slice": {
-  //   ty: "BorderImageSlice",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "mask-box-image-width": {
-  //   ty: "Rect(BorderImageSideWidth)",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "mask-box-image-outset": {
-  //   ty: "Rect(LengthOrNumber)",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
-  // "mask-box-image-repeat": {
-  //   ty: "BorderImageRepeat",
-  //   valid_prefixes: ["webkit"],
-  //   unprefixed: false,
-  // },
+  "mask-image": {
+    ty: "SmallList(Image, 1)",
+    valid_prefixes: ["webkit"],
+  },
+  "mask-mode": {
+    ty: "SmallList(MaskMode, 1)",
+  },
+  "mask-repeat": {
+    ty: "SmallList(BackgroundRepeat, 1)",
+    valid_prefixes: ["webkit"],
+  },
+  "mask-position-x": {
+    ty: "SmallList(HorizontalPosition, 1)",
+  },
+  "mask-position-y": {
+    ty: "SmallList(VerticalPosition, 1)",
+  },
+  "mask-position": {
+    ty: "SmallList(Position, 1)",
+    valid_prefixes: ["webkit"],
+  },
+  "mask-clip": {
+    ty: "SmallList(MaskClip, 1)",
+    valid_prefixes: ["webkit"],
+    eval_branch_quota: 5000,
+  },
+  "mask-origin": {
+    ty: "SmallList(GeometryBox, 1)",
+    valid_prefixes: ["webkit"],
+  },
+  "mask-size": {
+    ty: "SmallList(BackgroundSize, 1)",
+    valid_prefixes: ["webkit"],
+  },
+  "mask-composite": {
+    ty: "SmallList(MaskComposite, 1)",
+  },
+  "mask-type": {
+    ty: "MaskType",
+  },
+  mask: {
+    ty: "SmallList(Mask, 1)",
+    valid_prefixes: ["webkit"],
+    shorthand: true,
+  },
+  "mask-border-source": {
+    ty: "Image",
+  },
+  "mask-border-mode": {
+    ty: "MaskBorderMode",
+  },
+  "mask-border-slice": {
+    ty: "BorderImageSlice",
+  },
+  "mask-border-width": {
+    ty: "Rect(BorderImageSideWidth)",
+  },
+  "mask-border-outset": {
+    ty: "Rect(LengthOrNumber)",
+  },
+  "mask-border-repeat": {
+    ty: "BorderImageRepeat",
+  },
+  "mask-border": {
+    ty: "MaskBorder",
+    shorthand: true,
+  },
+  "-webkit-mask-composite": {
+    ty: "SmallList(WebKitMaskComposite, 1)",
+  },
+  "mask-source-type": {
+    ty: "SmallList(WebKitMaskSourceType, 1)",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "mask-box-image": {
+    ty: "BorderImage",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "mask-box-image-source": {
+    ty: "Image",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "mask-box-image-slice": {
+    ty: "BorderImageSlice",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "mask-box-image-width": {
+    ty: "Rect(BorderImageSideWidth)",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "mask-box-image-outset": {
+    ty: "Rect(LengthOrNumber)",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
+  "mask-box-image-repeat": {
+    ty: "BorderImageRepeat",
+    valid_prefixes: ["webkit"],
+    unprefixed: false,
+  },
   // filter: {
   //   ty: "FilterList",
   //   valid_prefixes: ["webkit"],
@@ -1650,7 +1684,9 @@ const LengthPercentageOrAuto = css_values.length.LengthPercentageOrAuto;
 const PropertyCategory = css.PropertyCategory;
 const LogicalGroup = css.LogicalGroup;
 const CSSNumber = css.css_values.number.CSSNumber;
+const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const CSSInteger = css.css_values.number.CSSInteger;
+const CSSIntegerFns = css.css_values.number.CSSIntegerFns;
 const NumberOrPercentage = css.css_values.percentage.NumberOrPercentage;
 const Percentage = css.css_values.percentage.Percentage;
 const Angle = css.css_values.angle.Angle;
@@ -1724,30 +1760,30 @@ const BorderInlineEnd = border.BorderInlineEnd;
 const BorderBlock = border.BorderBlock;
 const BorderInline = border.BorderInline;
 const Outline = outline.Outline;
-// const OutlineStyle = outline.OutlineStyle;
-// const FlexDirection = flex.FlexDirection;
-// const FlexWrap = flex.FlexWrap;
-// const FlexFlow = flex.FlexFlow;
-// const Flex = flex.Flex;
-// const BoxOrient = flex.BoxOrient;
-// const BoxDirection = flex.BoxDirection;
-// const BoxAlign = flex.BoxAlign;
-// const BoxPack = flex.BoxPack;
-// const BoxLines = flex.BoxLines;
-// const FlexPack = flex.FlexPack;
-// const FlexItemAlign = flex.FlexItemAlign;
-// const FlexLinePack = flex.FlexLinePack;
-// const AlignContent = @"align".AlignContent;
-// const JustifyContent = @"align".JustifyContent;
-// const PlaceContent = @"align".PlaceContent;
-// const AlignSelf = @"align".AlignSelf;
-// const JustifySelf = @"align".JustifySelf;
-// const PlaceSelf = @"align".PlaceSelf;
-// const AlignItems = @"align".AlignItems;
-// const JustifyItems = @"align".JustifyItems;
-// const PlaceItems = @"align".PlaceItems;
-// const GapValue = @"align".GapValue;
-// const Gap = @"align".Gap;
+const OutlineStyle = outline.OutlineStyle;
+const FlexDirection = flex.FlexDirection;
+const FlexWrap = flex.FlexWrap;
+const FlexFlow = flex.FlexFlow;
+const Flex = flex.Flex;
+const BoxOrient = flex.BoxOrient;
+const BoxDirection = flex.BoxDirection;
+const BoxAlign = flex.BoxAlign;
+const BoxPack = flex.BoxPack;
+const BoxLines = flex.BoxLines;
+const FlexPack = flex.FlexPack;
+const FlexItemAlign = flex.FlexItemAlign;
+const FlexLinePack = flex.FlexLinePack;
+const AlignContent = @"align".AlignContent;
+const JustifyContent = @"align".JustifyContent;
+const PlaceContent = @"align".PlaceContent;
+const AlignSelf = @"align".AlignSelf;
+const JustifySelf = @"align".JustifySelf;
+const PlaceSelf = @"align".PlaceSelf;
+const AlignItems = @"align".AlignItems;
+const JustifyItems = @"align".JustifyItems;
+const PlaceItems = @"align".PlaceItems;
+const GapValue = @"align".GapValue;
+const Gap = @"align".Gap;
 const MarginBlock = margin_padding.MarginBlock;
 const Margin = margin_padding.Margin;
 const MarginInline = margin_padding.MarginInline;
@@ -1840,19 +1876,19 @@ const Composes = css_modules.Composes;
 // const ShapeRendering = svg.ShapeRendering;
 // const TextRendering = svg.TextRendering;
 // const ImageRendering = svg.ImageRendering;
-// const ClipPath = masking.ClipPath;
-// const MaskMode = masking.MaskMode;
-// const MaskClip = masking.MaskClip;
-// const GeometryBox = masking.GeometryBox;
-// const MaskComposite = masking.MaskComposite;
-// const MaskType = masking.MaskType;
-// const Mask = masking.Mask;
-// const MaskBorderMode = masking.MaskBorderMode;
-// const MaskBorder = masking.MaskBorder;
-// const WebKitMaskComposite = masking.WebKitMaskComposite;
-// const WebKitMaskSourceType = masking.WebKitMaskSourceType;
-// const BackgroundRepeat = background.BackgroundRepeat;
-// const BackgroundSize = background.BackgroundSize;
+const ClipPath = masking.ClipPath;
+const MaskMode = masking.MaskMode;
+const MaskClip = masking.MaskClip;
+const GeometryBox = masking.GeometryBox;
+const MaskComposite = masking.MaskComposite;
+const MaskType = masking.MaskType;
+const Mask = masking.Mask;
+const MaskBorderMode = masking.MaskBorderMode;
+const MaskBorder = masking.MaskBorder;
+const WebKitMaskComposite = masking.WebKitMaskComposite;
+const WebKitMaskSourceType = masking.WebKitMaskSourceType;
+const BackgroundRepeat = background.BackgroundRepeat;
+const BackgroundSize = background.BackgroundSize;
 // const FilterList = effects.FilterList;
 // const ContainerType = contain.ContainerType;
 // const Container = contain.Container;

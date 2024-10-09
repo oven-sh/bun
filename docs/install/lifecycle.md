@@ -44,11 +44,3 @@ To disable lifecycle scripts for all packages, use the `--ignore-scripts` flag.
 ```bash
 $ bun install --ignore-scripts
 ```
-
-## `--trust-all`
-
-To allow lifecycle scripts for all packages, use the `--trust-all` flag.
-
-```bash
-$ bun install --trust-all
-```

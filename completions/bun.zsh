@@ -24,7 +24,6 @@ _bun_add_completion() {
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
         '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
-        '--trust-all[Allow all lifecycle scripts in the package.json]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -75,7 +74,6 @@ _bun_unlink_completion() {
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
         '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
-        '--trust-all[Allow all lifecycle scripts in the package.json]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -120,7 +118,6 @@ _bun_link_completion() {
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
         '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
-        '--trust-all[Allow all lifecycle scripts in the package.json]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -331,7 +328,6 @@ _bun_install_completion() {
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
         '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
-        '--trust-all[Allow all lifecycle scripts in the package.json]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -378,7 +374,6 @@ _bun_remove_completion() {
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
         '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
-        '--trust-all[Allow all lifecycle scripts in the package.json]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -552,7 +547,6 @@ _bun_update_completion() {
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
         '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
-        '--trust-all[Allow all lifecycle scripts in the package.json]' \
         '-g[Add a package globally]' \
         '--global[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -576,7 +570,7 @@ _bun_outdated_completion() {
         '--no-progress[Disable the progress bar]' \
         '--help[Print this help menu]' &&
         ret=0
-
+    
     case $state in
     config)
         _bun_list_bunfig_toml

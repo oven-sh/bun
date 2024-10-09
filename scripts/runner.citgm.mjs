@@ -76,7 +76,7 @@ const clone_dir = tmpdirSync();
   console.log(`${clone_dir}/package.json`);
   console.log();
   const cmd = process.argv0;
-  const args = ["install", "--trust-all"];
+  const args = ["install"];
   console.log("❯", [cmd, ...args]);
 
   const result = spawnSync(cmd, args, { stdio: ["ignore", "inherit", "inherit"], cwd: clone_dir });

@@ -7309,9 +7309,6 @@ pub const PackageManager = struct {
                 if (cli.global or cli.ignore_scripts) {
                     this.do.run_scripts = false;
                 }
-                if (cli.trust_all) {
-                    this.do.run_scripts = true;
-                }
 
                 if (cli.trusted) {
                     this.do.trust_dependencies_from_args = true;
@@ -9221,7 +9218,6 @@ pub const PackageManager = struct {
         clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
         clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
         clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
-        clap.parseParam("--trust-all                           Allow all") catch unreachable,
         clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
@@ -9328,7 +9324,6 @@ pub const PackageManager = struct {
         no_progress: bool = false,
         no_verify: bool = false,
         ignore_scripts: bool = false,
-        trust_all: bool = false,
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
@@ -9623,7 +9618,7 @@ pub const PackageManager = struct {
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Display files that would be published, without publishing to the registry.<r>
-                        \\  <b><green>bun publish --dry-run<r>
+                        \\  <b><green>bun publish --dry-run<r>  
                         \\
                         \\  <d>Publish the current package with public access.<r>
                         \\  <b><green>bun publish --access public<r>
@@ -9691,7 +9686,6 @@ pub const PackageManager = struct {
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose") or Output.is_verbose;
             cli.ignore_scripts = args.flag("--ignore-scripts");
-            cli.trust_all = args.flag("--trust-all");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
 

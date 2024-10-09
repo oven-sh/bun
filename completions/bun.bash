@@ -2,16 +2,20 @@
 
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
+    if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+        local reset=$(shopt -p globstar)
+        shopt -s globstar
+    fi
 
     if [[ -z "${cur_word}" ]]; then
         COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
     else
         COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
     fi
-
-    $reset
+    
+    if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+        $reset
+    fi
 }
 
 _long_short_completion() {
@@ -78,7 +82,7 @@ _subcommand_comp_reply() {
 
 
 _bun_completions() {
-    if [[ ! "$OSTYPE" == "darwin"* ]]; then
+    if ! [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
         declare -A GLOBAL_OPTIONS;
         declare -A PACKAGE_OPTIONS;
         declare -A PM_OPTIONS;

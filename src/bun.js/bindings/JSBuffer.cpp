@@ -1697,23 +1697,9 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 lstart:
 
     if (!arg3.isUndefined()) {
-        if (arg3.isNumber()) {
-            auto fend = arg3.asNumber();
-            if (std::isnan(fend)) fend = 0;
-            if (fend == std::numeric_limits<double>::infinity()) fend = thisLength;
-            if (fend == -std::numeric_limits<double>::infinity()) fend = 0;
-            if (fend < thisLength) {
-                end = static_cast<uint32_t>(fend);
-            }
-        } else {
-            auto fend = arg3.toNumber(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (std::isnan(fend)) fend = 0;
-            if (fend == std::numeric_limits<double>::infinity()) fend = thisLength;
-            if (fend == -std::numeric_limits<double>::infinity()) fend = 0;
-            fend = std::trunc(fend);
-            end = static_cast<uint32_t>(fend);
-        }
+        auto lend = arg3.toLength(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (lend < thisLength) end = lend;
     }
 
     if (end <= start)

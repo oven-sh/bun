@@ -11336,8 +11336,8 @@ pub const PackageManager = struct {
                 };
                 outfile.close();
 
-                const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
-                const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
+                const infile_path = bun.path.joinStringBufWZ(&buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
+                const outfile_path = bun.path.joinStringBufWZ(&buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
                 bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
                     manager.cleanError(err, "copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});

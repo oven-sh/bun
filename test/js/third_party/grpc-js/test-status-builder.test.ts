@@ -15,17 +15,18 @@
  *
  */
 
-import * as assert from 'assert';
+import assert from "assert";
 
-import * as grpc from '../src';
-import { StatusBuilder } from '../src/status-builder';
+import * as grpc from "@grpc/grpc-js/build/src";
+import { StatusBuilder } from "@grpc/grpc-js/build/src/status-builder";
+import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 
-describe('StatusBuilder', () => {
-  it('is exported by the module', () => {
+describe("StatusBuilder", () => {
+  it("is exported by the module", () => {
     assert.strictEqual(StatusBuilder, grpc.StatusBuilder);
   });
 
-  it('builds a status object', () => {
+  it("builds a status object", () => {
     const builder = new StatusBuilder();
     const metadata = new grpc.Metadata();
     let result;
@@ -34,17 +35,17 @@ describe('StatusBuilder', () => {
     result = builder.withCode(grpc.status.OK);
     assert.strictEqual(result, builder);
     assert.deepStrictEqual(builder.build(), { code: grpc.status.OK });
-    result = builder.withDetails('foobar');
+    result = builder.withDetails("foobar");
     assert.strictEqual(result, builder);
     assert.deepStrictEqual(builder.build(), {
       code: grpc.status.OK,
-      details: 'foobar',
+      details: "foobar",
     });
     result = builder.withMetadata(metadata);
     assert.strictEqual(result, builder);
     assert.deepStrictEqual(builder.build(), {
       code: grpc.status.OK,
-      details: 'foobar',
+      details: "foobar",
       metadata,
     });
   });

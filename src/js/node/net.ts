@@ -881,7 +881,7 @@ class Server extends EventEmitter {
     if (typeof callback === "function") {
       if (!this[bunSocketInternal]) {
         this.once("close", function close() {
-          callback(new ERR_SERVER_NOT_RUNNING());
+          callback(ERR_SERVER_NOT_RUNNING());
         });
       } else {
         this.once("close", callback);

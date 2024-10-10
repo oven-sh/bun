@@ -21808,14 +21808,14 @@ fn NewParser_(
                             continue;
                         }
                         if (@as(Expr.Tag, property.key.?.data) != .e_string and @as(Expr.Tag, property.key.?.data) != .e_private_identifier) {
-                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key must be a string or private identifier") catch unreachable;
-                            out_properties.push(p.allocator, property.*) catch unreachable;
+                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key must be a string or private identifier") catch bun.outOfMemory();
+                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
                         } else if (property.flags.contains(.is_method)) {
-                            p.log.addError(p.source, property.value.?.loc, "'accessor' property cannot be a method") catch unreachable;
-                            out_properties.push(p.allocator, property.*) catch unreachable;
+                            p.log.addError(p.source, property.value.?.loc, "'accessor' property cannot be a method") catch bun.outOfMemory();
+                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
                         } else if (property.flags.contains(.is_computed)) {
-                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key cannot be computed") catch unreachable;
-                            out_properties.push(p.allocator, property.*) catch unreachable;
+                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key cannot be computed") catch bun.outOfMemory();
+                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
                         } else {
                             // 1. change property name to #name
                             var old_property_name: string = undefined;
@@ -21827,22 +21827,22 @@ fn NewParser_(
                             const loc = property.key.?.loc;
 
                             if (is_private_prop) {
-                                old_property_name = property.key.?.data.e_string.string(p.allocator) catch unreachable;
-                                new_property_name = std.fmt.allocPrint(p.allocator, "#{s}", .{old_property_name}) catch unreachable;
+                                old_property_name = property.key.?.data.e_string.string(p.allocator) catch bun.outOfMemory();
+                                new_property_name = std.fmt.allocPrint(p.allocator, "#{s}", .{old_property_name}) catch bun.outOfMemory();
                                 accessor_key = p.newExpr(E.String{ .data = old_property_name }, loc);
                             } else {
                                 old_property_name = p.symbols.items[property.key.?.data.e_private_identifier.ref.innerIndex()].original_name;
-                                new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}", .{old_property_name[1..]}) catch unreachable;
+                                new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}", .{old_property_name[1..]}) catch bun.outOfMemory();
                                 accessor_key = property.key.?;
                             }
 
                             prop_name_ref = p.generateTempRefKind(.private_field, new_property_name);
-                            p.current_scope.generated.push(p.allocator, prop_name_ref) catch unreachable;
+                            p.current_scope.generated.push(p.allocator, prop_name_ref) catch bun.outOfMemory();
 
                             property.key = p.newExpr(E.PrivateIdentifier{ .ref = prop_name_ref }, loc);
                             property.kind = .normal;
 
-                            out_properties.push(p.allocator, property.*) catch unreachable;
+                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
 
                             // 2. generate getter and setter
                             out_properties.push(p.allocator, Property{
@@ -21874,9 +21874,9 @@ fn NewParser_(
                                         },
                                     },
                                 }, loc),
-                            }) catch unreachable;
+                            }) catch bun.outOfMemory();
 
-                            const underscore_ref = p.declareGeneratedSymbol(.other, "_") catch unreachable;
+                            const underscore_ref = p.declareGeneratedSymbol(.other, "_") catch bun.outOfMemory();
                             out_properties.push(p.allocator, Property{
                                 .kind = .set,
                                 .ts_decorators = property.ts_decorators,
@@ -21924,7 +21924,7 @@ fn NewParser_(
                                         },
                                     },
                                 }, loc),
-                            }) catch unreachable;
+                            }) catch bun.outOfMemory();
                         }
                     }
                     class.properties = out_properties.slice();

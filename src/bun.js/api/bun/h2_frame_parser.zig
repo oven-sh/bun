@@ -740,6 +740,37 @@ pub const H2FrameParser = struct {
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
 
+    pub const StreamResumableIterator = struct {
+        parser: *H2FrameParser,
+        index: u32 = 0,
+        pub fn init(parser: *H2FrameParser) StreamResumableIterator {
+            return .{ .index = 0, .parser = parser };
+        }
+        pub fn next(this: *StreamResumableIterator) ?*Stream {
+            const capacity = this.parser.streams.unmanaged.capacity();
+            if (this.index > capacity) {
+                return null;
+            }
+            const metadata = this.parser.streams.unmanaged.metadata;
+            if (metadata == null) {
+                return null;
+            }
+            var it = this.parser.streams.iterator();
+            // resume the iterator from the same index
+            it.index = this.index;
+            while (it.next()) |item| {
+                this.index = it.index;
+                return item.value_ptr;
+            }
+            this.index = it.index;
+            return null;
+        }
+    };
+    pub const FlushState = enum {
+        no_action,
+        flushed,
+        backpressure,
+    };
     const Stream = struct {
         id: u32 = 0,
         state: enum(u8) {
@@ -898,7 +929,7 @@ pub const H2FrameParser = struct {
                 .max => return @min(maxLen - frameLen, 255),
             }
         }
-        pub fn flushQueue(this: *Stream, client: *H2FrameParser, written: *usize) bool {
+        pub fn flushQueue(this: *Stream, client: *H2FrameParser, written: *usize) FlushState {
             if (this.canSendData()) {
                 // flush one frame
                 if (this.dataFrameQueue.dequeue()) |frame| {
@@ -967,11 +998,11 @@ pub const H2FrameParser = struct {
                             }
                         }
                     }
-                    return no_backpressure;
+                    return if (no_backpressure) .flushed else .backpressure;
                 }
             }
             // empty or cannot send data
-            return true;
+            return .no_action;
         }
 
         pub fn queueFrame(this: *Stream, client: *H2FrameParser, bytes: []const u8, callback: JSC.JSValue, end_stream: bool) void {
@@ -1514,25 +1545,26 @@ pub const H2FrameParser = struct {
         var written: usize = 0;
         // try to send as much as we can until we reach backpressure
         while (this.outboundQueueSize > 0) {
-            var it = this.streams.iterator();
-            this.streams.lockPointers();
-            defer this.streams.unlockPointers();
-            while (it.next()) |*entry| {
-                var stream = entry.value_ptr.*;
+            var it = StreamResumableIterator.init(this);
+            while (it.next()) |stream| {
                 // reach backpressure
-                if (!stream.flushQueue(this, &written)) return written;
+                const result = stream.flushQueue(this, &written);
+                switch (result) {
+                    .flushed, .no_action => continue, //nothing is change
+                    .backpressure => return written, // backpressure we need to return
+                }
             }
         }
         return written;
     }
 
     pub fn flush(this: *H2FrameParser) usize {
+        this.ref();
+        defer this.unref();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
             else => {
-                this.ref();
-                defer this.unref();
                 // consider that backpressure is gone and flush data queue
                 this.has_nonnative_backpressure = false;
                 const bytes = this.writeBuffer.slice();
@@ -3164,9 +3196,8 @@ pub const H2FrameParser = struct {
 
         const array = JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
         var count: u32 = 0;
-        var it = this.streams.iterator();
-        while (it.next()) |*entry| {
-            var stream = entry.value_ptr.*;
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
             const value = stream.jsContext.get() orelse continue;
             array.putIndex(globalObject, count, value);
             count += 1;
@@ -3182,9 +3213,8 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected error argument", .{});
             return .undefined;
         }
-        var it = this.streams.iterator();
-        while (it.next()) |*entry| {
-            var stream = entry.value_ptr.*;
+        var it = StreamResumableIterator.init(this);
+        while (it.next()) |stream| {
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
                 stream.rstCode = args_list.ptr[0].to(u32);
@@ -3770,9 +3800,8 @@ pub const H2FrameParser = struct {
             hpack.deinit();
             this.hpack = null;
         }
-        var it = this.streams.iterator();
-        while (it.next()) |*entry| {
-            var stream = entry.value_ptr.*;
+        var it = this.streams.valueIterator();
+        while (it.next()) |stream| {
             stream.freeResources(this, true);
         }
         this.streams.deinit();

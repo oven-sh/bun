@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
+import { afterEach, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, forceGuardMalloc } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -84,6 +84,73 @@ afterEach(() => {
   for (const client of clients) {
     client.kill();
   }
+});
+
+// publish on a closed websocket
+// connecct 2 websocket clients to one server
+// wait for one to call close callback
+// publish to the other client
+// the other client should not receive the message
+// the server should not crash
+// https://github.com/oven-sh/bun/issues/4443
+it("websocket/4443", async () => {
+  var serverSockets: ServerWebSocket<unknown>[] = [];
+  var onFirstConnected = Promise.withResolvers();
+  var onSecondMessageEchoedBack = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    websocket: {
+      open(ws) {
+        serverSockets.push(ws);
+        ws.subscribe("test");
+        if (serverSockets.length === 2) {
+          onFirstConnected.resolve();
+        }
+      },
+      message(ws, message) {
+        onSecondMessageEchoedBack.resolve();
+        ws.close();
+      },
+      close(ws) {
+        ws.publish("test", "close");
+      },
+    },
+    fetch(req, server) {
+      server.upgrade(req);
+      return new Response();
+    },
+  });
+
+  var clients = [];
+  var closedCount = 0;
+  var onClientsOpened = Promise.withResolvers();
+
+  var { promise, resolve } = Promise.withResolvers();
+  for (let i = 0; i < 2; i++) {
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    ws.binaryType = "arraybuffer";
+
+    const clientSocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    clientSocket.binaryType = "arraybuffer";
+    clientSocket.onopen = () => {
+      clients.push(clientSocket);
+      if (clients.length === 2) {
+        onClientsOpened.resolve();
+      }
+    };
+    clientSocket.onmessage = e => {
+      clientSocket.send(e.data);
+    };
+    clientSocket.onclose = () => {
+      if (closedCount++ === 1) {
+        resolve();
+      }
+    };
+  }
+
+  await Promise.all([onFirstConnected.promise, onClientsOpened.promise]);
+  clients[0].close();
+  await promise;
 });
 
 describe("Server", () => {

@@ -863,8 +863,10 @@ pub const Interpreter = struct {
     root_shell: ShellState,
     root_io: IO,
 
-    has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    // Necessary for builtin commands.
+    keep_alive: bun.Async.KeepAlive = .{},
 
     vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
     async_commands_executing: u32 = 0,
@@ -1252,19 +1254,29 @@ pub const Interpreter = struct {
                 if (cwd) |*cc| cc.deref();
                 shargs.deinit();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
-                return .undefined;
+                return .zero;
             },
         };
 
+        if (globalThis.hasException()) {
+            jsobjs.deinit();
+            if (export_env) |*ee| ee.deinit();
+            if (cwd) |*cc| cc.deref();
+            shargs.deinit();
+            interpreter.finalize();
+            return .zero;
+        }
+
         interpreter.flags.quiet = quiet;
-
         interpreter.globalThis = globalThis;
-        interpreter.this_jsvalue = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
-        JSC.Codegen.JSShellInterpreter.resolveSetCached(interpreter.this_jsvalue, globalThis, resolve);
-        JSC.Codegen.JSShellInterpreter.rejectSetCached(interpreter.this_jsvalue, globalThis, reject);
+        const js_value = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
 
+        interpreter.this_jsvalue = js_value;
+        JSC.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
+        JSC.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
+        interpreter.keep_alive.ref(globalThis.bunVM());
         bun.Analytics.Features.shell += 1;
-        return interpreter.this_jsvalue;
+        return js_value;
     }
 
     pub fn parse(
@@ -1648,18 +1660,14 @@ pub const Interpreter = struct {
         return .undefined;
     }
 
-    fn ioToJSValue(this: *ThisInterpreter, buf: *bun.ByteList) JSValue {
+    fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const value = JSC.MarkedArrayBuffer.toNodeBuffer(
-            .{
-                .allocator = bun.default_allocator,
-                .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
-            },
-            this.event_loop.js.global,
-        );
-
-        return value;
+        const buffer: JSC.Buffer = .{
+            .allocator = bun.default_allocator,
+            .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
+        };
+        return buffer.toNodeBuffer(globalThis);
     }
 
     fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
@@ -1690,10 +1698,21 @@ pub const Interpreter = struct {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
             if (this.this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this.this_jsvalue)) |resolve| {
-                    _ = resolve.call(this.globalThis, .undefined, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                const this_jsvalue = this.this_jsvalue;
+                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
+                    this.this_jsvalue = .zero;
+                    const globalThis = this.globalThis;
+                    const loop = this.event_loop.js;
+                    this.keep_alive.disable();
+                    loop.enter();
+                    _ = resolve.call(globalThis, .undefined, &.{
+                        JSValue.jsNumberFromU16(exit_code),
+                        this.getBufferedStdout(globalThis),
+                        this.getBufferedStderr(globalThis),
+                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
+                    loop.exit();
                 }
             }
         } else {
@@ -1707,12 +1726,24 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
-            if (this.this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this.this_jsvalue)) |reject| {
-                    reject.call(this.globalThis, &[_]JSValue{ JSValue.jsNumberFromChar(1), this.getBufferedStdout(), this.getBufferedStderr() });
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
+            const this_jsvalue = this.this_jsvalue;
+            if (this_jsvalue != .zero) {
+                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this_jsvalue)) |reject| {
+                    const loop = this.event_loop.js;
+                    const globalThis = this.globalThis;
                     this.this_jsvalue = .zero;
+                    this.keep_alive.disable();
+
+                    loop.enter();
+                    _ = reject.call(globalThis, &[_]JSValue{
+                        JSValue.jsNumberFromChar(1),
+                        this.getBufferedStdout(globalThis),
+                        this.getBufferedStderr(globalThis),
+                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .undefined);
+
+                    loop.exit();
                 }
             }
         }
@@ -1724,6 +1755,7 @@ pub const Interpreter = struct {
             jsobj.unprotect();
         }
         this.root_io.deref();
+        this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
         this.this_jsvalue = .zero;
     }
@@ -1837,16 +1869,16 @@ pub const Interpreter = struct {
 
     pub fn getBufferedStdout(
         this: *ThisInterpreter,
+        globalThis: *JSGlobalObject,
     ) JSC.JSValue {
-        const stdout = this.ioToJSValue(this.root_shell.buffered_stdout());
-        return stdout;
+        return ioToJSValue(globalThis, this.root_shell.buffered_stdout());
     }
 
     pub fn getBufferedStderr(
         this: *ThisInterpreter,
+        globalThis: *JSGlobalObject,
     ) JSC.JSValue {
-        const stdout = this.ioToJSValue(this.root_shell.buffered_stderr());
-        return stdout;
+        return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
     }
 
     pub fn finalize(
@@ -1861,13 +1893,13 @@ pub const Interpreter = struct {
         return this.has_pending_activity.load(.seq_cst) > 0;
     }
 
-    fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
+    fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
         @fence(.seq_cst);
         _ = has_pending_activity.fetchAdd(1, .seq_cst);
         log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
 
-    fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
+    fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
         @fence(.seq_cst);
         _ = has_pending_activity.fetchSub(1, .seq_cst);
         log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
@@ -12124,7 +12156,7 @@ pub fn ShellTask(
     /// Function that is called on the main thread, once the event loop
     /// processes that the task is done
     comptime runFromMainThread_: fn (*Ctx) void,
-    comptime debug: fn (comptime fmt: []const u8, args: anytype) void,
+    comptime debug: bun.Output.LogFunction,
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },

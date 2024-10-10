@@ -149,8 +149,12 @@ pub const TestRunner = struct {
         this.has_pending_tests = false;
         this.pending_test = null;
 
+        const vm = JSC.VirtualMachine.get();
+        vm.auto_killer.clear();
+        vm.auto_killer.disable();
+
         // disable idling
-        JSC.VirtualMachine.get().wakeup();
+        vm.wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {
@@ -756,11 +760,11 @@ pub const TestScope = struct {
             // TODO: not easy to coerce JSInternalPromise as JSValue,
             // so simply wait for completion for now.
             switch (promise) {
-                .Internal => vm.waitForPromise(promise),
+                .internal => vm.waitForPromise(promise),
                 else => {},
             }
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     if (!promise.isHandled(vm.global.vm())) {
                         _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
                     }
@@ -771,10 +775,10 @@ pub const TestScope = struct {
 
                     return .{ .fail = expect.active_test_expectation_counter.actual };
                 },
-                .Pending => {
+                .pending => {
                     task.promise_state = .pending;
                     switch (promise) {
-                        .Normal => |p| {
+                        .normal => |p| {
                             _ = p.asValue(vm.global).then(vm.global, task, jsOnResolve, jsOnReject);
                             return .{ .pending = {} };
                         },
@@ -983,7 +987,7 @@ pub const DescribeScope = struct {
                 },
             };
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(globalObject.vm()) == .Pending) {
+                if (promise.status(globalObject.vm()) == .pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
@@ -1023,7 +1027,7 @@ pub const DescribeScope = struct {
             var result: JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
 
             if (result.asAnyPromise()) |promise| {
-                if (promise.status(globalThis.vm()) == .Pending) {
+                if (promise.status(globalThis.vm()) == .pending) {
                     result.protect();
                     vm.waitForPromise(promise);
                     result.unprotect();
@@ -1123,7 +1127,7 @@ pub const DescribeScope = struct {
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
                 switch (prom.status(globalObject.ptr().vm())) {
-                    JSPromise.Status.Fulfilled => {},
+                    .fulfilled => {},
                     else => {
                         _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
                         return .undefined;
@@ -1410,7 +1414,7 @@ pub const TestRunnerTask = struct {
         }
 
         this.sync_state = .pending;
-
+        jsc_vm.auto_killer.enable();
         var result = TestScope.run(&test_, this);
 
         if (this.describe.tests.items.len > test_id) {
@@ -1429,7 +1433,6 @@ pub const TestRunnerTask = struct {
                 // Let's allow any pending work to run, and then move on to the next test.
                 this.continueRunningTestsAfterMicrotasksRun();
             }
-
             return true;
         }
 
@@ -1551,8 +1554,22 @@ pub const TestRunnerTask = struct {
         describe.tests.items[test_id] = test_;
 
         if (from == .timeout) {
-            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
+            const vm = this.globalThis.bunVM();
+            const cancel_result = vm.auto_killer.kill();
+
+            const err = brk: {
+                if (cancel_result.processes > 0) {
+                    switch (Output.enable_ansi_colors_stdout) {
+                        inline else => |enable_ansi_colors| {
+                            break :brk this.globalThis.createErrorInstance(comptime Output.prettyFmt("Test {} timed out after {d}ms <r><d>({})<r>", enable_ansi_colors), .{ bun.fmt.quote(test_.label), test_.timeout_millis, cancel_result });
+                        },
+                    }
+                } else {
+                    break :brk this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+                }
+            };
+
+            _ = vm.uncaughtException(this.globalThis, err, true);
         }
 
         checkAssertionsCounter(result);
@@ -1620,6 +1637,7 @@ pub const TestRunnerTask = struct {
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
+
         Jest.runner.?.runNextTest();
     }
 
@@ -2146,15 +2164,10 @@ inline fn createEach(
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalObject, function: JSValue, args: []const JSValue) JSValue {
     vm.eventLoop().enter();
-    defer {
-        vm.eventLoop().exit();
-    }
+    defer vm.eventLoop().exit();
 
     globalObject.clearTerminationException();
-    const result = function.call(globalObject, .undefined, args);
-    result.ensureStillAlive();
-
-    return result;
+    return function.call(globalObject, .undefined, args) catch |err| globalObject.takeException(err);
 }
 
 const assert = bun.assert;

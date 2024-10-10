@@ -9,15 +9,16 @@
 //
 // For explanation on this, please nag @paperdave to write documentation on how everything works.
 import fs from "fs";
-import { writeFile, mkdir } from "fs/promises";
-import path from "path";
-import { sliceSourceCode } from "./builtin-parser";
-import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
-import { createAssertClientJS, createLogClientJS } from "./client-js";
+import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
-import { define } from "./replacements";
-import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import path from "path";
+import ErrorCode from "../bun.js/bindings/ErrorCode";
+import { sliceSourceCode } from "./builtin-parser";
+import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
+import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
+import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import { define } from "./replacements";
 
 const BASE = path.join(import.meta.dir, "../js");
 const debug = process.argv[2] === "--debug=ON";
@@ -431,6 +432,31 @@ writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCP
 // zig will complain if this file is outside of the module
 const js2nativeZigPath = path.join(import.meta.dir, "../bun.js/bindings/GeneratedJS2Native.zig");
 writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
+
+const generatedDTSPath = path.join(CODEGEN_DIR, "generated.d.ts");
+writeIfNotChanged(
+  generatedDTSPath,
+  (() => {
+    let dts = `
+// GENERATED TEMP FILE - DO NOT EDIT
+`;
+
+    for (let i = 0; i < ErrorCode.length; i++) {
+      const [code, _, name] = ErrorCode[i];
+      dts += `
+/**
+ * Generate a ${name} error with the \`code\` property set to ${code}.
+ *
+ * @param msg The error message
+ * @param args Additional arguments
+ */
+declare function $${code}(msg: string, ...args: any[]): ${name};
+`;
+    }
+
+    return dts;
+  })(),
+);
 
 mark("Generate Code");
 

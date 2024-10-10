@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
 import { spawnSync } from "bun";
+import { describe, expect, test } from "bun:test";
+import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
-import { writeFileSync, rmSync } from "fs";
 
 let cwd: string;
 

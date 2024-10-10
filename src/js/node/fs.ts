@@ -862,8 +862,7 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   $assert(overridden_fs);
   this[kFs] = overridden_fs;
 }
-ReadStream.prototype = {};
-ObjectSetPrototypeOf(ReadStream.prototype, NativeReadable.prototype);
+ReadStream.prototype = Object.create(NativeReadable.prototype);
 
 ReadStream.prototype._construct = function (callback) {
   if (NativeReadablePrototype._construct) {
@@ -1543,7 +1542,6 @@ setName(chown, "chown");
 setName(chownSync, "chownSync");
 setName(close, "close");
 setName(closeSync, "closeSync");
-setName(constants, "constants");
 setName(copyFile, "copyFile");
 setName(copyFileSync, "copyFileSync");
 setName(cp, "cp");
@@ -1580,7 +1578,6 @@ setName(mkdtemp, "mkdtemp");
 setName(mkdtempSync, "mkdtempSync");
 setName(open, "open");
 setName(openSync, "openSync");
-setName(promises, "promises");
 setName(read, "read");
 setName(readFile, "readFile");
 setName(readFileSync, "readFileSync");

@@ -93,6 +93,8 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.experimental_css = ctx.bundler_options.experimental_css;
+
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {
@@ -107,9 +109,6 @@ pub const Run = struct {
 
         b.options.env.behavior = .load_all_without_inlining;
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
@@ -252,9 +251,6 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
@@ -307,7 +303,7 @@ pub const Run = struct {
         }
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .Rejected) {
+            if (promise.status(vm.global.vm()) == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
                 if (vm.hot_reload != .none or handled) {
@@ -375,7 +371,7 @@ pub const Run = struct {
         {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .Rejected) {
+                if (prev_promise.status(vm.global.vm()) == .rejected) {
                     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
 
@@ -384,7 +380,7 @@ pub const Run = struct {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                        if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                             prev_promise = this.vm.pending_internal_promise;
                             _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                             continue;
@@ -395,7 +391,7 @@ pub const Run = struct {
 
                     vm.onBeforeExit();
 
-                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
                         _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                     }
@@ -403,7 +399,7 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
 
-                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;
                     _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
@@ -418,7 +414,7 @@ pub const Run = struct {
                         const result = vm.entry_point_result.value.get() orelse .undefined;
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
-                                .Pending => {
+                                .pending => {
                                     result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();

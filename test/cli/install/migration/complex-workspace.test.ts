@@ -1,7 +1,7 @@
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import path from "path";
-import { test, expect, describe, beforeAll, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
+import path from "path";
 
 let cwd = tmpdirSync();
 

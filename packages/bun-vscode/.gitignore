@@ -1,3 +1,10 @@
-node_modules
-extension
-example/.vscode
+# Project files
+
+/node_modules
+/extension
+/example/.vscode
+/.vscode-test
+
+# macOS files
+
+.DS_Store

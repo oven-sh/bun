@@ -729,7 +729,7 @@ pub const TestCommand = struct {
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec
-        Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         var env_loader = brk: {
@@ -1206,13 +1206,14 @@ pub const TestCommand = struct {
             reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
-                .Rejected => {
+                .rejected => {
                     _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
+
                         Global.exit(1);
                     }
 
@@ -1287,6 +1288,10 @@ pub const TestCommand = struct {
                 Output.prettyErrorln("<r>\n::endgroup::\n", .{});
                 Output.flush();
             }
+
+            // Ensure these never linger across files.
+            vm.auto_killer.clear();
+            vm.auto_killer.disable();
         }
 
         if (is_last) {

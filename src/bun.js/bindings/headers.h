@@ -276,7 +276,7 @@ CPP_DECL void JSC__JSFunction__optimizeSoon(JSC__JSValue JSValue0);
 #pragma mark - JSC::JSGlobalObject
 
 CPP_DECL VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0);
-CPP_DECL JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* arg0, void** arg1, uint16_t arg2, const ZigString* arg3);
+CPP_DECL JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* arg0, const JSC::JSValue* arg1, size_t arg2, const ZigString* arg3);
 CPP_DECL void JSC__JSGlobalObject__createSyntheticModule_(JSC__JSGlobalObject* arg0, ZigString* arg1, size_t arg2, JSC__JSValue* arg3, size_t arg4);
 CPP_DECL void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* arg0, ZigString* arg1);
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObject* arg0);

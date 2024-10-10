@@ -1,10 +1,10 @@
-import { gc as bunGC, spawnSync, unsafe, which } from "bun";
-import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, join, dirname } from "path";
-import fs, { openSync, closeSync } from "node:fs";
-import os from "node:os";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFile, readlink, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
+import os from "node:os";
+import { dirname, isAbsolute, join } from "path";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -396,6 +396,43 @@ expect.extend({
   toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
     try {
       fn();
+      return {
+        pass: false,
+        message: () => `Received function did not throw`,
+      };
+    } catch (e) {
+      // expect(e).toBeInstanceOf(cls);
+      if (!(e instanceof cls)) {
+        return {
+          pass: false,
+          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+        };
+      }
+
+      // expect(e).toHaveProperty("code");
+      if (!("code" in e)) {
+        return {
+          pass: false,
+          message: () => `Expected error to have property 'code'; got ${e}`,
+        };
+      }
+
+      // expect(e.code).toEqual(code);
+      if (e.code !== code) {
+        return {
+          pass: false,
+          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+        };
+      }
+
+      return {
+        pass: true,
+      };
+    }
+  },
+  async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+    try {
+      await fn();
       return {
         pass: false,
         message: () => `Received function did not throw`,
@@ -969,7 +1006,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
+  let err = stderrForInstall(await new Response(stderr).text());
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -983,6 +1020,11 @@ export async function runBunInstall(
   let out = await new Response(stdout).text();
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
+}
+
+// stderr with `slow filesystem` warning removed
+export function stderrForInstall(err: string) {
+  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1009,6 +1051,30 @@ export async function runBunUpdate(
   }
 
   return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
+}
+
+export async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "pm", "pack", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warning:");
+  expect(err).not.toContain("failed");
+  expect(err).not.toContain("panic:");
+
+  const out = await Bun.readableStreamToText(stdout);
+
+  const exitCode = await exited;
+  expect(exitCode).toBe(0);
+
+  return { out, err };
 }
 
 // If you need to modify, clone it
@@ -1078,6 +1144,7 @@ interface BunHarnessTestMatchers {
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
+  toThrowWithCodeAsync(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {
@@ -1284,3 +1351,9 @@ Object.defineProperty(globalThis, "gc", {
   enumerable: false,
   configurable: true,
 });
+
+export function waitForFileToExist(path: string, interval: number) {
+  while (!fs.existsSync(path)) {
+    sleepSync(interval);
+  }
+}

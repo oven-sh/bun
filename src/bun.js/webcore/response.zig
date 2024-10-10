@@ -137,7 +137,7 @@ pub const Response = struct {
 
     pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
+        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len(), .{})});
 
         {
             formatter.indent += 1;
@@ -206,10 +206,10 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         if (this.init.status_code < 200) {
-            return ZigString.init("error").toJS(globalThis);
+            return bun.String.static("error").toJS(globalThis);
         }
 
-        return ZigString.init("default").toJS(globalThis);
+        return bun.String.static("default").toJS(globalThis);
     }
 
     pub fn getStatusText(
@@ -261,10 +261,33 @@ pub const Response = struct {
     pub fn doClone(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) JSValue {
+        const this_value = callframe.this();
         const cloned = this.clone(globalThis);
-        return Response.makeMaybePooled(globalThis, cloned);
+        if (globalThis.hasException()) {
+            cloned.finalize();
+            return .zero;
+        }
+
+        const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
+
+        if (js_wrapper != .zero) {
+            if (cloned.body.value == .Locked) {
+                if (cloned.body.value.Locked.readable.get()) |readable| {
+                    // If we are teed, then we need to update the cached .body
+                    // value to point to the new readable stream
+                    // We must do this on both the original and cloned response
+                    // but especially the original response since it will have a stale .body value now.
+                    Response.bodySetCached(js_wrapper, globalThis, readable.value);
+                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                        Response.bodySetCached(this_value, globalThis, other_readable.value);
+                    }
+                }
+            }
+        }
+
+        return js_wrapper;
     }
 
     pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {
@@ -1033,9 +1056,18 @@ pub const Fetch = struct {
                         var prev = this.readable_stream_ref;
                         this.readable_stream_ref = .{};
                         defer prev.deinit();
+                        buffer_reset = false;
+                        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                        this.scheduled_response_buffer = .{
+                            .allocator = bun.default_allocator,
+                            .list = .{
+                                .items = &.{},
+                                .capacity = 0,
+                            },
+                        };
                         readable.ptr.Bytes.onData(
                             .{
-                                .temporary_and_done = bun.ByteList.initConst(chunk),
+                                .owned_and_done = bun.ByteList.initConst(chunk),
                             },
                             bun.default_allocator,
                         );
@@ -1269,8 +1301,13 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.call(globalObject, .undefined, &[_]JSC.JSValue{ js_hostname, js_cert });
-                        // if check failed abort the request
+                        const check_result = check_server_identity.call(
+                            globalObject,
+                            .undefined,
+                            &.{ js_hostname, js_cert },
+                        ) catch |err| globalObject.takeException(err);
+
+                        // > Returns <Error> object [...] on failure
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
                             this.is_waiting_abort = this.result.has_more;
@@ -1285,6 +1322,9 @@ pub const Fetch = struct {
                             this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                             return false;
                         }
+
+                        // > On success, returns <undefined>
+                        // We treat any non-error value as a success.
                         return true;
                     }
                 }
@@ -1315,7 +1355,10 @@ pub const Fetch = struct {
         fn clearAbortSignal(this: *FetchTasklet) void {
             const signal = this.signal orelse return;
             this.signal = null;
-            defer signal.unref();
+            defer {
+                signal.pendingActivityUnref();
+                signal.unref();
+            }
 
             signal.cleanNativeBindings(this);
         }
@@ -1427,9 +1470,9 @@ pub const Fetch = struct {
             return .{ .SystemError = fetch_error };
         }
 
-        pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
+        pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
-            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this);
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -1707,6 +1750,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.signal) |signal| {
+                signal.pendingActivityRef();
                 fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
             }
             return fetch_tasklet;
@@ -2124,7 +2168,7 @@ pub const Fetch = struct {
 
         if (url_str.isEmpty()) {
             is_error = true;
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+            const err = JSC.toTypeError(.ERR_INVALID_URL, fetch_error_blank_url, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
@@ -2143,7 +2187,7 @@ pub const Fetch = struct {
         }
 
         url = ZigURL.fromString(allocator, url_str) catch {
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
+            const err = JSC.toTypeError(.ERR_INVALID_URL, "fetch() URL is invalid", .{}, ctx);
             is_error = true;
             return JSPromise.rejectedPromiseValue(
                 globalThis,
@@ -2568,7 +2612,7 @@ pub const Fetch = struct {
             }
 
             if (request) |req| {
-                if (req.body.value == .Used or (req.body.value == .Locked and req.body.value.Locked.isDisturbed(Request, globalThis, first_arg))) {
+                if (req.body.value == .Used or (req.body.value == .Locked and (req.body.value.Locked.action != .none or req.body.value.Locked.isDisturbed(Request, globalThis, first_arg)))) {
                     globalThis.ERR_BODY_ALREADY_USED("Request body already used", .{}).throw();
                     is_error = true;
                     return .zero;
@@ -2943,6 +2987,16 @@ pub const Fetch = struct {
 
         const promise_val = promise.value();
 
+        const initial_body_reference_count: if (Environment.isDebug) usize else u0 = brk: {
+            if (Environment.isDebug) {
+                if (body.store()) |store| {
+                    break :brk store.ref_count.load(.monotonic);
+                }
+            }
+
+            break :brk 0;
+        };
+
         _ = FetchTasklet.queue(
             allocator,
             globalThis,
@@ -2975,10 +3029,26 @@ pub const Fetch = struct {
             promise,
         ) catch bun.outOfMemory();
 
+        if (Environment.isDebug) {
+            if (body.store()) |store| {
+                if (store.ref_count.load(.monotonic) == initial_body_reference_count) {
+                    Output.panic("Expected body ref count to have incremented in FetchTasklet", .{});
+                }
+            }
+        }
+
         // These are now owned by FetchTasklet.
         url = .{};
         headers = null;
-        body = AnyBlob{ .Blob = .{} };
+        // Reference count for the blob is incremented above.
+        if (body.store() != null) {
+            body.detach();
+        } else {
+            // These are single-use, and have effectively been moved to the FetchTasklet.
+            body = .{
+                .Blob = .{},
+            };
+        }
         proxy = null;
         url_proxy_buffer = "";
         signal = null;
@@ -2996,6 +3066,11 @@ pub const Headers = struct {
     entries: Headers.Entries = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
+
+    pub fn deinit(this: *Headers) void {
+        this.entries.deinit(this.allocator);
+        this.buf.clearAndFree(this.allocator);
+    }
 
     pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
         return if (ptr.offset + ptr.length <= this.buf.items.len)

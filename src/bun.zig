@@ -34,10 +34,38 @@ pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").auto_allocator;
 
-pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
-
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+
+/// Restrict a value to a certain interval unless it is a float and NaN.
+pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
+    bun.debugAssert(min <= max);
+    if (comptime (@TypeOf(self) == f32 or @TypeOf(self) == f64)) {
+        return clampFloat(self, min, max);
+    }
+    return std.math.clamp(self, min, max);
+}
+
+/// Restrict a value to a certain interval unless it is NaN.
+///
+/// Returns `max` if `self` is greater than `max`, and `min` if `self` is
+/// less than `min`. Otherwise this returns `self`.
+///
+/// Note that this function returns NaN if the initial value was NaN as
+/// well.
+pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self)) @TypeOf(_self) {
+    if (comptime !(@TypeOf(_self) == f32 or @TypeOf(_self) == f64)) {
+        @compileError("Only call this on floats.");
+    }
+    var self = _self;
+    if (self < min) {
+        self = min;
+    }
+    if (self > max) {
+        self = max;
+    }
+    return self;
+}
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -56,6 +84,19 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
 
     return default_allocator;
 }
+
+pub const OOM = error{OutOfMemory};
+
+pub const JSError = error{
+    /// There is an active exception on the global object. Options:
+    ///
+    /// - Bubble it up to the caller
+    /// - Call `global.takeException(err)` to get the JSValue of the exception,
+    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    JSError,
+};
+
+pub const detectCI = @import("./ci_info.zig").detectCI;
 
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
@@ -82,6 +123,8 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
+pub const Bitflags = @import("./bitflags.zig").Bitflags;
+pub const css = @import("./css/css_parser.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -257,6 +300,8 @@ pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.slice(iovec);
     return iovec.base[0..iovec.len];
 }
+
+pub const libarchive = @import("./libarchive/libarchive.zig");
 
 pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
@@ -957,13 +1002,14 @@ pub const StringArrayHashMapContext = struct {
     pub const Prehashed = struct {
         value: u32,
         input: []const u8,
+
         pub fn hash(this: @This(), s: []const u8) u32 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
             return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
         }
 
-        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
             return strings.eqlLong(a, b, true);
         }
     };
@@ -1073,6 +1119,10 @@ pub fn StringArrayHashMap(comptime Type: type) type {
 
 pub fn CaseInsensitiveASCIIStringArrayHashMap(comptime Type: type) type {
     return std.ArrayHashMap([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
+}
+
+pub fn CaseInsensitiveASCIIStringArrayHashMapUnmanaged(comptime Type: type) type {
+    return std.ArrayHashMapUnmanaged([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
 }
 
 pub fn StringArrayHashMapUnmanaged(comptime Type: type) type {
@@ -2185,9 +2235,12 @@ pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.pos
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    if (comptime !Environment.isWindows) {
-        argv = try std.process.argsAlloc(allocator);
-    } else {
+    if (comptime Environment.isPosix) {
+        argv = try allocator.alloc([:0]const u8, std.os.argv.len);
+        for (0..argv.len) |i| {
+            argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
+        }
+    } else if (comptime Environment.isWindows) {
         // Zig's implementation of `std.process.argsAlloc()`on Windows platforms
         // is not reliable, specifically the way it splits the command line string.
         //
@@ -2237,6 +2290,8 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         }
 
         argv = out_argv;
+    } else {
+        argv = try std.process.argsAlloc(allocator);
     }
 }
 
@@ -2944,6 +2999,12 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
+    @setCold(true);
+    bun.Analytics.Features.todo_panic = 1;
+    Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
+}
+
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
@@ -3235,6 +3296,64 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
+pub inline fn resolveSourcePath(
+    comptime root: enum { codegen, src },
+    comptime sub_path: string,
+) string {
+    return comptime path: {
+        var buf: bun.PathBuffer = undefined;
+        var fba = std.heap.FixedBufferAllocator.init(&buf);
+        const resolved = (std.fs.path.resolve(fba.allocator(), &.{
+            switch (root) {
+                .codegen => Environment.codegen_path,
+                .src => Environment.base_path ++ "/src",
+            },
+            sub_path,
+        }) catch
+            @compileError(unreachable))[0..].*;
+        break :path &resolved;
+    };
+}
+
+pub fn runtimeEmbedFile(
+    comptime root: enum { codegen, src, src_eager },
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.codegen_embed);
+
+    const abs_path = switch (root) {
+        .codegen => resolveSourcePath(.codegen, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
+    };
+
+    const static = struct {
+        var storage: []const u8 = undefined;
+        var once = std.once(load);
+
+        fn load() void {
+            storage = std.fs.cwd().readFileAlloc(default_allocator, abs_path, std.math.maxInt(usize)) catch |e| {
+                Output.panic(
+                    \\Failed to load '{s}': {}
+                    \\
+                    \\To improve iteration speed, some files are not embedded but
+                    \\loaded at runtime, at the cost of making the binary non-portable.
+                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
+                , .{ abs_path, e });
+            };
+        }
+    };
+
+    if (root == .src_eager and static.once.done) {
+        static.once.done = false;
+        default_allocator.free(static.storage);
+    }
+
+    static.once.call();
+
+    return static.storage;
+}
+
 pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
     if (Environment.isWindows) {
         return;
@@ -3376,7 +3495,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
-pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
+pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
             @compileLog(a);
@@ -3384,7 +3503,10 @@ pub fn assert_eql(a: anytype, b: anytype) callconv(callconv_inline) void {
             @compileError("A != B");
         }
     }
-    return assert(a == b);
+    if (!Environment.allow_assert) return;
+    if (a != b) {
+        Output.panic("Assertion failure: {} != {}", .{ a, b });
+    }
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
@@ -3392,10 +3514,8 @@ pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
 
-pub inline fn unsafeAssert(condition: bool) void {
-    if (!condition) {
-        unreachable;
-    }
+pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
+    if (!condition) unreachable;
 }
 
 pub const dns = @import("./dns.zig");
@@ -3657,6 +3777,8 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
+pub const bake = @import("bake/bake.zig");
+
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
     return inline for (@typeInfo(Enum).Enum.fields) |f| {
@@ -3666,4 +3788,153 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
 extern "C" fn Bun__ramSize() usize;
 pub fn getTotalMemorySize() usize {
     return Bun__ramSize();
+}
+
+pub const WeakPtrData = packed struct(u32) {
+    reference_count: u31 = 0,
+    finalized: bool = false,
+
+    pub fn onFinalize(this: *WeakPtrData) bool {
+        bun.debugAssert(!this.finalized);
+        this.finalized = true;
+        return this.reference_count == 0;
+    }
+};
+
+pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T)) type {
+    return struct {
+        const WeakRef = @This();
+
+        value: ?*T = null,
+        pub fn create(req: *T) WeakRef {
+            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
+            @field(req, @tagName(weakable_field)).reference_count += 1;
+            return .{ .value = req };
+        }
+
+        comptime {
+            if (@TypeOf(@field(@as(T, undefined), @tagName(weakable_field))) != WeakPtrData) {
+                @compileError("Expected " ++ @typeName(T) ++ " to have a " ++ @typeName(WeakPtrData) ++ " field named " ++ @tagName(weakable_field));
+            }
+        }
+
+        fn deinitInternal(this: *WeakRef, value: *T) void {
+            const weak_data: *WeakPtrData = &@field(value, @tagName(weakable_field));
+
+            this.value = null;
+            const count = weak_data.reference_count - 1;
+            weak_data.reference_count = count;
+            if (weak_data.finalized and count == 0) {
+                value.destroy();
+            }
+        }
+
+        pub fn deinit(this: *WeakRef) void {
+            if (this.value) |value| {
+                this.deinitInternal(value);
+            }
+        }
+
+        pub fn get(this: *WeakRef) ?*T {
+            if (this.value) |value| {
+                if (!@field(value, @tagName(weakable_field)).finalized) {
+                    return value;
+                }
+
+                this.deinitInternal(value);
+            }
+            return null;
+        }
+    };
+}
+
+pub const DebugThreadLock = if (Environment.allow_assert)
+    struct {
+        owning_thread: ?std.Thread.Id = null,
+
+        pub fn lock(impl: *@This()) void {
+            bun.assert(impl.owning_thread == null);
+            impl.owning_thread = std.Thread.getCurrentId();
+        }
+
+        pub fn unlock(impl: *@This()) void {
+            impl.assertLocked();
+            impl.owning_thread = null;
+        }
+
+        pub fn assertLocked(impl: *const @This()) void {
+            assert(std.Thread.getCurrentId() == impl.owning_thread);
+        }
+    }
+else
+    struct {
+        pub fn lock(_: *@This()) void {}
+        pub fn unlock(_: *@This()) void {}
+        pub fn assertLocked(_: *const @This()) void {}
+    };
+
+pub const bytecode_extension = ".jsc";
+
+/// An typed index into an array or other structure.
+/// maxInt is reserved for an empty state.
+///
+/// const Thing = struct {};
+/// const Index = bun.GenericIndex(u32, Thing)
+///
+/// The second argument prevents Zig from memoizing the
+/// call, which would otherwise make all indexes
+/// equal to each other.
+pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    const null_value = std.math.maxInt(backing_int);
+    return enum(backing_int) {
+        _,
+        const Index = @This();
+        comptime {
+            _ = uid;
+        }
+
+        /// Prefer this over @enumFromInt to assert the int is in range
+        pub fn init(int: backing_int) callconv(callconv_inline) Index {
+            bun.assert(int != null_value); // would be confused for null
+            return @enumFromInt(int);
+        }
+
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
+        pub fn get(i: @This()) callconv(callconv_inline) backing_int {
+            bun.assert(@intFromEnum(i) != null_value); // memory corruption
+            return @intFromEnum(i);
+        }
+
+        pub fn toOptional(oi: @This()) callconv(callconv_inline) Optional {
+            return @enumFromInt(oi.get());
+        }
+
+        pub const Optional = enum(backing_int) {
+            none = std.math.maxInt(backing_int),
+            _,
+
+            pub fn init(maybe: ?Index) callconv(callconv_inline) ?Index {
+                return if (maybe) |i| i.toOptional() else .none;
+            }
+
+            pub fn unwrap(oi: Optional) callconv(callconv_inline) ?Index {
+                return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
+            }
+        };
+    };
+}
+
+comptime {
+    // Must be nominal
+    assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}
+
+/// Reverse of the slice index operator.
+/// Given `&slice[index] == item`, returns the `index` needed.
+/// The item must be in the slice.
+pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    bun.assert(isSliceInBufferT(T, slice, item[0..1]));
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    const index = @divExact(offset, @sizeOf(T));
+    return index;
 }

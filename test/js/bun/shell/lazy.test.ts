@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "path";

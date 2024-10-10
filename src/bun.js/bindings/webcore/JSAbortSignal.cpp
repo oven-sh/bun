@@ -271,7 +271,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), *context, WTFMove(reason)))));
 }
 
@@ -293,7 +293,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_timeoutBody(J
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto milliseconds = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::timeout(*context, WTFMove(milliseconds)))));
 }
 
@@ -315,7 +315,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto signals = convert<IDLSequence<IDLInterface<AbortSignal>>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTFMove(signals)))));
 }
 
@@ -361,7 +361,7 @@ void JSAbortSignal::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSAbortSignal);
 
 template<typename Visitor>
-void JSAbortSignal::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+void JSAbortSignal::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSAbortSignal*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -369,8 +369,8 @@ void JSAbortSignal::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildren(visitor);
 }
 
-template void JSAbortSignal::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSAbortSignal::visitOutputConstraints(JSCell*, SlotVisitor&);
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSAbortSignal);
+
 void JSAbortSignal::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = jsCast<JSAbortSignal*>(cell);

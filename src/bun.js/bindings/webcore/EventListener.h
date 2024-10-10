@@ -53,17 +53,22 @@ public:
     virtual bool operator==(const EventListener&) const = 0;
     virtual void handleEvent(ScriptExecutionContext&, Event&) = 0;
 
-    virtual void visitJSFunction(JSC::AbstractSlotVisitor&) { }
-    virtual void visitJSFunction(JSC::SlotVisitor&) { }
+    virtual void visitJSFunction(JSC::AbstractSlotVisitor&) {}
+    virtual void visitJSFunction(JSC::SlotVisitor&) {}
 
     virtual bool isAttribute() const { return false; }
     Type type() const { return m_type; }
 
 #if ASSERT_ENABLED
-    virtual void checkValidityForEventTarget(EventTarget&) { }
+    virtual void checkValidityForEventTarget(EventTarget&)
+    {
+    }
 #endif
 
-    virtual JSC::JSObject* jsFunction() const { return nullptr; }
+    virtual JSC::JSObject* jsFunction() const
+    {
+        return nullptr;
+    }
     virtual JSC::JSObject* wrapper() const { return nullptr; }
 
 protected:

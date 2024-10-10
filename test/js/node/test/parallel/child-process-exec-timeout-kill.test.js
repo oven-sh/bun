@@ -34,26 +34,16 @@ test("exec with timeout and killSignal", done => {
     (err, stdout, stderr) => {
       console.log("[stdout]", stdout.trim());
       console.log("[stderr]", stderr.trim());
-
-      expect(err.killed).toBe(true);
-      expect(err.code).toBeNull();
-      expect(err.signal).toBe("SIGKILL");
-      expect(err.cmd).toBe(cmd);
       expect(stdout.trim()).toBe("");
       expect(stderr.trim()).toBe("");
+
+      expect(err?.killed).toBe(true);
+      expect(err?.code).toBeNull();
+      expect(err?.signal).toBe("SIGKILL");
+      expect(err?.cmd).toBe(cmd);
       done();
     },
   );
-});
-
-afterAll(() => {
-  // Clean up any stale processes
-  const { execSync } = require("child_process");
-  try {
-    execSync(`pkill -f "${path.basename(__filename)}"`);
-  } catch (error) {
-    // Ignore errors, as there might not be any processes to kill
-  }
 });
 
 //<#END_FILE: test-child-process-exec-timeout-kill.js

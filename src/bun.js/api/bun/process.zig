@@ -962,6 +962,7 @@ pub const PosixSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
+    ipc: ?bun.FileDescriptor = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1031,6 +1032,7 @@ pub const WindowsSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
+    ipc: ?bun.FileDescriptor = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1077,6 +1079,7 @@ pub const PosixSpawnResult = struct {
     stdin: ?bun.FileDescriptor = null,
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
+    ipc: ?bun.FileDescriptor = null,
     extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
@@ -1259,6 +1262,11 @@ pub fn spawnProcessPosix(
 
     attr.set(@intCast(flags)) catch {};
     attr.resetSignals() catch {};
+
+    if (options.ipc) |ipc| {
+        try actions.inherit(ipc);
+        spawned.ipc = ipc;
+    }
 
     const stdio_options: [3]PosixSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
     const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
@@ -1765,6 +1773,7 @@ pub const sync = struct {
         stdin: Stdio = .ignore,
         stdout: Stdio = .inherit,
         stderr: Stdio = .inherit,
+        ipc: ?bun.FileDescriptor = null,
         cwd: []const u8 = "",
         detached: bool = false,
 
@@ -1799,6 +1808,8 @@ pub const sync = struct {
                 .stdin = this.stdin.toStdio(),
                 .stdout = this.stdout.toStdio(),
                 .stderr = this.stderr.toStdio(),
+                .ipc = this.ipc,
+
                 .cwd = this.cwd,
                 .detached = this.detached,
                 .use_execve_on_macos = this.use_execve_on_macos,
@@ -2045,21 +2056,54 @@ pub const sync = struct {
         return spawnWithArgv(options, @ptrCast(args.items.ptr), @ptrCast(envp));
     }
 
+    // Forward signals from parent to the child process.
+    extern "C" fn Bun__registerSignalsForForwarding() void;
+    extern "C" fn Bun__unregisterSignalsForForwarding() void;
+
+    // The PID to forward signals to.
+    // Set to 0 when unregistering.
+    extern "C" var Bun__currentSyncPID: i64;
+
+    // Race condition: a signal could be sent before spawnProcessPosix returns.
+    // We need to make sure to send it after the process is spawned.
+    extern "C" fn Bun__sendPendingSignalIfNecessary() void;
+
     fn spawnPosix(
         options: *const Options,
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        Bun__currentSyncPID = 0;
+        Bun__registerSignalsForForwarding();
+        defer {
+            Bun__unregisterSignalsForForwarding();
+            bun.crash_handler.resetOnPosix();
+        }
         const process = switch (try spawnProcessPosix(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
+        Bun__currentSyncPID = @intCast(process.pid);
+
+        Bun__sendPendingSignalIfNecessary();
+
         var out = [2]std.ArrayList(u8){
             std.ArrayList(u8).init(bun.default_allocator),
             std.ArrayList(u8).init(bun.default_allocator),
         };
         var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
+        var success = false;
         defer {
+            // If we're going to return an error,
+            // let's make sure to clean up the output buffers
+            // and kill the process
+            if (!success) {
+                for (&out) |*array_list| {
+                    array_list.clearAndFree();
+                }
+                _ = std.c.kill(process.pid, 1);
+            }
+
             for (out_fds) |fd| {
                 if (fd != bun.invalid_fd) {
                     _ = bun.sys.close(fd);
@@ -2090,13 +2134,14 @@ pub const sync = struct {
             for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                 if (fd.* == bun.invalid_fd) continue;
                 while (true) {
-                    bytes.ensureUnusedCapacity(16384) catch bun.outOfMemory();
+                    bytes.ensureUnusedCapacity(16384) catch {
+                        return .{ .err = bun.sys.Error.fromCode(.NOMEM, .recv) };
+                    };
                     switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
                         .err => |err| {
                             if (err.isRetry() or err.getErrno() == .PIPE) {
                                 break;
                             }
-                            _ = std.c.kill(process.pid, 1);
                             return .{ .err = err };
                         },
                         .result => |bytes_read| {
@@ -2165,6 +2210,7 @@ pub const sync = struct {
             }
         }
 
+        success = true;
         return .{
             .result = Result{
                 .status = status,

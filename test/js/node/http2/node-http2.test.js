@@ -1,15 +1,15 @@
-import http2 from "node:http2";
-import { Duplex } from "stream";
-import tls from "node:tls";
-import net from "node:net";
 import { which } from "bun";
-import path from "node:path";
+import { bunEnv, bunExe } from "harness";
 import fs from "node:fs";
-import { bunExe, bunEnv, expectMaxObjectTypeCount } from "harness";
+import http2 from "node:http2";
+import net from "node:net";
 import { tmpdir } from "node:os";
+import path from "node:path";
+import tls from "node:tls";
+import { Duplex } from "stream";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import http2utils from "./helpers";
-import { afterAll, describe, beforeAll, it, test, expect } from "vitest";
-import { TLS_OPTIONS, nodeEchoServer, TLS_CERT } from "./http2-helpers";
+import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 
 const nodeExecutable = which("node");
 let nodeEchoServer_;

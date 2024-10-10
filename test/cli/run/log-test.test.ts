@@ -1,8 +1,8 @@
-import { it, expect } from "bun:test";
-import { basename, dirname, join } from "path";
+import { spawnSync } from "bun";
+import { expect, it } from "bun:test";
 import * as fs from "fs";
-import { readableStreamToText, spawnSync } from "bun";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
+import { dirname, join } from "path";
 
 it("should not log .env when quiet", async () => {
   writeDirectoryTree("/tmp/log-test-silent", {

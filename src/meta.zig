@@ -3,6 +3,41 @@ const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
+pub fn EnumFields(comptime T: type) []const std.builtin.Type.EnumField {
+    const tyinfo = @typeInfo(T);
+    return switch (tyinfo) {
+        .Union => std.meta.fields(tyinfo.Union.tag_type.?),
+        .Enum => tyinfo.Enum.fields,
+        else => {
+            @compileError("Used `EnumFields(T)` on a type that is not an `enum` or a `union(enum)`");
+        },
+    };
+}
+
+pub fn ReturnOfMaybe(comptime function: anytype) type {
+    const Func = @TypeOf(function);
+    const typeinfo: std.builtin.Type.Fn = @typeInfo(Func).Fn;
+    const MaybeType = typeinfo.return_type orelse @compileError("Expected the function to have a return type");
+    return MaybeResult(MaybeType);
+}
+
+pub fn MaybeResult(comptime MaybeType: type) type {
+    const maybe_ty_info = @typeInfo(MaybeType);
+
+    const maybe = maybe_ty_info.Union;
+    if (maybe.fields.len != 2) @compileError("Expected the Maybe type to be a union(enum) with two variants");
+
+    if (!std.mem.eql(u8, maybe.fields[0].name, "err")) {
+        @compileError("Expected the first field of the Maybe type to be \"err\", got: " ++ maybe.fields[0].name);
+    }
+
+    if (!std.mem.eql(u8, maybe.fields[1].name, "result")) {
+        @compileError("Expected the second field of the Maybe type to be \"result\"" ++ maybe.fields[1].name);
+    }
+
+    return maybe.fields[1].type;
+}
+
 pub fn ReturnOf(comptime function: anytype) type {
     return ReturnOfType(@TypeOf(function));
 }
@@ -17,8 +52,8 @@ pub fn typeName(comptime Type: type) []const u8 {
     return typeBaseName(name);
 }
 
-// partially emulates behaviour of @typeName in previous Zig versions,
-// converting "some.namespace.MyType" to "MyType"
+/// partially emulates behaviour of @typeName in previous Zig versions,
+/// converting "some.namespace.MyType" to "MyType"
 pub fn typeBaseName(comptime fullname: [:0]const u8) [:0]const u8 {
     // leave type name like "namespace.WrapperType(namespace.MyType)" as it is
     const baseidx = comptime std.mem.indexOf(u8, fullname, "(");
@@ -73,4 +108,85 @@ pub fn Item(comptime T: type) type {
         },
         else => return std.meta.Child(T),
     }
+}
+
+/// Returns .{a, ...args_}
+pub fn ConcatArgs1(
+    comptime func: anytype,
+    a: anytype,
+    args_: anytype,
+) std.meta.ArgsTuple(@TypeOf(func)) {
+    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+    args[0] = a;
+
+    inline for (args_, 1..) |arg, i| {
+        args[i] = arg;
+    }
+
+    return args;
+}
+
+/// Returns .{a, b, ...args_}
+pub inline fn ConcatArgs2(
+    comptime func: anytype,
+    a: anytype,
+    b: anytype,
+    args_: anytype,
+) std.meta.ArgsTuple(@TypeOf(func)) {
+    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+    args[0] = a;
+    args[1] = b;
+
+    inline for (args_, 2..) |arg, i| {
+        args[i] = arg;
+    }
+
+    return args;
+}
+
+/// Returns .{a, b, c, d, ...args_}
+pub inline fn ConcatArgs4(
+    comptime func: anytype,
+    a: anytype,
+    b: anytype,
+    c: anytype,
+    d: anytype,
+    args_: anytype,
+) std.meta.ArgsTuple(@TypeOf(func)) {
+    var args: std.meta.ArgsTuple(@TypeOf(func)) = undefined;
+    args[0] = a;
+    args[1] = b;
+    args[2] = c;
+    args[3] = d;
+
+    inline for (args_, 4..) |arg, i| {
+        args[i] = arg;
+    }
+
+    return args;
+}
+
+// Copied from std.meta
+fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
+    var tuple_fields: [types.len]std.builtin.Type.StructField = undefined;
+    inline for (types, 0..) |T, i| {
+        @setEvalBranchQuota(10_000);
+        var num_buf: [128]u8 = undefined;
+        tuple_fields[i] = .{
+            .name = std.fmt.bufPrintZ(&num_buf, "{d}", .{i}) catch unreachable,
+            .type = T,
+            .default_value = null,
+            .is_comptime = false,
+            .alignment = if (@sizeOf(T) > 0) @alignOf(T) else 0,
+        };
+    }
+
+    return @Type(.{
+        .Struct = .{
+            .is_tuple = true,
+            .layout = .auto,
+            .decls = &.{},
+            .fields = &tuple_fields,
+        },
+    });
 }

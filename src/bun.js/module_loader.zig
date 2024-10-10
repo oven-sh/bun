@@ -88,56 +88,6 @@ const String = bun.String;
 
 const debug = Output.scoped(.ModuleLoader, true);
 
-// Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
-// from there instead of the ones embedded into the binary.
-// In debug mode, this is set automatically for you, using the path relative to this file.
-fn jsModuleFromFile(from_path: string, comptime input: string) string {
-    // `modules_dev` is not minified or committed. Later we could also try loading source maps for it too.
-    const moduleFolder = if (comptime Environment.isDebug) "modules_dev" else "modules";
-
-    const Holder = struct {
-        pub const file = @embedFile("../js/out/" ++ moduleFolder ++ "/" ++ input);
-    };
-
-    if ((comptime !Environment.allow_assert) and from_path.len == 0) {
-        return Holder.file;
-    }
-
-    var file: std.fs.File = undefined;
-    if ((comptime Environment.allow_assert) and from_path.len == 0) {
-        const absolute_path = comptime (Environment.base_path ++ (std.fs.path.dirname(std.fs.path.dirname(@src().file).?).?) ++ "/js/out/" ++ moduleFolder ++ "/" ++ input);
-        file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
-            const WarnOnce = struct {
-                pub var warned = false;
-            };
-            if (!WarnOnce.warned) {
-                WarnOnce.warned = true;
-                Output.prettyErrorln("Could not find file: " ++ absolute_path ++ " - using embedded version", .{});
-            }
-            return Holder.file;
-        };
-    } else {
-        var parts = [_]string{ from_path, "src/js/out/" ++ moduleFolder ++ "/" ++ input };
-        var buf: bun.PathBuffer = undefined;
-        var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
-        buf[absolute_path_to_use.len] = 0;
-        file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
-            const WarnOnce = struct {
-                pub var warned = false;
-            };
-            if (!WarnOnce.warned) {
-                WarnOnce.warned = true;
-                Output.prettyErrorln("Could not find file: {s}, so using embedded version", .{absolute_path_to_use});
-            }
-            return Holder.file;
-        };
-    }
-
-    const contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file " ++ input);
-    file.close();
-    return contents;
-}
-
 inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
         .allocator = null,
@@ -234,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                bun.fmt.formatJSONStringUTF8(specifier),
+                bun.fmt.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -486,7 +436,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -529,6 +479,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .allow_bytecode_cache = true,
             };
 
             defer {
@@ -623,8 +574,9 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (parse_result.already_bundled) {
+            if (parse_result.already_bundled != .none) {
                 const duped = String.createUTF8(specifier);
+                const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -632,6 +584,9 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .already_bundled = true,
                     .hash = 0,
+                    .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                    .bytecode_cache_size = bytecode_slice.len,
+                    .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -717,10 +672,10 @@ pub const RuntimeTranspilerStore = struct {
                 // In a benchmarking loading @babel/standalone 100 times:
                 //
                 // After ensureHash:
-                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 354.00 ms    4.2%    354.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 // Before ensureHash:
-                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                // 506.00 ms    6.1%    506.00 ms           WTF::StringImpl::hashSlowCase() const
                 //
                 result.ensureHash();
 
@@ -1632,7 +1587,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -1665,6 +1620,7 @@ pub const ModuleLoader = struct {
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
                     .keep_json_and_toml_as_one_statement = true,
+                    .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1810,7 +1766,8 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (parse_result.already_bundled) {
+                if (parse_result.already_bundled != .none) {
+                    const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1818,6 +1775,9 @@ pub const ModuleLoader = struct {
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
                         .hash = 0,
+                        .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
+                        .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
+                        .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
                 }
 
@@ -2113,6 +2073,58 @@ pub const ModuleLoader = struct {
             },
 
             else => {
+                if (virtual_source == null) {
+                    if (comptime !disable_transpilying) {
+                        if (jsc_vm.isWatcherEnabled()) auto_watch: {
+                            if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                const input_fd: bun.StoredFileDescriptorType = brk: {
+                                    // on macOS, we need a file descriptor to receive event notifications on it.
+                                    // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
+                                    if (comptime Environment.isMac) {
+                                        switch (bun.sys.open(
+                                            &(std.posix.toPosixPath(path.text) catch break :auto_watch),
+                                            bun.C.O_EVTONLY,
+                                            0,
+                                        )) {
+                                            .err => break :auto_watch,
+                                            .result => |fd| break :brk @enumFromInt(fd.cast()),
+                                        }
+                                    } else {
+                                        // Otherwise, don't even bother opening it.
+                                        break :brk .zero;
+                                    }
+                                };
+                                const hash = JSC.GenericWatcher.getHash(path.text);
+                                switch (jsc_vm.bun_watcher.addFile(
+                                    input_fd,
+                                    path.text,
+                                    hash,
+                                    loader,
+                                    .zero,
+                                    null,
+                                    true,
+                                )) {
+                                    .err => {
+                                        if (comptime Environment.isMac) {
+                                            // If any error occurs and we just
+                                            // opened the file descriptor to
+                                            // receive event notifications on
+                                            // it, we should close it.
+                                            if (input_fd != .zero) {
+                                                _ = bun.sys.close(bun.toFD(input_fd));
+                                            }
+                                        }
+
+                                        // we don't consider it a failure if we cannot watch the file
+                                        // they didn't open the file
+                                    },
+                                    .result => {},
+                                }
+                            }
+                        }
+                    }
+                }
+
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 const allocator = stack_buf.get();
                 var buf = MutableString.init2048(allocator) catch bun.outOfMemory();
@@ -2146,34 +2158,14 @@ pub const ModuleLoader = struct {
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-        var was_http = false;
-        if (jsc_vm.bundler.options.serve) {
-            if (strings.hasPrefixComptime(slice, "https://")) {
-                slice = slice["https://".len..];
-                was_http = true;
-            } else if (strings.hasPrefixComptime(slice, "http://")) {
-                slice = slice["http://".len..];
-                was_http = true;
-            }
-        }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
         }
 
         if (jsc_vm.origin.path.len > 1) {
             if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
                 slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        if (jsc_vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
             }
         }
 
@@ -2292,7 +2284,7 @@ pub const ModuleLoader = struct {
                     virtual_source = &virtual_source_to_use.?;
                 }
             } else {
-                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.createErrorInstanceWithCode(.MODULE_NOT_FOUND, "Blob not found", .{}).asVoid());
+                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
                 return null;
             }
         }
@@ -2572,6 +2564,9 @@ pub const ModuleLoader = struct {
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
                     .source_code_needs_deref = false,
+                    .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
+                    .bytecode_cache_size = file.bytecode.len,
+                    .is_commonjs_module = file.module_format == .cjs,
                 };
             }
         }
@@ -2819,7 +2814,7 @@ pub const HardcodedModule = enum {
 
     pub const Alias = struct {
         path: string,
-        tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
+        tag: ImportRecord.Tag = .builtin,
     };
 
     pub const Aliases = struct {

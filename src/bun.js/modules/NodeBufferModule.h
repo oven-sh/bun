@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include "../bindings/JSBuffer.h"
+#include "ErrorCode.h"
 #include "JavaScriptCore/PageCount.h"
 #include "_NativeModule.h"
 #include "wtf/SIMDUTF.h"
@@ -26,7 +27,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     if (UNLIKELY(bufferView->isDetached())) {
       throwTypeError(lexicalGlobalObject, throwScope,
                      "ArrayBufferView is detached"_s);
-      return JSValue::encode({});
+      return {};
     }
 
     byteLength = bufferView->byteLength();
@@ -45,9 +46,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     }
 
     if (UNLIKELY(impl->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBuffer is detached"_s);
-      return JSValue::encode({});
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     byteLength = impl->byteLength();
@@ -58,11 +58,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
 
     ptr = reinterpret_cast<const char *>(impl->data());
   } else {
-    throwVMError(
-        lexicalGlobalObject, throwScope,
-        createTypeError(lexicalGlobalObject,
-                        "First argument must be an ArrayBufferView"_s));
-    return JSValue::encode({});
+    Bun::throwError(lexicalGlobalObject, throwScope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "First argument must be an ArrayBufferView"_s);
+    return {};
   }
 
   RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(
@@ -82,9 +81,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
   if (bufferView) {
 
     if (UNLIKELY(bufferView->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBufferView is detached"_s);
-      return JSValue::encode({});
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     byteLength = bufferView->byteLength();
@@ -100,7 +98,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     if (UNLIKELY(impl->isDetached())) {
       throwTypeError(lexicalGlobalObject, throwScope,
                      "ArrayBuffer is detached"_s);
-      return JSValue::encode({});
+      return {};
     }
 
     if (!impl) {
@@ -115,11 +113,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
 
     ptr = reinterpret_cast<const char *>(impl->data());
   } else {
-    throwVMError(
-        lexicalGlobalObject, throwScope,
-        createTypeError(lexicalGlobalObject,
-                        "First argument must be an ArrayBufferView"_s));
-    return JSValue::encode({});
+    Bun::throwError(lexicalGlobalObject, throwScope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "First argument must be an ArrayBufferView"_s);
+    return {};
   }
 
   RELEASE_AND_RETURN(
@@ -137,7 +134,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
 
   throwException(globalObject, scope,
                  createError(globalObject, "Not implemented"_s));
-  return JSValue::encode(jsUndefined());
+  return {};
 }
 
 DEFINE_NATIVE_MODULE(NodeBuffer) {
@@ -170,7 +167,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
 
   put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(std::numeric_limits<unsigned>().max()));
+      JSC::jsNumber(WTF::String::MaxLength));
 
   JSC::JSObject *constants = JSC::constructEmptyObject(
       lexicalGlobalObject, globalObject->objectPrototype(), 2);
@@ -178,7 +175,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
                        JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
   constants->putDirect(vm,
                        JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(std::numeric_limits<unsigned>().max()));
+                       JSC::jsNumber(WTF::String::MaxLength));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 

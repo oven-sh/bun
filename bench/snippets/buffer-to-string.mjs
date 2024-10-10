@@ -1,6 +1,6 @@
-import { bench, run } from "./runner.mjs";
 import { Buffer } from "node:buffer";
 import crypto from "node:crypto";
+import { bench, run } from "./runner.mjs";
 
 const bigBuffer = Buffer.from("hello world".repeat(10000));
 const converted = bigBuffer.toString("base64");

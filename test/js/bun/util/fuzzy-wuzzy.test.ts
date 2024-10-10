@@ -19,7 +19,7 @@
 
 const ENABLE_LOGGING = false;
 
-import { describe, expect, test } from "bun:test";
+import { describe, test } from "bun:test";
 import { isWindows } from "harness";
 
 const Promise = globalThis.Promise;

@@ -56,6 +56,13 @@ export const iniInternals = {
   loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
+export const cssInternals = {
+  minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
+  prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
+};
+
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
@@ -104,3 +111,33 @@ export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindin
    */
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
+
+// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
+export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
+
+export const npmTag: (
+  name: string,
+) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
+  $newZigFunction("dependency.zig", "Version.Tag.inferFromJS", 1);
+
+export const readTarball: (tarball: string) => any = $newZigFunction("pack_command.zig", "bindings.jsReadTarball", 1);
+
+export const isArchitectureMatch: (architecture: string[]) => boolean = $newZigFunction(
+  "npm.zig",
+  "Architecture.jsFunctionArchitectureIsMatch",
+  1,
+);
+
+export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $newZigFunction(
+  "npm.zig",
+  "OperatingSystem.jsFunctionOperatingSystemIsMatch",
+  1,
+);
+
+export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+
+export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
+  "NodeModuleModule.cpp",
+  "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  0,
+);

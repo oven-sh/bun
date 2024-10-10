@@ -28,7 +28,7 @@ execute_process(
     GIT_MERGEBASE_RESULT
 )
 if(NOT GIT_MERGEBASE_RESULT EQUAL 0)
-  message(${WARNING} "Command failed: ${GIT_MERGEBASE_COMMAND} ${GIT_MERGEBASE_ERROR}")
+  message(${WARNING} "Command failed: ${GIT_MERGEBASE_COMMAND}" "\n" ${GIT_MERGEBASE_ERROR})
   return()
 endif()
 
@@ -50,7 +50,7 @@ execute_process(
 )
 
 if(NOT GIT_DIFF_RESULT EQUAL 0)
-  message(${WARNING} "Command failed: ${GIT_DIFF_COMMAND} ${GIT_DIFF_ERROR}")
+  message(${WARNING} "Command failed: ${GIT_DIFF_COMMAND}" "\n" ${GIT_DIFF_ERROR})
   return()
 endif()
 

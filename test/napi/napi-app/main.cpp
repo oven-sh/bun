@@ -646,7 +646,8 @@ napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
 }
 
 // throw_error(code: string|undefined, msg: string|undefined,
-// kind: 'error'|'type_error'|'range_error'|'syntax_error')
+// error_kind: 'error'|'type_error'|'range_error'|'syntax_error')
+// if code and msg are JS undefined then change them to nullptr
 napi_value throw_error(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -688,8 +689,9 @@ napi_value throw_error(const Napi::CallbackInfo &info) {
   }
 }
 
-// create_and_throw_error(code: string|undefined, msg: string|undefined,
-// kind: 'error'|'type_error'|'range_error'|'syntax_error')
+// create_and_throw_error(code: any, msg: any,
+// error_kind: 'error'|'type_error'|'range_error'|'syntax_error')
+// if code and msg are JS null then change them to nullptr
 napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -719,8 +721,17 @@ napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
 
   napi_value err;
   napi_status create_status = create_error_function(env, js_code, js_msg, &err);
+  // cases that should fail:
+  // - js_msg is nullptr
+  // - js_msg is not a string
+  // - js_code is not nullptr and not a string
+  // also we need to make sure not to call get_typeof with nullptr, since it
+  // asserts that napi_typeof succeeded
   if (!js_msg || get_typeof(env, js_msg) != napi_string ||
       (js_code && get_typeof(env, js_code) != napi_string)) {
+    // bun and node may return different errors here depending on in what order
+    // the parameters are checked, but what's important is that there is an
+    // error
     assert(create_status == napi_string_expected ||
            create_status == napi_invalid_arg);
     return ok(env);

@@ -637,8 +637,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
                 .ca_count = @intCast(init_opts.ca.len),
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
-
-                // TODO: is this needed?
                 .request_cert = 1,
             };
 

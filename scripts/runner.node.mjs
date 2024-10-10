@@ -891,7 +891,7 @@ function isHidden(path) {
  * @returns {string[]}
  */
 async function getTests(cwd) {
-  async function* getFiles(cwd, path) {
+  function* getFiles(cwd, path) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
@@ -906,8 +906,9 @@ async function getTests(cwd) {
       }
     }
   }
+  // prettier-ignore
   return [
-    ...(await Array.fromAsync(getFiles(cwd, ""))),
+    ...Array.from(getFiles(cwd, "")),
     ...(await import("./citgm-items.mjs")).default.map(v => v[1]),
   ].sort();
 }

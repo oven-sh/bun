@@ -878,6 +878,17 @@ pub const EventLoop = struct {
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
+    pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
+        this.enter();
+        defer this.exit();
+
+        const result = callback.call(globalObject, thisValue, arguments) catch |err| {
+            globalObject.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+        return result;
+    }
+
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
         var global = this.global;
         const global_vm = global.vm();

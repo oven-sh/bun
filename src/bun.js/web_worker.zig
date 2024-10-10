@@ -23,7 +23,7 @@ pub const WebWorker = struct {
     /// Already resolved.
     specifier: []const u8 = "",
     store_fd: bool = false,
-    arena: bun.MimallocArena = undefined,
+    arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
     mini: bool = false,
@@ -101,13 +101,65 @@ pub const WebWorker = struct {
         defer parent.bundler.setLog(prev_log);
         defer temp_log.deinit();
 
-        var resolved_entry_point: bun.resolver.Result = undefined;
-
         const path = brk: {
             const str = spec_slice.slice();
             if (parent.standalone_module_graph) |graph| {
                 if (graph.find(str) != null) {
                     break :brk str;
+                }
+
+                // Since `bun build --compile` renames files to `.js` by
+                // default, we need to do the reverse of our file extension
+                // mapping.
+                //
+                //   new Worker("./foo") -> new Worker("./foo.js")
+                //   new Worker("./foo.ts") -> new Worker("./foo.js")
+                //   new Worker("./foo.jsx") -> new Worker("./foo.js")
+                //   new Worker("./foo.mjs") -> new Worker("./foo.js")
+                //   new Worker("./foo.mts") -> new Worker("./foo.js")
+                //   new Worker("./foo.cjs") -> new Worker("./foo.js")
+                //   new Worker("./foo.cts") -> new Worker("./foo.js")
+                //   new Worker("./foo.tsx") -> new Worker("./foo.js")
+                //
+                if (bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../")) try_from_extension: {
+                    var pathbuf: bun.PathBuffer = undefined;
+                    var base = str;
+
+                    base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
+                    const extname = std.fs.path.extension(base);
+
+                    // ./foo -> ./foo.js
+                    if (extname.len == 0) {
+                        pathbuf[base.len..][0..3].* = ".js".*;
+                        if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
+                            break :brk js_file.name;
+                        }
+
+                        break :try_from_extension;
+                    }
+
+                    // ./foo.ts -> ./foo.js
+                    if (bun.strings.eqlComptime(extname, ".ts")) {
+                        pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
+                        if (graph.find(pathbuf[0..base.len])) |js_file| {
+                            break :brk js_file.name;
+                        }
+
+                        break :try_from_extension;
+                    }
+
+                    if (extname.len == 4) {
+                        inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
+                            if (bun.strings.eqlComptime(extname, ext)) {
+                                pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
+                                const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
+                                if (graph.find(as_js)) |js_file| {
+                                    break :brk js_file.name;
+                                }
+                                break :try_from_extension;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -120,13 +172,13 @@ pub const WebWorker = struct {
                 }
             }
 
-            resolved_entry_point = parent.bundler.resolveEntryPoint(str) catch {
+            var resolved_entry_point: bun.resolver.Result = parent.bundler.resolveEntryPoint(str) catch {
                 const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
                 error_message.* = out;
                 return null;
             };
 
-            const entry_path = resolved_entry_point.path() orelse {
+            const entry_path: *bun.fs.Path = resolved_entry_point.path() orelse {
                 error_message.* = bun.String.static("Worker entry point is missing");
                 return null;
             };
@@ -177,7 +229,7 @@ pub const WebWorker = struct {
         }
 
         if (this.hasRequestedTerminate()) {
-            this.deinit();
+            this.exitAndDeinit();
             return;
         }
 
@@ -186,13 +238,13 @@ pub const WebWorker = struct {
 
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
-            .allocator = this.arena.allocator(),
+            .allocator = this.arena.?.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
         });
-        vm.allocator = this.arena.allocator();
-        vm.arena = &this.arena;
+        vm.allocator = this.arena.?.allocator();
+        vm.arena = &this.arena.?;
 
         var b = &vm.bundler;
 
@@ -217,7 +269,7 @@ pub const WebWorker = struct {
 
         vm.bundler.env = loader;
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;
         vm.onUnhandledRejection = onUnhandledRejection;
@@ -427,8 +479,9 @@ pub const WebWorker = struct {
         if (vm_to_deinit) |vm| {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
-
-        arena.deinit();
+        if (arena) |*arena_| {
+            arena_.deinit();
+        }
         bun.exitThread();
     }
 

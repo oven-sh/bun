@@ -24,6 +24,6 @@ it("macros should not lead to seg faults under any given input", async () => {
     stderr: "pipe",
   });
 
-  expect(stderr.toString().trim().replaceAll(testDir, "[dir]")).toMatchSnapshot();
+  expect(stderr.toString().trim().replaceAll(testDir, "[dir]").replaceAll("\\", "/")).toMatchSnapshot();
   expect(exitCode).toBe(1);
 });

@@ -955,6 +955,7 @@ declare global {
     ref(): Timer;
     unref(): Timer;
     hasRef(): boolean;
+    refresh(): Timer
 
     [Symbol.toPrimitive](): number;
   }
@@ -1917,6 +1918,10 @@ declare global {
      * closely to the `BodyMixin` API.
      */
     formData(): Promise<FormData>;
+    /**
+     * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
+     */
+    bytes(): Promise<Uint8Array>;
   }
   var Blob: typeof globalThis extends {
     onerror: any;

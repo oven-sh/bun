@@ -16,23 +16,22 @@ pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
 
 pub fn throwErrInvalidArgValue(
     globalThis: *JSGlobalObject,
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
 ) !void {
     @setCold(true);
-    const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, fmt, args, globalThis);
+    const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fmt, args, globalThis);
     globalThis.vm().throwError(globalThis, err);
     return error.InvalidArgument;
 }
 
 pub fn throwErrInvalidArgTypeWithMessage(
     globalThis: *JSGlobalObject,
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
 ) !void {
     @setCold(true);
-    const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, globalThis);
-    globalThis.vm().throwError(globalThis, err);
+    globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
     return error.InvalidArgument;
 }
 
@@ -50,7 +49,7 @@ pub fn throwErrInvalidArgType(
 
 pub fn throwRangeError(
     globalThis: *JSGlobalObject,
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
 ) !void {
     @setCold(true);

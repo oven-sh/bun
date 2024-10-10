@@ -1521,7 +1521,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external"; // default: "none", true -> "inline"
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked"; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -1537,6 +1537,16 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+    /**
+     * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
+     * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
+     * annotations in libraries.
+     */
+    ignoreDCEAnnotations?: boolean;
+    /**
+     * Force emitting @__PURE__ annotations even if minify.whitespace is true.
+     */
+    emitDCEAnnotations?: boolean;
     // treeshaking?: boolean;
 
     // jsx?:
@@ -2333,6 +2343,14 @@ declare module "bun" {
     unix?: never;
 
     /**
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to inactivity.
+     *
+     * Default is `10` seconds.
+     */
+    idleTimeout?: number;
+
+    /**
      * Handle HTTP requests
      *
      * Respond to {@link Request} objects with a {@link Response} object.
@@ -2750,6 +2768,16 @@ declare module "bun" {
     ): ServerWebSocketSendStatus;
 
     /**
+     * A count of connections subscribed to a given topic
+     *
+     * This operation will loop through each topic internally to get the count.
+     *
+     * @param topic the websocket topic to check how many subscribers are connected to
+     * @returns the number of subscribers
+     */
+    subscriberCount(topic: string): number;
+
+    /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
      * @example
@@ -2849,6 +2877,13 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
+
+  /**
+   * A list of files embedded into the standalone executable. Lexigraphically sorted by name.
+   *
+   * If the process is not a standalone executable, this returns an empty array.
+   */
+  const embeddedFiles: ReadonlyArray<Blob>;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.

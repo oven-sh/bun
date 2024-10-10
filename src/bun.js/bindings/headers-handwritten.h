@@ -94,8 +94,7 @@ typedef struct ResolvedSource {
     BunString specifier;
     BunString source_code;
     BunString source_url;
-    ZigString* commonJSExports;
-    uint32_t commonJSExportsLen;
+    bool isCommonJSModule;
     uint32_t hash;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;
@@ -299,9 +298,9 @@ using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;
-    uint32_t offset;
-    uint32_t len;
-    uint32_t byte_len;
+    size_t offset;
+    size_t len;
+    size_t byte_len;
     uint8_t cell_type;
     int64_t _value;
     bool shared;

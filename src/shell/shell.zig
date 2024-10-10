@@ -3316,14 +3316,6 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         fn read_char(self: *@This()) ?InputChar {
             return self.chars.read_char();
         }
-
-        // fn debug_tokens(self: *const @This()) void {
-        //     std.debug.print("Tokens: \n", .{});
-        //     for (self.tokens.items, 0..) |tok, i| {
-        //         std.debug.print("{d}: ", .{i});
-        //         tok.debug(self.strpool.items[0..self.strpool.items.len]);
-        //     }
-        // }
     };
 }
 

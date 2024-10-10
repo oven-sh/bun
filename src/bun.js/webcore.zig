@@ -547,7 +547,7 @@ pub const Crypto = struct {
         return .zero;
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: string, fmt: anytype) JSC.JSValue {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
         const err = switch (error_type) {
             .RangeError => globalThis.createRangeErrorInstanceWithCode(
                 .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,

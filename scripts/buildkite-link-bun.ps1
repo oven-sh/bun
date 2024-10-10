@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 $Target = If ($Baseline) { "windows-x64-baseline" } Else { "windows-x64" }
 $Tag = "bun-$Target"
 
-.\scripts\env.ps1
+. (Join-Path $PSScriptRoot "env.ps1")
 
 mkdir -Force build
 buildkite-agent artifact download "**" build --step "${Target}-build-zig"

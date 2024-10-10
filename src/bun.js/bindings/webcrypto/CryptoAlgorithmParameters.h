@@ -35,6 +35,7 @@ namespace WebCore {
 
 class CryptoAlgorithmParameters {
     WTF_MAKE_FAST_ALLOCATED;
+
 public:
     enum class Class {
         None,
@@ -57,7 +58,7 @@ public:
 
     // FIXME: Consider merging name and identifier.
     String name;
-    CryptoAlgorithmIdentifier identifier;
+    CryptoAlgorithmIdentifier identifier { CryptoAlgorithmIdentifier::None };
 
     virtual ~CryptoAlgorithmParameters() = default;
 

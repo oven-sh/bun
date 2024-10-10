@@ -1,6 +1,8 @@
 #pragma once
-#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
+
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
 
@@ -35,7 +37,19 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_filename;
     mutable JSC::WriteBarrier<JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
-    mutable JSC::WriteBarrier<Unknown> m_parent;
+
+    // Visited by the GC. When the module is assigned a non-JSCommonJSModule
+    // parent, it is assigned to this field.
+    //
+    //    module.parent = parent;
+    //
+    mutable JSC::WriteBarrier<Unknown> m_overridenParent;
+
+    // Not visited by the GC.
+    // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
+    // This is the normal state.
+    JSC::Weak<JSCommonJSModule> m_parent {};
+
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
@@ -68,6 +82,11 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
+        JSValue exportsObject, bool hasEvaluated, JSValue parent);
+
+    static JSCommonJSModule* create(
+        Zig::GlobalObject* globalObject,
+        JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(

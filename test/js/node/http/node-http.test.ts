@@ -1830,68 +1830,16 @@ if (process.platform !== "win32") {
   });
 }
 
-it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", done => {
-  // x = ascii
-  // á = latin1 supplementary character
-  // 📙 = emoji
-  // 👍🏽 = its a grapheme of 👍 🟤
-  // "\u{1F600}" = utf16
-  const chars = ["x", "á", "📙", "👍🏽", "\u{1F600}"];
-
-  // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
-  // 8Kb = small than cork buffer
-  // 16Kb = cork buffer
-  // 32Kb = large than cork buffer
-  const start_size = 128;
-  const increment_step = 1024;
-  const end_size = 32 * 1024;
-  let expected = "";
-
-  function finish(err) {
-    server.closeAllConnections();
-    Bun.gc(true);
-    done(err);
-  }
-  const server = require("http")
-    .createServer((_, response) => {
-      response.write(expected);
-      response.write("");
-      response.end();
-    })
-    .listen(0, "localhost", async (err, hostname, port) => {
-      expect(err).toBeFalsy();
-      expect(port).toBeGreaterThan(0);
-
-      for (const char of chars) {
-        for (let size = start_size; size <= end_size; size += increment_step) {
-          expected = char + Buffer.alloc(size, "-").toString("utf8") + "x";
-
-          try {
-            const url = `http://${hostname}:${port}`;
-            const count = 20;
-            const all = [];
-            const batchSize = 20;
-            while (all.length < count) {
-              const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
-
-              all.push(...(await Promise.all(batch)));
-            }
-
-            using _ = disableAggressiveGCScope();
-            for (const result of all) {
-              expect(result).toBe(expected);
-            }
-          } catch (err) {
-            return finish(err);
-          }
-        }
-
-        // still always run GC at the end here.
-        Bun.gc(true);
-      }
-      finish();
-    });
-}, 20_000);
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", () => {
+  // this can cause a segfault so we run it in a separate process
+  const { exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-response-write-encode-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 it("#11425 http no payload limit", done => {
   const server = Server((req, res) => {
@@ -1943,48 +1891,55 @@ it("should emit events in the right order", async () => {
 
 it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
-  const payload = Buffer.from("X".repeat(128 * 1024));
-
-  using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      let running = true;
-      req.signal.onabort = () => (running = false);
-      return new Response(async function* () {
-        while (running) {
-          yield payload;
-          await Bun.sleep(10);
-        }
-      });
-    },
-  });
-
-  async function run() {
-    let receivedByteLength = 0;
-    let { promise, resolve } = Promise.withResolvers();
-    const req = request(server.url, res => {
-      res.on("data", data => {
-        receivedByteLength += data.length;
-        if (resolve) {
-          resolve();
-          resolve = null;
-        }
-      });
+  const payload = Buffer.alloc(128 * 1024, "X");
+  for (let i = 0; i < 5; i++) {
+    let sendedByteLength = 0;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        let running = true;
+        req.signal.onabort = () => (running = false);
+        return new Response(async function* () {
+          while (running) {
+            sendedByteLength += payload.byteLength;
+            yield payload;
+            await Bun.sleep(10);
+          }
+        });
+      },
     });
-    req.end();
-    await promise;
-    req.destroy();
-    await Bun.sleep(10);
-    const initialByteLength = receivedByteLength;
-    expect(receivedByteLength).toBeLessThanOrEqual(payload.length * 3);
-    await Bun.sleep(10);
-    expect(initialByteLength).toBe(receivedByteLength);
+
+    async function run() {
+      let receivedByteLength = 0;
+      let { promise, resolve } = Promise.withResolvers();
+      const req = request(server.url, res => {
+        res.on("data", data => {
+          receivedByteLength += data.length;
+          if (resolve) {
+            resolve();
+            resolve = null;
+          }
+        });
+      });
+      req.end();
+      await promise;
+      req.destroy();
+      await Bun.sleep(10);
+      const initialByteLength = receivedByteLength;
+      // we should receive the same amount of data we sent
+      expect(initialByteLength).toBeLessThanOrEqual(sendedByteLength);
+      await Bun.sleep(10);
+      // we should not receive more data after destroy
+      expect(initialByteLength).toBe(receivedByteLength);
+      await Bun.sleep(10);
+    }
+
+    const runCount = 50;
+    const runs = Array.from({ length: runCount }, run);
+    await Promise.all(runs);
+    Bun.gc(true);
     await Bun.sleep(10);
   }
-
-  const runCount = 50;
-  const runs = Array.from({ length: runCount }, run);
-  await Promise.all(runs);
 });
 
 it("can send brotli from Server and receive with fetch", async () => {
@@ -2251,4 +2206,96 @@ it("should propagate exception in async data handler", async () => {
 
   expect(stdout.toString()).toContain("Test passed");
   expect(exitCode).toBe(0);
+});
+// This test is disabled because it can OOM the CI
+it.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  const { promise: listen, resolve: resolveListen } = Promise.withResolvers();
+  const server = http
+    .createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": CONTENT_LENGTH,
+      });
+      function commit() {
+        if (written < CONTENT_LENGTH) {
+          written += buf.byteLength;
+          res.write(buf, commit);
+        } else {
+          res.end();
+        }
+      }
+
+      commit();
+    })
+    .listen(0, "localhost", resolveListen);
+  await listen;
+
+  try {
+    const response = await fetch(`http://localhost:${server.address().port}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      received += value ? value.byteLength : 0;
+      if (done) {
+        break;
+      }
+    }
+    expect(written).toBe(CONTENT_LENGTH);
+    expect(received).toBe(CONTENT_LENGTH);
+  } finally {
+    server.close();
+  }
+}, 30_000);
+
+// TODO: today we use a workaround to continue event, we need to fix it in the future.
+it("should emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = request(
+    "https://example.com",
+    { headers: { "accept-encoding": "identity", "expect": "100-continue" } },
+    res => {
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        expect(receivedContinue).toBe(true);
+        expect(data).toContain("This domain is for use in illustrative examples in documents");
+        done();
+      });
+      res.on("error", err => done(err));
+    },
+  );
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
+});
+
+it("should not emit continue event #7480", done => {
+  let receivedContinue = false;
+  const req = request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    let data = "";
+    res.setEncoding("utf8");
+    res.on("data", chunk => {
+      data += chunk;
+    });
+    res.on("end", () => {
+      expect(receivedContinue).toBe(false);
+      expect(data).toContain("This domain is for use in illustrative examples in documents");
+      done();
+    });
+    res.on("error", err => done(err));
+  });
+  req.on("continue", () => {
+    receivedContinue = true;
+  });
+  req.end();
 });

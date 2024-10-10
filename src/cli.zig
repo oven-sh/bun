@@ -81,7 +81,7 @@ pub const debug_flags = if (Environment.isDebug) struct {
         }
         return false;
     }
-} else @compileError("Do not access this namespace []const u8; in a release build");
+} else @compileError("Do not access this namespace in a release build");
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
@@ -115,6 +115,7 @@ pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
+pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -185,6 +186,7 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
@@ -251,6 +253,7 @@ pub const Arguments = struct {
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
+        clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
@@ -753,6 +756,8 @@ pub const Arguments = struct {
         const output_dir: ?string = null;
         const output_file: ?string = null;
 
+        ctx.bundler_options.ignore_dce_annotations = args.flag("--ignore-dce-annotations");
+
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
 
@@ -764,6 +769,9 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+
+            ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
+                !ctx.bundler_options.minify_whitespace;
 
             if (args.options("--external").len > 0) {
                 var externals = try allocator.alloc([]u8, args.options("--external").len);
@@ -823,6 +831,7 @@ pub const Arguments = struct {
 
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
+                ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
             if (args.option("--outdir")) |outdir| {
@@ -895,6 +904,13 @@ pub const Arguments = struct {
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
+                }
+
+                // when using --compile, only `external` works, as we do not
+                // look at the source map comment. so after we validate the
+                // user's choice was in the list, we secretly override it
+                if (ctx.bundler_options.compile) {
+                    opts.source_map = .external;
                 }
             }
         }
@@ -1123,6 +1139,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
@@ -1328,9 +1345,12 @@ pub const Command = struct {
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
+            inline_entrypoint_import_meta_main: bool = false,
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            ignore_dce_annotations: bool = false,
+            emit_dce_annotations: bool = true,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1476,6 +1496,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("exec") => .ExecCommand,
 
+            RootCommandMatcher.case("outdated") => .OutdatedCommand,
+
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
@@ -1490,7 +1512,6 @@ pub const Command = struct {
             RootCommandMatcher.case("whoami") => .ReservedCommand,
             RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("outdated") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
 
@@ -1610,6 +1631,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .PatchCommitCommand);
 
                 try PatchCommitCommand.exec(ctx);
+                return;
+            },
+            .OutdatedCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .OutdatedCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .OutdatedCommand);
+
+                try OutdatedCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2179,6 +2207,7 @@ pub const Command = struct {
         ExecCommand,
         PatchCommand,
         PatchCommitCommand,
+        OutdatedCommand,
 
         /// Used by crash reports.
         ///
@@ -2210,6 +2239,7 @@ pub const Command = struct {
                 .ExecCommand => 'e',
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
+                .OutdatedCommand => 'o',
             };
         }
 
@@ -2427,11 +2457,14 @@ pub const Command = struct {
                         \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
                         \\
                         \\<b>Examples<d>:<r>
-                        \\  <b>bunx exec "echo hi"<r>
-                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\  <b>bun exec "echo hi"<r>
+                        \\  <b>bun exec "echo \"hey friends\"!"<r>
                         \\
                     , .{});
                     Output.flush();
+                },
+                .OutdatedCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.outdated);
                 },
                 else => {
                     HelpCommand.printWithReason(.explicit);
@@ -2441,7 +2474,16 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
+                .BunxCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                .OutdatedCommand,
+                => true,
                 else => false,
             };
         }
@@ -2458,6 +2500,7 @@ pub const Command = struct {
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
+                .OutdatedCommand,
                 => true,
                 else => false,
             };
@@ -2477,6 +2520,7 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2490,6 +2534,7 @@ pub const Command = struct {
             .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
+            .OutdatedCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2504,6 +2549,7 @@ pub const Command = struct {
             .LinkCommand = false,
             .UnlinkCommand = false,
             .BunxCommand = false,
+            .OutdatedCommand = false,
         });
     };
 };

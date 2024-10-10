@@ -248,7 +248,7 @@ pub const UpgradeCommand = struct {
             null,
             HTTP.FetchRedirect.follow,
         );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         if (!silent) async_http.client.progress_node = progress.?;
         const response = try async_http.sendSync(true);
@@ -531,7 +531,7 @@ pub const UpgradeCommand = struct {
                 HTTP.FetchRedirect.follow,
             );
             async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+            async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
             const response = try async_http.sendSync(true);
 
@@ -652,10 +652,10 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path {s} {s} -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
                         .{
-                            tmpname,
-                            tmpdir_path,
+                            bun.fmt.escapePowershell(tmpname),
+                            bun.fmt.escapePowershell(tmpdir_path),
                         },
                     );
 

@@ -3,7 +3,7 @@ name: lint-cpp
 permissions:
   contents: read
 env:
-  LLVM_VERSION: 16
+  LLVM_VERSION: 18
   LC_CTYPE: "en_US.UTF-8"
   LC_ALL: "en_US.UTF-8"
 
@@ -26,7 +26,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: latest
+          bun-version: 1.1.23
       - name: Install Dependencies
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1

@@ -845,6 +845,8 @@ pub fn printMetadata(writer: anytype) !void {
             }
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
+        } else if (bun.Environment.isWindows) {
+            try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
         }
 
         if (!cpu_features.isEmpty()) {
@@ -884,10 +886,12 @@ pub fn printMetadata(writer: anytype) !void {
             &peak_commit,
             &page_faults,
         );
-        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\nRSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\n", .{
             elapsed_msecs,
             user_msecs,
             system_msecs,
+        });
+        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
             std.fmt.fmtIntSizeDec(current_rss),
             std.fmt.fmtIntSizeDec(peak_rss),
             std.fmt.fmtIntSizeDec(current_commit),
@@ -993,7 +997,11 @@ const StackLine = struct {
                     .address = @intCast(addr - base_address),
 
                     .object = if (!std.mem.eql(u16, name, image_path)) name: {
-                        const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
+                        const basename = name[if (std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' })) |i|
+                            // skip the last slash
+                            i + 1
+                        else
+                            0..];
                         break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
                     } else null,
                 };
@@ -1515,7 +1523,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperdave): see if zig 0.12 fixes this
+            // TODO(@paperdave): see if zig 0.14 fixes this
         },
         else => {
             stdDumpStackTrace(trace);

@@ -182,9 +182,10 @@ pub const Request = struct {
                 try formatter.writeIndent(Writer, writer);
                 const size = this.body.value.size();
                 if (size == 0) {
-                    try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+                    var empty = Blob.initEmpty(undefined);
+                    try empty.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
-                    try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
+                    try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
                 if (this.body.value.Locked.readable.get()) |stream| {
@@ -286,7 +287,7 @@ pub const Request = struct {
         this.url = bun.String.empty;
 
         if (this.signal) |signal| {
-            _ = signal.unref();
+            signal.unref();
             this.signal = null;
         }
     }
@@ -549,6 +550,8 @@ pub const Request = struct {
                             req._headers = headers;
                             fields.insert(.headers);
                         }
+
+                        if (globalThis.hasException()) return null;
                     }
 
                     if (!fields.contains(.body)) {
@@ -556,6 +559,7 @@ pub const Request = struct {
                             .Null, .Empty, .Used => {},
                             else => {
                                 req.body.value = request.body.value.clone(globalThis);
+                                if (globalThis.hasException()) return null;
                                 fields.insert(.body);
                             },
                         }
@@ -591,6 +595,8 @@ pub const Request = struct {
                             },
                         }
                     }
+
+                    if (globalThis.hasException()) return null;
                 }
             }
 
@@ -601,6 +607,8 @@ pub const Request = struct {
                         return null;
                     };
                 }
+
+                if (globalThis.hasException()) return null;
             }
 
             if (!fields.contains(.url)) {
@@ -618,6 +626,8 @@ pub const Request = struct {
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
+
+                if (globalThis.hasException()) return null;
             }
 
             if (!fields.contains(.signal)) {
@@ -628,20 +638,19 @@ pub const Request = struct {
                         signal_.ensureStillAlive();
                         req.signal = signal.ref();
                     } else {
-                        globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                        if (!globalThis.hasException()) {
+                            globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                        }
                         return null;
                     }
                 }
+
+                if (globalThis.hasException()) return null;
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
-                if (Response.Init.init(globalThis.allocator(), globalThis, value) catch null) |response_init| {
-                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
-                        if (!fields.contains(.method)) {
-                            req.method = response_init.method;
-                            fields.insert(.method);
-                        }
-                    }
+                if (globalThis.hasException()) return null;
+                if (Response.Init.init(globalThis, value) catch null) |response_init| {
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
                         if (response_init.headers) |headers| {
                             if (!fields.contains(.headers)) {
@@ -652,9 +661,26 @@ pub const Request = struct {
                             }
                         }
                     }
+
+                    if (globalThis.hasException()) return null;
+
+                    if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
+                        if (!fields.contains(.method)) {
+                            req.method = response_init.method;
+                            fields.insert(.method);
+                        }
+                    }
+                    if (globalThis.hasException()) return null;
                 }
+
+                if (globalThis.hasException()) return null;
             }
         }
+
+        if (globalThis.hasException()) {
+            return null;
+        }
+
         if (req.url.isEmpty()) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
             return null;
@@ -662,11 +688,13 @@ pub const Request = struct {
 
         const href = JSC.URL.hrefFromString(req.url);
         if (href.isEmpty()) {
-            // globalThis.throw can cause GC, which could cause the above string to be freed.
-            // so we must increment the reference count before calling it.
-            globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
-                req.url,
-            });
+            if (!globalThis.hasException()) {
+                // globalThis.throw can cause GC, which could cause the above string to be freed.
+                // so we must increment the reference count before calling it.
+                globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
+                    req.url,
+                });
+            }
             return null;
         }
 
@@ -684,7 +712,7 @@ pub const Request = struct {
             req.body.value.Blob.content_type.len > 0 and
             !req._headers.?.fastHas(.ContentType))
         {
-            req._headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
+            req._headers.?.put(.ContentType, req.body.value.Blob.content_type, globalThis);
         }
 
         req.calculateEstimatedByteSize();
@@ -717,6 +745,12 @@ pub const Request = struct {
         _: *JSC.CallFrame,
     ) JSC.JSValue {
         var cloned = this.clone(getAllocator(globalThis), globalThis);
+
+        if (globalThis.hasException()) {
+            cloned.finalize();
+            return .zero;
+        }
+
         return cloned.toJS(globalThis);
     }
 
@@ -752,7 +786,7 @@ pub const Request = struct {
 
         if (this.request_context.getRequest()) |req| {
             // we have a request context, so we can get the headers from it
-            this._headers = FetchHeaders.createFromUWS(globalThis, req);
+            this._headers = FetchHeaders.createFromUWS(req);
         } else {
             // we don't have a request context, so we need to create an empty headers object
             this._headers = FetchHeaders.createEmpty();
@@ -760,12 +794,29 @@ pub const Request = struct {
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this._headers.?.put("content-type", content_type, globalThis);
+                    this._headers.?.put(.ContentType, content_type, globalThis);
                 }
             }
         }
 
         return this._headers.?;
+    }
+
+    pub fn getFetchHeadersUnlessEmpty(
+        this: *Request,
+    ) ?*FetchHeaders {
+        if (this._headers == null) {
+            if (this.request_context.getRequest()) |req| {
+                // we have a request context, so we can get the headers from it
+                this._headers = FetchHeaders.createFromUWS(req);
+            }
+        }
+
+        const headers = this._headers orelse return null;
+        if (headers.isEmpty()) {
+            return null;
+        }
+        return headers;
     }
 
     /// Returns the headers of the request. This will not look at the request contex to get the headers.
@@ -786,7 +837,7 @@ pub const Request = struct {
     pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
         if (this._headers == null) {
             if (this.request_context.getRequest()) |uws_req| {
-                this._headers = FetchHeaders.createFromUWS(globalThis, uws_req);
+                this._headers = FetchHeaders.createFromUWS(uws_req);
             }
         }
 
@@ -812,7 +863,9 @@ pub const Request = struct {
         this.ensureURL() catch {};
         const vm = globalThis.bunVM();
         const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
-            globalThis.throw("Failed to clone request", .{});
+            if (!globalThis.hasException()) {
+                globalThis.throw("Failed to clone request", .{});
+            }
             return;
         };
         const original_url = req.url;

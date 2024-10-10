@@ -26,6 +26,10 @@
 #include <stdlib.h>
 
 #ifndef _WIN32
+// Necessary for the stdint include
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -38,8 +42,8 @@
 #include <mstcpip.h>
 #endif
 
-#if defined(__APPLE__) && defined(__aarch64__)
-#define HAS_MSGX
+#if defined(__APPLE__)
+extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
 
@@ -73,32 +77,30 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
     }
     return sendbuf->num;
 #elif defined(__APPLE__)
-    // TODO figure out why sendmsg_x fails when one of the messages is empty
-    // so that we can get rid of this code.
-    // One of the weird things is that once a non-empty message has been sent on the socket,
-    // empty messages start working as well. Bizzare.
-#ifdef HAS_MSGX
-    if (sendbuf->has_empty) {
-#endif
-        for (int i = 0; i < sendbuf->num; i++) {
-            while (1) {
-                ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
-                if (ret < 0) {
-                    if (errno == EINTR) continue;
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
-                    return ret;
-                }
-                break;
-            }
+    // sendmsg_x does not support addresses.
+    if (!sendbuf->has_empty && !sendbuf->has_addresses && Bun__doesMacOSVersionSupportSendRecvMsgX()) {
+        while (1) {
+            int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
+            if (ret >= 0) return ret;
+            // If we receive EMMSGSIZE, we should use the fallback code.
+            if (errno == EMSGSIZE) break;
+            if (errno != EINTR) return ret;
         }
-        return sendbuf->num;
-#ifdef HAS_MSGX
     }
-    while (1) {
-        int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
-        if (ret >= 0 || errno != EINTR) return ret;
+
+    for (size_t i = 0, count = sendbuf->num; i < count; i++) {
+        while (1) {
+            ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                return ret;
+            }
+            break;
+        }
     }
-#endif
+
+    return sendbuf->num;
 #else
     while (1) {
         int ret = sendmmsg(fd, sendbuf->msgvec, sendbuf->num, flags | MSG_NOSIGNAL);
@@ -120,12 +122,13 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
         return 1;
     }
 #elif defined(__APPLE__)
-#ifdef HAS_MSGX
-    while (1) {
-        int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
-        if (ret >= 0 || errno != EINTR) return ret;
+    if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
+        while (1) {
+            int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+            if (ret >= 0 || errno != EINTR) return ret;
+        }
     }
-#else
+
     for (int i = 0; i < LIBUS_UDP_RECV_COUNT; ++i) {
         while (1) {
             ssize_t ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
@@ -139,7 +142,6 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
         }
     }
     return LIBUS_UDP_RECV_COUNT;
-#endif
 #else
     while (1) {
         int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
@@ -154,19 +156,20 @@ void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t da
     recvbuf->buflen = databuflen;
 #else
     // assert(databuflen > LIBUS_UDP_MAX_SIZE * LIBUS_UDP_RECV_COUNT);
-
-    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+    memset(recvbuf, 0, sizeof(struct udp_recvbuf));
+    for (size_t i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
         recvbuf->iov[i].iov_base = (char*)databuf + i * LIBUS_UDP_MAX_SIZE;
         recvbuf->iov[i].iov_len = LIBUS_UDP_MAX_SIZE;
 
-        recvbuf->msgvec[i].msg_hdr.msg_name = &recvbuf->addr[i];
-        recvbuf->msgvec[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
-
-        recvbuf->msgvec[i].msg_hdr.msg_iov = &recvbuf->iov[i];
-        recvbuf->msgvec[i].msg_hdr.msg_iovlen = 1;
-
-        recvbuf->msgvec[i].msg_hdr.msg_control = recvbuf->control[i];
-        recvbuf->msgvec[i].msg_hdr.msg_controllen = 256;
+        struct msghdr mh = {};
+        memset(&mh, 0, sizeof(struct msghdr));
+        mh.msg_name = &recvbuf->addr[i];
+        mh.msg_namelen = sizeof(struct sockaddr_storage);
+        mh.msg_iov = &recvbuf->iov[i];
+        mh.msg_iovlen = 1;
+        mh.msg_control = recvbuf->control[i];
+        mh.msg_controllen = sizeof(recvbuf->control[i]);
+        recvbuf->msgvec[i].msg_hdr = mh;
     }
 #endif
 }
@@ -179,7 +182,12 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
     buf->num = num;
     return num;
 #else
+    // TODO: can we skip empty messages altogether? Do we really need to send 0-length messages?
     buf->has_empty = 0;
+
+    // sendmsg_x docs states it does not support addresses.
+    buf->has_addresses = 0;
+
     struct mmsghdr *msgvec = buf->msgvec;
     // todo check this math
     size_t count = (bufsize - sizeof(struct udp_sendbuf)) / (sizeof(struct mmsghdr) + sizeof(struct iovec));
@@ -194,6 +202,9 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
             addr_len = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) 
                      : addr->sa_family == AF_INET6 ? sizeof(struct sockaddr_in6) 
                      : 0;
+            if (addr_len > 0) {
+                buf->has_addresses = 1;
+            }
         }
         iov[i].iov_base = payloads[i];
         iov[i].iov_len = lengths[i];
@@ -205,6 +216,7 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
         msgvec[i].msg_hdr.msg_iovlen = 1;
         msgvec[i].msg_hdr.msg_flags = 0;
         msgvec[i].msg_len = 0;
+
 
         if (lengths[i] == 0) {
             buf->has_empty = 1;

@@ -7,11 +7,13 @@
 
 /// <reference path="./private.d.ts" />
 
-export const quickAndDirtyJavaScriptSyntaxHighlighter = $newZigFunction(
-  "fmt.zig",
-  "QuickAndDirtyJavaScriptSyntaxHighlighter.jsFunctionSyntaxHighlight",
-  2,
-) as (code: string) => string;
+const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
+  code: string,
+  id: number,
+) => string;
+
+export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
+export const escapePowershell = (code: string) => fmtBinding(code, 1);
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -23,9 +25,12 @@ export const patchInternals = {
   makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
 };
 
+const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
+const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
+
 export const shellInternals = {
-  lex: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2)(a.raw, b),
-  parse: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2)(a.raw, b),
+  lex: (a, ...b) => shellLex(a.raw, b),
+  parse: (a, ...b) => shellParse(a.raw, b),
   /**
    * Checks if the given builtin is disabled on the current platform
    *
@@ -78,3 +83,24 @@ export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",
   "createNativeFrameForTesting",
 );
+
+// Linux-only. Create an in-memory file descriptor with a preset size.
+// You should call fs.closeSync(fd) when you're done with it.
+export const memfd_create: (size: number) => number = $newZigFunction(
+  "node_fs_binding.zig",
+  "createMemfdForTesting",
+  1,
+);
+
+export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
+  "javascript.zig",
+  "Bun__setSyntheticAllocationLimitForTesting",
+  1,
+);
+
+export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindings.generate") as {
+  /**
+   * Returns the parsed manifest file. Currently only returns an array of available versions.
+   */
+  parseManifest: (manifestFileName: string, registryUrl: string) => any;
+};

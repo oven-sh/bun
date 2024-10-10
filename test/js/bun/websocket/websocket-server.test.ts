@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -61,6 +61,21 @@ const binaryTypes = [
 
 let servers: Server[] = [];
 let clients: Subprocess[] = [];
+
+it("should work fine if you repeatedly call methods on closed websockets", async () => {
+  let env = { ...bunEnv };
+  forceGuardMalloc(env);
+
+  const { exited } = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "websocket-server-fixture.js")],
+    env,
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+
+  expect(await exited).toBe(0);
+});
 
 afterEach(() => {
   for (const server of servers) {
@@ -477,9 +492,11 @@ describe("ServerWebSocket", () => {
           }
         }
       };
-      test(label, (done, connect) => ({
+      test(label, (done, connect, options) => ({
         async open(ws) {
+          const initial = options.server.subscriberCount(topic);
           ws.subscribe(topic);
+          expect(options.server.subscriberCount(topic)).toBe(initial + 1);
           if (ws.data.id === 0) {
             await connect();
           } else if (ws.data.id === 1) {
@@ -510,10 +527,12 @@ describe("ServerWebSocket", () => {
           }
         }
       };
-      test(label, done => ({
+      test(label, (done, _, options) => ({
         publishToSelf: true,
         async open(ws) {
+          const initial = options.server.subscriberCount(topic);
           ws.subscribe(topic);
+          expect(options.server.subscriberCount(topic)).toBe(initial + 1);
           send(ws);
         },
         drain(ws) {
@@ -578,6 +597,15 @@ describe("ServerWebSocket", () => {
     let count = 0;
     return {
       open(ws) {
+        expect(() => ws.cork()).toThrow();
+        expect(() => ws.cork(undefined)).toThrow();
+        expect(() => ws.cork({})).toThrow();
+        expect(() =>
+          ws.cork(() => {
+            throw new Error("boom");
+          }),
+        ).toThrow();
+
         setTimeout(() => {
           ws.cork(() => {
             ws.send("1");
@@ -666,7 +694,11 @@ describe("ServerWebSocket", () => {
 
 function test(
   label: string,
-  fn: (done: (err?: unknown) => void, connect: () => Promise<void>) => Partial<WebSocketHandler<{ id: number }>>,
+  fn: (
+    done: (err?: unknown) => void,
+    connect: () => Promise<void>,
+    options: { server: Server },
+  ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
   it(
@@ -681,6 +713,9 @@ function test(
         }
       };
       let id = 0;
+      var options = {
+        server: undefined,
+      };
       const server: Server = serve({
         port: 0,
         fetch(request, server) {
@@ -693,9 +728,11 @@ function test(
         websocket: {
           sendPings: false,
           message() {},
-          ...fn(done, () => connect(server)),
+          ...fn(done, () => connect(server), options as any),
         },
       });
+      options.server = server;
+      expect(server.subscriberCount("empty topic")).toBe(0);
       await connect(server);
     },
     { timeout: timeout ?? 1000 },

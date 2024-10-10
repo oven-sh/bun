@@ -908,7 +908,7 @@ async function getTests(cwd) {
   }
   // prettier-ignore
   return [
-    // ...Array.from(getFiles(cwd, "")),
+    ...Array.from(getFiles(cwd, "")),
     ...(await import("./citgm-items.mjs")).default
       .filter(v => !(v[2] && isWindows))
       .map(v => v[1]),

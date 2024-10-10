@@ -1108,6 +1108,8 @@ await Bun.build({
 $ bun build ./index.tsx --outdir ./out --banner "\"use client\";"
 ```
 
+{% /codetabs %}
+
 ### `footer`
 
 A footer to be added to the final bundle, this can be something like a comment block for a license or just a fun easter egg.

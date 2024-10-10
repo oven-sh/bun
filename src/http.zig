@@ -516,6 +516,13 @@ pub const HTTPCertError = struct {
     reason: [:0]const u8 = "",
 };
 
+pub const InitError = error{
+    FailedToOpenSocket,
+    LoadCAFile,
+    InvalidCAFile,
+    InvalidCA,
+};
+
 fn NewHTTPContext(comptime ssl: bool) type {
     return struct {
         const pool_size = 64;
@@ -584,13 +591,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
             uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
             bun.default_allocator.destroy(this);
         }
-
-        pub const InitError = error{
-            FailedToOpenSocket,
-            LoadCAFile,
-            InvalidCAFile,
-            InvalidCA,
-        };
 
         pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) InitError!void {
             if (!comptime ssl) {
@@ -1041,9 +1041,34 @@ pub const HTTPThread = struct {
         return this.lazy_libdeflater.?;
     }
 
+    fn onInitErrorNoop(err: InitError, opts: InitOpts) noreturn {
+        switch (err) {
+            error.LoadCAFile => {
+                if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
+                    Output.err("HTTPThread", "failed to find CA file: '{s}'", .{opts.abs_ca_file_name});
+                } else {
+                    Output.err("HTTPThread", "failed to load CA file: '{s}'", .{opts.abs_ca_file_name});
+                }
+            },
+            error.InvalidCAFile => {
+                Output.err("HTTPThread", "the CA file is invalid: '{s}'", .{opts.abs_ca_file_name});
+            },
+            error.InvalidCA => {
+                Output.err("HTTPThread", "the provided CA is invalid", .{});
+            },
+            error.FailedToOpenSocket => {
+                Output.errGeneric("failed to start HTTP client thread", .{});
+            },
+        }
+        Global.crash();
+    }
+
     pub const InitOpts = struct {
         ca: []stringZ = &.{},
         abs_ca_file_name: stringZ = &.{},
+        for_install: bool = false,
+
+        onInitError: *const fn (err: InitError, opts: InitOpts) noreturn = &onInitErrorNoop,
     };
 
     fn initOnce(opts: *const InitOpts) void {
@@ -1088,27 +1113,7 @@ pub const HTTPThread = struct {
 
         http_thread.loop = loop;
         http_thread.http_context.init();
-        http_thread.https_context.initWithThreadOpts(&opts) catch |err| {
-            switch (err) {
-                error.LoadCAFile => {
-                    if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
-                        Output.err("HTTPThread", "failed to find CA file: '{s}'", .{opts.abs_ca_file_name});
-                    } else {
-                        Output.err("HTTPThread", "failed to load CA file: '{s}'", .{opts.abs_ca_file_name});
-                    }
-                },
-                error.InvalidCAFile => {
-                    Output.err("HTTPThread", "the CA file is invalid: '{s}'", .{opts.abs_ca_file_name});
-                },
-                error.InvalidCA => {
-                    Output.err("HTTPThread", "the provided CA is invalid", .{});
-                },
-                error.FailedToOpenSocket => {
-                    Output.errGeneric("failed to start HTTP client thread", .{});
-                },
-            }
-            Global.crash();
-        };
+        http_thread.https_context.initWithThreadOpts(&opts) catch |err| opts.onInitError(err, opts);
         http_thread.has_awoken.store(true, .monotonic);
         http_thread.processEvents();
     }

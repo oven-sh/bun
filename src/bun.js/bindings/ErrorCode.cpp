@@ -300,7 +300,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     auto input = JSValueToStringSafe(globalObject, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: \""_s, input, '"');
+    return makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received: "_s, input);
 }
 
 }

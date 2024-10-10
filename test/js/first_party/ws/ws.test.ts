@@ -277,6 +277,30 @@ describe("WebSocketServer", () => {
     await promise;
   });
 
+  it("sockets should handle internal ws being null", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const { resolve, reject, promise } = Promise.withResolvers();
+
+    wss.on("connection", async ws => {
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      const kBunInternals = Symbol.for("::bunternal::");
+      // @ts-expect-error
+      ws[kBunInternals].open(null); // force invalid state for this.#ws
+      try {
+        ws.ping();
+        ws.pong();
+        ws.close();
+        ws.send("hello");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+    new WebSocket("ws://localhost:" + wss.address().port);
+
+    await promise;
+  });
+
   it("sockets can be terminated", async () => {
     const wss = new WebSocketServer({ port: 0 });
     const { resolve, reject, promise } = Promise.withResolvers();

@@ -21836,13 +21836,9 @@ fn NewParser_(
                                 accessor_key = property.key.?;
                             }
 
-                            var collision_count: u8 = 1;
-                            while (p.current_scope.members.contains(new_property_name)) : (collision_count += 1) {
-                                p.allocator.free(new_property_name);
-                                new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}{}", .{ old_property_name[1..], collision_count }) catch unreachable;
-                            }
-
                             prop_name_ref = p.generateTempRefKind(.private_field, new_property_name);
+                            p.current_scope.generated.push(p.allocator, prop_name_ref) catch unreachable;
+
                             property.key = p.newExpr(E.PrivateIdentifier{ .ref = prop_name_ref }, loc);
                             property.kind = .normal;
 
@@ -22883,7 +22879,7 @@ fn NewParser_(
         pub fn generateTempRefWithScope(p: *P, default_name: ?string, kind: Symbol.Kind, scope: *Scope) Ref {
             const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
-                if (kind.isPrivate())
+                if (!kind.isPrivate())
                     break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory()
                 else
                     break :brk std.fmt.allocPrint(p.allocator, "#__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();

@@ -504,9 +504,10 @@ pub const NumberRenamer = struct {
         var inner: *bun.BabyList(string) = &r.names[ref.sourceIndex()];
         if (inner.len > ref.innerIndex() and inner.at(ref.innerIndex()).len > 0) return;
 
-        // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
+        // Don't rename unbound symbols, symbols marked as reserved names or labels
         const symbol = r.symbols.get(ref).?;
-        if (symbol.slotNamespace() != .default) {
+        const ns = symbol.slotNamespace();
+        if (ns != .default and ns != .private_name) {
             return;
         }
 
@@ -697,7 +698,10 @@ pub const NumberRenamer = struct {
             pub fn find(this: *NumberScope, name: []const u8) NameUse {
                 // This version doesn't allocate
                 if (comptime Environment.allow_assert)
-                    bun.assert(JSLexer.isIdentifier(name));
+                    if (name[0] == '#')
+                        bun.assert(JSLexer.isIdentifier(name[1..]))
+                    else
+                        bun.assert(JSLexer.isIdentifier(name));
 
                 // avoid rehashing the same string over for each scope
                 const ctx = bun.StringHashMapContext.pre(name);
@@ -725,7 +729,10 @@ pub const NumberRenamer = struct {
 
         /// Caller must use an arena allocator
         pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator, input_name: []const u8) UnusedName {
-            var name = bun.MutableString.ensureValidIdentifier(input_name, temp_allocator) catch unreachable;
+            var name = if (input_name[0] == '#')
+                allocator.dupe(u8, input_name) catch unreachable
+            else
+                bun.MutableString.ensureValidIdentifier(input_name, temp_allocator) catch unreachable;
 
             switch (NameUse.find(this, name)) {
                 .unused => {},

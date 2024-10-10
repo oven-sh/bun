@@ -1417,7 +1417,6 @@ fn NewPrinter(
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             bun.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
-
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {

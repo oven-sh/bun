@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative, sep } from "node:path";
+import { join, basename, dirname, relative, sep, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
@@ -221,6 +221,11 @@ async function runTests() {
 
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
+      if (testPath.startsWith("https://")) {
+        // ecosystem tests
+        await runTest(testPath, async () => spawnCitgmTest(execPath, testPath));
+        continue;
+      }
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
@@ -559,6 +564,51 @@ async function spawnBunTest(execPath, testPath) {
 }
 
 /**
+ * @param {string} execPath
+ * @param {string} testPath
+ * @returns {Promise<TestResult>}
+ */
+async function spawnCitgmTest(execPath, testPath) {
+  const timeout = integrationTimeout;
+
+  const bunEnv = {
+    ...process.env,
+    GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    FORCE_COLOR: "1",
+    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    BUN_DEBUG_QUIET_LOGS: "1",
+    BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+    BUN_JSC_randomIntegrityAuditRate: "1.0",
+    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+    BUN_INSTALL_CACHE_DIR: tmpdirPath,
+    SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
+    TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+  };
+
+  const result = await spawnSafe({
+    command: resolve("./run-citgm-test.ts"),
+    args: [execPath, testPath],
+    cwd: cwd,
+    timeout: timeout,
+    env: bunEnv,
+    stdout: chunk => pipeTestStdout(process.stdout, chunk),
+    stderr: chunk => pipeTestStdout(process.stderr, chunk),
+  });
+  const { ok, error, stdout } = result;
+  return {
+    testPath: testPath,
+    ok,
+    status: ok ? "pass" : "fail",
+    error: error,
+    errors: [],
+    tests: [],
+    stdout: stdout,
+    stdoutPreview: stdout,
+  };
+}
+
+/**
  * @param {string} testPath
  * @returns {number}
  */
@@ -819,6 +869,7 @@ function isJavaScript(path) {
 function isTest(path) {
   if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
+  if (path.startsWith("https://")) return true; // ecosystem tests
   return isTestStrict(path);
 }
 
@@ -852,6 +903,9 @@ function getTests(cwd) {
       } else if (entry.isDirectory()) {
         yield* getFiles(cwd, filename);
       }
+    }
+    for (const item of require("./citgm-items.mjs")) {
+      yield item[1];
     }
   }
   return [...getFiles(cwd, "")].sort();

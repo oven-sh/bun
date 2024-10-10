@@ -437,8 +437,6 @@ pub const LifecycleScriptSubprocess = struct {
         });
 
         if (comptime log_level.isVerbose()) {
-            manager.pauseProgress();
-            defer manager.resumeProgress();
             Output.prettyErrorln("<d>[Scripts]<r> Starting scripts for <b>\"{s}\"<r>", .{
                 list.package_name,
             });
@@ -447,8 +445,6 @@ pub const LifecycleScriptSubprocess = struct {
         _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .monotonic);
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
-            manager.pauseProgress();
-            defer manager.resumeProgress();
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
                 Lockfile.Scripts.names[list.first_index],
                 @errorName(err),

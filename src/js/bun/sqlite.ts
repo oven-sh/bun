@@ -103,6 +103,7 @@ class Statement {
       case 0: {
         this.get = this.#getNoArgs;
         this.all = this.#allNoArgs;
+        this.iterate = this.#iterateNoArgs;
         this.values = this.#valuesNoArgs;
         this.run = this.#runNoArgs;
         break;
@@ -110,6 +111,7 @@ class Statement {
       default: {
         this.get = this.#get;
         this.all = this.#all;
+        this.iterate = this.#iterate;
         this.values = this.#values;
         this.run = this.#run;
         break;
@@ -121,6 +123,7 @@ class Statement {
 
   get;
   all;
+  iterate;
   values;
   run;
   isFinalized = false;
@@ -152,6 +155,12 @@ class Statement {
 
   #allNoArgs() {
     return this.#raw.all();
+  }
+
+  *#iterateNoArgs() {
+    for (let res = this.#raw.iterate(); res; res = this.#raw.iterate()) {
+      yield res;
+    }
   }
 
   #valuesNoArgs() {
@@ -201,6 +210,22 @@ class Statement {
     return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
       ? this.#raw.all(args)
       : this.#raw.all(...args);
+  }
+
+  *#iterate(...args) {
+    if (args.length === 0) return yield* this.#iterateNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    let res =
+      !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+        ? this.#raw.iterate(args)
+        : this.#raw.iterate(...args);
+    for (; res; res = this.#raw.iterate()) {
+      yield res;
+    }
   }
 
   #values(...args) {

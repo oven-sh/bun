@@ -22,6 +22,7 @@ import {
   toMatchNodeModulesAt,
   writeShebangScript,
   stderrForInstall,
+  tls,
 } from "harness";
 import { join, resolve, sep } from "path";
 import { readdirSorted } from "../dummy.registry";
@@ -515,6 +516,112 @@ ${Object.keys(opts)
 });
 
 describe("certificate authority", () => {
+  const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
+    return async function (req: Request) {
+      // console.log({ url: req.url });
+      if (req.url.includes("no-deps")) {
+        return new Response(Bun.file(join(import.meta.dir, "packages", "no-deps", "package.json")));
+      }
+      return new Response("OK", { status: 200 });
+    };
+  };
+  test("valid --cafile", async () => {
+    console.log({ packageDir });
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+    [install]
+    cache = false
+    registry = "https://localhost:${server.port}/"`,
+      ),
+      write(join(packageDir, "cafile"), tls.cert),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", "cafile"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("+ no-deps@1.0.0");
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("ConnectionClosed");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await exited).toBe(0);
+  });
+  test("valid --ca", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+        [install]
+        cache = false
+        registry = "https://localhost:${server.port}/"`,
+      ),
+    ]);
+
+    // first without ca, should fail
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    let out = await Bun.readableStreamToText(stdout);
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(await exited).toBe(1);
+
+    // now with a valid ca
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--ca", tls.cert],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("+ no-deps@1.0.0");
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
   test(`non-existent --cafile`, async () => {
     await write(
       join(packageDir, "package.json"),

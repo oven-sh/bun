@@ -29,6 +29,12 @@ export function from(items) {
       }
     }
   }
+  if (typeof items === "object") {
+    const data = items.data;
+    if (items.type === "Buffer" && Array.isArray(data)) {
+      return new $Buffer(data);
+    }
+  }
 
   var arrayLike = $toObject(
     items,

@@ -2921,3 +2921,27 @@ export function fillRepeating(dstBuffer, start, end) {
     sLen <<= 1; // double length for next segment
   }
 }
+
+describe("serialization", () => {
+  it("json", () => {
+    expect(JSON.stringify(Buffer.alloc(0))).toBe('{"type":"Buffer","data":[]}');
+    expect(JSON.stringify(Buffer.from([1, 2, 3, 4]))).toBe('{"type":"Buffer","data":[1,2,3,4]}');
+  });
+
+  it("and deserialization", () => {
+    const buf = Buffer.from("test");
+    const json = JSON.stringify(buf);
+    const obj = JSON.parse(json);
+    const copy = Buffer.from(obj);
+    expect(copy).toEqual(buf);
+  });
+
+  it("custom", () => {
+    const buffer = Buffer.from("test");
+    const string = JSON.stringify(buffer);
+    expect(string).toBe('{"type":"Buffer","data":[116,101,115,116]}');
+
+    const receiver = (key, value) => (value && value.type === "Buffer" ? Buffer.from(value.data) : value);
+    expect(JSON.parse(string, receiver)).toEqual(buffer);
+  });
+});

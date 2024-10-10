@@ -3884,18 +3884,18 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         /// Prefer this over @enumFromInt to assert the int is in range
-        pub fn init(int: backing_int) callconv(callconv_inline) Index {
+        pub inline fn init(int: backing_int) Index {
             bun.assert(int != null_value); // would be confused for null
             return @enumFromInt(int);
         }
 
         /// Prefer this over @intFromEnum because of type confusion with `.Optional`
-        pub fn get(i: @This()) callconv(callconv_inline) backing_int {
+        pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);
         }
 
-        pub fn toOptional(oi: @This()) callconv(callconv_inline) Optional {
+        pub inline fn toOptional(oi: @This()) Optional {
             return @enumFromInt(oi.get());
         }
 
@@ -3903,11 +3903,11 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub fn init(maybe: ?Index) callconv(callconv_inline) ?Index {
+            pub inline fn init(maybe: ?Index) ?Index {
                 return if (maybe) |i| i.toOptional() else .none;
             }
 
-            pub fn unwrap(oi: Optional) callconv(callconv_inline) ?Index {
+            pub inline fn unwrap(oi: Optional) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
         };

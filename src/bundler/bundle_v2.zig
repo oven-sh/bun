@@ -1001,6 +1001,8 @@ pub const BundleV2 = struct {
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
     /// at the same time in one pass over the SBC list.
+    /// 
+///
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
@@ -1769,8 +1771,8 @@ pub const BundleV2 = struct {
                             // unknown at this point:
                             .contents_or_fd = .{
                                 .fd = .{
-                                    .dir = .zero,
-                                    .file = .zero,
+                                    .dir = bun.invalid_fd,
+                                    .file = bun.invalid_fd,
                                 },
                             },
                             .side_effects = _resolver.SideEffects.has_side_effects,
@@ -2086,13 +2088,18 @@ pub const BundleV2 = struct {
                     inline else => |is_server| {
                         const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
-                            if (is_server) {
-                                this.graph.kit_referenced_server_data = true;
+                            if(this.bundler.options.dev_server != null) {
+                                import_record.is_external_without_side_effects = true;
+                                import_record.source_index = Index.invalid;
                             } else {
-                                this.graph.kit_referenced_client_data = true;
+                                if (is_server) {
+                                    this.graph.kit_referenced_server_data = true;
+                                } else {
+                                    this.graph.kit_referenced_client_data = true;
+                                }
+                                import_record.path.namespace = "bun";
+                                import_record.source_index = src.index;
                             }
-                            import_record.path.namespace = "bun";
-                            import_record.source_index = src.index;
                             continue;
                         }
                     },
@@ -2401,7 +2408,7 @@ pub const BundleV2 = struct {
 
         // To minimize contention, watchers are appended by the bundler thread.
         if (this.bun_watcher) |watcher| {
-            if (parse_result.watcher_data.fd != .zero and parse_result.watcher_data.fd != bun.invalid_fd) {
+        if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
                 const source = switch (parse_result.value) {
                     inline .empty, .err => |data| graph.input_files.items(.source)[data.source_index.get()],
                     .success => |val| val.source,
@@ -2595,7 +2602,7 @@ pub const BundleV2 = struct {
 
                 if (process_log) {
                     if (this.bundler.options.dev_server) |dev_server| {
-                        dev_server.handleFailureLog(err.target.bakeGraph(), this.graph.input_files.items(.source)[err.source_index.get()].path.text,&err.log,) catch bun.outOfMemory();
+                        dev_server.handleParseTaskFailure(err.target.bakeGraph(), this.graph.input_files.items(.source)[err.source_index.get()].path.text,&err.log,) catch bun.outOfMemory();
                     } else if (err.log.msgs.items.len > 0) {
                         err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
                     } else {
@@ -3244,7 +3251,7 @@ pub const ParseTask = struct {
         this: *ThreadPool.Worker,
         step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
-    ) anyerror!Result.Success {
+    ) anyerror! Result.Success {
         const allocator = this.allocator;
 
         var data = this.data;
@@ -3256,7 +3263,7 @@ pub const ParseTask = struct {
         const loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
 
         var entry: CacheEntry = switch (task.contents_or_fd) {
-            .fd => brk: {
+            .fd => |contents| brk: {
                 const trace = tracer(@src(), "readFile");
                 defer trace.end();
 
@@ -3273,7 +3280,7 @@ pub const ParseTask = struct {
                         }
                     }
 
-                    break :brk CacheEntry{
+                    break :brk .{
                         .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
                     };
                 }
@@ -3288,8 +3295,8 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (task.contents_or_fd.fd.file != .zero)
-                        task.contents_or_fd.fd.file
+                    if (contents.file != bun.invalid_fd and contents.file != .zero)
+                        contents.file
                     else
                         null,
                 ) catch |err| {
@@ -3317,27 +3324,33 @@ pub const ParseTask = struct {
                     return err;
                 };
             },
-            .contents => |contents| CacheEntry{
+            .contents => |contents| .{
                 .contents = contents,
-                .fd = .zero,
+                .fd = bun.invalid_fd,
             },
         };
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
-            !entry.fd.isStdio() and
-            (this.ctx.bun_watcher == null);
+            entry.fd.isValid() and !entry.fd.isStdio() and
+            this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
-        }
-
-        if (!will_close_file_descriptor and !entry.fd.isStdio()) task.contents_or_fd = .{
-            .fd = .{
-                .file = entry.fd,
-                .dir = bun.invalid_fd,
-            },
-        };
+            task.contents_or_fd = .{
+                .fd = .{
+                    .file = bun.invalid_fd,
+                    .dir = bun.invalid_fd
+                }
+            };
+        } else {
+            task.contents_or_fd = .{
+                .fd = .{
+                    .file = entry.fd,
+                    .dir = bun.invalid_fd,
+                }
+            };
+    }
         step.* = .parse;
 
         const is_empty = strings.isAllWhitespace(entry.contents);
@@ -3436,7 +3449,7 @@ pub const ParseTask = struct {
 
         step.* = .resolve;
 
-        return Result.Success{
+        return .{
             .ast = ast,
             .source = source,
             .log = log.*,
@@ -8474,10 +8487,10 @@ pub const LinkerContext = struct {
 
         // TODO: css banner
         // if len(c.options.CSSBanner) > 0 {
-        // 	prevOffset.AdvanceString(c.options.CSSBanner)
-        // 	j.AddString(c.options.CSSBanner)
-        // 	prevOffset.AdvanceString("\n")
-        // 	j.AddString("\n")
+        //     prevOffset.AdvanceString(c.options.CSSBanner)
+        //     j.AddString(c.options.CSSBanner)
+        //     prevOffset.AdvanceString("\n")
+        //     j.AddString("\n")
         // }
 
         // TODO: (this is where we would put the imports)
@@ -8540,7 +8553,7 @@ pub const LinkerContext = struct {
         // Make sure the file ends with a newline
         j.ensureNewlineAtEnd();
         // if c.options.UnsupportedCSSFeatures.Has(compat.InlineStyle) {
-        // 	slashTag = ""
+        //    slashTag = ""
         // }
         // c.maybeAppendLegalComments(c.options.LegalComments, legalCommentList, chunk, &j, slashTag)
 

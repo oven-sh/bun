@@ -80,7 +80,7 @@ try {
           while (routeCount > 0) {
             routeCount -= 1;
             const routeId = reader.u32();
-            const routePattern = reader.string(reader.u16());
+            const routePattern = reader.stringWithLength(reader.u16());
             if (routeMatch(routeId, routePattern)) {
               performRouteReload();
               break;

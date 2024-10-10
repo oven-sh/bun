@@ -115,6 +115,8 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
   return module;
 }
 
+export const getModule = registry.get.bind(registry);
+
 export function replaceModule(key: Id, load: ModuleLoadFunction) {
   const module = registry.get(key);
   if (module) {
@@ -149,6 +151,16 @@ export function replaceModules(modules: any) {
   runtime.exports = runtimeHelpers;
   runtime.__esModule = true;
   registry.set("bun:wrap", runtime);
+}
+
+export const serverManifest = {};
+export const clientManifest = {};
+
+if (side === 'server') {
+  const server_module = new HotModule("bun:bake/server");
+  server_module.__esModule = true;
+  server_module.exports = { serverManifest, clientManifest };
+  registry.set(server_module.id, server_module);
 }
 
 if (side === "client") {

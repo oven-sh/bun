@@ -110,5 +110,3 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 }
 
 #endif // UWS_HTTPRESPONSEDATA_H
-
-static_assert(sizeof(uWS::HttpResponseData<true>) == 128, "HttpResponseData size is incorrect");

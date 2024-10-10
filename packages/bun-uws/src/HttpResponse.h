@@ -150,6 +150,8 @@ public:
                         }
                     }
                 }
+            } else {
+                this->uncork();
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -213,6 +215,8 @@ public:
                             }
                         }
                     }
+                }  else {
+                    this->uncork();
                 }
             }
 

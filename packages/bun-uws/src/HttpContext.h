@@ -127,7 +127,9 @@ private:
             /* Signal broken HTTP request only if we have a pending request */
             if (httpResponseData->onAborted) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
-            } else if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+            }
+
+            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
                 httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
             }
 

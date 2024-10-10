@@ -5801,7 +5801,6 @@ pub const NodeHTTPResponse = struct {
     onDataCallback: JSC.Strong = .{},
     onWritableCallback: JSC.Strong = .{},
     onAbortedCallback: JSC.Strong = .{},
-    strong_this: JSC.Strong = .{},
 
     ref_count: u32 = 1,
     js_ref: JSC.Ref = .{},
@@ -5823,6 +5822,11 @@ pub const NodeHTTPResponse = struct {
         pending,
         done,
     };
+
+    extern "C" fn Bun__getNodeHTTPResponseThisValue(c_int, *anyopaque) JSC.JSValue;
+    fn getThisValue(this: *NodeHTTPResponse) JSC.JSValue {
+        return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+    }
 
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
         if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
@@ -5908,7 +5912,6 @@ pub const NodeHTTPResponse = struct {
         }
         response.js_ref.ref(vm);
         const js_this = response.toJS(globalObject);
-        response.strong_this.set(globalObject, js_this);
         node_response_ptr.* = response;
         return js_this;
     }
@@ -5996,10 +5999,6 @@ pub const NodeHTTPResponse = struct {
         if (handleEndedIfNecessary(state, globalObject)) {
             return .zero;
         }
-        if (state.isHttpWriteCalled() or state.isHttpStatusCalled()) {
-            globalObject.ERR_HTTP_HEADERS_SENT("Stream already started", .{}).throw();
-            return .zero;
-        }
 
         const status_code_value = if (arguments.len > 0) arguments[0] else .undefined;
         const status_message_value = if (arguments.len > 1 and arguments[1] != .null) arguments[1] else .undefined;
@@ -6025,6 +6024,11 @@ pub const NodeHTTPResponse = struct {
         defer status_message_slice.deinit();
 
         if (globalObject.hasException()) {
+            return .zero;
+        }
+
+        if (state.isHttpStatusCalled()) {
+            globalObject.ERR_HTTP_HEADERS_SENT("Stream already started", .{}).throw();
             return .zero;
         }
 
@@ -6090,13 +6094,7 @@ pub const NodeHTTPResponse = struct {
         defer if (event == .abort) this.markRequestAsDoneIfNecessary();
         defer this.deref();
 
-        const js_this: JSValue = brk: {
-            if (comptime event == .abort) {
-                break :brk this.strong_this.trySwap() orelse .undefined;
-            }
-            break :brk this.strong_this.get() orelse .undefined;
-        };
-
+        const js_this: JSValue = this.getThisValue();
         if (this.onAbortedCallback.get()) |on_aborted| {
             defer {
                 if (event == .abort) {
@@ -6137,7 +6135,6 @@ pub const NodeHTTPResponse = struct {
 
         this.clearJSValues();
         this.markRequestAsDoneIfNecessary();
-        this.deref();
     }
 
     pub export fn Bun__NodeHTTPRequest__onResolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
@@ -6191,7 +6188,6 @@ pub const NodeHTTPResponse = struct {
 
     fn clearJSValues(this: *NodeHTTPResponse) void {
         // Promise is handled separately.
-        this.strong_this.deinit();
         this.onWritableCallback.deinit();
         this.onAbortedCallback.deinit();
     }
@@ -6249,6 +6245,7 @@ pub const NodeHTTPResponse = struct {
             });
         }
     }
+    pub const BUN_DEBUG_REFCOUNT_NAME = "NodeHTTPServerResponse";
     pub fn onData(this: *NodeHTTPResponse, chunk: []const u8, last: bool) void {
         log("onData({d} bytes, is_last = {d})", .{ chunk.len, @intFromBool(last) });
 
@@ -6539,7 +6536,6 @@ pub const NodeHTTPResponse = struct {
         this.onAbortedCallback.deinit();
         this.onDataCallback.deinit();
         this.onWritableCallback.deinit();
-        this.strong_this.deinit();
         this.promise.deinit();
         this.destroy();
     }
@@ -7399,8 +7395,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             httplog("scheduleDeinit", .{});
 
             if (!this.flags.terminated) {
+                // App.close can cause finalizers to run.
+                // scheduleDeinit can be called inside a finalizer.
+                // Therefore, we split it into two tasks.
                 this.flags.terminated = true;
-                this.app.close();
+                const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
+                task.* = JSC.AnyTask.New(App, App.close).init(this.app);
+                this.vm.enqueueTask(JSC.Task.init(task));
             }
 
             const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
@@ -7747,14 +7748,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                     break :brk .{ .success = {} };
                                 }
 
-                                if (node_response.strong_this.get()) |strong_self| {
-                                    node_response.promise = strong_promise;
-                                    strong_promise = .{};
-                                    result._then(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
-                                } else {
-                                    @panic("This should not happen");
-                                }
-
+                                const strong_self = node_response.getThisValue();
+                                node_response.promise = strong_promise;
+                                strong_promise = .{};
+                                result._then(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
                                 is_async = true;
                             }
 
@@ -8022,6 +8019,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (this.config.onNodeHTTPRequest != .zero) {
                 this.app.any("/*", *ThisServer, this, onNodeHTTPRequest);
+                NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), this.app);
             } else if (this.config.onRequest != .zero) {
                 this.app.any("/*", *ThisServer, this, onRequest);
             }
@@ -8261,3 +8259,5 @@ extern fn NodeHTTPServer__onRequest_https(
     response: *uws.NewApp(true).Response,
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
+
+extern fn NodeHTTP_assignOnCloseFunction(c_int, *anyopaque) void;

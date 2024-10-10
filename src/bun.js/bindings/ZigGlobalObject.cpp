@@ -2689,7 +2689,7 @@ void GlobalObject::finishCreation(VM& vm)
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(
         [](const Initializer<Structure>& init) {
-            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm));
+            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
         });
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {

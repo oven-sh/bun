@@ -5,36 +5,64 @@
 #include "helpers.h"
 #include "BunClientData.h"
 
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/JSFunction.h"
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSFunction.h>
 #include "wtf/URL.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
 #include <bun-uws/src/App.h>
 #include "ZigGeneratedClasses.h"
+#include "ScriptExecutionContext.h"
+#include "AsyncContextFrame.h"
+#include "ZigGeneratedClasses.h"
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include "JSSocketAddress.h"
+
+extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
 
+JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
+    return false;
+}
+
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed);
+JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex);
+JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex);
+
 // Create a static hash table of values containing an onclose DOMAttributeGetterSetter and a close function
-static const struct HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
-    { "onclose"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterOnClose, setterOnClose } },
-    { "close"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, functionNodeHTTPServerSocket_close, 0 } },
+static const HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = {
+    { "onclose"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnClose, jsNodeHttpServerSocketSetterOnClose } },
+    { "closed"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosed, noOpSetter } },
+    { "response"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterResponse, noOpSetter } },
+    { "duplex"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterDuplex, jsNodeHttpServerSocketSetterDuplex } },
+    { "remoteAddress"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterRemoteAddress, noOpSetter } },
+    { "close"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
 };
 
 class JSNodeHTTPServerSocketPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static JSNodeHTTPServerSocketPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    static JSNodeHTTPServerSocketPrototype* create(VM& vm, Structure* structure)
     {
         JSNodeHTTPServerSocketPrototype* prototype = new (NotNull, allocateCell<JSNodeHTTPServerSocketPrototype>(vm)) JSNodeHTTPServerSocketPrototype(vm, structure);
-        prototype->finishCreation(vm, globalObject);
+        prototype->finishCreation(vm);
         return prototype;
     }
 
@@ -56,26 +84,29 @@ private:
     {
     }
 
-    void finishCreation(VM& vm, JSGlobalObject* globalObject)
+    void finishCreation(VM& vm)
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
+        reifyStaticProperties(vm, info(), JSNodeHTTPServerSocketPrototypeTableValues, *this);
+        this->structure()->setMayBePrototype(true);
     }
 };
 
 class JSNodeHTTPServerSocket : public JSC::JSDestructibleObject {
-    using Base = JSC::JSDestructibleObject;
-
 public:
-    static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl)
+    using Base = JSC::JSDestructibleObject;
+    static JSNodeHTTPServerSocket* create(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
     {
-        return new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl);
+        auto* object = new (JSC::allocateCell<JSNodeHTTPServerSocket>(vm)) JSNodeHTTPServerSocket(vm, structure, socket, is_ssl, response);
+        object->finishCreation(vm);
+        return object;
     }
 
-    static JSNodeHTTPServerSocket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl)
+    static JSNodeHTTPServerSocket* create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
     {
         auto* structure = globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject);
-        return create(vm, structure, socket, is_ssl);
+        return create(vm, structure, socket, is_ssl, response);
     }
 
     static void destroy(JSC::JSCell* cell)
@@ -92,6 +123,19 @@ public:
         }
     }
 
+    void close()
+    {
+        auto* socket = this->socket;
+        if (socket) {
+            us_socket_close(is_ssl, socket, 0, nullptr);
+        }
+    }
+
+    bool isClosed() const
+    {
+        return !socket || us_socket_is_closed(is_ssl, socket);
+    }
+
     ~JSNodeHTTPServerSocket()
     {
         if (socket) {
@@ -103,17 +147,22 @@ public:
         }
     }
 
-    JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl)
+    JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
         : JSC::JSDestructibleObject(vm, structure)
         , socket(socket)
         , is_ssl(is_ssl)
     {
+        currentResponseObject.setEarlyValue(vm, this, response);
     }
 
     mutable WriteBarrier<JSObject> functionToCallOnClose;
     mutable WriteBarrier<WebCore::JSNodeHTTPResponse> currentResponseObject;
+    mutable WriteBarrier<JSObject> m_remoteAddress;
+    mutable WriteBarrier<JSObject> m_duplex;
+
     unsigned is_ssl : 1;
     us_socket_t* socket;
+    JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -134,27 +183,235 @@ public:
     void onClose()
     {
         this->socket = nullptr;
-    }
+        this->m_duplex.clear();
+        this->currentResponseObject.clear();
 
-    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue onClose(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-    {
-        auto* thisObject = jsDynamicCast<JSNodeHTTPServerSocket*>(callFrame->thisValue());
-        if (!thisObject) {
-            return JSValue::encode(JSC::jsUndefined());
+        // This function can be called during GC!
+        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+        if (!functionToCallOnClose) {
+            this->strongThis.clear();
+
+            return;
         }
 
-        thisObject->onClose();
-        return JSValue::encode(JSC::jsUndefined());
+        WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
+
+        if (scriptExecutionContext) {
+            JSC::gcProtect(this);
+            scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
+                WTF::NakedPtr<JSC::Exception> exception;
+                auto* globalObject = defaultGlobalObject(context.globalObject());
+                auto* thisObject = self;
+                auto* callbackObject = thisObject->functionToCallOnClose.get();
+                if (!callbackObject) {
+                    JSC::gcUnprotect(self);
+                    return;
+                }
+                auto callData = JSC::getCallData(callbackObject);
+                MarkedArgumentBuffer args;
+                EnsureStillAliveScope ensureStillAlive(self);
+                JSC::gcUnprotect(self);
+
+                if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+                    profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+
+                    if (auto* ptr = exception.get()) {
+                        exception.clear();
+                        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                    }
+                }
+            });
+        }
+
+        this->strongThis.clear();
     }
 
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
-        JSC::JSObject* prototype = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-        prototype->structure()->setMayBePrototype(true);
+        auto* structure = JSC::Structure::create(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), JSNodeHTTPServerSocketPrototype::info());
+        auto* prototype = JSNodeHTTPServerSocketPrototype::create(vm, structure);
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
 
-        return JSC::Structure::create(vm, globalObject, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
     }
 };
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = jsDynamicCast<JSNodeHTTPServerSocket*>(callFrame->thisValue());
+    if (UNLIKELY(!thisObject)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    if (thisObject->isClosed()) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    thisObject->close();
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    if (thisObject->m_duplex) {
+        return JSValue::encode(thisObject->m_duplex.get());
+    }
+    return JSValue::encode(JSC::jsNull());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    JSValue value = JSC::JSValue::decode(encodedValue);
+    if (auto* object = value.getObject()) {
+        thisObject->m_duplex.set(vm, thisObject, object);
+
+    } else {
+        thisObject->m_duplex.clear();
+    }
+
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    if (thisObject->m_remoteAddress) {
+        return JSValue::encode(thisObject->m_remoteAddress.get());
+    }
+
+    us_socket_t* socket = thisObject->socket;
+    if (!socket) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    const char* address = nullptr;
+    int port = 0;
+    bool is_ipv6 = false;
+
+    uws_res_get_remote_address_info(socket, &address, &port, &is_ipv6);
+
+    if (address == nullptr) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    auto addressString = WTF::String::fromUTF8(address);
+    if (addressString.isEmpty()) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    auto* object = JSSocketAddress::create(defaultGlobalObject(globalObject), jsString(vm, addressString), port, is_ipv6);
+    thisObject->m_remoteAddress.set(vm, thisObject, object);
+    return JSValue::encode(object);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+
+    if (thisObject->functionToCallOnClose) {
+        return JSValue::encode(thisObject->functionToCallOnClose.get());
+    }
+
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    JSValue value = JSC::JSValue::decode(encodedValue);
+
+    if (value.isUndefined() || value.isNull()) {
+        thisObject->functionToCallOnClose.clear();
+        return true;
+    }
+
+    if (!value.isCallable()) {
+        return false;
+    }
+
+    thisObject->functionToCallOnClose.set(vm, thisObject, value.getObject());
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    return JSValue::encode(JSC::jsBoolean(thisObject->isClosed()));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    auto* thisObject = jsCast<JSNodeHTTPServerSocket*>(JSC::JSValue::decode(thisValue));
+    if (!thisObject->currentResponseObject) {
+        return JSValue::encode(JSC::jsNull());
+    }
+
+    return JSValue::encode(thisObject->currentResponseObject.get());
+}
+
+template<typename Visitor>
+void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSNodeHTTPServerSocket* fn = jsCast<JSNodeHTTPServerSocket*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(fn, info());
+    Base::visitChildren(fn, visitor);
+
+    visitor.append(fn->currentResponseObject);
+    visitor.append(fn->functionToCallOnClose);
+    visitor.append(fn->m_remoteAddress);
+    visitor.append(fn->m_duplex);
+}
+
+DEFINE_VISIT_CHILDREN(JSNodeHTTPServerSocket);
+
+template<bool SSL>
+static JSNodeHTTPServerSocket* getNodeHTTPServerSocket(us_socket_t* socket)
+{
+    auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(SSL, socket);
+    return reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
+}
+
+template<bool SSL>
+static WebCore::JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket)
+{
+    auto* serverSocket = getNodeHTTPServerSocket<SSL>(socket);
+    if (!serverSocket) {
+        return nullptr;
+    }
+    return serverSocket->currentResponseObject.get();
+}
+
+const JSC::ClassInfo JSNodeHTTPServerSocket::s_info = { "NodeHTTPServerSocket"_s, &Base::s_info, nullptr, nullptr,
+    CREATE_METHOD_TABLE(JSNodeHTTPServerSocket) };
+
+const JSC::ClassInfo JSNodeHTTPServerSocketPrototype::s_info = { "NodeHTTPServerSocket"_s, &Base::s_info, nullptr, nullptr,
+    CREATE_METHOD_TABLE(JSNodeHTTPServerSocketPrototype) };
+
+template<bool SSL>
+static void* getNodeHTTPResponsePtr(us_socket_t* socket)
+{
+    WebCore::JSNodeHTTPResponse* responseObject = getNodeHTTPResponse<SSL>(socket);
+    if (!responseObject) {
+        return nullptr;
+    }
+    return responseObject->wrapped();
+}
+
+extern "C" EncodedJSValue Bun__getNodeHTTPResponseThisValue(int is_ssl, us_socket_t* socket)
+{
+    if (is_ssl) {
+        return JSValue::encode(getNodeHTTPResponse<true>(socket));
+    }
+    return JSValue::encode(getNodeHTTPResponse<false>(socket));
+}
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionRequestOrResponseHasBodyValue);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer);
@@ -553,12 +810,30 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     return JSValue::encode(tuple);
 }
 
+template<bool isSSL>
+static void assignOnCloseFunction(uWS::TemplatedApp<isSSL>* app)
+{
+    app->setOnClose([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+        auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
+        ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
+        socket->onClose();
+    });
+}
+
+extern "C" void NodeHTTP_assignOnCloseFunction(int is_ssl, void* uws_app)
+{
+    if (is_ssl) {
+        assignOnCloseFunction<true>(reinterpret_cast<uWS::TemplatedApp<true>*>(uws_app));
+    } else {
+        assignOnCloseFunction<false>(reinterpret_cast<uWS::TemplatedApp<false>*>(uws_app));
+    }
+}
 extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, int* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
     size_t any_server,
-    JSC::JSGlobalObject* globalObject,
+    Zig::GlobalObject* globalObject,
     JSValue thisValue,
     JSValue callback,
     uWS::HttpRequest* request,
@@ -581,11 +856,38 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
 
     int hasBody = 0;
-    EncodedJSValue nodehttpobjectValue = NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, nodeHttpResponsePtr);
+    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = jsCast<WebCore::JSNodeHTTPResponse*>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, nodeHttpResponsePtr)));
 
     JSC::CallData callData = getCallData(callbackObject);
-    args.append(JSValue::decode(nodehttpobjectValue));
+    args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));
+
+    auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(response->getHttpResponseData()->socketData);
+
+    if (currentSocketDataPtr) {
+        auto* thisSocket = jsCast<JSNodeHTTPServerSocket*>(currentSocketDataPtr);
+        thisSocket->currentResponseObject.set(vm, thisSocket, nodeHTTPResponseObject);
+        args.append(thisSocket);
+        args.append(jsBoolean(true));
+        if (thisSocket->m_duplex) {
+            args.append(thisSocket->m_duplex.get());
+        } else {
+            args.append(jsUndefined());
+        }
+    } else {
+        JSNodeHTTPServerSocket* socket = JSNodeHTTPServerSocket::create(
+            vm,
+            globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject),
+            (us_socket_t*)response,
+            isSSL, nodeHTTPResponseObject);
+
+        socket->strongThis.set(vm, socket);
+        response->getHttpResponseData()->socketData = socket;
+
+        args.append(socket);
+        args.append(jsBoolean(false));
+        args.append(jsUndefined());
+    }
 
     WTF::NakedPtr<JSC::Exception> exception;
     JSValue returnValue = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, jsUndefined(), args, exception);
@@ -697,6 +999,9 @@ static void NodeHTTPServer__writeHead(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
+    if (response->getLoopData()->canCork() && response->getBufferedAmount() == 0) {
+        response->getLoopData()->setCorkedSocket(response, isSSL);
+    }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
     if (headersObject) {
@@ -774,7 +1079,7 @@ extern "C" void NodeHTTPServer__writeHead_https(
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     size_t any_server,
-    JSC::JSGlobalObject* globalObject,
+    Zig::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     uWS::HttpRequest* request,
@@ -786,7 +1091,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     size_t any_server,
-    JSC::JSGlobalObject* globalObject,
+    Zig::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     uWS::HttpRequest* request,
@@ -1053,6 +1358,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "getCompleteWebRequestOrResponseBodyValueAsArrayBuffer"_s)),
         1, jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+    obj->putDirectNativeFunction(
+        vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
+        0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
     return obj;
 }
 
@@ -1063,6 +1371,11 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     } else {
         writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
     }
+}
+
+JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return JSNodeHTTPServerSocket::createStructure(vm, globalObject);
 }
 
 } // namespace Bun

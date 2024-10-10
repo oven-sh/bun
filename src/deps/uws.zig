@@ -3040,6 +3040,12 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn socket(this: AnyResponse) *uws_res {
+        return switch (this) {
+            .SSL => |resp| resp.downcast(),
+            .TCP => |resp| resp.downcast(),
+        };
+    }
     pub fn getRemoteSocketInfo(this: AnyResponse) ?SocketAddress {
         return switch (this) {
             .SSL => |resp| resp.getRemoteSocketInfo(),

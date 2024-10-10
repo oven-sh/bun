@@ -55,6 +55,8 @@ const statusMessageSymbol = Symbol("statusMessage");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 
+const kRequest = Symbol("request");
+
 const kEmptyObject = Object.freeze(Object.create(null));
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
@@ -79,6 +81,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  drainMicrotasks,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -298,6 +301,133 @@ var FakeSocket = class Socket extends Duplex {
   _write(chunk, encoding, callback) {}
 };
 
+const NodeHTTPServerSocket = class Socket extends Duplex {
+  bytesRead = 0;
+  bytesWritten = 0;
+  connecting = false;
+  timeout = 0;
+  [kHandle];
+  server: Server;
+  _httpMessage;
+
+  constructor(server: Server, handle, encrypted) {
+    super();
+    this.server = server;
+    this[kHandle] = handle;
+    handle.onclose = this.#onClose.bind(this);
+    handle.duplex = this;
+    this.encrypted = encrypted;
+  }
+
+  #onClose(callback) {
+    this[kHandle] = null;
+    if ($isCallable(callback)) callback();
+  }
+
+  address() {
+    return this[kHandle]?.remoteAddress || null;
+  }
+
+  get bufferSize() {
+    return this.writableLength;
+  }
+
+  connect(port, host, connectListener) {
+    return this;
+  }
+
+  _destroy(err, callback) {
+    const handle = this[kHandle];
+    if (!handle) return; // sometimes 'this' is Socket not FakeSocket
+    this[kHandle] = undefined;
+    handle.onclose = this.#onClose.bind(this, callback);
+    handle.close();
+  }
+
+  _final(callback) {
+    const handle = this[kHandle];
+    if (!handle) return; // sometimes 'this' is Socket not FakeSocket
+    handle.onclose = this.#onClose.bind(this, callback);
+    handle.close();
+  }
+
+  get localAddress() {
+    return "127.0.0.1";
+  }
+
+  get localFamily() {
+    return "IPv4";
+  }
+
+  get localPort() {
+    return 80;
+  }
+
+  get pending() {
+    return this.connecting;
+  }
+
+  _read(size) {}
+
+  get readyState() {
+    if (this.connecting) return "opening";
+    if (this.readable) {
+      return this.writable ? "open" : "readOnly";
+    } else {
+      return this.writable ? "writeOnly" : "closed";
+    }
+  }
+
+  ref() {
+    return this;
+  }
+
+  get remoteAddress() {
+    return this.address()?.address;
+  }
+
+  set remoteAddress(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().address = val;
+  }
+
+  get remotePort() {
+    return this.address()?.port;
+  }
+
+  set remotePort(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().port = val;
+  }
+
+  get remoteFamily() {
+    return this.address()?.family;
+  }
+
+  set remoteFamily(val) {
+    // initialize the object so that other properties wouldn't be lost
+    this.address().family = val;
+  }
+
+  resetAndDestroy() {}
+
+  setKeepAlive(enable = false, initialDelay = 0) {}
+
+  setNoDelay(noDelay = true) {
+    return this;
+  }
+
+  setTimeout(timeout, callback) {
+    return this;
+  }
+
+  unref() {
+    return this;
+  }
+
+  _write(chunk, encoding, callback) {}
+} as unknown as typeof import("node:net").Socket;
+
 function createServer(options, callback) {
   return new Server(options, callback);
 }
@@ -393,7 +523,8 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
-function Server(options, callback) {
+type Server = InstanceType<typeof Server>;
+const Server = function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
 
@@ -470,7 +601,7 @@ function Server(options, callback) {
 
   if (callback) this.on("request", callback);
   return this;
-}
+} as unknown as typeof import("node:http").Server;
 
 function onRequestEvent(event) {
   const [server, http_res, req] = this.socket[kInternalSocketData];
@@ -486,6 +617,23 @@ function onRequestEvent(event) {
         emitCloseNTAndComplete(this);
         http_res[finishedSymbol] = true;
         break;
+    }
+  }
+}
+
+function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
+  const server: Server = this.server;
+  const socket: NodeHTTPServerSocket = this;
+
+  switch (event) {
+    case NodeHTTPResponseAbortEvent.abort: {
+      socket.destroy();
+      break;
+    }
+    case NodeHTTPResponseAbortEvent.timeout: {
+      socket.emit("timeout");
+      server.emit("timeout", socket);
+      break;
     }
   }
 }
@@ -690,11 +838,17 @@ Server.prototype = {
           headersArray: string[],
           handle,
           hasBody: boolean,
+          socketHandle,
+          isSocketNew,
+          socket,
         ) {
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
+          if (!socket) {
+            socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
+          }
 
-          const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody);
+          const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
           const http_res = new ResponseClass(http_req, {
             [kHandle]: handle,
           });
@@ -712,32 +866,42 @@ Server.prototype = {
 
           let resolveFunction;
           let didFinish = false;
-          let closeCallback = () => {
-            didFinish = true;
-            handle && (handle.onabort = undefined);
-            if (resolveFunction) resolveFunction(http_res);
-            handle = undefined;
-          };
 
           http_req.once("error", errorCallback);
           http_res.once("error", errorCallback);
 
-          handle.onabort = onRequestEvent.bind(http_req);
-          const socket = http_req.socket;
-          socket[kInternalSocketData] = [server, http_res, handle];
-          server.emit("connection", socket);
+          // handle.onabort = onServerRequestEvent.bind(socketHandle);
+          http_res.once("close", () => {
+            didFinish = true;
+            resolveFunction && resolveFunction();
+          });
+
+          if (isSocketNew) {
+            server.emit("connection", socket);
+          }
+
+          socket._httpMessage = http_res;
+          http_res.socket = socket;
+          socket[kRequest] = http_req;
+
           server.emit("request", http_req, http_res);
+
+          socket.cork(drainMicrotasks);
 
           if (capturedError) {
             handle = undefined;
+            if (socket._httpMessage === http_res) {
+              socket._httpMessage = null;
+            }
             throw capturedError;
           }
 
           if (handle.finished || didFinish) {
             http_res.off("error", errorCallback);
-            http_res.off("close", closeCallback);
             handle = undefined;
-            closeCallback = () => {};
+            if (socket._httpMessage === http_res) {
+              socket._httpMessage = null;
+            }
             return;
           }
 
@@ -921,15 +1085,6 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this.complete = false;
   this._closed = false;
 
-  if (isNextIncomingMessageHTTPS) {
-    // Creating a new Duplex is expensive.
-    // We can skip it if the request is not HTTPS.
-    const socket = new FakeSocket();
-    this[fakeSocketSymbol] = socket;
-    socket.encrypted = true;
-    isNextIncomingMessageHTTPS = false;
-  }
-
   // (url, method, headers, rawHeaders, handle, hasBody)
   if (req === kHandle) {
     this[typeSymbol] = NodeHTTPIncomingRequestType.NodeHTTPResponse;
@@ -939,8 +1094,18 @@ function IncomingMessage(req, defaultIncomingOpts) {
     this.rawHeaders = arguments[4];
     this[kHandle] = arguments[5];
     this[noBodySymbol] = !arguments[6];
+    this[fakeSocketSymbol] = arguments[7];
     Readable.$call(this);
   } else {
+    if (isNextIncomingMessageHTTPS) {
+      // Creating a new Duplex is expensive.
+      // We can skip it if the request is not HTTPS.
+      const socket = new FakeSocket();
+      this[fakeSocketSymbol] = socket;
+      socket.encrypted = true;
+      isNextIncomingMessageHTTPS = false;
+    }
+
     this[noBodySymbol] = false;
     Readable.$call(this);
     var { [typeSymbol]: type = NodeHTTPIncomingRequestType.FetchRequest, [reqSymbol]: nodeReq } =
@@ -1509,6 +1674,7 @@ function callWriteHeadIfObservable(self, headerState) {
     !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
   ) {
     self.writeHead(self.statusCode, self.statusMessage, self[headersSymbol]);
+    console.log("called rwriteHead");
   }
 }
 
@@ -1576,6 +1742,7 @@ const ServerResponsePrototype = {
           handle.end(chunk, encoding);
         }
       }
+      this._header = " ";
       const req = this.req;
       const reqClosed = req?._closed;
       if (reqClosed === false && req) {
@@ -1752,7 +1919,7 @@ const ServerResponsePrototype = {
       throw ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
-    socket.on("close", () => onServerResponseClose.$call(socket));
+    socket.once("close", () => onServerResponseClose.$call(socket));
     this.socket = socket;
     this.emit("socket", socket);
   },
@@ -1796,6 +1963,7 @@ const ServerResponsePrototype = {
 
     const handle = this[kHandle];
     if (handle && !this.headersSent) {
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
     }
   },
@@ -2893,7 +3061,7 @@ const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTT
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 
 var globalAgent = new Agent();
-export default {
+const http_exports = {
   Agent,
   Server,
   METHODS,
@@ -2918,3 +3086,5 @@ export default {
   ClientRequest,
   OutgoingMessage,
 };
+
+export default http_exports;

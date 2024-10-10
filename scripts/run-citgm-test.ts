@@ -69,6 +69,9 @@ const test_script = Bun.argv[4] ?? "test";
     console.log("-", "command exited with non-zero status:", result.status);
     process.exit(1);
   }
+  if (result.error) {
+    process.exit(1);
+  }
   console.log("---");
 }
 
@@ -92,6 +95,9 @@ if (deps.length || devDeps.length) {
     console.log("-", "command exited with non-zero status:", result.status);
     process.exit(1);
   }
+  if (result.error) {
+    process.exit(1);
+  }
   console.log("---");
 }
 
@@ -109,6 +115,9 @@ if (deps.length || devDeps.length) {
   }
   if (result.status) {
     console.log("-", "command exited with non-zero status:", result.status);
+    process.exit(1);
+  }
+  if (result.error) {
     process.exit(1);
   }
   console.log("---");

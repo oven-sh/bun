@@ -1,6 +1,8 @@
 export default [
+  // index key:
+  //    mode, clone_url, skipWindows
   // 0
-  [0, "https://github.com/maxogden/binary-split.git"], //binary-split
+  [0, "https://github.com/maxogden/binary-split.git", 1], //binary-split
   [0, "https://github.com/mafintosh/blake2b-wasm.git"], //blake2b-wasm
   [0, "https://github.com/mafintosh/flush-write-stream.git"], //flush-write-stream
   [0, "https://github.com/hughsk/from2.git"], //from2

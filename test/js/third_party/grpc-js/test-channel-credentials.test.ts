@@ -142,7 +142,6 @@ describe("ChannelCredentials usage", () => {
     const callCreds = CallCredentials.createFromMetadataGenerator((options, cb) => {
       const metadata = new grpc.Metadata();
       metadata.set("test-key", "test-value");
-      console.error("createFromMetadataGenerator!");
 
       cb(null, metadata);
     });
@@ -151,7 +150,6 @@ describe("ChannelCredentials usage", () => {
       server = new grpc.Server();
       server.addService(echoService.service, {
         echo(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
-          console.error("sendDatadata!", call.metadata);
           call.sendMetadata(call.metadata);
 
           callback(null, call.request);
@@ -164,7 +162,6 @@ describe("ChannelCredentials usage", () => {
           return;
         }
         portNum = port;
-        console.error("bind port", port);
         client = new echoService(`127.0.0.1:${port}`, combinedCreds, {
           "grpc.ssl_target_name_override": hostnameOverride,
           "grpc.default_authority": hostnameOverride,

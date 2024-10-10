@@ -905,11 +905,11 @@ async function getTests(cwd) {
         yield* getFiles(cwd, filename);
       }
     }
-    for (const item of (await import("./citgm-items.mjs")).default) {
-      yield item[1];
-    }
   }
-  return (await Array.fromAsync(getFiles(cwd, ""))).sort();
+  return [
+    ...(await Array.fromAsync(getFiles(cwd, ""))),
+    ...(await import("./citgm-items.mjs")).default.map(v => v[1]),
+  ].sort();
 }
 
 /**

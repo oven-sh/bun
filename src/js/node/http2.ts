@@ -2238,7 +2238,6 @@ class ServerHttp2Session extends Http2Session {
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
-  #queue: Array<Buffer> = [];
   #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   #socket_proxy: Proxy<TLSSocket | Socket>;
@@ -2373,7 +2372,6 @@ class ServerHttp2Session extends Http2Session {
       const error_instance = sessionErrorFromCode(errorCode);
       self.emit("error", error_instance);
       self[bunHTTP2Socket]?.end();
-      self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Session) {
@@ -2390,25 +2388,21 @@ class ServerHttp2Session extends Http2Session {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
       self[bunHTTP2Socket]?.end();
-      self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self[bunHTTP2Socket]?.end();
-      self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
     write(self: ServerHttp2Session, buffer: Buffer) {
-      if (!self) return false;
+      if (!self) return -1;
       const socket = self[bunHTTP2Socket];
-      if (socket && /*!socket.writableEnded &&*/ self.#connected) {
+      if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
-        return socket.write(buffer);
+        return socket.write(buffer) ? 1 : 0;
       }
-      //queue
-      self.#queue.push(buffer);
-      return true;
+      return -1;
     },
   };
 
@@ -2418,14 +2412,14 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
+    // this[bunHTTP2Socket] = null;
     // this.emit("close");
     this.close();
   }
 
   #onError(error: Error) {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
+    // this[bunHTTP2Socket] = null;
     // this.emit("error", error);
     this.destroy(error);
   }
@@ -2485,11 +2479,9 @@ class ServerHttp2Session extends Http2Session {
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
-    // we can just use native to read data when possible
-    if (!this.#parser.hasNativeRead()) {
-      socket.on("data", this.#onRead.bind(this));
-      socket.on("drain", this.#onDrain.bind(this));
-    }
+    socket.on("data", this.#onRead.bind(this));
+    socket.on("drain", this.#onDrain.bind(this));
+
     process.nextTick(emitConnectNT, this, socket);
   }
 
@@ -2657,7 +2649,6 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
-  #queue: Array<Buffer> = [];
   #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   #socket_proxy: Proxy<TLSSocket | Socket>;
@@ -2786,7 +2777,6 @@ class ClientHttp2Session extends Http2Session {
       const error_instance = sessionErrorFromCode(errorCode);
       self.emit("error", error_instance);
       self[bunHTTP2Socket]?.destroy();
-      self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
 
@@ -2804,25 +2794,21 @@ class ClientHttp2Session extends Http2Session {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
       self[bunHTTP2Socket]?.end();
-      self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self[bunHTTP2Socket]?.end();
-      self[bunHTTP2Socket] = null;
       self.#parser = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
-      if (!self) return false;
+      if (!self) return -1;
       const socket = self[bunHTTP2Socket];
-      if (socket && /*!socket.writableEnded &&*/ self.#connected) {
+      if (socket && !socket.writableEnded && self.#connected) {
         // redirect writes to socket
-        return socket.write(buffer);
+        return socket.write(buffer) ? 1 : 0;
       }
-      //queue
-      self.#queue.push(buffer);
-      return false;
+      return -1;
     },
   };
 
@@ -2863,29 +2849,16 @@ class ClientHttp2Session extends Http2Session {
     if (nativeSocket) {
       this.#parser.setNativeSocket(nativeSocket);
     }
-    // we can just use native to read data when possible
-    if (!this.#parser.hasNativeRead()) {
-      socket.on("data", this.#onRead.bind(this));
-      socket.on("drain", this.#onDrain.bind(this));
-    }
-    // redirect the queued buffers
-    const queue = this.#queue;
-    while (queue.length) {
-      socket.write(queue.shift());
-    }
     process.nextTick(emitConnectNT, this, socket);
+    this.#parser.flush();
   }
 
   #onClose() {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
-    // this.emit("close");
     this.close();
   }
   #onError(error: Error) {
     this.#parser = null;
-    this[bunHTTP2Socket] = null;
-    // this.emit("error", error);
     this.destroy(error);
   }
   #onTimeout() {
@@ -3072,14 +3045,15 @@ class ClientHttp2Session extends Http2Session {
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;
-    const nativeSocket = socket[bunSocketInternal];
+    // const nativeSocket = socket[bunSocketInternal];
     this.#parser = new H2FrameParser({
-      native: nativeSocket,
+      // native: nativeSocket,
       context: this,
       settings: options,
       handlers: ClientHttp2Session.#Handlers,
     });
-
+    socket.on("data", this.#onRead.bind(this));
+    socket.on("drain", this.#onDrain.bind(this));
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));

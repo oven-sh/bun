@@ -21,7 +21,7 @@ import { promisify } from "util";
 
 import assert from "node:assert";
 import grpc, { sendUnaryData, ServerUnaryCall, ServiceError } from "@grpc/grpc-js";
-import { afterAll, beforeAll, describe, it, afterEach } from "bun:test";
+import { afterAll, beforeAll, describe, it, afterEach, beforeEach } from "bun:test";
 import { CallCredentials } from "@grpc/grpc-js/build/src/call-credentials";
 import { ChannelCredentials } from "@grpc/grpc-js/build/src/channel-credentials";
 import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
@@ -134,7 +134,7 @@ describe("ChannelCredentials usage", () => {
   let portNum: number;
   let caCert: Buffer;
   const hostnameOverride = "foo.test.google.fr";
-  beforeAll(async () => {
+  beforeEach(async () => {
     const { ca, key, cert } = await pFixtures;
     caCert = ca;
     const serverCreds = grpc.ServerCredentials.createSsl(null, [{ private_key: key, cert_chain: cert }]);
@@ -142,6 +142,8 @@ describe("ChannelCredentials usage", () => {
     const callCreds = CallCredentials.createFromMetadataGenerator((options, cb) => {
       const metadata = new grpc.Metadata();
       metadata.set("test-key", "test-value");
+      console.error("createFromMetadataGenerator!");
+
       cb(null, metadata);
     });
     const combinedCreds = channelCreds.compose(callCreds);
@@ -149,18 +151,21 @@ describe("ChannelCredentials usage", () => {
       server = new grpc.Server();
       server.addService(echoService.service, {
         echo(call: ServerUnaryCall<any, any>, callback: sendUnaryData<any>) {
+          console.error("sendDatadata!", call.metadata);
           call.sendMetadata(call.metadata);
+
           callback(null, call.request);
         },
       });
 
-      server.bindAsync("localhost:0", serverCreds, (err, port) => {
+      server.bindAsync("127.0.0.1:0", serverCreds, (err, port) => {
         if (err) {
           reject(err);
           return;
         }
         portNum = port;
-        client = new echoService(`localhost:${port}`, combinedCreds, {
+        console.error("bind port", port);
+        client = new echoService(`127.0.0.1:${port}`, combinedCreds, {
           "grpc.ssl_target_name_override": hostnameOverride,
           "grpc.default_authority": hostnameOverride,
         });
@@ -169,11 +174,11 @@ describe("ChannelCredentials usage", () => {
       });
     });
   });
-  afterAll(() => {
+  afterEach(() => {
     server.forceShutdown();
   });
 
-  it.todo("Should send the metadata from call credentials attached to channel credentials", done => {
+  it("Should send the metadata from call credentials attached to channel credentials", done => {
     const call = client.echo(
       { value: "test value", value2: 3 },
       assert2.mustCall((error: ServiceError, response: any) => {

@@ -942,6 +942,78 @@ describe("publish", async () => {
     expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
   });
 
+  for (const info of [
+    { user: "bin1", bin: "bin1.js" },
+    { user: "bin2", bin: { bin1: "bin1.js", bin2: "bin2.js" } },
+    { user: "bin3", directories: { bin: "bins" } },
+  ]) {
+    test.only(`can publish and install binaries with ${JSON.stringify(info.bin)}`, async () => {
+      const publishDir = tmpdirSync();
+      const bunfig = await authBunfig("binaries-" + info.user);
+
+      const publishJson = {
+        name: "publish-pkg-bins",
+        version: "1.1.1",
+        ...info,
+      };
+
+      console.log("publishJson", publishJson);
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "publish-pkg-bins"), { recursive: true, force: true }),
+        write(
+          join(publishDir, "package.json"),
+          JSON.stringify({
+            name: "publish-pkg-bins",
+            version: "1.1.1",
+            ...info,
+          }),
+        ),
+        write(join(publishDir, "bunfig.toml"), bunfig),
+        write(join(publishDir, "bin1.js"), `#!/usr/bin/env bun\nconsole.log("bin1!")`),
+        write(join(publishDir, "bin2.js"), `#!/usr/bin/env bun\nconsole.log("bin2!")`),
+        write(join(publishDir, "bins", "bin3.js"), `#!/usr/bin/env bun\nconsole.log("bin3!")`),
+        write(join(publishDir, "bins", "moredir", "bin4.js"), `#!/usr/bin/env bun\nconsole.log("bin4!")`),
+
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "publish-pkg-bins": "1.1.1",
+            },
+          }),
+        ),
+      ]);
+
+      const { out, err, exitCode } = await publish(env, publishDir);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(out).toContain("+ publish-pkg-bins@1.1.1");
+      expect(exitCode).toBe(0);
+
+      await runBunInstall(env, packageDir);
+
+      const results = await Promise.all([
+        exists(join(packageDir, "node_modules", ".bin", "bin1")),
+        exists(join(packageDir, "node_modules", ".bin", "bin2")),
+        exists(join(packageDir, "node_modules", ".bin", "bin3")),
+        exists(join(packageDir, "node_modules", ".bin", "moredir", "bin4")),
+      ]);
+
+      switch (info.user) {
+        case "bin1": {
+          expect(results).toEqual([true, false, false, false]);
+        }
+        case "bin2": {
+          expect(results).toEqual([true, true, false, false]);
+        }
+        case "bin3": {
+          expect(results).toEqual([false, false, true, true]);
+        }
+      }
+    });
+  }
+
   test("can publish workspace package", async () => {
     const bunfig = await authBunfig("workspace");
     const pkgJson = {

@@ -1148,6 +1148,13 @@ pub const PackCommand = struct {
             }
         }
 
+        const bins: if (for_publish) ?Publish.Bins else void = if (comptime for_publish)
+            Publish.Bins.normalizeFromJSON(ctx.allocator, json.root) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => |oom| return oom,
+                }
+            };
+
         var this_bundler: bun.bundler.Bundler = undefined;
 
         _ = RunCommand.configureEnvForRun(
@@ -1401,14 +1408,15 @@ pub const PackCommand = struct {
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
                     .script_env = this_bundler.env,
+                    .bins = bins,
                 };
             }
 
             return;
         }
 
-        const bins = try getPackageBins(ctx.allocator, json.root);
-        defer for (bins) |bin| ctx.allocator.free(bin.path);
+        const bin_info = try getPackageBins(ctx.allocator, json.root);
+        defer for (bin_info) |bin| ctx.allocator.free(bin.path);
 
         var print_buf = std.ArrayList(u8).init(ctx.allocator);
         defer print_buf.deinit();
@@ -1545,7 +1553,7 @@ pub const PackCommand = struct {
                     archive,
                     entry,
                     &print_buf,
-                    bins,
+                    bin_info,
                 );
             }
 
@@ -1572,7 +1580,7 @@ pub const PackCommand = struct {
                     archive,
                     entry,
                     &print_buf,
-                    bins,
+                    bin_info,
                 );
             }
 
@@ -1715,6 +1723,7 @@ pub const PackCommand = struct {
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
                 .script_env = this_bundler.env,
+                .bins = bins,
             };
         }
     }

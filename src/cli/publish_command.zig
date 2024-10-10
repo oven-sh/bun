@@ -34,6 +34,128 @@ const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
 
 pub const PublishCommand = struct {
+    pub const Bins = union(enum) {
+        str: []const u8,
+        dir: []const u8,
+        obj: List,
+
+        pub const List = std.ArrayListUnmanaged(struct { []const u8, []const u8 });
+
+        const NormalizeFromJSONError = OOM || error{};
+
+        pub fn normalizeFromJSON(allocator: std.mem.Allocator, root: Expr) NormalizeFromJSONError!?@This() {
+            var normalize_buf: bun.PathBuffer = undefined;
+            if (root.get("bin")) |bin| {
+                switch (bin.data) {
+                    .e_string => |bin_str| {
+                        return .{
+                            .str = try allocator.dupe(
+                                u8,
+                                strings.withoutPrefixComptime(
+                                    path.normalizeBuf(
+                                        try bin_str.string(allocator),
+                                        &normalize_buf,
+                                        .posix,
+                                    ),
+                                    "./",
+                                ),
+                            ),
+                        };
+                    },
+                    .e_object => |bin_obj| {
+                        var bins = try List.initCapacity(allocator, bin_obj.properties.len);
+
+                        for (bin_obj.properties.slice()) |prop| {
+                            const key = key: {
+                                if (prop.key) |key| {
+                                    if (key.isString() and key.data.e_string.len() != 0) {
+                                        break :key try allocator.dupe(
+                                            u8,
+                                            strings.withoutPrefixComptime(
+                                                // replace separators
+                                                path.normalizeBuf(
+                                                    try key.data.e_string.string(allocator),
+                                                    &normalize_buf,
+                                                    .posix,
+                                                ),
+                                                "./",
+                                            ),
+                                        );
+                                    }
+                                }
+
+                                // TODO(dylan-conway): error or warn? npm warns
+                                continue;
+                            };
+                            if (key.len == 0) {
+                                // TODO(dylan-conway): error or warn? npm warns
+                                continue;
+                            }
+
+                            const value = value: {
+                                if (prop.value) |value| {
+                                    if (value.isString() and value.data.e_string.len() != 0) {
+                                        break :value try allocator.dupe(
+                                            u8,
+                                            strings.withoutPrefixComptime(
+                                                // replace separators
+                                                path.normalizeBuf(
+                                                    try value.data.e_string.string(allocator),
+                                                    &normalize_buf,
+                                                    .posix,
+                                                ),
+                                                "./",
+                                            ),
+                                        );
+                                    }
+                                }
+
+                                // TODO(dylan-conway): error or warn? npm warns
+                                continue;
+                            };
+                            if (value.len == 0) {
+                                // TODO(dylan-conway): error or warn? npm warns
+                                continue;
+                            }
+
+                            try bins.append(allocator, .{ key, value });
+                        }
+
+                        return .{ .obj = bins };
+                    },
+                    else => {
+                        // TODO(dylan-conway): error or warn? npm warns
+                        return null;
+                    },
+                }
+            }
+
+            if (root.get("directories")) |dirs| {
+                if (dirs.get("bin")) |bin| {
+                    const bin_dir = bin.asString(allocator) orelse {
+                        // TODO(dylan-conway): error or warn? npm warns
+                        return null;
+                    };
+                    return .{
+                        .dir = try allocator.dupe(
+                            u8,
+                            strings.withoutPrefixComptime(
+                                path.normalizeBuf(
+                                    bin_dir,
+                                    &normalize_buf,
+                                    .posix,
+                                ),
+                                "./",
+                            ),
+                        ),
+                    };
+                }
+            }
+
+            return null;
+        }
+    };
+
     pub fn Context(comptime directory_publish: bool) type {
         return struct {
             manager: *PackageManager,
@@ -47,6 +169,7 @@ pub const PublishCommand = struct {
             shasum: sha.SHA1.Digest,
             integrity: sha.SHA512.Digest,
             uses_workspaces: bool,
+            bins: ?Bins,
 
             publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
             postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
@@ -163,7 +286,7 @@ pub const PublishCommand = struct {
 
                 const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
 
-                const package_name, const package_version = package_info: {
+                const package_name, const package_version, const bins = package_info: {
                     defer ctx.allocator.free(package_json_contents);
 
                     const source = logger.Source.initPathString("package.json", package_json_contents);
@@ -213,7 +336,17 @@ pub const PublishCommand = struct {
                     const version = try json.getStringCloned(ctx.allocator, "version") orelse return error.MissingPackageVersion;
                     if (version.len == 0) return error.InvalidPackageVersion;
 
-                    break :package_info .{ name, version };
+                    if (json.get("bin")) |bin| {
+                        break :package_info .{
+                            name, version, Bins.normalizeFromJSON(ctx.allocator, bin) catch |err| {
+                                switch (err) {
+                                    error.OutOfMemory => |oom| return oom,
+                                }
+                            },
+                        };
+                    }
+
+                    break :package_info .{ name, version, null };
                 };
 
                 var shasum: sha.SHA1.Digest = undefined;
@@ -253,6 +386,7 @@ pub const PublishCommand = struct {
                     .uses_workspaces = false,
                     .command_ctx = ctx,
                     .script_env = {},
+                    .bins = bins,
                 };
             }
 
@@ -1023,6 +1157,45 @@ pub const PublishCommand = struct {
             try writer.print(",\"_integrity\":\"{}\"", .{
                 bun.fmt.integrity(ctx.integrity, .full),
             });
+
+            if (ctx.bins) |bins| {
+                switch (bins) {
+                    .obj => |obj| {
+                        try writer.print(",\"bin\":{{", .{});
+                        for (0..obj.items.len) |i| {
+                            const key, const value = obj.items[i];
+                            if (!bun.sys.exists(value)) {
+                                Output.warn("bin '{s}' does not exist", .{value});
+                            }
+                            try writer.print("\"{s}\":\"{s}\"{s}", .{
+                                key,
+                                value,
+                                if (i == obj.items.len - 1) "" else ",",
+                            });
+                        }
+                        try writer.print("}}", .{});
+                    },
+                    .str => |str| {
+                        try writer.print(",\"bin\":{{", .{});
+                        if (!bun.sys.exists(str)) {
+                            Output.warn("bin '{s}' does not exist", .{str});
+                        }
+                        try writer.print("\"{s}\":\"{s}\"", .{
+                            // becomes the package name
+                            ctx.package_name,
+                            str,
+                        });
+                        try writer.print("}}", .{});
+                    },
+                    .dir => |dir| {
+                        if (!bun.sys.exists(dir)) {
+                            Output.warn("bin directory '{s}' does not exist", .{dir});
+                        }
+                        try writer.print(",\"directories\":{{\"bin\":\"{s}\"}}", .{dir});
+                    },
+                }
+                try writer.print("}}", .{});
+            }
 
             try writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{
                 Environment.reported_nodejs_version,

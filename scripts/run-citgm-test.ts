@@ -12,7 +12,6 @@ function tmpdirSync(pattern = "bun.citgm.") {
 const exec_path = Bun.argv[2];
 console.log("exec path:", exec_path);
 console.log("---");
-console.log();
 
 const clone_url = Bun.argv[3];
 const clone_dir = tmpdirSync();

@@ -3440,28 +3440,6 @@ pub const Parser = struct {
                         try p.appendPart(parts_list, sliced.items);
                     },
 
-                    // Hoist functions to the top in the output
-                    // This is normally done by the JS parser, but we need to do it here
-                    // incase we have CommonJS exports converted to ESM exports there are assignments
-                    // to the exports object that need to be hoisted.
-                    .s_function => {
-                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
-                        sliced.items.len = 1;
-                        sliced.items[0] = stmt;
-                        // since we convert top-level function statements to look like this:
-                        //
-                        //   let foo = function () { ... }
-                        //
-                        // we have to hoist them to the top of the file, even when not bundling
-                        //
-                        // we might also need to do this for classes but i'm not sure yet.
-                        try p.appendPart(&parts, sliced.items);
-
-                        if (parts.items.len > 0) {
-                            before.append(parts.getLast()) catch unreachable;
-                            parts.items.len -= 1;
-                        }
-                    },
                     .s_class => |class| {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
@@ -19347,6 +19325,7 @@ fn NewParser_(
                         }
                     }
 
+                    data.kind = kind;
                     try stmts.append(stmt.*);
 
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
@@ -22071,29 +22050,37 @@ fn NewParser_(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
-                                if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
+                                if (!local.is_export and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
+                                    var any_decl_in_const_values = local.kind == .k_const;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
-                                            const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
-                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref) and symbol.use_count_estimate == 0) {
-                                                continue;
+                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                                                any_decl_in_const_values = true;
+                                                const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
+                                                if (symbol.use_count_estimate == 0) {
+                                                    // Skip declarations that are constants with zero usage
+                                                    continue;
+                                                }
                                             }
                                         }
                                         decls[end] = decl;
                                         end += 1;
                                     }
                                     local.decls.len = @as(u32, @truncate(end));
-                                    if (end == 0) {
-                                        stmt.* = stmt.*.toEmpty();
+                                    if (any_decl_in_const_values) {
+                                        if (end == 0) {
+                                            stmt.* = stmt.*.toEmpty();
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
                             },
                             else => {},
                         }
 
+                        // Break after processing relevant statements
                         break;
                     }
                 }

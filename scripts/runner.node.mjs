@@ -168,7 +168,7 @@ async function runTests() {
   const revision = getRevision(execPath);
   console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath);
+  const tests = await getRelevantTests(testsPath);
   console.log("Running tests:", tests.length);
 
   let i = 0;
@@ -570,6 +570,7 @@ async function spawnBunTest(execPath, testPath) {
  */
 async function spawnCitgmTest(execPath, testPath) {
   const timeout = integrationTimeout;
+  const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
 
   const bunEnv = {
     ...process.env,
@@ -587,7 +588,7 @@ async function spawnCitgmTest(execPath, testPath) {
   };
 
   const result = await spawnSafe({
-    command: resolve("./run-citgm-test.ts"),
+    command: resolve(join(import.meta.dirname, "run-citgm-test.ts")),
     args: [execPath, testPath],
     cwd: cwd,
     timeout: timeout,
@@ -889,8 +890,8 @@ function isHidden(path) {
  * @param {string} cwd
  * @returns {string[]}
  */
-function getTests(cwd) {
-  function* getFiles(cwd, path) {
+async function getTests(cwd) {
+  async function* getFiles(cwd, path) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
@@ -904,19 +905,19 @@ function getTests(cwd) {
         yield* getFiles(cwd, filename);
       }
     }
-    for (const item of require("./citgm-items.mjs")) {
+    for (const item of (await import("./citgm-items.mjs")).default) {
       yield item[1];
     }
   }
-  return [...getFiles(cwd, "")].sort();
+  return (await Array.fromAsync(getFiles(cwd, ""))).sort();
 }
 
 /**
  * @param {string} cwd
  * @returns {string[]}
  */
-function getRelevantTests(cwd) {
-  const tests = getTests(cwd);
+async function getRelevantTests(cwd) {
+  const tests = await getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
 

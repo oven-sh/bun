@@ -518,15 +518,13 @@ ${Object.keys(opts)
 describe("certificate authority", () => {
   const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
     return async function (req: Request) {
-      // console.log({ url: req.url });
       if (req.url.includes("no-deps")) {
-        return new Response(Bun.file(join(import.meta.dir, "packages", "no-deps", "package.json")));
+        return new Response(Bun.file(join(import.meta.dir, "packages", "no-deps", "no-deps-1.0.0.tgz")));
       }
       return new Response("OK", { status: 200 });
     };
   };
   test("valid --cafile", async () => {
-    console.log({ packageDir });
     using server = Bun.serve({
       port: 0,
       fetch: mockRegistryFetch(),
@@ -539,7 +537,7 @@ describe("certificate authority", () => {
           name: "foo",
           version: "1.1.1",
           dependencies: {
-            "no-deps": "1.0.0",
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
           },
         }),
       ),
@@ -561,7 +559,7 @@ describe("certificate authority", () => {
       env,
     });
     const out = await Bun.readableStreamToText(stdout);
-    expect(out).toContain("+ no-deps@1.0.0");
+    expect(out).toContain("+ no-deps@");
     const err = await Bun.readableStreamToText(stderr);
     expect(err).not.toContain("ConnectionClosed");
     expect(err).not.toContain("error:");
@@ -581,7 +579,7 @@ describe("certificate authority", () => {
           name: "foo",
           version: "1.1.1",
           dependencies: {
-            "no-deps": "1.0.0",
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
           },
         }),
       ),
@@ -616,7 +614,7 @@ describe("certificate authority", () => {
       env,
     }));
     out = await Bun.readableStreamToText(stdout);
-    expect(out).toContain("+ no-deps@1.0.0");
+    expect(out).toContain("+ no-deps@");
     err = await Bun.readableStreamToText(stderr);
     expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(err).not.toContain("error:");

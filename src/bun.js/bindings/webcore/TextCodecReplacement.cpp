@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,38 +23,48 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#include "config.h"
+#include "TextCodecReplacement.h"
 
-#include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
+#include <wtf/Function.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace PAL {
 
-struct CryptoDigestContext;
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TextCodecReplacement);
 
-class CryptoDigest {
-    WTF_MAKE_NONCOPYABLE(CryptoDigest);
+void TextCodecReplacement::registerEncodingNames(EncodingNameRegistrar registrar)
+{
+    registrar("replacement"_s, "replacement"_s);
 
-public:
-    enum class Algorithm {
-        SHA_1,
-        SHA_224,
-        SHA_256,
-        SHA_384,
-        SHA_512,
-    };
-    static std::unique_ptr<CryptoDigest> create(Algorithm);
-    ~CryptoDigest();
+    registrar("csiso2022kr"_s, "replacement"_s);
+    registrar("hz-gb-2312"_s, "replacement"_s);
+    registrar("iso-2022-cn"_s, "replacement"_s);
+    registrar("iso-2022-cn-ext"_s, "replacement"_s);
+    registrar("iso-2022-kr"_s, "replacement"_s);
+}
 
-    void addBytes(const void* input, size_t length);
-    Vector<uint8_t> computeHash();
-    String toHexString();
+void TextCodecReplacement::registerCodecs(TextCodecRegistrar registrar)
+{
+    registrar("replacement"_s, [] {
+        return makeUnique<TextCodecReplacement>();
+    });
+}
 
-private:
-    CryptoDigest();
+String TextCodecReplacement::decode(std::span<const uint8_t>, bool, bool, bool& sawError)
+{
+    sawError = true;
+    if (m_sentEOF)
+        return emptyString();
+    m_sentEOF = true;
+    return span(replacementCharacter);
+}
 
-    std::unique_ptr<CryptoDigestContext> m_context;
-};
+Vector<uint8_t> TextCodecReplacement::encode(StringView string, UnencodableHandling) const
+{
+    return {};
+}
 
 } // namespace PAL

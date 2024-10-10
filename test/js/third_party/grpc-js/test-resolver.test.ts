@@ -24,6 +24,7 @@ import * as resolver_uds from "@grpc/grpc-js/build/src/resolver-uds";
 import * as resolver_ip from "@grpc/grpc-js/build/src/resolver-ip";
 import { ServiceConfig } from "@grpc/grpc-js/build/src/service-config";
 import { StatusObject } from "@grpc/grpc-js/build/src/call-interface";
+import { isIPv6 } from "harness";
 import {
   Endpoint,
   SubchannelAddress,
@@ -67,7 +68,9 @@ describe("Name Resolver", () => {
           // Only handle the first resolution result
           listener.onSuccessfulResolution = () => {};
           assert(hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 50051 }));
-          assert(hasMatchingAddress(endpointList, { host: "::1", port: 50051 }));
+          if (isIPv6()) {
+            assert(hasMatchingAddress(endpointList, { host: "::1", port: 50051 }));
+          }
           done();
         },
         onError: (error: StatusObject) => {
@@ -91,7 +94,9 @@ describe("Name Resolver", () => {
           // Only handle the first resolution result
           listener.onSuccessfulResolution = () => {};
           assert(hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }));
-          assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
+          if (isIPv6()) {
+            assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
+          }
           done();
         },
         onError: (error: StatusObject) => {

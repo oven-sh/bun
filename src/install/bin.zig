@@ -2,7 +2,6 @@ const ExternalStringList = @import("./install.zig").ExternalStringList;
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const Output = bun.Output;
 const Global = bun.Global;
 const std = @import("std");
 const strings = bun.strings;

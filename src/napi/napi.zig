@@ -822,7 +822,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
 // We don't want to fail to load the library because of that
 // so we instead return an error and warn the user
 fn notImplementedYet(comptime name: []const u8) void {
-    bun.once(
+    bun.onceUnsafe(
         struct {
             pub fn warn() void {
                 if (JSC.VirtualMachine.get().log.level.atLeast(.warn)) {

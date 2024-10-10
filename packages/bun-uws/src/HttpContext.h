@@ -433,7 +433,8 @@ public:
     static HttpContext *create(Loop *loop, us_bun_socket_context_options_t options = {}) {
         HttpContext *httpContext;
 
-        httpContext = (HttpContext *) us_create_bun_socket_context(SSL, (us_loop_t *) loop, sizeof(HttpContextData<SSL>), options);
+        enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+        httpContext = (HttpContext *) us_create_bun_socket_context(SSL, (us_loop_t *) loop, sizeof(HttpContextData<SSL>), options, &err);
 
         if (!httpContext) {
             return nullptr;

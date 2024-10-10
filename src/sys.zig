@@ -2480,6 +2480,16 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
+pub fn existsZ(path: [:0]const u8) bool {
+    if (comptime Environment.isPosix) {
+        return system.access(path, 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        return getFileAttributes(path) != null;
+    }
+}
+
 pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
     const dir_fd = bun.toFD(dir_);

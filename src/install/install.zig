@@ -677,6 +677,8 @@ pub const Task = struct {
                     pt.apply() catch bun.outOfMemory();
                     if (pt.callback.apply.logger.errors > 0) {
                         defer pt.callback.apply.logger.deinit();
+                        manager.pauseProgress();
+                        defer manager.resumeProgress();
                         // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
                         pt.callback.apply.logger.printForLogLevel(Output.writer()) catch {};
                     }
@@ -1624,9 +1626,9 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                         }
 
                                         if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
-                                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                            PackageManager.instance.cleanError(err, "copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                         } else {
-                                            Output.prettyError("<r><red>error<r> copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                            PackageManager.instance.cleanErrorGeneric("copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                         }
 
                                         Global.crash();
@@ -1654,7 +1656,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                         progress_.refresh();
                                     }
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                    PackageManager.instance.cleanError(err, "copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     Global.crash();
                                 };
                             };
@@ -1671,7 +1673,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                     progress_.refresh();
                                 }
 
-                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                PackageManager.instance.cleanError(err, "copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                 Global.crash();
                             };
                         }
@@ -2039,7 +2041,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                                 }.get();
 
                                                 if (once_log) {
-                                                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                                                    PackageManager.instance.cleanWarnResume("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
                                                         bun.fmt.fmtOSPath(src, .{}),
                                                         bun.fmt.fmtOSPath(dest, .{}),
                                                     });
@@ -6339,10 +6341,12 @@ pub const PackageManager = struct {
                     }
 
                     if (comptime log_level.isVerbose()) {
+                        manager.pauseProgress();
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
                         Output.prettyError("\n<d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
+                        manager.resumeProgress();
                     }
 
                     if (response.status_code == 304) {
@@ -6542,10 +6546,12 @@ pub const PackageManager = struct {
                     }
 
                     if (comptime log_level.isVerbose()) {
+                        manager.pauseProgress();
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
                         Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
+                        manager.resumeProgress();
                     }
 
                     if (comptime log_level.showProgress()) {
@@ -6571,7 +6577,9 @@ pub const PackageManager = struct {
             if (task.log.msgs.items.len > 0) {
                 switch (Output.enable_ansi_colors) {
                     inline else => |enable_ansi_colors| {
+                        manager.pauseProgress();
                         try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
+                        manager.resumeProgress();
                     },
                 }
             }
@@ -6895,6 +6903,59 @@ pub const PackageManager = struct {
         }
     }
 
+    pub inline fn pauseProgress(this: *PackageManager) void {
+        if (this.options.log_level.showProgress() and Output.enable_ansi_colors) {
+            this.progress.lock_stderr();
+        }
+    }
+
+    pub inline fn resumeProgress(this: *PackageManager) void {
+        if (this.options.log_level.showProgress() and Output.enable_ansi_colors) {
+            this.progress.unlock_stderr();
+        }
+    }
+
+    /// Will pause and clear progrss from terminal, print the error, then resume progress. Best for errors that
+    /// are not immediately fatal.
+    pub inline fn cleanErrorGenericResume(this: *PackageManager, comptime fmt: string, args: anytype) void {
+        this.pauseProgress();
+        Output.errGeneric(fmt, args);
+        this.resumeProgress();
+    }
+
+    /// Will pause and clear progrss from terminal, print the error, then resume progress. Best for errors that
+    /// are not immediately fatal.
+    pub inline fn cleanErrorResume(this: *PackageManager, name: anytype, comptime fmt: string, args: anytype) void {
+        this.pauseProgress();
+        Output.err(name, fmt, args);
+        this.resumeProgress();
+    }
+
+    /// Will pause and clear progress from terminal if it exists. Does not resume progress, best for calling
+    /// before `Global.crash()`.
+    pub inline fn cleanErrorGeneric(this: *PackageManager, comptime fmt: string, args: anytype) void {
+        this.pauseProgress();
+        Output.errGeneric(fmt, args);
+    }
+
+    /// Will pause and clear progress from terminal if it exists. Does not resume progress, best for calling
+    /// before `Global.crash()`.
+    pub inline fn cleanError(this: *PackageManager, name: anytype, comptime fmt: string, args: anytype) void {
+        this.pauseProgress();
+        Output.err(name, fmt, args);
+    }
+
+    pub inline fn cleanWarnResume(this: *PackageManager, comptime fmt: string, args: anytype) void {
+        this.pauseProgress();
+        Output.warn(fmt, args);
+        this.resumeProgress();
+    }
+
+    pub inline fn cleanWarn(this: *PackageManager, comptime fmt: string, args: anytype) void {
+        this.pauseProgress();
+        Output.warn(fmt, args);
+    }
+
     pub const Options = struct {
         log_level: LogLevel = .default,
         global: bool = false,
@@ -6942,6 +7003,9 @@ pub const PackageManager = struct {
         max_concurrent_lifecycle_scripts: usize,
 
         publish_config: PublishConfig = .{},
+
+        ca: []const string = &.{},
+        ca_file_name: string = &.{},
 
         pub const PublishConfig = struct {
             access: ?Access = null,
@@ -7087,8 +7151,8 @@ pub const PackageManager = struct {
                 .password = "",
                 .token = "",
             };
-            if (bun_install_) |bun_install| {
-                if (bun_install.default_registry) |registry| {
+            if (bun_install_) |config| {
+                if (config.default_registry) |registry| {
                     base = registry;
                 }
             }
@@ -7097,8 +7161,8 @@ pub const PackageManager = struct {
             defer {
                 this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
             }
-            if (bun_install_) |bun_install| {
-                if (bun_install.scoped) |scoped| {
+            if (bun_install_) |config| {
+                if (config.scoped) |scoped| {
                     for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
                         var registry = registry_.*;
                         if (registry.url.len == 0) registry.url = base.url;
@@ -7106,42 +7170,57 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (bun_install.disable_cache orelse false) {
+                if (config.ca) |ca| {
+                    switch (ca) {
+                        .list => |ca_list| {
+                            this.ca = ca_list;
+                        },
+                        .str => |ca_str| {
+                            this.ca = &.{ca_str};
+                        },
+                    }
+                }
+
+                if (config.cafile) |cafile| {
+                    this.ca_file_name = cafile;
+                }
+
+                if (config.disable_cache orelse false) {
                     this.enable.cache = false;
                 }
 
-                if (bun_install.disable_manifest_cache orelse false) {
+                if (config.disable_manifest_cache orelse false) {
                     this.enable.manifest_cache = false;
                 }
 
-                if (bun_install.force orelse false) {
+                if (config.force orelse false) {
                     this.enable.manifest_cache_control = false;
                     this.enable.force_install = true;
                 }
 
-                if (bun_install.save_yarn_lockfile orelse false) {
+                if (config.save_yarn_lockfile orelse false) {
                     this.do.save_yarn_lock = true;
                 }
 
-                if (bun_install.save_lockfile) |save_lockfile| {
+                if (config.save_lockfile) |save_lockfile| {
                     this.do.save_lockfile = save_lockfile;
                     this.enable.force_save_lockfile = true;
                 }
 
-                if (bun_install.save_dev) |save| {
+                if (config.save_dev) |save| {
                     this.local_package_features.dev_dependencies = save;
                 }
 
-                if (bun_install.save_peer) |save| {
+                if (config.save_peer) |save| {
                     this.do.install_peer_dependencies = save;
                     this.remote_package_features.peer_dependencies = save;
                 }
 
-                if (bun_install.exact) |exact| {
+                if (config.exact) |exact| {
                     this.enable.exact_versions = exact;
                 }
 
-                if (bun_install.production) |production| {
+                if (config.production) |production| {
                     if (production) {
                         this.local_package_features.dev_dependencies = false;
                         this.enable.fail_early = true;
@@ -7150,22 +7229,22 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (bun_install.frozen_lockfile) |frozen_lockfile| {
+                if (config.frozen_lockfile) |frozen_lockfile| {
                     if (frozen_lockfile) {
                         this.enable.frozen_lockfile = true;
                     }
                 }
 
-                if (bun_install.concurrent_scripts) |jobs| {
+                if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
                 }
 
-                if (bun_install.save_optional) |save| {
+                if (config.save_optional) |save| {
                     this.remote_package_features.optional_dependencies = save;
                     this.local_package_features.optional_dependencies = save;
                 }
 
-                this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;
+                this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
             }
 
             const default_disable_progress_bar: bool = brk: {
@@ -7391,6 +7470,13 @@ pub const PackageManager = struct {
                 }
                 if (cli.publish_config.auth_type) |auth_type| {
                     this.publish_config.auth_type = auth_type;
+                }
+
+                if (cli.ca.len > 0) {
+                    this.ca = cli.ca;
+                }
+                if (cli.ca_file_name.len > 0) {
+                    this.ca_file_name = cli.ca_file_name;
                 }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
@@ -8329,14 +8415,33 @@ pub const PackageManager = struct {
         }
     };
 
+    fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
+        switch (err) {
+            error.LoadCAFile => {
+                if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
+                    PackageManager.instance.cleanError("HTTPThread", "could not find CA file: '{s}'", .{opts.abs_ca_file_name});
+                } else {
+                    PackageManager.instance.cleanError("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
+                }
+            },
+            error.InvalidCAFile => {
+                PackageManager.instance.cleanError("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
+            },
+            error.InvalidCA => {
+                PackageManager.instance.cleanError("HTTPThread", "the CA is invalid", .{});
+            },
+            error.FailedToOpenSocket => {
+                PackageManager.instance.cleanErrorGeneric("failed to start HTTP client thread", .{});
+            },
+        }
+        Global.crash();
+    }
+
     pub fn init(
         ctx: Command.Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
     ) !struct { *PackageManager, string } {
-        // assume that spawning a thread will take a lil so we do that asap
-        HTTP.HTTPThread.init();
-
         if (cli.global) {
             var explicit_global_dir: string = "";
             if (ctx.install) |opts| {
@@ -8638,7 +8743,6 @@ pub const PackageManager = struct {
             .resolve_tasks = .{},
             .lockfile = undefined,
             .root_package_json_file = root_package_json_file,
-            // .progress
             .event_loop = .{
                 .mini = JSC.MiniEventLoop.init(bun.default_allocator),
             },
@@ -8676,6 +8780,36 @@ pub const PackageManager = struct {
             ctx.install,
             subcommand,
         );
+
+        var ca: []stringZ = &.{};
+        if (manager.options.ca.len > 0) {
+            ca = try manager.allocator.alloc(stringZ, manager.options.ca.len);
+            for (ca, manager.options.ca) |*z, s| {
+                z.* = try manager.allocator.dupeZ(u8, s);
+            }
+        }
+
+        var abs_ca_file_name: stringZ = &.{};
+        if (manager.options.ca_file_name.len > 0) {
+            // resolve with original cwd
+            if (std.fs.path.isAbsolute(manager.options.ca_file_name)) {
+                abs_ca_file_name = try manager.allocator.dupeZ(u8, manager.options.ca_file_name);
+            } else {
+                var path_buf: bun.PathBuffer = undefined;
+                abs_ca_file_name = try manager.allocator.dupeZ(u8, bun.path.joinAbsStringBuf(
+                    original_cwd_clone,
+                    &path_buf,
+                    &.{manager.options.ca_file_name},
+                    .auto,
+                ));
+            }
+        }
+
+        HTTP.HTTPThread.init(&.{
+            .ca = ca,
+            .abs_ca_file_name = abs_ca_file_name,
+            .onInitError = &httpThreadOnInitError,
+        });
 
         manager.timestamp_for_manifest_cache_control = brk: {
             if (comptime bun.Environment.allow_assert) {
@@ -8750,7 +8884,7 @@ pub const PackageManager = struct {
         };
         manager.lockfile = try allocator.create(Lockfile);
 
-        if (Output.enable_ansi_colors_stderr) {
+        if (Output.enable_ansi_colors) {
             manager.progress = Progress{};
             manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             manager.root_progress_node = manager.progress.start("", 0);
@@ -8914,7 +9048,7 @@ pub const PackageManager = struct {
             // Step 1. parse the nearest package.json file
             {
                 const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
-                    Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
+                    manager.cleanErrorGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
                 lockfile.initEmpty(ctx.allocator);
@@ -9016,7 +9150,7 @@ pub const PackageManager = struct {
                     .node_modules = bun.toFD(node_modules.fd),
                     .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
                         if (manager.options.log_level != .silent) {
-                            Output.err(err, "failed to link binary", .{});
+                            manager.cleanError(err, "failed to link binary", .{});
                         }
                         Global.crash();
                     },
@@ -9097,7 +9231,7 @@ pub const PackageManager = struct {
             // Step 1. parse the nearest package.json file
             {
                 const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
-                    Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
+                    manager.cleanErrorGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
                     Global.crash();
                 };
                 lockfile.initEmpty(ctx.allocator);
@@ -9106,12 +9240,12 @@ pub const PackageManager = struct {
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
-                        Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
+                        manager.cleanErrorGeneric("package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
                     }
                     Global.crash();
                 } else if (!strings.isNPMPackageName(name)) {
                     if (manager.options.log_level != .silent) {
-                        Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
+                        manager.cleanErrorGeneric("invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
                             name,
                             package_json_source.path.text,
                         });
@@ -9146,7 +9280,7 @@ pub const PackageManager = struct {
 
                 break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
-                        Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
+                        manager.cleanErrorGeneric("failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();
                 };
             };
@@ -9183,14 +9317,14 @@ pub const PackageManager = struct {
             // delete it if it exists
             node_modules.deleteTree(name) catch |err| {
                 if (manager.options.log_level != .silent)
-                    Output.prettyErrorln("<r><red>error:<r> failed to unlink package in global dir due to error {s}", .{@errorName(err)});
+                    manager.cleanErrorGeneric("failed to unlink package in global dir due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
 
             Output.prettyln("<r><green>success:<r> unlinked package \"{s}\"", .{name});
             Global.exit(0);
         } else {
-            Output.prettyln("<r><red>error:<r> bun unlink {{packageName}} not implemented yet", .{});
+            manager.cleanErrorGeneric("bun unlink {{packageName}} not implemented yet", .{});
             Global.crash();
         }
     }
@@ -9207,6 +9341,8 @@ pub const PackageManager = struct {
         clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
         clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
+        clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
+        clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
         clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
         clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
@@ -9348,6 +9484,9 @@ pub const PackageManager = struct {
         registry: string = "",
 
         publish_config: Options.PublishConfig = .{},
+
+        ca: []const string = &.{},
+        ca_file_name: string = "",
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9688,6 +9827,11 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            cli.ca = args.options("--ca");
+
+            if (args.option("--cafile")) |ca_file_name| {
+                cli.ca_file_name = ca_file_name;
+            }
 
             // commands that support --filter
             if (comptime subcommand.supportsWorkspaceFiltering()) {
@@ -10262,14 +10406,14 @@ pub const PackageManager = struct {
         if (manager.options.positionals.len <= 1) {
             switch (manager.subcommand) {
                 .add => {
-                    Output.errGeneric("no package specified to add", .{});
+                    manager.cleanErrorGeneric("no package specified to add", .{});
                     Output.flush();
                     PackageManager.CommandLineArguments.printHelp(.add);
 
                     Global.exit(0);
                 },
                 .remove => {
-                    Output.errGeneric("no package specified to remove", .{});
+                    manager.cleanErrorGeneric("no package specified to remove", .{});
                     Output.flush();
                     PackageManager.CommandLineArguments.printHelp(.remove);
 
@@ -10324,14 +10468,14 @@ pub const PackageManager = struct {
                         manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
                     },
                 }
-                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                manager.cleanErrorGeneric("failed to parse package.json \"{s}\": {s}", .{
                     manager.original_package_json_path,
                     @errorName(err),
                 });
                 Global.crash();
             },
             .read_err => |err| {
-                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                manager.cleanErrorGeneric("failed to read package.json \"{s}\": {s}", .{
                     manager.original_package_json_path,
                     @errorName(err),
                 });
@@ -10349,10 +10493,10 @@ pub const PackageManager = struct {
 
         if (subcommand == .remove) {
             if (current_package_json.root.data != .e_object) {
-                Output.errGeneric("package.json is not an Object {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
+                manager.cleanErrorGeneric("package.json is not an Object {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
                 Global.crash();
             } else if (current_package_json.root.data.e_object.properties.len == 0) {
-                Output.errGeneric("package.json is empty {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
+                manager.cleanErrorGeneric("package.json is empty {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
                 Global.crash();
             } else if (current_package_json.root.asProperty("devDependencies") == null and
                 current_package_json.root.asProperty("dependencies") == null and
@@ -10485,7 +10629,7 @@ pub const PackageManager = struct {
                 .indent = current_package_json_indent,
             },
         ) catch |err| {
-            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+            manager.cleanErrorGeneric("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
         };
 
@@ -10528,14 +10672,14 @@ pub const PackageManager = struct {
                             manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
                         },
                     }
-                    Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    manager.cleanErrorGeneric("failed to parse package.json \"{s}\": {s}", .{
                         root_package_json_path,
                         @errorName(err),
                     });
                     Global.crash();
                 },
                 .read_err => |err| {
-                    Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    manager.cleanErrorGeneric("failed to read package.json \"{s}\": {s}", .{
                         manager.original_package_json_path,
                         @errorName(err),
                     });
@@ -10565,7 +10709,7 @@ pub const PackageManager = struct {
                         .indent = root_package_json.indentation,
                     },
                 ) catch |err| {
-                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    manager.cleanErrorGeneric("package.json failed to write due to error {s}", .{@errorName(err)});
                     Global.crash();
                 };
                 root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
@@ -10589,7 +10733,7 @@ pub const PackageManager = struct {
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
             var new_package_json = JSON.parsePackageJSONUTF8(&source, manager.log, manager.allocator) catch |err| {
-                Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
+                manager.cleanErrorGeneric("package.json failed to parse due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
 
@@ -10628,7 +10772,7 @@ pub const PackageManager = struct {
                     .indent = current_package_json_indent,
                 },
             ) catch |err| {
-                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                manager.cleanErrorGeneric("package.json failed to write due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
 
@@ -10705,7 +10849,7 @@ pub const PackageManager = struct {
                     }
                 } else |err| {
                     if (err != error.ENOENT) {
-                        Output.err(err, "while reading node_modules/.bin", .{});
+                        manager.cleanError(err, "while reading node_modules/.bin", .{});
                         Global.crash();
                     }
                 }
@@ -10735,6 +10879,7 @@ pub const PackageManager = struct {
     const IdPair = struct { DependencyID, PackageID };
 
     fn pkgInfoForNameAndVersion(
+        this: *PackageManager,
         lockfile: *Lockfile,
         iterator: *Lockfile.Tree.Iterator,
         pkg_maybe_version_to_patch: []const u8,
@@ -10768,7 +10913,7 @@ pub const PackageManager = struct {
         }
 
         if (pairs.items.len == 0) {
-            Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
+            this.cleanErrorGeneric("package <b>{s}<r> not found", .{pkg_maybe_version_to_patch});
             Global.crash();
             return;
         }
@@ -10778,8 +10923,8 @@ pub const PackageManager = struct {
             if (pairs.items.len == 1) {
                 const dep_id, const pkg_id = pairs.items[0];
                 const folder = (try nodeModulesFolderForDependencyID(iterator, dep_id)) orelse {
-                    Output.prettyError(
-                        "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                    this.cleanErrorGeneric(
+                        "could not find the folder for <b>{s}<r> in node_modules",
                         .{pkg_maybe_version_to_patch},
                     );
                     Global.crash();
@@ -10795,8 +10940,8 @@ pub const PackageManager = struct {
             // so we are going to try looking for each dep id in node_modules
             _, const pkg_id = pairs.items[0];
             const folder = (try nodeModulesFolderForDependencyIDs(iterator, pairs.items)) orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                this.cleanErrorGeneric(
+                    "could not find the folder for <b>{s}<r> in node_modules",
                     .{pkg_maybe_version_to_patch},
                 );
                 Global.crash();
@@ -10814,8 +10959,8 @@ pub const PackageManager = struct {
         if (pairs.items.len == 1) {
             const dep_id, const pkg_id = pairs.items[0];
             const folder = (try nodeModulesFolderForDependencyID(iterator, dep_id)) orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                this.cleanErrorGeneric(
+                    "could not find the folder for <b>{s}<r> in node_modules",
                     .{pkg_maybe_version_to_patch},
                 );
                 Global.crash();
@@ -10845,8 +10990,8 @@ pub const PackageManager = struct {
         if (count == pairs.items.len) {
             // It may be hoisted, so we'll try the first one that matches
             const folder = (try nodeModulesFolderForDependencyIDs(iterator, pairs.items)) orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                this.cleanErrorGeneric(
+                    "could not find the folder for <b>{s}<r> in node_modules",
                     .{pkg_maybe_version_to_patch},
                 );
                 Global.crash();
@@ -10943,8 +11088,8 @@ pub const PackageManager = struct {
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
                         .result => |s| break :src s,
                         .err => |e| {
-                            Output.prettyError(
-                                "<r><red>error<r>: failed to read package.json: {}<r>\n",
+                            manager.cleanErrorGeneric(
+                                "failed to read package.json: {}",
                                 .{e.withPath(package_json_path).toSystemError()},
                             );
                             Global.crash();
@@ -10955,6 +11100,7 @@ pub const PackageManager = struct {
 
                 initializeStore();
                 const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
+                    manager.pauseProgress();
                     switch (Output.enable_ansi_colors) {
                         inline else => |enable_ansi_colors| {
                             manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -10968,8 +11114,8 @@ pub const PackageManager = struct {
                     if (json.asProperty("version")) |v| {
                         if (v.expr.asString(manager.allocator)) |s| break :version s;
                     }
-                    Output.prettyError(
-                        "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {s}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "invalid package.json, missing or invalid property \"version\": {s}",
                         .{package_json_source.path.text},
                     );
                     Global.crash();
@@ -10995,7 +11141,7 @@ pub const PackageManager = struct {
                                 break :id pkg;
                             }
                         }
-                        Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
+                        manager.cleanErrorGeneric("could not find package with name:<r> {s}", .{
                             package.name.slice(lockfile.buffers.string_bytes.items),
                         });
                         Global.crash();
@@ -11035,7 +11181,7 @@ pub const PackageManager = struct {
             .name_and_version => brk: {
                 const pkg_maybe_version_to_patch = argument;
                 const name, const version = Dependency.splitNameAndVersion(pkg_maybe_version_to_patch);
-                const pkg_id, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
+                const pkg_id, const folder = pkgInfoForNameAndVersion(manager, manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
 
                 const pkg = manager.lockfile.packages.get(pkg_id);
                 const pkg_name = pkg.name.slice(strbuf);
@@ -11079,8 +11225,8 @@ pub const PackageManager = struct {
         //
         // So we will overwrite the folder by directly copying the package in cache into it
         manager.overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
-            Output.prettyError(
-                "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
+            manager.cleanErrorGeneric(
+                "error overwriting folder in node_modules: {s}",
                 .{@errorName(e)},
             );
             Global.crash();
@@ -11293,16 +11439,16 @@ pub const PackageManager = struct {
             .err => |cause| {
                 if (log_level != .silent) {
                     switch (cause.step) {
-                        .open_file => Output.prettyError("<r><red>error<r> opening lockfile:<r> {s}\n<r>", .{
+                        .open_file => manager.cleanErrorGeneric("failed to open lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
-                        .parse_file => Output.prettyError("<r><red>error<r> parsing lockfile:<r> {s}\n<r>", .{
+                        .parse_file => manager.cleanErrorGeneric("failed to parse lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
-                        .read_file => Output.prettyError("<r><red>error<r> reading lockfile:<r> {s}\n<r>", .{
+                        .read_file => manager.cleanErrorGeneric("failed to read lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
-                        .migrating => Output.prettyError("<r><red>error<r> migrating lockfile:<r> {s}\n<r>", .{
+                        .migrating => manager.cleanErrorGeneric("failed to migrate lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
                     }
@@ -11341,8 +11487,8 @@ pub const PackageManager = struct {
         var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
             .result => |fd| std.fs.Dir{ .fd = fd.cast() },
             .err => |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {}<r>\n",
+                manager.cleanErrorGeneric(
+                    "failed to open root <b>node_modules<r> folder: {}",
                     .{e},
                 );
                 Global.crash();
@@ -11360,8 +11506,8 @@ pub const PackageManager = struct {
                     switch (bun.sys.File.toSource(package_json_path, manager.allocator)) {
                         .result => |s| break :brk s,
                         .err => |e| {
-                            Output.prettyError(
-                                "<r><red>error<r>: failed to read package.json: {}<r>\n",
+                            manager.cleanErrorGeneric(
+                                "failed to read package.json: {}",
                                 .{e.withPath(package_json_path).toSystemError()},
                             );
                             Global.crash();
@@ -11372,6 +11518,7 @@ pub const PackageManager = struct {
 
                 initializeStore();
                 const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
+                    manager.pauseProgress();
                     switch (Output.enable_ansi_colors) {
                         inline else => |enable_ansi_colors| {
                             manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -11385,8 +11532,8 @@ pub const PackageManager = struct {
                     if (json.asProperty("version")) |v| {
                         if (v.expr.asString(manager.allocator)) |s| break :version s;
                     }
-                    Output.prettyError(
-                        "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {s}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "invalid package.json, missing or invalid property \"version\": {s}",
                         .{package_json_source.path.text},
                     );
                     Global.crash();
@@ -11397,8 +11544,8 @@ pub const PackageManager = struct {
 
                 const name = lockfile.str(&package.name);
                 const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
+                    manager.cleanErrorGeneric(
+                        "failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.",
                         .{},
                     );
                     Global.crash();
@@ -11412,7 +11559,7 @@ pub const PackageManager = struct {
                                 break :brk pkg;
                             }
                         }
-                        Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
+                        manager.cleanErrorGeneric("could not find package with name: {s}", .{
                             package.name.slice(lockfile.buffers.string_bytes.items),
                         });
                         Global.crash();
@@ -11434,7 +11581,7 @@ pub const PackageManager = struct {
             },
             .name_and_version => brk: {
                 const name, const version = Dependency.splitNameAndVersion(argument);
-                const pkg_id, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
+                const pkg_id, const node_modules = pkgInfoForNameAndVersion(manager, lockfile, &iterator, argument, name, version);
 
                 const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
                     node_modules.relative_path,
@@ -11471,8 +11618,8 @@ pub const PackageManager = struct {
                 const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(cache_dir.fd), &buf2)) {
                     .result => |s| s,
                     .err => |e| {
-                        Output.prettyError(
-                            "<r><red>error<r>: failed to read from cache {}<r>\n",
+                        manager.cleanErrorGeneric(
+                            "failed to read from cache {}",
                             .{e.toSystemError()},
                         );
                         Global.crash();
@@ -11485,8 +11632,8 @@ pub const PackageManager = struct {
             };
 
             const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
+                manager.cleanErrorGeneric(
+                    "failed to make tempdir {s}",
                     .{@errorName(e)},
                 );
                 Global.crash();
@@ -11499,8 +11646,8 @@ pub const PackageManager = struct {
             // will `rename()` it out and back again.
             const has_nested_node_modules = has_nested_node_modules: {
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "failed to open directory <b>{s}<r> {s}",
                         .{ new_folder, @errorName(e) },
                     );
                     Global.crash();
@@ -11519,8 +11666,8 @@ pub const PackageManager = struct {
             };
 
             const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
+                manager.cleanErrorGeneric(
+                    "failed to make tempdir {s}",
                     .{@errorName(e)},
                 );
                 Global.crash();
@@ -11540,8 +11687,8 @@ pub const PackageManager = struct {
                     break :has_bun_patch_tag null;
                 };
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "failed to open directory <b>{s}<r> {s}",
                         .{ new_folder, @errorName(e) },
                     );
                     Global.crash();
@@ -11555,7 +11702,7 @@ pub const PackageManager = struct {
                     patch_tag_tmpname,
                     .{ .move_fallback = true },
                 ).asErr()) |e| {
-                    Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                    manager.cleanWarnResume("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                     break :has_bun_patch_tag null;
                 }
                 break :has_bun_patch_tag patch_tag;
@@ -11563,8 +11710,8 @@ pub const PackageManager = struct {
             defer {
                 if (has_nested_node_modules or bun_patch_tag != null) {
                     var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                        Output.prettyError(
-                            "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
+                        manager.cleanErrorGeneric(
+                            "failed to open directory <b>{s}<r> {s}",
                             .{ new_folder, @errorName(e) },
                         );
                         Global.crash();
@@ -11579,7 +11726,7 @@ pub const PackageManager = struct {
                             "node_modules",
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
-                            Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+                            manager.cleanWarnResume("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
                         }
                     }
 
@@ -11591,7 +11738,7 @@ pub const PackageManager = struct {
                             patch_tag,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
-                            Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                            manager.cleanWarnResume("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                         }
                     }
                 }
@@ -11601,8 +11748,8 @@ pub const PackageManager = struct {
             const cwd = switch (bun.sys.getcwdZ(&cwdbuf)) {
                 .result => |fd| fd,
                 .err => |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to get cwd path {}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "failed to get cwd path {}",
                         .{e},
                     );
                     Global.crash();
@@ -11610,8 +11757,8 @@ pub const PackageManager = struct {
             };
             var gitbuf: bun.PathBuffer = undefined;
             const git = bun.which(&gitbuf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
+                manager.cleanErrorGeneric(
+                    "git must be installed to use `<cyan>bun patch --commit<r>`",
                     .{},
                 );
                 Global.crash();
@@ -11620,16 +11767,16 @@ pub const PackageManager = struct {
             const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, &manager.event_loop);
 
             var spawn_result = switch (bun.spawnSync(&opts) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {s}<r>\n",
+                manager.cleanErrorGeneric(
+                    "failed to make diff {s}",
                     .{@errorName(e)},
                 );
                 Global.crash();
             }) {
                 .result => |r| r,
                 .err => |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to make diff {}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "failed to make diff {}",
                         .{e},
                     );
                     Global.crash();
@@ -11637,8 +11784,8 @@ pub const PackageManager = struct {
             };
 
             const contents = switch (bun.patch.diffPostProcess(&spawn_result, paths[0], paths[1]) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {s}<r>\n",
+                manager.cleanErrorGeneric(
+                    "failed to make diff {s}",
                     .{@errorName(e)},
                 );
                 Global.crash();
@@ -11661,8 +11808,8 @@ pub const PackageManager = struct {
                             } else try writer.print("{s}", .{this.stderr.items[0..]});
                         }
                     };
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to make diff {}<r>\n",
+                    manager.cleanErrorGeneric(
+                        "failed to make diff {}",
                         .{
                             Truncate{ .stderr = stderr },
                         },
@@ -12622,6 +12769,8 @@ pub const PackageManager = struct {
                 .symlink => {
                     const directory = this.manager.globalLinkDir() catch |err| {
                         if (comptime log_level != .silent) {
+                            this.manager.pauseProgress();
+                            defer this.manager.resumeProgress();
                             const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
 
@@ -12800,7 +12949,7 @@ pub const PackageManager = struct {
                 // creating this directory now, right before installing package
                 var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                     if (log_level != .silent) {
-                        Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                        this.manager.cleanErrorResume(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
                             name,
                             bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
                         });
@@ -12884,6 +13033,8 @@ pub const PackageManager = struct {
                             const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, destination_dir, log_level);
                             if (count > 0) {
                                 if (comptime log_level.isVerbose()) {
+                                    this.manager.pauseProgress();
+                                    defer this.manager.resumeProgress();
                                     Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
                                         count,
                                         alias,
@@ -12909,8 +13060,8 @@ pub const PackageManager = struct {
                         if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
 
                         if (cause.err == error.DanglingSymlink) {
-                            Output.prettyErrorln(
-                                "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
+                            this.manager.cleanErrorGenericResume(
+                                "<b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)",
                                 .{ @errorName(cause.err), this.names[package_id].slice(buf) },
                             );
                             this.summary.fail += 1;
@@ -12926,7 +13077,7 @@ pub const PackageManager = struct {
                             if (!Singleton.node_modules_is_ok) {
                                 if (!Environment.isWindows) {
                                     const stat = bun.sys.fstat(bun.toFD(destination_dir)).unwrap() catch |err| {
-                                        Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                        this.manager.cleanError("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                             this.names[package_id].slice(buf),
                                         });
                                         if (Environment.isDebug) {
@@ -12943,21 +13094,21 @@ pub const PackageManager = struct {
                                         stat.mode & bun.S.IWOTH > 0;
 
                                     if (!is_writable) {
-                                        Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
+                                        this.manager.cleanError("EACCES", "Permission denied while writing packages into node_modules.", .{});
                                         Global.exit(1);
                                     }
                                 }
                                 Singleton.node_modules_is_ok = true;
                             }
 
-                            Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                            this.manager.cleanErrorResume("EACCES", "Permission denied while installing <b>{s}<r>", .{
                                 this.names[package_id].slice(buf),
                             });
 
                             this.summary.fail += 1;
                         } else {
-                            Output.prettyErrorln(
-                                "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r> ({s})",
+                            this.manager.cleanErrorGenericResume(
+                                "<b><red>{s}<r> installing <b>{s}<r> ({s})",
                                 .{ @errorName(cause.err), this.names[package_id].slice(buf), install_result.fail.step.name() },
                             );
                             this.summary.fail += 1;
@@ -12971,7 +13122,7 @@ pub const PackageManager = struct {
 
                 var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                     if (log_level != .silent) {
-                        Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                        this.manager.cleanError(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
                             name,
                             bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
                         });
@@ -13042,6 +13193,8 @@ pub const PackageManager = struct {
                 resolution,
             ) catch |err| {
                 if (comptime log_level != .silent) {
+                    this.manager.pauseProgress();
+                    defer this.manager.resumeProgress();
                     const fmt = "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n";
                     const args = .{ folder_name, @errorName(err) };
 
@@ -13112,6 +13265,8 @@ pub const PackageManager = struct {
                     this.node.completeOne();
                 }
                 if (comptime log_level.isVerbose()) {
+                    this.manager.pauseProgress();
+                    defer this.manager.resumeProgress();
                     const name = this.lockfile.str(&this.names[package_id]);
                     if (!meta.os.isMatch() and !meta.arch.isMatch()) {
                         Output.prettyErrorln("<d>Skip installing '<b>{s}<r><d>' cpu & os mismatch", .{name});
@@ -13379,7 +13534,7 @@ pub const PackageManager = struct {
                 }
             };
             break :brk bun.openDir(cwd, "node_modules") catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
+                this.cleanErrorGeneric("<b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
         };
@@ -13632,6 +13787,8 @@ pub const PackageManager = struct {
                         }
 
                         if (PackageManager.verbose_install and PackageManager.instance.pendingTaskCount() > 0) {
+                            closure.manager.pauseProgress();
+                            defer closure.manager.resumeProgress();
                             if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pendingTaskCount()});
                         }
 
@@ -13680,6 +13837,8 @@ pub const PackageManager = struct {
 
             while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                 if (PackageManager.verbose_install) {
+                    this.pauseProgress();
+                    defer this.resumeProgress();
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.monotonic)});
                 }
 
@@ -13815,7 +13974,6 @@ pub const PackageManager = struct {
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
         var had_any_diffs = false;
-        manager.progress = .{};
 
         // Step 2. Parse the package.json file
         const root_package_json_source = logger.Source.initPathString(package_json_cwd, root_package_json_contents);
@@ -13824,16 +13982,16 @@ pub const PackageManager = struct {
             .err => |cause| {
                 if (log_level != .silent) {
                     switch (cause.step) {
-                        .open_file => Output.prettyError("<r><red>error<r> opening lockfile:<r> {s}\n<r>", .{
+                        .open_file => Output.errGeneric("failed to open lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
-                        .parse_file => Output.prettyError("<r><red>error<r> parsing lockfile:<r> {s}\n<r>", .{
+                        .parse_file => Output.errGeneric("failed to parse lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
-                        .read_file => Output.prettyError("<r><red>error<r> reading lockfile:<r> {s}\n<r>", .{
+                        .read_file => Output.errGeneric("failed to read lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
-                        .migrating => Output.prettyError("<r><red>error<r> migrating lockfile:<r> {s}\n<r>", .{
+                        .migrating => Output.errGeneric("failed to migrate lockfile: {s}", .{
                             @errorName(cause.value),
                         }),
                     }
@@ -14137,7 +14295,7 @@ pub const PackageManager = struct {
 
             if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
                 if (comptime log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
+                    manager.cleanErrorGeneric("lockfile had changes, but lockfile is frozen", .{});
                 }
                 Global.crash();
             }
@@ -14232,6 +14390,8 @@ pub const PackageManager = struct {
                             const pending_tasks = this.pendingTaskCount();
 
                             if (PackageManager.verbose_install and pending_tasks > 0) {
+                                this.pauseProgress();
+                                defer this.resumeProgress();
                                 if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{pending_tasks});
                             }
 
@@ -14278,8 +14438,10 @@ pub const PackageManager = struct {
         }
 
         const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
+        manager.pauseProgress();
         try manager.log.printForLogLevel(Output.errorWriter());
         manager.log.reset();
+        manager.resumeProgress();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
@@ -14377,6 +14539,8 @@ pub const PackageManager = struct {
         if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
             if (manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false) {
                 if (comptime log_level != .silent) {
+                    manager.pauseProgress();
+                    defer manager.resumeProgress();
                     Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
                     Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
                 }
@@ -14395,6 +14559,8 @@ pub const PackageManager = struct {
         }
 
         if (comptime log_level != .silent) {
+            manager.pauseProgress();
+            defer manager.resumeProgress();
             try manager.log.printForLogLevel(Output.errorWriter());
         }
         if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
@@ -14428,12 +14594,18 @@ pub const PackageManager = struct {
                             break :brk;
                         }
 
-                        if (log_level != .silent) Output.prettyErrorln("\n<red>error: {s} deleting empty lockfile", .{@errorName(err)});
+                        if (log_level != .silent) {
+                            manager.pauseProgress();
+                            defer manager.resumeProgress();
+                            Output.prettyErrorln("\n<red>error: {s} deleting empty lockfile", .{@errorName(err)});
+                        }
                         break :save;
                     };
                 }
                 if (!manager.options.global) {
                     if (log_level != .silent) {
+                        manager.pauseProgress();
+                        defer manager.resumeProgress();
                         switch (manager.subcommand) {
                             .remove => Output.prettyErrorln("\npackage.json has no dependencies! Deleted empty lockfile", .{}),
                             else => Output.prettyErrorln("No packages! Deleted empty lockfile", .{}),
@@ -14514,7 +14686,11 @@ pub const PackageManager = struct {
 
                 while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                     if (PackageManager.verbose_install) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.monotonic)});
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) {
+                            manager.pauseProgress();
+                            defer manager.resumeProgress();
+                            Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.monotonic)});
+                        }
                     }
 
                     manager.sleep();
@@ -14671,6 +14847,8 @@ pub const PackageManager = struct {
                         this.options.remote_package_features,
                 )) continue;
                 if (log_level != .silent) {
+                    this.pauseProgress();
+                    defer this.resumeProgress();
                     if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
                         Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{
                             failed_dep.version.literal.fmt(string_buf),

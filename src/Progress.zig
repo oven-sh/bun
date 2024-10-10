@@ -380,11 +380,11 @@ pub fn lock_stderr(p: *Progress) void {
             p.terminal = null;
         };
     }
-    std.debug.getStderrMutex().lock();
+    std.debug.lockStdErr();
 }
 
 pub fn unlock_stderr(p: *Progress) void {
-    std.debug.getStderrMutex().unlock();
+    std.debug.unlockStdErr();
     p.update_mutex.unlock();
 }
 

@@ -60,7 +60,8 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
         opts.request_cert = true;
         // but do not reject unauthorized
         opts.reject_unauthorized = false;
-        this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts);
+        enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+        this->m_ssl_client_websockets_ctx = us_create_bun_socket_context(1, loop, sizeof(size_t), opts, &err);
         void** ptr = reinterpret_cast<void**>(us_socket_context_ext(1, m_ssl_client_websockets_ctx));
         *ptr = this;
         registerHTTPContextForWebSocket<true, false>(this, m_ssl_client_websockets_ctx, loop);

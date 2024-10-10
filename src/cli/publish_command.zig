@@ -372,7 +372,7 @@ pub const PublishCommand = struct {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.NeedAuth => {
-                        Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                        Output.errGeneric("missing authentication (run `<cyan>bunx npm login<r>`)", .{});
                         Global.crash();
                     },
                 }
@@ -419,7 +419,7 @@ pub const PublishCommand = struct {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.NeedAuth => {
-                    Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
+                    Output.errGeneric("missing authentication (run `<cyan>bunx npm login<r>`)", .{});
                     Global.crash();
                 },
             }

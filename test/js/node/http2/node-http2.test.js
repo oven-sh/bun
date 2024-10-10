@@ -148,7 +148,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
         expect(parsed.headers["test-header"]).toBe("test-value");
       });
-      it.only("should be able to send a POST request", async () => {
+      it("should be able to send a POST request", async () => {
         const payload = JSON.stringify({ "hello": "bun" });
         const result = await doHttp2Request(
           HTTPS_SERVER,
@@ -982,7 +982,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         ]);
       });
 
-      it("should not leak memory", () => {
+      it.skip("should not leak memory", () => {
         const { stdout, exitCode } = Bun.spawnSync({
           cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
           env: {

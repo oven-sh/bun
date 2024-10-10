@@ -982,10 +982,10 @@ pub const H2FrameParser = struct {
                                 } else {
                                     this.state = .HALF_CLOSED_LOCAL;
                                 }
-                                const identifier = this.getIdentifier();
-                                identifier.ensureStillAlive();
-                                this.freeResources(client, false);
                                 if (this.state == .CLOSED) {
+                                    const identifier = this.getIdentifier();
+                                    identifier.ensureStillAlive();
+                                    this.freeResources(client, false);
                                     client.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(this.state)));
                                 }
                             }

@@ -1,6 +1,6 @@
-import { bench, run } from "./runner.mjs";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { bench, run } from "./runner.mjs";
 
 bench(`readFileSync(/tmp/404-not-found)`, () => {
   try {

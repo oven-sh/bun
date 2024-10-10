@@ -9,6 +9,7 @@ const js_lexer = bun.js_lexer;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
+const OOM = bun.OOM;
 
 pub const MutableString = struct {
     allocator: std.mem.Allocator,
@@ -18,7 +19,7 @@ pub const MutableString = struct {
         return MutableString.init(allocator, 2048);
     }
 
-    pub const Writer = std.io.Writer(*@This(), anyerror, MutableString.writeAll);
+    pub const Writer = std.io.Writer(*@This(), OOM, MutableString.writeAll);
     pub fn writer(self: *MutableString) Writer {
         return Writer{
             .context = self,
@@ -40,11 +41,12 @@ pub const MutableString = struct {
         return bun.isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
-    pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
+    pub fn growIfNeeded(self: *MutableString, amount: usize) OOM!void {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
-    pub fn write(self: *MutableString, bytes: anytype) !usize {
+    pub fn write(self: *MutableString, bytes: anytype) OOM!usize {
+        bun.debugAssert(bytes.len == 0 or !bun.isSliceInBuffer(bytes, self.list.allocatedSlice()));
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
     }
@@ -53,7 +55,7 @@ pub const MutableString = struct {
         return BufferedWriter{ .context = self };
     }
 
-    pub fn init(allocator: std.mem.Allocator, capacity: usize) std.mem.Allocator.Error!MutableString {
+    pub fn init(allocator: std.mem.Allocator, capacity: usize) OOM!MutableString {
         return MutableString{ .allocator = allocator, .list = if (capacity > 0)
             try std.ArrayListUnmanaged(u8).initCapacity(allocator, capacity)
         else
@@ -66,7 +68,7 @@ pub const MutableString = struct {
 
     pub const ensureUnusedCapacity = growIfNeeded;
 
-    pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
+    pub fn initCopy(allocator: std.mem.Allocator, str: anytype) OOM!MutableString {
         var mutable = try MutableString.init(allocator, str.len);
         try mutable.copy(str);
         return mutable;
@@ -199,6 +201,10 @@ pub const MutableString = struct {
 
     pub fn inflate(self: *MutableString, amount: usize) !void {
         try self.list.resize(self.allocator, amount);
+    }
+
+    pub inline fn appendCharNTimes(self: *MutableString, char: u8, n: usize) !void {
+        try self.list.appendNTimes(self.allocator, char, n);
     }
 
     pub inline fn appendChar(self: *MutableString, char: u8) !void {
@@ -442,7 +448,7 @@ pub const MutableString = struct {
         }
     };
 
-    pub fn writeAll(self: *MutableString, bytes: string) std.mem.Allocator.Error!usize {
+    pub fn writeAll(self: *MutableString, bytes: string) OOM!usize {
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
     }

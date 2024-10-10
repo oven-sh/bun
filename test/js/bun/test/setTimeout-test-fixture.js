@@ -1,4 +1,4 @@
-import { setDefaultTimeout, test, expect, beforeAll } from "bun:test";
+import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 
 beforeAll(() => {
   setDefaultTimeout(100);

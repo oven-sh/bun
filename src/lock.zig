@@ -1,3 +1,6 @@
+// Note(2024-10-01): there is little reason to use this over std.Thread.Mutex,
+// as we have dropped old macOS versions it didnt support. Additionally, the
+// Zig Standard Library has deadlock protections in debug builds.
 const std = @import("std");
 const Atomic = std.atomic.Value;
 const Futex = @import("./futex.zig");
@@ -103,11 +106,7 @@ pub const Mutex = struct {
 };
 
 pub const Lock = struct {
-    mutex: Mutex,
-
-    pub fn init() Lock {
-        return Lock{ .mutex = Mutex{} };
-    }
+    mutex: Mutex = .{},
 
     pub inline fn lock(this: *Lock) void {
         this.mutex.acquire();

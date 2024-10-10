@@ -27,9 +27,13 @@
 
 namespace WebCore {
 
-enum class EventIsTrusted : bool { No, Yes };
-enum class EventCanBubble : bool { No, Yes };
-enum class EventIsCancelable : bool { No, Yes };
-enum class EventIsComposed : bool { No, Yes };
+enum class EventIsTrusted : bool { No,
+    Yes };
+enum class EventCanBubble : bool { No,
+    Yes };
+enum class EventIsCancelable : bool { No,
+    Yes };
+enum class EventIsComposed : bool { No,
+    Yes };
 
 }

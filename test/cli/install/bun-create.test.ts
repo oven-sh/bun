@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, expect, it, describe } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, tmpdirSync } from "harness";
-import { mkdir, stat, exists } from "fs/promises";
 import { join } from "path";
 
 let x_dir: string;

@@ -1,3 +1,10 @@
+# ------------------------------------------------------------
+#                         WARNING
+# ------------------------------------------------------------
+# This file is very old and will be removed soon!
+# You can build Bun using `cmake` or `bun run build`
+# ------------------------------------------------------------
+
 SHELL := $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -70,7 +77,7 @@ BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier 2>/dev/null || echo "./node_modules/.bin/prettier")
 ESBUILD = "$(shell which esbuild 2>/dev/null || echo "./node_modules/.bin/esbuild")"
 DSYMUTIL ?= $(shell which dsymutil 2>/dev/null || which dsymutil-15 2>/dev/null)
-WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
+WEBKIT_DIR ?= $(realpath vendor/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
@@ -131,8 +138,8 @@ endif
 SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
-BUN_DEPS_DIR ?= $(shell pwd)/src/deps
-BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/bun-deps
+BUN_DEPS_DIR ?= $(shell pwd)/vendor
+BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/release
 CPU_COUNT = 2
 ifeq ($(OS_NAME),darwin)
 CPU_COUNT = $(shell sysctl -n hw.logicalcpu)
@@ -366,7 +373,7 @@ ifeq ($(OS_NAME),linux)
 endif
 
 ifeq ($(OS_NAME),darwin)
-MACOS_MIN_FLAG=-mmacosx-version-min=$(MIN_MACOS_VERSION)
+MACOS_MIN_FLAG=-mmacos-version-min=$(MIN_MACOS_VERSION)
 POSIX_PKG_MANAGER=brew
 INCLUDE_DIRS += $(MAC_INCLUDE_DIRS)
 endif
@@ -682,19 +689,10 @@ assert-deps:
 	@test $(shell cargo --version | awk '{print $$2}' | cut -d. -f2) -gt 57 || (echo -e "ERROR: cargo version must be at least 1.57."; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
-# the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
-# unless you explicitly clone it yourself (a huge download)
-SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
-ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
-	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))
-endif
 
 .PHONY: init-submodules
 init-submodules: submodule # (backwards-compatibility alias)
 
-.PHONY: submodule
-submodule: ## to init or update all submodules
-	git submodule update --init --recursive --progress --depth=1 --checkout $(SUBMODULE_NAMES)
 
 .PHONY: build-obj
 build-obj:
@@ -797,7 +795,7 @@ cls:
 	@echo -e "\n\n---\n\n"
 
 jsc-check:
-	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo -e "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
+	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo -e "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/vendor/WebKit -f $(shell pwd)/vendor/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
 	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)
 
@@ -928,7 +926,7 @@ bun-codesign-release-local-debug:
 .PHONY: jsc
 jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-debug
-jsc-debug: jsc-build-debug jsc-copy-headers-debug
+jsc-debug: jsc-build-debug
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-build-debug
@@ -938,7 +936,7 @@ jsc-bindings: headers bindings
 
 .PHONY: clone-submodules
 clone-submodules:
-	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+	git -c submodule."vendor/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 
 .PHONY: headers
@@ -1258,7 +1256,7 @@ jsc-build-mac-compile:
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
-			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_BUILD_TYPE=RelWithDebInfo \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
@@ -1270,7 +1268,7 @@ jsc-build-mac-compile:
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS)  -ffat-lto-objects" \
-		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
+		cmake --build $(WEBKIT_RELEASE_DIR) --config RelWithDebInfo --target jsc
 
 .PHONY: jsc-build-mac-compile-lto
 jsc-build-mac-compile-lto:
@@ -1372,7 +1370,7 @@ jsc-build-linux-compile-config-debug:
 			$(WEBKIT_DEBUG_DIR)
 
 # If you get "Error: could not load cache"
-# run  rm -rf src/bun.js/WebKit/CMakeCache.txt
+# run  rm -rf vendor/WebKit/CMakeCache.txt
 .PHONY: jsc-build-linux-compile-build
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
@@ -1389,10 +1387,10 @@ jsc-build-linux-compile-build-debug:
 
 
 jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-copy
-jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug jsc-build-copy-debug
+jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug
 
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-copy
-jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug jsc-build-copy-debug
+jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug
 
 jsc-build-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
@@ -1407,7 +1405,7 @@ jsc-build-copy-debug:
 	cp $(WEBKIT_DEBUG_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
 clean-jsc:
-	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
+	cd vendor/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf vendor/WebKit/WebKitBuild
 clean-bindings:
 	rm -rf $(OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/webcore/*.o $(DEBUG_BINDINGS_OBJ) $(OBJ_DIR)/webcore/*.o $(BINDINGS_OBJ) $(OBJ_DIR)/*.d $(DEBUG_OBJ_DIR)/*.d
 

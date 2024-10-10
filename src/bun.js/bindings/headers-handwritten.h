@@ -101,6 +101,8 @@ typedef struct ResolvedSource {
     uint32_t tag;
     bool needsDeref;
     bool already_bundled;
+    uint8_t* bytecode_cache;
+    size_t bytecode_cache_size;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -298,9 +300,9 @@ using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;
-    uint32_t offset;
-    uint32_t len;
-    uint32_t byte_len;
+    size_t offset;
+    size_t len;
+    size_t byte_len;
     uint8_t cell_type;
     int64_t _value;
     bool shared;
@@ -343,6 +345,7 @@ extern "C" bool Bun__fetchBuiltinModule(
 
 // Used in process.version
 extern "C" const char* Bun__version;
+extern "C" const char* Bun__version_with_sha;
 
 // Used in process.versions
 extern "C" const char* Bun__versions_boringssl;

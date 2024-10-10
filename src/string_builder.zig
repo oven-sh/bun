@@ -67,7 +67,7 @@ pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: st
         return buf[0..result.count :0];
     } else {
         var list = std.ArrayList(u8).init(fallback_allocator);
-        var out = bun.strings.toUTF8ListWithTypeBun(&list, []const u16, slice) catch return null;
+        var out = bun.strings.toUTF8ListWithTypeBun(&list, []const u16, slice, false) catch return null;
         out.append(0) catch return null;
         return list.items[0 .. list.items.len - 1 :0];
     }
@@ -102,6 +102,17 @@ pub fn append(this: *StringBuilder, slice: string) string {
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
     return result;
+}
+
+pub fn addConcat(this: *StringBuilder, slices: []const string) bun.StringPointer {
+    var remain = this.allocatedSlice()[this.len..];
+    var len: usize = 0;
+    for (slices) |slice| {
+        @memcpy(remain[0..slice.len], slice);
+        remain = remain[slice.len..];
+        len += slice.len;
+    }
+    return this.add(len);
 }
 
 pub fn add(this: *StringBuilder, len: usize) bun.StringPointer {

@@ -11,4 +11,4 @@ const blob = await Bun.readableStreamToBlob(stream);
 
 ---
 
-See [Docs > API > Utils](/docs/api/utils#bun-readablestreamto) for documentation on Bun's other `ReadableStream` conversion functions.
+See [Docs > API > Utils](https://bun.sh/docs/api/utils#bun-readablestreamto) for documentation on Bun's other `ReadableStream` conversion functions.

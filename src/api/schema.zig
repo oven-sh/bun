@@ -824,12 +824,19 @@ pub const Api = struct {
         }
     };
 
-    pub const StringPointer = packed struct {
+    /// Represents a slice stored within an externally stored buffer. Safe to serialize.
+    /// Must be an extern struct to match with `headers-handwritten.h`.
+    pub const StringPointer = extern struct {
         /// offset
         offset: u32 = 0,
 
         /// length
         length: u32 = 0,
+
+        comptime {
+            bun.assert(@alignOf(StringPointer) == @alignOf(u32));
+            bun.assert(@sizeOf(StringPointer) == @sizeOf(u64));
+        }
 
         pub fn decode(reader: anytype) anyerror!StringPointer {
             var this = std.mem.zeroes(StringPointer);
@@ -844,7 +851,7 @@ pub const Api = struct {
             try writer.writeInt(this.length);
         }
 
-        pub fn slice(this: *const @This(), bytes: []const u8) []const u8 {
+        pub fn slice(this: @This(), bytes: []const u8) []const u8 {
             return bytes[this.offset .. this.offset + this.length];
         }
     };
@@ -1664,12 +1671,6 @@ pub const Api = struct {
         /// extension_order
         extension_order: []const []const u8,
 
-        /// framework
-        framework: ?FrameworkConfig = null,
-
-        /// router
-        router: ?RouteConfig = null,
-
         /// no_summary
         no_summary: ?bool = null,
 
@@ -1748,9 +1749,7 @@ pub const Api = struct {
                     15 => {
                         this.target = try reader.readValue(Target);
                     },
-                    16 => {
-                        this.serve = try reader.readValue(bool);
-                    },
+                    16 => {},
                     17 => {
                         this.env_files = try reader.readArray([]const u8);
                     },

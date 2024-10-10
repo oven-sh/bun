@@ -21,10 +21,10 @@
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
-import { expect, describe, it } from "bun:test";
-import util from "util";
 import assert from "assert";
+import { describe, expect, it } from "bun:test";
 import "harness";
+import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {
@@ -53,6 +53,19 @@ describe("util", () => {
     for (let i = 0; i < strings.length; i++) {
       expect(util.toUSVString(strings[i])).toBe(outputs[i]);
     }
+  });
+  it("inherits", () => {
+    function Bar() {}
+    Bar.prototype.bar = function () {};
+
+    Wat.prototype.func = function () {
+      return 43;
+    };
+
+    function Wat() {}
+
+    expect(util.inherits(Wat, Bar)).toBeUndefined();
+    expect(Wat.prototype.func).toBeDefined();
   });
   describe("isArray", () => {
     it("all cases", () => {

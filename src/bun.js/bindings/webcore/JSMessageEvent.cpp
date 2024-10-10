@@ -227,10 +227,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstru
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<MessageEvent::Init>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = MessageEvent::create(WTFMove(type), WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -395,29 +395,29 @@ static inline JSC::EncodedJSValue jsMessageEventPrototypeFunction_initMessageEve
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto bubbles = convert<IDLBoolean>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto cancelable = convert<IDLBoolean>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument3 = callFrame->argument(3);
     auto data = argument3.value().isUndefined() ? jsNull() : convert<IDLAny>(*lexicalGlobalObject, argument3.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument4 = callFrame->argument(4);
     auto originArg = argument4.value().isUndefined() ? emptyString() : convert<IDLUSVString>(*lexicalGlobalObject, argument4.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument5 = callFrame->argument(5);
     auto lastEventId = argument5.value().isUndefined() ? emptyString() : convert<IDLDOMString>(*lexicalGlobalObject, argument5.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument6 = callFrame->argument(6);
     auto source = WebCore::MessageEventSource();
     // auto source = argument6.value().isUndefined() ? std::nullopt : convert<IDLNullable<IDLUnion<IDLInterface<WindowProxy>, IDLInterface<MessagePort>, IDLInterface<ServiceWorker>>>>(*lexicalGlobalObject, argument6.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument7 = callFrame->argument(7);
     auto messagePorts = argument7.value().isUndefined() ? Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {} : convert<IDLSequence<IDLInterface<MessagePort>>>(*lexicalGlobalObject, argument7.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable), WTFMove(data), WTFMove(originArg), WTFMove(lastEventId), WTFMove(source), WTFMove(messagePorts)); })));
 }
 

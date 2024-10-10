@@ -1,4 +1,4 @@
-import { pbkdf2, pbkdf2Sync } from "node:crypto";
+import { pbkdf2 } from "node:crypto";
 
 import { bench, run } from "./runner.mjs";
 

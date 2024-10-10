@@ -7,6 +7,42 @@ on:
     types: [labeled]
 
 jobs:
+  # on-bug:
+  #   runs-on: ubuntu-latest
+  #   if: github.event.label.name == 'bug' || github.event.label.name == 'crash'
+  #   permissions:
+  #     issues: write
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         sparse-checkout: |
+  #           scripts
+  #           .github
+  #           CMakeLists.txt
+  #     - name: Setup Bun
+  #       uses: ./.github/actions/setup-bun
+  #       with:
+  #         bun-version: "1.1.24"
+  #     - name: "categorize bug"
+  #       id: add-labels
+  #       env:
+  #         GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
+  #         GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+  #         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  #       shell: bash
+  #       run: |
+  #         echo '{"dependencies": { "@anthropic-ai/sdk": "latest" }}' > scripts/package.json && bun install --cwd=./scripts
+  #         LABELS=$(bun scripts/label-issue.ts)
+  #         echo "labels=$LABELS" >> $GITHUB_OUTPUT
+  #     - name: Add labels
+  #       uses: actions-cool/issues-helper@v3
+  #       if: steps.add-labels.outputs.labels != ''
+  #       with:
+  #         actions: "add-labels"
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+  #         issue-number: ${{ github.event.issue.number }}
+  #         labels: ${{ steps.add-labels.outputs.labels }}
   on-labeled:
     runs-on: ubuntu-latest
     if: github.event.label.name == 'crash' || github.event.label.name == 'needs repro'
@@ -78,4 +114,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            Hello @${{ github.event.issue.user.login }}. Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun), or [CodeSandbox](https://codesandbox.io/templates/bun). Issues marked with `needs repro` will be closed if they have no activity within 3 days.
+            Hello @${{ github.event.issue.user.login }}. Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun), [CodeSandbox](https://codesandbox.io/templates/bun), or provide a bulleted list of commands to run that reproduce this issue. Issues marked with `needs repro` will be closed if they have no activity within 3 days.

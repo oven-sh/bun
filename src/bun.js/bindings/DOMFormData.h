@@ -35,7 +35,10 @@
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 #include "blob.h"
+
 namespace WebCore {
+
+class ScriptExecutionContext;
 
 template<typename> class ExceptionOr;
 class HTMLElement;
@@ -84,6 +87,7 @@ public:
         size_t m_index { 0 };
     };
     Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
     // explicit DOMFormData(ScriptExecutionContext*, const PAL::TextEncoding& = PAL::UTF8Encoding());

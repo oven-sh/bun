@@ -783,6 +783,32 @@ describe("expect()", () => {
     });
   });
 
+  test("toThrow asymmetric matchers", () => {
+    expect(() => {
+      const err = new Error("foo");
+      err.code = "ERR_BAR";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAR" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).not.toThrow(expect.objectContaining({ code: "ERR_BAR", name: "TypeError" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+
+    expect(() => {
+      const err = new TypeError("foo");
+      err.code = "ERR_BAZ";
+      throw err;
+    }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");
@@ -1075,6 +1101,32 @@ describe("expect()", () => {
     expect(w).not.toEqual(v);
     expect(v).toEqual(v);
     expect(w).toEqual(w);
+  });
+
+  test("deepEquals Set/Map stress test", () => {
+    const arr1 = [];
+    const arr2 = [];
+    const arr3 = [];
+    const arr4 = [];
+
+    for (let i = 0; i < 150; i++) {
+      arr1[i] = [i];
+      arr2[i] = [i];
+      arr3[i] = [i, [i]];
+      arr4[i] = [i, [i]];
+    }
+
+    for (let i = 0; i < 2000; i++) {
+      let outerSet = new Set(arr1);
+      let innerSet = new Set(arr2);
+      Bun.deepEquals(outerSet, innerSet);
+    }
+
+    for (let i = 0; i < 1000; i++) {
+      let outerMap = new Map(arr3);
+      let innerMap = new Map(arr4);
+      Bun.deepEquals(outerMap, innerMap);
+    }
   });
 
   test("deepEquals - Date", () => {
@@ -4457,6 +4509,36 @@ describe("expect()", () => {
     expect("a").toEqual("a");
   });
 
+  test("expect.assertions doesn't throw when valid, async", async () => {
+    expect.assertions(1);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid, callback", done => {
+    expect.assertions(1);
+    process.nextTick(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
+  test("expect.assertions doesn't throw when valid, setImmediate", done => {
+    expect.assertions(1);
+    setImmediate(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
+  test("expect.assertions doesn't throw when valid, queueMicrotask", done => {
+    expect.assertions(1);
+    queueMicrotask(() => {
+      expect("a").toEqual("a");
+      done();
+    });
+  });
+
   test("expect.hasAssertions returns undefined", () => {
     expect(expect.hasAssertions()).toBeUndefined();
   });
@@ -4670,6 +4752,27 @@ describe("expect()", () => {
 
   test(' " " to contain ""', () => {
     expect(" ").toContain("");
+  });
+
+  test("should work #13267", () => {
+    try {
+      expect(() => {
+        throw "!";
+      }).not.toThrow(/ball/);
+      throw undefined;
+    } catch (e) {
+      expect(e).toBeUndefined();
+    }
+    try {
+      expect(() => {
+        throw "ball";
+      }).not.toThrow(/ball/);
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeDefined();
+      expect(e.message).toContain("Received message: ");
+      expect(e.message).toContain('"ball"');
+    }
   });
 });
 

@@ -57,4 +57,4 @@ coverageThreshold = { lines = 0.5, functions = 0.7 }
 
 ---
 
-See [Docs > Test runner > Coverage](/docs/test/coverage) for complete documentation on code coverage reporting in Bun.
+See [Docs > Test runner > Coverage](https://bun.sh/docs/test/coverage) for complete documentation on code coverage reporting in Bun.

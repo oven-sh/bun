@@ -684,20 +684,6 @@ pub const Bunfig = struct {
                 jsx.development = jsx_dev;
             }
 
-            switch (comptime cmd) {
-                .AutoCommand, .BuildCommand => {
-                    if (json.get("publicDir")) |public_dir| {
-                        try this.expectString(public_dir);
-                        this.bunfig.router = Api.RouteConfig{
-                            .extensions = &.{},
-                            .dir = &.{},
-                            .static_dir = try public_dir.data.e_string.string(allocator),
-                        };
-                    }
-                },
-                else => {},
-            }
-
             if (json.get("debug")) |expr| {
                 if (expr.get("editor")) |editor| {
                     if (editor.asString(allocator)) |value| {
@@ -736,13 +722,6 @@ pub const Bunfig = struct {
                     },
                     else => try this.addError(expr.loc, "Expected string or array"),
                 }
-            }
-
-            if (json.get("framework")) |expr| {
-                try this.expectString(expr);
-                this.bunfig.framework = Api.FrameworkConfig{
-                    .package = expr.asString(allocator).?,
-                };
             }
 
             if (json.get("loader")) |expr| {
@@ -806,7 +785,7 @@ pub const Bunfig = struct {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }
             return err;
-        } else JSONParser.ParseTSConfig(&source, ctx.log, allocator) catch |err| {
+        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }

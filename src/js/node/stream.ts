@@ -28,6 +28,24 @@ const kPaused = Symbol("kPaused");
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+const { kAutoDestroyed } = require("internal/shared");
+const {
+  validateBoolean,
+  validateString,
+  validateNumber,
+  validateSignalName,
+  validateEncoding,
+  validatePort,
+  validateInteger,
+  validateInt32,
+  validateUint32,
+  validateArray,
+  validateBuffer,
+  validateAbortSignal,
+  validateFunction,
+  validatePlainFunction,
+  validateUndefined,
+} = require("internal/validators");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -46,48 +64,7 @@ function isReadableStream(value) {
   return typeof value === "object" && value !== null && value instanceof ReadableStream;
 }
 
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
 $debug("node:stream loaded");
-
-/**
- * @callback validateObject
- * @param {*} value
- * @param {string} name
- * @param {{
- *   allowArray?: boolean,
- *   allowFunction?: boolean,
- *   nullable?: boolean
- * }} [options]
- */
-
-/** @type {validateObject} */
-const validateObject = (value, name, options = null) => {
-  const allowArray = options?.allowArray ?? false;
-  const allowFunction = options?.allowFunction ?? false;
-  const nullable = options?.nullable ?? false;
-  if (
-    (!nullable && value === null) ||
-    (!allowArray && $isJSArray(value)) ||
-    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-  ) {
-    throw ERR_INVALID_ARG_TYPE(name, "Object", value);
-  }
-};
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-
-/** @type {validateString} */
-function validateString(value, name) {
-  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
-}
 
 //------------------------------------------------------------------------------
 // Node error polyfills
@@ -640,14 +617,9 @@ var require_validators = __commonJS({
       ArrayPrototypeIncludes,
       ArrayPrototypeJoin,
       ArrayPrototypeMap,
-      NumberIsInteger,
-      NumberMAX_SAFE_INTEGER,
-      NumberMIN_SAFE_INTEGER,
       NumberParseInt,
       RegExpPrototypeTest,
       String: String2,
-      StringPrototypeToUpperCase,
-      StringPrototypeTrim,
     } = require_primordials();
     var {
       hideStackFrames,
@@ -677,46 +649,6 @@ var require_validators = __commonJS({
       validateInt32(value, name, 0, 2 ** 32 - 1);
       return value;
     }
-    var validateInteger = hideStackFrames((value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) => {
-      if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-      if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-      if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-    });
-    var validateInt32 = hideStackFrames((value, name, min = -2147483648, max = 2147483647) => {
-      if (typeof value !== "number") {
-        throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-      }
-      if (!isInt32(value)) {
-        if (!NumberIsInteger(value)) {
-          throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-        }
-        throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-      }
-      if (value < min || value > max) {
-        throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-      }
-    });
-    var validateUint32 = hideStackFrames((value, name, positive) => {
-      if (typeof value !== "number") {
-        throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-      }
-      if (!isUint32(value)) {
-        if (!NumberIsInteger(value)) {
-          throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-        }
-        const min = positive ? 1 : 0;
-        throw new ERR_OUT_OF_RANGE(name, `>= ${min} && < 4294967296`, value);
-      }
-      if (positive && value === 0) {
-        throw new ERR_OUT_OF_RANGE(name, ">= 1 && < 4294967296", value);
-      }
-    });
-    function validateString(value, name) {
-      if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
-    }
-    function validateNumber(value, name) {
-      if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-    }
     var validateOneOf = hideStackFrames((value, name, oneOf) => {
       if (!ArrayPrototypeIncludes(oneOf, value)) {
         const allowed = ArrayPrototypeJoin(
@@ -727,9 +659,6 @@ var require_validators = __commonJS({
         throw new ERR_INVALID_ARG_VALUE(name, value, reason);
       }
     });
-    function validateBoolean(value, name) {
-      if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-    }
     var validateObject = hideStackFrames((value, name, options) => {
       const useDefaultOptions = options == null;
       const allowArray = useDefaultOptions ? false : options.allowArray;
@@ -743,84 +672,12 @@ var require_validators = __commonJS({
         throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
       }
     });
-    var validateArray = hideStackFrames((value, name, minLength = 0) => {
-      if (!$isJSArray(value)) {
-        throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
-      }
-      if (value.length < minLength) {
-        const reason = `must be longer than ${minLength}`;
-        throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-      }
-    });
-    function validateSignalName(signal, name = "signal") {
-      validateString(signal, name);
-      if (signals[signal] === void 0) {
-        if (signals[StringPrototypeToUpperCase(signal)] !== void 0) {
-          throw new ERR_UNKNOWN_SIGNAL(signal + " (signals must use all capital letters)");
-        }
-        throw new ERR_UNKNOWN_SIGNAL(signal);
-      }
-    }
-    var validateBuffer = hideStackFrames((buffer, name = "buffer") => {
-      if (!isArrayBufferView(buffer)) {
-        throw new ERR_INVALID_ARG_TYPE(name, ["Buffer", "TypedArray", "DataView"], buffer);
-      }
-    });
-    function validateEncoding(data, encoding) {
-      const normalizedEncoding = normalizeEncoding(encoding);
-      const length = data.length;
-      if (normalizedEncoding === "hex" && length % 2 !== 0) {
-        throw new ERR_INVALID_ARG_VALUE("encoding", encoding, `is invalid for data of length ${length}`);
-      }
-    }
-    function validatePort(port, name = "Port", allowZero = true) {
-      if (
-        (typeof port !== "number" && typeof port !== "string") ||
-        (typeof port === "string" && StringPrototypeTrim(port).length === 0) ||
-        +port !== +port >>> 0 ||
-        port > 65535 ||
-        (port === 0 && !allowZero)
-      ) {
-        throw new ERR_SOCKET_BAD_PORT(name, port, allowZero);
-      }
-      return port | 0;
-    }
-    var validateAbortSignal = hideStackFrames((signal, name) => {
-      if (signal !== void 0 && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-        throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-      }
-    });
-    var validateFunction = hideStackFrames((value, name) => {
-      if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
-    });
-    var validatePlainFunction = hideStackFrames((value, name) => {
-      if (typeof value !== "function" || isAsyncFunction(value))
-        throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
-    });
-    var validateUndefined = hideStackFrames((value, name) => {
-      if (value !== void 0) throw new ERR_INVALID_ARG_TYPE(name, "undefined", value);
-    });
     module.exports = {
       isInt32,
       isUint32,
       parseFileMode,
-      validateArray,
-      validateBoolean,
-      validateBuffer,
-      validateEncoding,
-      validateFunction,
-      validateInt32,
-      validateInteger,
-      validateNumber,
       validateObject,
       validateOneOf,
-      validatePlainFunction,
-      validatePort,
-      validateSignalName,
-      validateString,
-      validateUint32,
-      validateUndefined,
-      validateAbortSignal,
     };
   },
 });
@@ -1118,7 +975,7 @@ var require_end_of_stream = __commonJS({
     var { AbortError, codes } = require_errors();
     var { ERR_INVALID_ARG_TYPE, ERR_STREAM_PREMATURE_CLOSE } = codes;
     var { once } = require_util();
-    var { validateAbortSignal, validateFunction, validateObject } = require_validators();
+    var { validateObject } = require_validators();
     var { Promise: Promise2 } = require_primordials();
     var {
       isClosed,
@@ -1328,7 +1185,7 @@ var require_operators = __commonJS({
       codes: { ERR_INVALID_ARG_TYPE, ERR_MISSING_ARGS, ERR_OUT_OF_RANGE },
       AbortError,
     } = require_errors();
-    var { validateAbortSignal, validateInteger, validateObject } = require_validators();
+    var { validateObject } = require_validators();
     var kWeakHandler = require_primordials().Symbol("kWeak");
     var { finished } = require_end_of_stream();
     var {
@@ -2103,11 +1960,6 @@ var require_add_abort_signal = __commonJS({
     var { AbortError, codes } = require_errors();
     var eos = require_end_of_stream();
     var { ERR_INVALID_ARG_TYPE } = codes;
-    var validateAbortSignal = (signal, name) => {
-      if (typeof signal !== "object" || !("aborted" in signal)) {
-        throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-      }
-    };
     function isNodeStream(obj) {
       return !!(obj && typeof obj.pipe === "function");
     }
@@ -2264,50 +2116,6 @@ var require_from = __commonJS({
   },
 });
 
-var require_state = __commonJS({
-  "node_modules/readable-stream/lib/internal/streams/state.js"(exports, module) {
-    "use strict";
-
-    const { MathFloor, NumberIsInteger } = require_primordials();
-    const { validateInteger } = require_validators();
-    const { ERR_INVALID_ARG_VALUE } = require_errors().codes;
-    let defaultHighWaterMarkBytes = 16 * 1024;
-    let defaultHighWaterMarkObjectMode = 16;
-    function highWaterMarkFrom(options, isDuplex, duplexKey) {
-      return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
-    }
-    function getDefaultHighWaterMark(objectMode) {
-      return objectMode ? defaultHighWaterMarkObjectMode : defaultHighWaterMarkBytes;
-    }
-    function setDefaultHighWaterMark(objectMode, value) {
-      validateInteger(value, "value", 0);
-      if (objectMode) {
-        defaultHighWaterMarkObjectMode = value;
-      } else {
-        defaultHighWaterMarkBytes = value;
-      }
-    }
-    function getHighWaterMark(state, options, duplexKey, isDuplex) {
-      const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
-      if (hwm != null) {
-        if (!NumberIsInteger(hwm) || hwm < 0) {
-          const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-          throw new ERR_INVALID_ARG_VALUE(name, hwm);
-        }
-        return MathFloor(hwm);
-      }
-
-      // Default value
-      return getDefaultHighWaterMark(state.objectMode);
-    }
-    module.exports = {
-      getHighWaterMark,
-      getDefaultHighWaterMark,
-      setDefaultHighWaterMark,
-    };
-  },
-});
-
 var _ReadableFromWeb;
 var _ReadableFromWebForUndici;
 
@@ -2334,8 +2142,6 @@ var require_readable = __commonJS({
     var { Stream, prependListener } = require_legacy();
 
     const BufferList = $cpp("JSBufferList.cpp", "getBufferList");
-
-    const { getHighWaterMark, getDefaultHighWaterMark } = require_state();
 
     const { AbortError } = require_errors();
 
@@ -3574,6 +3380,7 @@ var require_readable = __commonJS({
           const wState = stream._writableState;
           const autoDestroy = !wState || (wState.autoDestroy && (wState.finished || wState.writable === false));
           if (autoDestroy) {
+            stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
             stream.destroy();
           }
         }
@@ -3889,6 +3696,10 @@ var require_writable = __commonJS({
       return writeOrBuffer(stream, state, chunk, encoding, cb);
     }
     Writable.prototype.write = function (chunk, encoding, cb) {
+      if ($isCallable(encoding)) {
+        cb = encoding;
+        encoding = null;
+      }
       return _write(this, chunk, encoding, cb) === true;
     };
     Writable.prototype.cork = function () {
@@ -4146,7 +3957,7 @@ var require_writable = __commonJS({
       }
       return this;
     };
-    function needFinish(state, tag) {
+    function needFinish(state, tag?) {
       var needFinish =
         state.ending &&
         !state.destroyed &&
@@ -4949,7 +4760,6 @@ var require_pipeline = __commonJS({
       codes: { ERR_INVALID_ARG_TYPE, ERR_INVALID_RETURN_VALUE, ERR_MISSING_ARGS, ERR_STREAM_DESTROYED },
       AbortError,
     } = require_errors();
-    var { validateFunction, validateAbortSignal } = require_validators();
     var { isIterable, isReadable, isReadableNodeStream, isNodeStream } = require_utils();
     var PassThrough;
     function destroyer(stream, reading, writing) {

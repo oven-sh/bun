@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-import { Password, password } from "bun";
+import { password } from "bun";
 
 const placeholder = "hey";
 
@@ -87,6 +87,7 @@ describe("hash", () => {
         Int8Array,
         Int16Array,
         Int32Array,
+        Float16Array,
         Float32Array,
         Float64Array,
         ArrayBuffer,

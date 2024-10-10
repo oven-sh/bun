@@ -132,17 +132,17 @@ pub const Action = union(enum) {
             .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
                 try writer.print(
                     \\generating bundler chunk
-                    \\  chunk entry point: {s}
-                    \\  source: {s}
+                    \\  chunk entry point: {?s}
+                    \\  source: {?s}
                     \\  part range: {d}..{d}
                 ,
                     .{
-                        data.linkerContext().graph.bundler_graph.input_files
+                        if (data.part_range.source_index.isValid()) data.linkerContext().parse_graph.input_files
                             .items(.source)[data.chunk.entry_point.source_index]
-                            .path.text,
-                        data.linkerContext().graph.bundler_graph.input_files
+                            .path.text else null,
+                        if (data.part_range.source_index.isValid()) data.linkerContext().parse_graph.input_files
                             .items(.source)[data.part_range.source_index.get()]
-                            .path.text,
+                            .path.text else null,
                         data.part_range.part_index_begin,
                         data.part_range.part_index_end,
                     },
@@ -763,6 +763,15 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
 
 var windows_segfault_handle: ?windows.HANDLE = null;
 
+pub fn resetOnPosix() void {
+    var act = std.posix.Sigaction{
+        .handler = .{ .sigaction = handleSegfaultPosix },
+        .mask = std.posix.empty_sigset,
+        .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
+    };
+    updatePosixSegfaultHandler(&act) catch {};
+}
+
 pub fn init() void {
     if (!enable) return;
     switch (bun.Environment.os) {
@@ -770,12 +779,7 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            var act = std.posix.Sigaction{
-                .handler = .{ .sigaction = handleSegfaultPosix },
-                .mask = std.posix.empty_sigset,
-                .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
-            };
-            updatePosixSegfaultHandler(&act) catch {};
+            resetOnPosix();
         },
         else => @compileError("TODO"),
     }
@@ -830,6 +834,8 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
+    var is_ancient_cpu = false;
+
     try writer.writeAll(metadata_version_line);
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
@@ -845,6 +851,14 @@ pub fn printMetadata(writer: anytype) !void {
             }
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
+        } else if (bun.Environment.isWindows) {
+            try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
+        }
+
+        if (comptime bun.Environment.isX64) {
+            if (!cpu_features.avx and !cpu_features.avx2 and !cpu_features.avx512) {
+                is_ancient_cpu = true;
+            }
         }
 
         if (!cpu_features.isEmpty()) {
@@ -884,10 +898,12 @@ pub fn printMetadata(writer: anytype) !void {
             &peak_commit,
             &page_faults,
         );
-        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\nRSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\n", .{
             elapsed_msecs,
             user_msecs,
             system_msecs,
+        });
+        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
             std.fmt.fmtIntSizeDec(current_rss),
             std.fmt.fmtIntSizeDec(peak_rss),
             std.fmt.fmtIntSizeDec(current_commit),
@@ -899,6 +915,12 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");
+
+    if (comptime bun.Environment.isX64) {
+        if (is_ancient_cpu) {
+            try writer.writeAll("CPU lacks AVX support. Please consider upgrading to a newer CPU.\n");
+        }
+    }
 }
 
 fn waitForOtherThreadToFinishPanicking() void {
@@ -1643,7 +1665,8 @@ pub const js_bindings = struct {
             // there is definitely enough space in the bounded array
             unreachable;
         };
-        return bun.String.createLatin1(buf.slice()).toJS(global);
+        var str = bun.String.createLatin1(buf.slice());
+        return str.transferToJS(global);
     }
 
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -1656,7 +1679,11 @@ pub const js_bindings = struct {
         obj.put(global, JSC.ZigString.static("features"), array);
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
         obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+
+        // This is the source of truth for the git sha.
+        // Not the github ref or the git tag.
         obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+
         obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }

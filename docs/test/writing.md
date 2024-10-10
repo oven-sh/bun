@@ -76,6 +76,12 @@ test("wat", async () => {
 }, 500); // test must run in <500ms
 ```
 
+In `bun:test`, test timeouts throw an uncatchable exception to force the test to stop running and fail. We also kill any child processes that were spawned in the test to avoid leaving behind zombie processes lurking in the background.
+
+### 🧟 Zombie process killer
+
+When a test times out and processes spawned in the test via `Bun.spawn`, `Bun.spawnSync`, or `node:child_process` are not killed, they will be automatically killed and a message will be logged to the console.
+
 ## `test.skip`
 
 Skip individual tests with `test.skip`. These tests will not be run.
@@ -324,6 +330,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 - [`.toContainAllValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainallvaluesvalues)
 
 ---
+
 - ✅
 - [`.toContainAnyValues()`](https://jest-extended.jestcommunity.dev/docs/matchers/Object#tocontainanyvaluesvalues)
 

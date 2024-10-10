@@ -29,6 +29,7 @@ export type Field =
   | ({
       fn: string;
       length?: number;
+      passThis?: boolean;
       DOMJIT?: {
         returns: string;
         args?: [string, string] | [string, string, string] | [string] | [];
@@ -57,6 +58,7 @@ export interface ClassDefinition {
   values?: string[];
   JSType?: string;
   noConstructor?: boolean;
+  wantsThis?: boolean;
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
@@ -101,7 +103,21 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
-    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
+    klass: Object.fromEntries(
+      Object.entries(klass)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => {
+          v.DOMJIT = undefined;
+          return [k, v];
+        }),
+    ),
+    proto: Object.fromEntries(
+      Object.entries(proto)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => {
+          v.DOMJIT = undefined;
+          return [k, v];
+        }),
+    ),
   };
 }

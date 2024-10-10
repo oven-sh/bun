@@ -732,12 +732,15 @@ Url.prototype.parseHost = function () {
   if (host) this.hostname = host;
 };
 
-export { URL, URLSearchParams };
-export { urlParse as parse };
-export { urlResolve as resolve };
-export { urlResolveObject as resolveObject };
-export { urlFormat as format };
-export { Url as Url };
+export {
+  URL,
+  URLSearchParams,
+  Url as Url,
+  urlFormat as format,
+  urlParse as parse,
+  urlResolve as resolve,
+  urlResolveObject as resolveObject,
+};
 
 export default {
   parse: urlParse,

@@ -16269,8 +16269,7 @@ fn NewParser_(
                                         break :tagger p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.fragment) catch unreachable;
                                     }
 
-                                    const I_FUCKING_HATE_LLDB = p.jsxImport(.Fragment, expr.loc);
-                                    break :tagger I_FUCKING_HATE_LLDB;
+                                    break :tagger p.jsxImport(.Fragment, expr.loc);
                                 }
                             };
 

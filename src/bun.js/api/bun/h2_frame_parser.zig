@@ -739,7 +739,6 @@ pub const H2FrameParser = struct {
     ref_count: u8 = 1,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
-
     pub const StreamResumableIterator = struct {
         parser: *H2FrameParser,
         index: u32 = 0,
@@ -749,10 +748,6 @@ pub const H2FrameParser = struct {
         pub fn next(this: *StreamResumableIterator) ?*Stream {
             const capacity = this.parser.streams.unmanaged.capacity();
             if (this.index > capacity) {
-                return null;
-            }
-            const metadata = this.parser.streams.unmanaged.metadata;
-            if (metadata == null) {
                 return null;
             }
             var it = this.parser.streams.iterator();

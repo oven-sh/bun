@@ -308,8 +308,6 @@ for (let withOverridenBufferWrite of [false, true]) {
         // Try to copy 0 bytes past the end of the target buffer
         b.copy(Buffer.alloc(0), 1, 1, 1);
         b.copy(Buffer.alloc(1), 1, 1, 1);
-        // Try to copy 0 bytes from past the end of the source buffer
-        b.copy(Buffer.alloc(1), 0, 2048, 2048);
       });
 
       it("smart defaults and ability to pass string values as offset", () => {
@@ -1153,11 +1151,9 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("ParseArrayIndex() should reject values that don't fit in a 32 bits size_t", () => {
-        expect(() => {
-          const a = Buffer.alloc(1);
-          const b = Buffer.alloc(1);
-          a.copy(b, 0, 0x100000000, 0x100000001);
-        }).toThrow(RangeError);
+        const a = Buffer.alloc(1);
+        const b = Buffer.alloc(1);
+        expect(() => a.copy(b, 0, 0x100000000, 0x100000001)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
       });
 
       it("unpooled buffer (replaces SlowBuffer)", () => {

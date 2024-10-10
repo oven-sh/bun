@@ -374,6 +374,7 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    double INSPECT_MAX_BYTES = 50;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

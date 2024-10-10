@@ -9,7 +9,7 @@ let $debug_log_enabled = ((env) => (
   // The rationale for checking all these variables is just so you don't have to exactly remember which one you set.
   (env.BUN_DEBUG_ALL && env.BUN_DEBUG_ALL !== '0')
   || (env.BUN_DEBUG_JS && env.BUN_DEBUG_JS !== '0')
-  || (env.BUN_DEBUG_${pathToUpperSnakeCase(filepath)})
+  || (env.BUN_DEBUG_${pathToUpperSnakeCase(publicName)})
   || (env.DEBUG_${pathToUpperSnakeCase(filepath)})
 ))(Bun.env);
 let $debug_pid_prefix = Bun.env.SHOW_PID === '1';

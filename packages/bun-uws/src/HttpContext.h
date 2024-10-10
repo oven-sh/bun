@@ -128,7 +128,10 @@ private:
             if (httpResponseData->onAborted) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
-            
+
+            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            }
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();

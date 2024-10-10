@@ -7,6 +7,17 @@ Bun's server-side `WebSocket` API provides a native pub-sub API. Sockets can be 
 This code snippet implements a simple single-channel chat server.
 
 ```ts
+const getUsernameFromCookies = (cookies: string | null) => {
+  if (!cookies) return "Anonymous";
+
+  var regex = /username=([^;]+)/;
+  var match = regex.exec(cookies);
+
+  if (!match) return "Anonymous";
+
+  return match[1];
+};
+
 const server = Bun.serve<{ username: string }>({
   fetch(req, server) {
     const cookies = req.headers.get("cookie");

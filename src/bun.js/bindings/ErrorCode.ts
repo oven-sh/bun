@@ -42,6 +42,7 @@ export default [
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError, "TypeError"],
   ["ERR_INVALID_URL", TypeError, "TypeError"],
   ["ERR_BUFFER_TOO_LARGE", RangeError, "RangeError"],
+  ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_BROTLI_INVALID_PARAM", RangeError, "RangeError"],
   ["ERR_UNKNOWN_ENCODING", TypeError, "TypeError"],
   ["ERR_INVALID_STATE", Error, "Error"],

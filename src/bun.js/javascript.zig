@@ -1560,7 +1560,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
-    pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
+    pub fn waitFor(this: *VirtualMachine, cond: anytype) void {
         while (!cond.*) {
             this.eventLoop().tick();
 

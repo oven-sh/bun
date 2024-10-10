@@ -4178,6 +4178,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == DescribeScope__onResolve) {
+        return GlobalObject::PromiseFunctions::DescribeScope__onResolve;
+    } else if (handler == DescribeScope__onReject) {
+        return GlobalObject::PromiseFunctions::DescribeScope__onReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

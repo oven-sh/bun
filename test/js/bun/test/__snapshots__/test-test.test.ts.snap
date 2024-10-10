@@ -1,5 +1,47 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`expect().toEqual() on objects with property indices doesn't print undefined 1`] = `
+"expect(received).toEqual(expected)
+
+  {
++   "0": 0,
++   "1": 1,
++   "10": 10,
++   "11": 11,
++   "12": 12,
++   "13": 13,
++   "14": 14,
++   "15": 15,
++   "2": 2,
++   "3": 3,
++   "4": 4,
++   "5": 5,
++   "6": 6,
++   "7": 7,
++   "8": 8,
++   "9": 9,
+-   "0": 123,
+-   "1": 123,
+-   "10": 123,
+-   "11": 123,
+-   "12": 123,
+-   "13": 123,
+-   "14": 123,
+-   "15": 123,
+-   "2": 123,
+-   "3": 123,
+-   "4": 123,
+-   "5": 123,
+-   "6": 123,
+-   "7": 123,
+-   "8": 123,
+-   "9": 123,
+  }
+
+- Expected  - 16
++ Received  + 16"
+`;
+
 exports[`unhandled errors between tests are reported in beforeAll 1`] = `
 "
 my-test.test.js:
@@ -28,6 +70,9 @@ Ran 1 tests across 1 files.
 exports[`unhandled errors between tests are reported in beforeEach 1`] = `
 "
 my-test.test.js:
+
+# Unhandled error between tests
+-------------------------------
 1 | import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
 2 |
 3 | beforeEach(async () => {
@@ -36,10 +81,13 @@ my-test.test.js:
               ^
 error: ## stage beforeEach ##
       at <dir>/my-test.test.js:5:11
-(fail) my-test
+-------------------------------
 
- 0 pass
- 1 fail
+(pass) my-test
+
+ 1 pass
+ 0 fail
+ 1 error
 Ran 1 tests across 1 files.
 "
 `;
@@ -108,7 +156,6 @@ my-test.test.js:
               ^
 error: ## stage describe ##
       at <dir>/my-test.test.js:5:11
-      at <dir>/my-test.test.js:3:1
 -------------------------------
 
 (pass) my-test
@@ -118,46 +165,4 @@ error: ## stage describe ##
  1 error
 Ran 1 tests across 1 files.
 "
-`;
-
-exports[`expect().toEqual() on objects with property indices doesn't print undefined 1`] = `
-"expect(received).toEqual(expected)
-
-  {
-+   "0": 0,
-+   "1": 1,
-+   "10": 10,
-+   "11": 11,
-+   "12": 12,
-+   "13": 13,
-+   "14": 14,
-+   "15": 15,
-+   "2": 2,
-+   "3": 3,
-+   "4": 4,
-+   "5": 5,
-+   "6": 6,
-+   "7": 7,
-+   "8": 8,
-+   "9": 9,
--   "0": 123,
--   "1": 123,
--   "10": 123,
--   "11": 123,
--   "12": 123,
--   "13": 123,
--   "14": 123,
--   "15": 123,
--   "2": 123,
--   "3": 123,
--   "4": 123,
--   "5": 123,
--   "6": 123,
--   "7": 123,
--   "8": 123,
--   "9": 123,
-  }
-
-- Expected  - 16
-+ Received  + 16"
 `;

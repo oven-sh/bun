@@ -370,6 +370,19 @@ myorg = { username = "myusername", password = "$npm_password", url = "https://re
 myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
+### `install.ca` and `install.cafile`
+
+To configure a CA certificate, use `install.ca` or `install.cafile` to specify a path to a CA certificate file.
+
+```toml
+[install]
+# the CA certificate as a string
+ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# a path to a CA certificate
+cafile = "path/to/cafile"
+```
+
 ### `install.cache`
 
 To configure the cache behavior:

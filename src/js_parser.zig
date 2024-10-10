@@ -21813,6 +21813,9 @@ fn NewParser_(
                         } else if (property.flags.contains(.is_method)) {
                             p.log.addError(p.source, property.value.?.loc, "'accessor' property cannot be a method") catch unreachable;
                             out_properties.push(p.allocator, property.*) catch unreachable;
+                        } else if (property.flags.contains(.is_computed)) {
+                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key cannot be computed") catch unreachable;
+                            out_properties.push(p.allocator, property.*) catch unreachable;
                         } else {
                             // 1. change property name to #name
                             var old_property_name: string = undefined;

@@ -21694,7 +21694,7 @@ fn NewParser_(
                 }
 
                 var constructor_function: ?*E.Function = null;
-                var out_properties = Property.List.init(&.{});
+                var saw_accessor = false;
                 for (class.properties) |*property| {
                     if (property.kind == .class_static_block) {
                         const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
@@ -21796,6 +21796,17 @@ fn NewParser_(
                     }
 
                     if (property.kind == .accessor) {
+                        saw_accessor = true;
+                    }
+                }
+
+                if (saw_accessor) {
+                    var out_properties = Property.List.init(&.{});
+                    for (class.properties) |*property| {
+                        if (property.kind != .accessor) {
+                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
+                            continue;
+                        }
                         if (@as(Expr.Tag, property.key.?.data) != .e_string and @as(Expr.Tag, property.key.?.data) != .e_private_identifier) {
                             p.log.addError(p.source, property.key.?.loc, "'accessor' property key must be a string or private identifier") catch unreachable;
                             out_properties.push(p.allocator, property.*) catch unreachable;
@@ -21820,6 +21831,12 @@ fn NewParser_(
                                 old_property_name = p.symbols.items[property.key.?.data.e_private_identifier.ref.innerIndex()].original_name;
                                 new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}", .{old_property_name[1..]}) catch unreachable;
                                 accessor_key = property.key.?;
+                            }
+
+                            var collision_count: u8 = 1;
+                            while (p.current_scope.members.contains(new_property_name)) : (collision_count += 1) {
+                                p.allocator.free(new_property_name);
+                                new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}{}", .{ old_property_name[1..], collision_count }) catch unreachable;
                             }
 
                             prop_name_ref = p.generateTempRefKind(.private_field, new_property_name);
@@ -21910,12 +21927,9 @@ fn NewParser_(
                                 }, loc),
                             }) catch unreachable;
                         }
-                    } else {
-                        out_properties.push(p.allocator, property.*) catch unreachable;
                     }
+                    class.properties = out_properties.slice();
                 }
-
-                class.properties = out_properties.slice();
 
                 // note: our version assumes useDefineForClassFields is true
                 if (comptime is_typescript_enabled) {

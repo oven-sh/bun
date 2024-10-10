@@ -148,7 +148,7 @@ pub const Background = struct {
         }
 
         const position: Position = this.position.intoPosition();
-        if (!position.isZero() or this.size.eql(&BackgroundSize.default())) {
+        if (!position.isZero() or !this.size.eql(&BackgroundSize.default())) {
             if (has_output) {
                 try dest.writeStr(" ");
             }
@@ -205,6 +205,10 @@ pub const Background = struct {
 
     pub inline fn deepClone(this: *const @This(), allocator: Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

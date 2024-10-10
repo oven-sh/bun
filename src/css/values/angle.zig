@@ -283,6 +283,10 @@ pub const Angle = union(Tag) {
             .deg, .rad, .grad, .turn => |v| CSSNumberFns.sign(&v),
         };
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.

@@ -333,3 +333,79 @@ pub inline fn partialCmpF32(lhs: *const f32, rhs: *const f32) ?std.math.Order {
     if (lte and !rte) return .lt;
     return .eq;
 }
+
+pub const HASH_SEED: u64 = 0;
+
+pub fn hashArrayList(comptime V: type, this: *const ArrayList(V), hasher: *std.hash.Wyhash) void {
+    for (this.items) |*item| {
+        hash(V, item, hasher);
+    }
+}
+pub fn hashBabyList(comptime V: type, this: *const bun.BabyList(V), hasher: *std.hash.Wyhash) void {
+    for (this.sliceConst()) |*item| {
+        hash(V, item, hasher);
+    }
+}
+
+pub fn hasHash(comptime T: type) bool {
+    const tyinfo = @typeInfo(T);
+    if (comptime T == []const u8) return true;
+    if (comptime bun.meta.isSimpleEqlType(T)) return true;
+    if (tyinfo == .Pointer) {
+        const TT = std.meta.Child(T);
+        return hasHash(TT);
+    }
+    if (tyinfo == .Optional) {
+        const TT = std.meta.Child(T);
+        return hasHash(TT);
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        switch (result.list) {
+            .array_list => return true,
+            .baby_list => return true,
+            .small_list => return true,
+        }
+    }
+    return switch (T) {
+        else => @hasDecl(T, "hash"),
+    };
+}
+
+pub fn hash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
+    if (comptime T == void) return;
+    const tyinfo = @typeInfo(T);
+    if (comptime tyinfo == .Pointer and T != []const u8) {
+        const TT = std.meta.Child(T);
+        if (tyinfo.Pointer.size == .One) {
+            return hash(TT, this.*, hasher);
+        } else if (tyinfo.Pointer.size == .Slice) {
+            for (this.*) |*item| {
+                hash(TT, item, hasher);
+            }
+            return;
+        } else {
+            @compileError("Can't hash this pointer type: " ++ @typeName(T));
+        }
+    }
+    if (comptime @typeInfo(T) == .Optional) {
+        const TT = std.meta.Child(T);
+        if (this.* != null) return hash(TT, &this.*.?, hasher);
+        return;
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        switch (result.list) {
+            .array_list => return hashArrayList(result.child, this, hasher),
+            .baby_list => return hashBabyList(result.child, this, hasher),
+            .small_list => return this.hash(hasher),
+        }
+    }
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        const bytes = std.mem.asBytes(&this);
+        hasher.update(bytes);
+        return;
+    }
+    return switch (T) {
+        []const u8 => hasher.update(this.*),
+        else => T.hash(this, hasher),
+    };
+}

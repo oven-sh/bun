@@ -504,6 +504,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(Image, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -516,16 +520,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(SmallList(Image, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
@@ -538,6 +534,26 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "deepClone")) {
@@ -552,16 +568,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundPosition, 1)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
@@ -576,6 +584,26 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -588,6 +616,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -598,6 +630,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "deepClone")) {
@@ -612,6 +648,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundOrigin, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundOrigin, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(background.Background, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.Background, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -622,6 +662,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(background.Background, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.Background, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.Background, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.Background, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "deepClone")) {
@@ -636,6 +680,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(box_shadow.BoxShadow, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(box_shadow.BoxShadow, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(box_shadow.BoxShadow, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(css.css_values.alpha.AlphaValue, "deepClone")) {
                 compile_error = compile_error ++ @typeName(css.css_values.alpha.AlphaValue) ++ ": does not have a deepClone() function.\n";
             }
@@ -648,6 +696,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(css.css_values.alpha.AlphaValue) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(css.css_values.alpha.AlphaValue, "eql")) {
+                compile_error = compile_error ++ @typeName(css.css_values.alpha.AlphaValue) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(CssColor, "deepClone")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
@@ -658,6 +710,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(CssColor, "toCss")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(display.Display, "deepClone")) {
@@ -672,6 +728,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(display.Display) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(display.Display, "eql")) {
+                compile_error = compile_error ++ @typeName(display.Display) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(display.Visibility, "deepClone")) {
                 compile_error = compile_error ++ @typeName(display.Visibility) ++ ": does not have a deepClone() function.\n";
             }
@@ -684,16 +744,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(display.Visibility) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(size.Size, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "parse")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(display.Visibility, "eql")) {
+                compile_error = compile_error ++ @typeName(display.Visibility) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(size.Size, "deepClone")) {
@@ -708,16 +760,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(size.Size, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "parse")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(size.Size, "deepClone")) {
@@ -730,6 +774,42 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(size.Size, "toCss")) {
                 compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(size.MaxSize, "deepClone")) {
@@ -744,64 +824,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(size.MaxSize, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.MaxSize, "parse")) {
-                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.MaxSize, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "parse")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "parse")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "parse")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "deepClone")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "parse")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(size.Size, "toCss")) {
-                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(size.MaxSize, "eql")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(size.MaxSize, "deepClone")) {
@@ -816,6 +840,74 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(size.MaxSize, "eql")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "parse")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.Size, "eql")) {
+                compile_error = compile_error ++ @typeName(size.Size) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(size.MaxSize, "deepClone")) {
                 compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
             }
@@ -826,6 +918,26 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(size.MaxSize, "toCss")) {
                 compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "eql")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "deepClone")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "parse")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "toCss")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.MaxSize, "eql")) {
+                compile_error = compile_error ++ @typeName(size.MaxSize) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(size.BoxSizing, "deepClone")) {
@@ -840,6 +952,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(size.BoxSizing) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(size.BoxSizing, "eql")) {
+                compile_error = compile_error ++ @typeName(size.BoxSizing) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(size.AspectRatio, "deepClone")) {
                 compile_error = compile_error ++ @typeName(size.AspectRatio) ++ ": does not have a deepClone() function.\n";
             }
@@ -850,6 +966,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(size.AspectRatio, "toCss")) {
                 compile_error = compile_error ++ @typeName(size.AspectRatio) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(size.AspectRatio, "eql")) {
+                compile_error = compile_error ++ @typeName(size.AspectRatio) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(overflow.Overflow, "deepClone")) {
@@ -864,16 +984,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(overflow.Overflow) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
-                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(overflow.OverflowKeyword, "parse")) {
-                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(overflow.OverflowKeyword, "toCss")) {
-                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(overflow.Overflow, "eql")) {
+                compile_error = compile_error ++ @typeName(overflow.Overflow) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
@@ -886,6 +998,26 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(overflow.OverflowKeyword, "toCss")) {
                 compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "eql")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "deepClone")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "parse")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "toCss")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(overflow.OverflowKeyword, "eql")) {
+                compile_error = compile_error ++ @typeName(overflow.OverflowKeyword) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(overflow.TextOverflow, "deepClone")) {
@@ -900,6 +1032,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(overflow.TextOverflow) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(overflow.TextOverflow, "eql")) {
+                compile_error = compile_error ++ @typeName(overflow.TextOverflow) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(position.Position, "deepClone")) {
                 compile_error = compile_error ++ @typeName(position.Position) ++ ": does not have a deepClone() function.\n";
             }
@@ -912,16 +1048,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(position.Position) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(position.Position, "eql")) {
+                compile_error = compile_error ++ @typeName(position.Position) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -936,16 +1064,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -960,16 +1080,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -984,16 +1096,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -1006,6 +1110,74 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(margin_padding.InsetBlock, "deepClone")) {
@@ -1020,6 +1192,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(margin_padding.InsetBlock) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(margin_padding.InsetBlock, "eql")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetBlock) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(margin_padding.InsetInline, "deepClone")) {
                 compile_error = compile_error ++ @typeName(margin_padding.InsetInline) ++ ": does not have a deepClone() function.\n";
             }
@@ -1030,6 +1206,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(margin_padding.InsetInline, "toCss")) {
                 compile_error = compile_error ++ @typeName(margin_padding.InsetInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(margin_padding.InsetInline, "eql")) {
+                compile_error = compile_error ++ @typeName(margin_padding.InsetInline) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(margin_padding.Inset, "deepClone")) {
@@ -1044,6 +1224,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(margin_padding.Inset) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(margin_padding.Inset, "eql")) {
+                compile_error = compile_error ++ @typeName(margin_padding.Inset) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(css.css_values.size.Size2D(Length), "deepClone")) {
                 compile_error = compile_error ++ @typeName(css.css_values.size.Size2D(Length)) ++ ": does not have a deepClone() function.\n";
             }
@@ -1056,16 +1240,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(css.css_values.size.Size2D(Length)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(CssColor, "deepClone")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "parse")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "toCss")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(css.css_values.size.Size2D(Length), "eql")) {
+                compile_error = compile_error ++ @typeName(css.css_values.size.Size2D(Length)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(CssColor, "deepClone")) {
@@ -1080,16 +1256,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(CssColor, "deepClone")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "parse")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "toCss")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(CssColor, "deepClone")) {
@@ -1104,16 +1272,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(CssColor, "deepClone")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "parse")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "toCss")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(CssColor, "deepClone")) {
@@ -1128,16 +1288,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(CssColor, "deepClone")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "parse")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "toCss")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(CssColor, "deepClone")) {
@@ -1152,76 +1304,72 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "deepClone")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "parse")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "toCss")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "deepClone")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "parse")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "toCss")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "deepClone")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "parse")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "toCss")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "deepClone")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "parse")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "toCss")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "deepClone")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "parse")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "toCss")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "deepClone")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(border.LineStyle, "parse")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(border.LineStyle, "toCss")) {
-                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(border.LineStyle, "deepClone")) {
@@ -1236,6 +1384,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(border.LineStyle, "deepClone")) {
                 compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
             }
@@ -1248,6 +1400,106 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(border.LineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(border.LineStyle) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderSideWidth, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
             }
@@ -1260,16 +1512,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(BorderSideWidth, "deepClone")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(BorderSideWidth, "parse")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(BorderSideWidth, "toCss")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderSideWidth, "deepClone")) {
@@ -1284,16 +1528,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(BorderSideWidth, "deepClone")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(BorderSideWidth, "parse")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(BorderSideWidth, "toCss")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderSideWidth, "deepClone")) {
@@ -1308,16 +1544,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(BorderSideWidth, "deepClone")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(BorderSideWidth, "parse")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(BorderSideWidth, "toCss")) {
-                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderSideWidth, "deepClone")) {
@@ -1332,6 +1560,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderSideWidth, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
             }
@@ -1342,6 +1574,58 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderSideWidth, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "deepClone")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "parse")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "toCss")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
@@ -1356,16 +1640,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
@@ -1380,16 +1656,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
@@ -1404,16 +1672,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
-                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
@@ -1428,6 +1688,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
                 compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
             }
@@ -1438,6 +1702,58 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
                 compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "deepClone")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "parse")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "toCss")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Size2D(LengthPercentage), "eql")) {
+                compile_error = compile_error ++ @typeName(Size2D(LengthPercentage)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderRadius, "deepClone")) {
@@ -1452,6 +1768,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderRadius) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderRadius, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderRadius) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Image, "deepClone")) {
                 compile_error = compile_error ++ @typeName(Image) ++ ": does not have a deepClone() function.\n";
             }
@@ -1462,6 +1782,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(Image, "toCss")) {
                 compile_error = compile_error ++ @typeName(Image) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Image, "eql")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
@@ -1476,6 +1800,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Rect(LengthOrNumber), "eql")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImageRepeat, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a deepClone() function.\n";
             }
@@ -1486,6 +1814,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImageRepeat, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
@@ -1500,6 +1832,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Rect(BorderImageSideWidth), "eql")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImageSlice, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a deepClone() function.\n";
             }
@@ -1512,6 +1848,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderImageSlice, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImage, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a deepClone() function.\n";
             }
@@ -1522,6 +1862,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImage, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderColor, "deepClone")) {
@@ -1536,6 +1880,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderColor) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderColor, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderColor) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderStyle, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderStyle) ++ ": does not have a deepClone() function.\n";
             }
@@ -1546,6 +1894,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderStyle, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderStyle) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderWidth, "deepClone")) {
@@ -1560,6 +1912,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderWidth) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderWidth) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderBlockColor, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderBlockColor) ++ ": does not have a deepClone() function.\n";
             }
@@ -1570,6 +1926,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderBlockColor, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderBlockColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockColor, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBlockColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderBlockStyle, "deepClone")) {
@@ -1584,6 +1944,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderBlockStyle) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderBlockStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStyle) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderBlockWidth, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderBlockWidth) ++ ": does not have a deepClone() function.\n";
             }
@@ -1594,6 +1958,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderBlockWidth, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderBlockWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBlockWidth) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderInlineColor, "deepClone")) {
@@ -1608,6 +1976,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderInlineColor) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderInlineColor, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderInlineColor) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderInlineStyle, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderInlineStyle) ++ ": does not have a deepClone() function.\n";
             }
@@ -1618,6 +1990,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderInlineStyle, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderInlineStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStyle) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderInlineWidth, "deepClone")) {
@@ -1632,6 +2008,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderInlineWidth) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderInlineWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderInlineWidth) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Border, "deepClone")) {
                 compile_error = compile_error ++ @typeName(Border) ++ ": does not have a deepClone() function.\n";
             }
@@ -1642,6 +2022,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(Border, "toCss")) {
                 compile_error = compile_error ++ @typeName(Border) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Border, "eql")) {
+                compile_error = compile_error ++ @typeName(Border) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderTop, "deepClone")) {
@@ -1656,6 +2040,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderTop) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderTop, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderTop) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderBottom, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderBottom) ++ ": does not have a deepClone() function.\n";
             }
@@ -1666,6 +2054,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderBottom, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderBottom) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBottom, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBottom) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderLeft, "deepClone")) {
@@ -1680,6 +2072,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderLeft) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderLeft, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderLeft) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderRight, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderRight) ++ ": does not have a deepClone() function.\n";
             }
@@ -1690,6 +2086,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderRight, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderRight) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderRight, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderRight) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderBlock, "deepClone")) {
@@ -1704,6 +2104,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderBlock) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderBlock, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBlock) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderBlockStart, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderBlockStart) ++ ": does not have a deepClone() function.\n";
             }
@@ -1714,6 +2118,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderBlockStart, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderBlockStart) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderBlockStart, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBlockStart) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderBlockEnd, "deepClone")) {
@@ -1728,6 +2136,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderBlockEnd) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderBlockEnd, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderBlockEnd) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderInline, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderInline) ++ ": does not have a deepClone() function.\n";
             }
@@ -1738,6 +2150,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderInline, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInline, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderInline) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BorderInlineStart, "deepClone")) {
@@ -1752,6 +2168,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderInlineStart) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BorderInlineStart, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderInlineStart) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderInlineEnd, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderInlineEnd) ++ ": does not have a deepClone() function.\n";
             }
@@ -1762,6 +2182,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderInlineEnd, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderInlineEnd) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderInlineEnd, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderInlineEnd) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Outline, "deepClone")) {
@@ -1776,6 +2200,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Outline) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Outline, "eql")) {
+                compile_error = compile_error ++ @typeName(Outline) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(CssColor, "deepClone")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
@@ -1786,6 +2214,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(CssColor, "toCss")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(OutlineStyle, "deepClone")) {
@@ -1800,6 +2232,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(OutlineStyle) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(OutlineStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(OutlineStyle) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderSideWidth, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a deepClone() function.\n";
             }
@@ -1810,6 +2246,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderSideWidth, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderSideWidth, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderSideWidth) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(FlexDirection, "deepClone")) {
@@ -1824,6 +2264,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FlexDirection) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FlexDirection, "eql")) {
+                compile_error = compile_error ++ @typeName(FlexDirection) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(FlexWrap, "deepClone")) {
                 compile_error = compile_error ++ @typeName(FlexWrap) ++ ": does not have a deepClone() function.\n";
             }
@@ -1834,6 +2278,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(FlexWrap, "toCss")) {
                 compile_error = compile_error ++ @typeName(FlexWrap) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FlexWrap, "eql")) {
+                compile_error = compile_error ++ @typeName(FlexWrap) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(FlexFlow, "deepClone")) {
@@ -1848,6 +2296,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FlexFlow) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FlexFlow, "eql")) {
+                compile_error = compile_error ++ @typeName(FlexFlow) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
             }
@@ -1858,6 +2310,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Flex, "deepClone")) {
@@ -1872,6 +2328,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Flex) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Flex, "eql")) {
+                compile_error = compile_error ++ @typeName(Flex) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(AlignContent, "deepClone")) {
                 compile_error = compile_error ++ @typeName(AlignContent) ++ ": does not have a deepClone() function.\n";
             }
@@ -1882,6 +2342,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(AlignContent, "toCss")) {
                 compile_error = compile_error ++ @typeName(AlignContent) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(AlignContent, "eql")) {
+                compile_error = compile_error ++ @typeName(AlignContent) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(JustifyContent, "deepClone")) {
@@ -1896,6 +2360,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(JustifyContent) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(JustifyContent, "eql")) {
+                compile_error = compile_error ++ @typeName(JustifyContent) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(PlaceContent, "deepClone")) {
                 compile_error = compile_error ++ @typeName(PlaceContent) ++ ": does not have a deepClone() function.\n";
             }
@@ -1906,6 +2374,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(PlaceContent, "toCss")) {
                 compile_error = compile_error ++ @typeName(PlaceContent) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PlaceContent, "eql")) {
+                compile_error = compile_error ++ @typeName(PlaceContent) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(AlignSelf, "deepClone")) {
@@ -1920,6 +2392,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(AlignSelf) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(AlignSelf, "eql")) {
+                compile_error = compile_error ++ @typeName(AlignSelf) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(JustifySelf, "deepClone")) {
                 compile_error = compile_error ++ @typeName(JustifySelf) ++ ": does not have a deepClone() function.\n";
             }
@@ -1930,6 +2406,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(JustifySelf, "toCss")) {
                 compile_error = compile_error ++ @typeName(JustifySelf) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(JustifySelf, "eql")) {
+                compile_error = compile_error ++ @typeName(JustifySelf) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(PlaceSelf, "deepClone")) {
@@ -1944,6 +2424,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(PlaceSelf) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(PlaceSelf, "eql")) {
+                compile_error = compile_error ++ @typeName(PlaceSelf) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(AlignItems, "deepClone")) {
                 compile_error = compile_error ++ @typeName(AlignItems) ++ ": does not have a deepClone() function.\n";
             }
@@ -1954,6 +2438,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(AlignItems, "toCss")) {
                 compile_error = compile_error ++ @typeName(AlignItems) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(AlignItems, "eql")) {
+                compile_error = compile_error ++ @typeName(AlignItems) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(JustifyItems, "deepClone")) {
@@ -1968,6 +2456,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(JustifyItems) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(JustifyItems, "eql")) {
+                compile_error = compile_error ++ @typeName(JustifyItems) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(PlaceItems, "deepClone")) {
                 compile_error = compile_error ++ @typeName(PlaceItems) ++ ": does not have a deepClone() function.\n";
             }
@@ -1980,16 +2472,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(PlaceItems) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(GapValue, "deepClone")) {
-                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(GapValue, "parse")) {
-                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(GapValue, "toCss")) {
-                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(PlaceItems, "eql")) {
+                compile_error = compile_error ++ @typeName(PlaceItems) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(GapValue, "deepClone")) {
@@ -2002,6 +2486,26 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(GapValue, "toCss")) {
                 compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "eql")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "deepClone")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "parse")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "toCss")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(GapValue, "eql")) {
+                compile_error = compile_error ++ @typeName(GapValue) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Gap, "deepClone")) {
@@ -2016,6 +2520,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Gap) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Gap, "eql")) {
+                compile_error = compile_error ++ @typeName(Gap) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BoxOrient, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BoxOrient) ++ ": does not have a deepClone() function.\n";
             }
@@ -2026,6 +2534,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BoxOrient, "toCss")) {
                 compile_error = compile_error ++ @typeName(BoxOrient) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxOrient, "eql")) {
+                compile_error = compile_error ++ @typeName(BoxOrient) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BoxDirection, "deepClone")) {
@@ -2040,6 +2552,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BoxDirection) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BoxDirection, "eql")) {
+                compile_error = compile_error ++ @typeName(BoxDirection) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BoxAlign, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a deepClone() function.\n";
             }
@@ -2050,6 +2566,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BoxAlign, "toCss")) {
                 compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "eql")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BoxPack, "deepClone")) {
@@ -2064,6 +2584,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BoxPack) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BoxPack, "eql")) {
+                compile_error = compile_error ++ @typeName(BoxPack) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BoxLines, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BoxLines) ++ ": does not have a deepClone() function.\n";
             }
@@ -2074,6 +2598,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BoxLines, "toCss")) {
                 compile_error = compile_error ++ @typeName(BoxLines) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxLines, "eql")) {
+                compile_error = compile_error ++ @typeName(BoxLines) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(FlexPack, "deepClone")) {
@@ -2088,6 +2616,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FlexPack) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FlexPack, "eql")) {
+                compile_error = compile_error ++ @typeName(FlexPack) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BoxAlign, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a deepClone() function.\n";
             }
@@ -2098,6 +2630,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BoxAlign, "toCss")) {
                 compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BoxAlign, "eql")) {
+                compile_error = compile_error ++ @typeName(BoxAlign) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(FlexItemAlign, "deepClone")) {
@@ -2112,6 +2648,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FlexItemAlign) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FlexItemAlign, "eql")) {
+                compile_error = compile_error ++ @typeName(FlexItemAlign) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(FlexLinePack, "deepClone")) {
                 compile_error = compile_error ++ @typeName(FlexLinePack) ++ ": does not have a deepClone() function.\n";
             }
@@ -2124,16 +2664,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FlexLinePack) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(FlexLinePack, "eql")) {
+                compile_error = compile_error ++ @typeName(FlexLinePack) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2148,16 +2680,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2172,16 +2696,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2196,16 +2712,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2220,6 +2728,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
             }
@@ -2230,6 +2742,74 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(MarginBlock, "deepClone")) {
@@ -2244,6 +2824,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(MarginBlock) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(MarginBlock, "eql")) {
+                compile_error = compile_error ++ @typeName(MarginBlock) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(MarginInline, "deepClone")) {
                 compile_error = compile_error ++ @typeName(MarginInline) ++ ": does not have a deepClone() function.\n";
             }
@@ -2254,6 +2838,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(MarginInline, "toCss")) {
                 compile_error = compile_error ++ @typeName(MarginInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(MarginInline, "eql")) {
+                compile_error = compile_error ++ @typeName(MarginInline) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Margin, "deepClone")) {
@@ -2268,16 +2856,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Margin) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(Margin, "eql")) {
+                compile_error = compile_error ++ @typeName(Margin) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2292,16 +2872,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2316,16 +2888,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2340,16 +2904,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2362,6 +2918,74 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(PaddingBlock, "deepClone")) {
@@ -2376,6 +3000,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(PaddingBlock) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(PaddingBlock, "eql")) {
+                compile_error = compile_error ++ @typeName(PaddingBlock) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(PaddingInline, "deepClone")) {
                 compile_error = compile_error ++ @typeName(PaddingInline) ++ ": does not have a deepClone() function.\n";
             }
@@ -2386,6 +3014,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(PaddingInline, "toCss")) {
                 compile_error = compile_error ++ @typeName(PaddingInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(PaddingInline, "eql")) {
+                compile_error = compile_error ++ @typeName(PaddingInline) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Padding, "deepClone")) {
@@ -2400,16 +3032,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Padding) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(Padding, "eql")) {
+                compile_error = compile_error ++ @typeName(Padding) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2424,16 +3048,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2448,16 +3064,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2472,16 +3080,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2494,6 +3094,74 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(ScrollMarginBlock, "deepClone")) {
@@ -2508,6 +3176,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(ScrollMarginBlock) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(ScrollMarginBlock, "eql")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginBlock) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(ScrollMarginInline, "deepClone")) {
                 compile_error = compile_error ++ @typeName(ScrollMarginInline) ++ ": does not have a deepClone() function.\n";
             }
@@ -2518,6 +3190,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(ScrollMarginInline, "toCss")) {
                 compile_error = compile_error ++ @typeName(ScrollMarginInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollMarginInline, "eql")) {
+                compile_error = compile_error ++ @typeName(ScrollMarginInline) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(ScrollMargin, "deepClone")) {
@@ -2532,16 +3208,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(ScrollMargin) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(ScrollMargin, "eql")) {
+                compile_error = compile_error ++ @typeName(ScrollMargin) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2556,16 +3224,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2580,16 +3240,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2604,16 +3256,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
-                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
@@ -2626,6 +3270,74 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
                 compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "parse")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "toCss")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LengthPercentageOrAuto, "eql")) {
+                compile_error = compile_error ++ @typeName(LengthPercentageOrAuto) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(ScrollPaddingBlock, "deepClone")) {
@@ -2640,6 +3352,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(ScrollPaddingBlock) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(ScrollPaddingBlock, "eql")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingBlock) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(ScrollPaddingInline, "deepClone")) {
                 compile_error = compile_error ++ @typeName(ScrollPaddingInline) ++ ": does not have a deepClone() function.\n";
             }
@@ -2650,6 +3366,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(ScrollPaddingInline, "toCss")) {
                 compile_error = compile_error ++ @typeName(ScrollPaddingInline) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ScrollPaddingInline, "eql")) {
+                compile_error = compile_error ++ @typeName(ScrollPaddingInline) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(ScrollPadding, "deepClone")) {
@@ -2664,6 +3384,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(ScrollPadding) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(ScrollPadding, "eql")) {
+                compile_error = compile_error ++ @typeName(ScrollPadding) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(FontWeight, "deepClone")) {
                 compile_error = compile_error ++ @typeName(FontWeight) ++ ": does not have a deepClone() function.\n";
             }
@@ -2674,6 +3398,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(FontWeight, "toCss")) {
                 compile_error = compile_error ++ @typeName(FontWeight) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontWeight, "eql")) {
+                compile_error = compile_error ++ @typeName(FontWeight) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(FontSize, "deepClone")) {
@@ -2688,6 +3416,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FontSize) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FontSize, "eql")) {
+                compile_error = compile_error ++ @typeName(FontSize) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(FontStretch, "deepClone")) {
                 compile_error = compile_error ++ @typeName(FontStretch) ++ ": does not have a deepClone() function.\n";
             }
@@ -2698,6 +3430,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(FontStretch, "toCss")) {
                 compile_error = compile_error ++ @typeName(FontStretch) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontStretch, "eql")) {
+                compile_error = compile_error ++ @typeName(FontStretch) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(BabyList(FontFamily), "deepClone")) {
@@ -2712,6 +3448,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BabyList(FontFamily)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(BabyList(FontFamily), "eql")) {
+                compile_error = compile_error ++ @typeName(BabyList(FontFamily)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(FontStyle, "deepClone")) {
                 compile_error = compile_error ++ @typeName(FontStyle) ++ ": does not have a deepClone() function.\n";
             }
@@ -2722,6 +3462,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(FontStyle, "toCss")) {
                 compile_error = compile_error ++ @typeName(FontStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontStyle, "eql")) {
+                compile_error = compile_error ++ @typeName(FontStyle) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(FontVariantCaps, "deepClone")) {
@@ -2736,6 +3480,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(FontVariantCaps) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FontVariantCaps, "eql")) {
+                compile_error = compile_error ++ @typeName(FontVariantCaps) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(LineHeight, "deepClone")) {
                 compile_error = compile_error ++ @typeName(LineHeight) ++ ": does not have a deepClone() function.\n";
             }
@@ -2746,6 +3494,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(LineHeight, "toCss")) {
                 compile_error = compile_error ++ @typeName(LineHeight) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LineHeight, "eql")) {
+                compile_error = compile_error ++ @typeName(LineHeight) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Font, "deepClone")) {
@@ -2760,16 +3512,8 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Font) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(CssColor, "deepClone")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "parse")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(CssColor, "toCss")) {
-                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(Font, "eql")) {
+                compile_error = compile_error ++ @typeName(Font) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(CssColor, "deepClone")) {
@@ -2782,6 +3526,26 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(CssColor, "toCss")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "deepClone")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "parse")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "toCss")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(CssColor, "eql")) {
+                compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Direction, "deepClone")) {
@@ -2796,6 +3560,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Direction, "eql")) {
+                compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Composes, "deepClone")) {
                 compile_error = compile_error ++ @typeName(Composes) ++ ": does not have a deepClone() function.\n";
             }
@@ -2806,6 +3574,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(Composes, "toCss")) {
                 compile_error = compile_error ++ @typeName(Composes) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Composes, "eql")) {
+                compile_error = compile_error ++ @typeName(Composes) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(Image, 1), "deepClone")) {
@@ -2820,6 +3592,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(Image, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Image, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(MaskMode, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(MaskMode, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -2830,6 +3606,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(MaskMode, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(MaskMode, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskMode, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskMode, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(BackgroundRepeat, 1), "deepClone")) {
@@ -2844,6 +3624,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(BackgroundRepeat, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(BackgroundRepeat, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundRepeat, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(HorizontalPosition, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -2854,6 +3638,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(HorizontalPosition, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(HorizontalPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(VerticalPosition, 1), "deepClone")) {
@@ -2868,6 +3656,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(VerticalPosition, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(VerticalPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(VerticalPosition, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(Position, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(Position, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -2878,6 +3670,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(Position, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(Position, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(Position, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Position, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(MaskClip, 1), "deepClone")) {
@@ -2892,6 +3688,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(MaskClip, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(MaskClip, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskClip, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(GeometryBox, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(GeometryBox, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -2902,6 +3702,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(GeometryBox, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(GeometryBox, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(GeometryBox, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(GeometryBox, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(BackgroundSize, 1), "deepClone")) {
@@ -2916,6 +3720,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(BackgroundSize, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(MaskComposite, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(MaskComposite, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -2926,6 +3734,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(MaskComposite, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(MaskComposite, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(MaskComposite, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(MaskComposite, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(MaskType, "deepClone")) {
@@ -2940,6 +3752,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(MaskType) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(MaskType, "eql")) {
+                compile_error = compile_error ++ @typeName(MaskType) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(Mask, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(Mask, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -2952,6 +3768,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(Mask, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(Mask, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(Mask, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Image, "deepClone")) {
                 compile_error = compile_error ++ @typeName(Image) ++ ": does not have a deepClone() function.\n";
             }
@@ -2962,6 +3782,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(Image, "toCss")) {
                 compile_error = compile_error ++ @typeName(Image) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Image, "eql")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(MaskBorderMode, "deepClone")) {
@@ -2976,6 +3800,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(MaskBorderMode) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(MaskBorderMode, "eql")) {
+                compile_error = compile_error ++ @typeName(MaskBorderMode) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImageSlice, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a deepClone() function.\n";
             }
@@ -2986,6 +3814,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImageSlice, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
@@ -3000,6 +3832,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Rect(BorderImageSideWidth), "eql")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
                 compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a deepClone() function.\n";
             }
@@ -3012,6 +3848,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Rect(LengthOrNumber), "eql")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImageRepeat, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a deepClone() function.\n";
             }
@@ -3022,6 +3862,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImageRepeat, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(MaskBorder, "deepClone")) {
@@ -3036,6 +3880,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(MaskBorder) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(MaskBorder, "eql")) {
+                compile_error = compile_error ++ @typeName(MaskBorder) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(SmallList(WebKitMaskComposite, 1), "deepClone")) {
                 compile_error = compile_error ++ @typeName(SmallList(WebKitMaskComposite, 1)) ++ ": does not have a deepClone() function.\n";
             }
@@ -3046,6 +3894,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(WebKitMaskComposite, 1), "toCss")) {
                 compile_error = compile_error ++ @typeName(SmallList(WebKitMaskComposite, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(WebKitMaskComposite, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskComposite, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(WebKitMaskSourceType, 1), "deepClone")) {
@@ -3060,6 +3912,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(WebKitMaskSourceType, 1)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(SmallList(WebKitMaskSourceType, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(WebKitMaskSourceType, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImage, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a deepClone() function.\n";
             }
@@ -3070,6 +3926,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImage, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImage, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImage) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Image, "deepClone")) {
@@ -3084,6 +3944,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Image) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Image, "eql")) {
+                compile_error = compile_error ++ @typeName(Image) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImageSlice, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a deepClone() function.\n";
             }
@@ -3094,6 +3958,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImageSlice, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageSlice, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImageSlice) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(Rect(BorderImageSideWidth), "deepClone")) {
@@ -3108,6 +3976,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Rect(BorderImageSideWidth), "eql")) {
+                compile_error = compile_error ++ @typeName(Rect(BorderImageSideWidth)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Rect(LengthOrNumber), "deepClone")) {
                 compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a deepClone() function.\n";
             }
@@ -3120,6 +3992,10 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(Rect(LengthOrNumber), "eql")) {
+                compile_error = compile_error ++ @typeName(Rect(LengthOrNumber)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(BorderImageRepeat, "deepClone")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a deepClone() function.\n";
             }
@@ -3130,6 +4006,10 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(BorderImageRepeat, "toCss")) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BorderImageRepeat, "eql")) {
+                compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a eql() function.\n";
             }
 
             const final_compile_error = compile_error;
@@ -5808,6 +6688,243 @@ pub const Property = union(PropertyIdTag) {
         }
         return null;
     }
+
+    pub fn eql(lhs: *const Property, rhs: *const Property) bool {
+        if (@intFromEnum(lhs.*) != @intFromEnum(rhs.*)) return false;
+        return switch (lhs.*) {
+            .@"background-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"background-color"),
+            .@"background-image" => |*v| css.generic.eql(SmallList(Image, 1), v, &rhs.@"background-image"),
+            .@"background-position-x" => |*v| css.generic.eql(SmallList(css_values.position.HorizontalPosition, 1), v, &rhs.@"background-position-x"),
+            .@"background-position-y" => |*v| css.generic.eql(SmallList(css_values.position.HorizontalPosition, 1), v, &rhs.@"background-position-y"),
+            .@"background-position" => |*v| css.generic.eql(SmallList(background.BackgroundPosition, 1), v, &rhs.@"background-position"),
+            .@"background-size" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-size"),
+            .@"background-repeat" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-repeat"),
+            .@"background-attachment" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), v, &rhs.@"background-attachment"),
+            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), &v[0], &v[0]) and v[1].eq(rhs.@"background-clip"[1]),
+            .@"background-origin" => |*v| css.generic.eql(SmallList(background.BackgroundOrigin, 1), v, &rhs.@"background-origin"),
+            .background => |*v| css.generic.eql(SmallList(background.Background, 1), v, &rhs.background),
+            .@"box-shadow" => |*v| css.generic.eql(SmallList(box_shadow.BoxShadow, 1), &v[0], &v[0]) and v[1].eq(rhs.@"box-shadow"[1]),
+            .opacity => |*v| css.generic.eql(css.css_values.alpha.AlphaValue, v, &rhs.opacity),
+            .color => |*v| css.generic.eql(CssColor, v, &rhs.color),
+            .display => |*v| css.generic.eql(display.Display, v, &rhs.display),
+            .visibility => |*v| css.generic.eql(display.Visibility, v, &rhs.visibility),
+            .width => |*v| css.generic.eql(size.Size, v, &rhs.width),
+            .height => |*v| css.generic.eql(size.Size, v, &rhs.height),
+            .@"min-width" => |*v| css.generic.eql(size.Size, v, &rhs.@"min-width"),
+            .@"min-height" => |*v| css.generic.eql(size.Size, v, &rhs.@"min-height"),
+            .@"max-width" => |*v| css.generic.eql(size.MaxSize, v, &rhs.@"max-width"),
+            .@"max-height" => |*v| css.generic.eql(size.MaxSize, v, &rhs.@"max-height"),
+            .@"block-size" => |*v| css.generic.eql(size.Size, v, &rhs.@"block-size"),
+            .@"inline-size" => |*v| css.generic.eql(size.Size, v, &rhs.@"inline-size"),
+            .@"min-block-size" => |*v| css.generic.eql(size.Size, v, &rhs.@"min-block-size"),
+            .@"min-inline-size" => |*v| css.generic.eql(size.Size, v, &rhs.@"min-inline-size"),
+            .@"max-block-size" => |*v| css.generic.eql(size.MaxSize, v, &rhs.@"max-block-size"),
+            .@"max-inline-size" => |*v| css.generic.eql(size.MaxSize, v, &rhs.@"max-inline-size"),
+            .@"box-sizing" => |*v| css.generic.eql(size.BoxSizing, &v[0], &v[0]) and v[1].eq(rhs.@"box-sizing"[1]),
+            .@"aspect-ratio" => |*v| css.generic.eql(size.AspectRatio, v, &rhs.@"aspect-ratio"),
+            .overflow => |*v| css.generic.eql(overflow.Overflow, v, &rhs.overflow),
+            .@"overflow-x" => |*v| css.generic.eql(overflow.OverflowKeyword, v, &rhs.@"overflow-x"),
+            .@"overflow-y" => |*v| css.generic.eql(overflow.OverflowKeyword, v, &rhs.@"overflow-y"),
+            .@"text-overflow" => |*v| css.generic.eql(overflow.TextOverflow, &v[0], &v[0]) and v[1].eq(rhs.@"text-overflow"[1]),
+            .position => |*v| css.generic.eql(position.Position, v, &rhs.position),
+            .top => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.top),
+            .bottom => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.bottom),
+            .left => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.left),
+            .right => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.right),
+            .@"inset-block-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"inset-block-start"),
+            .@"inset-block-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"inset-block-end"),
+            .@"inset-inline-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"inset-inline-start"),
+            .@"inset-inline-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"inset-inline-end"),
+            .@"inset-block" => |*v| css.generic.eql(margin_padding.InsetBlock, v, &rhs.@"inset-block"),
+            .@"inset-inline" => |*v| css.generic.eql(margin_padding.InsetInline, v, &rhs.@"inset-inline"),
+            .inset => |*v| css.generic.eql(margin_padding.Inset, v, &rhs.inset),
+            .@"border-spacing" => |*v| css.generic.eql(css.css_values.size.Size2D(Length), v, &rhs.@"border-spacing"),
+            .@"border-top-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-top-color"),
+            .@"border-bottom-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-bottom-color"),
+            .@"border-left-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-left-color"),
+            .@"border-right-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-right-color"),
+            .@"border-block-start-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-block-start-color"),
+            .@"border-block-end-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-block-end-color"),
+            .@"border-inline-start-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-inline-start-color"),
+            .@"border-inline-end-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"border-inline-end-color"),
+            .@"border-top-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-top-style"),
+            .@"border-bottom-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-bottom-style"),
+            .@"border-left-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-left-style"),
+            .@"border-right-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-right-style"),
+            .@"border-block-start-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-block-start-style"),
+            .@"border-block-end-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-block-end-style"),
+            .@"border-inline-start-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-inline-start-style"),
+            .@"border-inline-end-style" => |*v| css.generic.eql(border.LineStyle, v, &rhs.@"border-inline-end-style"),
+            .@"border-top-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-top-width"),
+            .@"border-bottom-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-bottom-width"),
+            .@"border-left-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-left-width"),
+            .@"border-right-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-right-width"),
+            .@"border-block-start-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-block-start-width"),
+            .@"border-block-end-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-block-end-width"),
+            .@"border-inline-start-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-inline-start-width"),
+            .@"border-inline-end-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"border-inline-end-width"),
+            .@"border-top-left-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &v[0]) and v[1].eq(rhs.@"border-top-left-radius"[1]),
+            .@"border-top-right-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &v[0]) and v[1].eq(rhs.@"border-top-right-radius"[1]),
+            .@"border-bottom-left-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &v[0]) and v[1].eq(rhs.@"border-bottom-left-radius"[1]),
+            .@"border-bottom-right-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), &v[0], &v[0]) and v[1].eq(rhs.@"border-bottom-right-radius"[1]),
+            .@"border-start-start-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-start-start-radius"),
+            .@"border-start-end-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-start-end-radius"),
+            .@"border-end-start-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-end-start-radius"),
+            .@"border-end-end-radius" => |*v| css.generic.eql(Size2D(LengthPercentage), v, &rhs.@"border-end-end-radius"),
+            .@"border-radius" => |*v| css.generic.eql(BorderRadius, &v[0], &v[0]) and v[1].eq(rhs.@"border-radius"[1]),
+            .@"border-image-source" => |*v| css.generic.eql(Image, v, &rhs.@"border-image-source"),
+            .@"border-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), v, &rhs.@"border-image-outset"),
+            .@"border-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, v, &rhs.@"border-image-repeat"),
+            .@"border-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), v, &rhs.@"border-image-width"),
+            .@"border-image-slice" => |*v| css.generic.eql(BorderImageSlice, v, &rhs.@"border-image-slice"),
+            .@"border-image" => |*v| css.generic.eql(BorderImage, &v[0], &v[0]) and v[1].eq(rhs.@"border-image"[1]),
+            .@"border-color" => |*v| css.generic.eql(BorderColor, v, &rhs.@"border-color"),
+            .@"border-style" => |*v| css.generic.eql(BorderStyle, v, &rhs.@"border-style"),
+            .@"border-width" => |*v| css.generic.eql(BorderWidth, v, &rhs.@"border-width"),
+            .@"border-block-color" => |*v| css.generic.eql(BorderBlockColor, v, &rhs.@"border-block-color"),
+            .@"border-block-style" => |*v| css.generic.eql(BorderBlockStyle, v, &rhs.@"border-block-style"),
+            .@"border-block-width" => |*v| css.generic.eql(BorderBlockWidth, v, &rhs.@"border-block-width"),
+            .@"border-inline-color" => |*v| css.generic.eql(BorderInlineColor, v, &rhs.@"border-inline-color"),
+            .@"border-inline-style" => |*v| css.generic.eql(BorderInlineStyle, v, &rhs.@"border-inline-style"),
+            .@"border-inline-width" => |*v| css.generic.eql(BorderInlineWidth, v, &rhs.@"border-inline-width"),
+            .border => |*v| css.generic.eql(Border, v, &rhs.border),
+            .@"border-top" => |*v| css.generic.eql(BorderTop, v, &rhs.@"border-top"),
+            .@"border-bottom" => |*v| css.generic.eql(BorderBottom, v, &rhs.@"border-bottom"),
+            .@"border-left" => |*v| css.generic.eql(BorderLeft, v, &rhs.@"border-left"),
+            .@"border-right" => |*v| css.generic.eql(BorderRight, v, &rhs.@"border-right"),
+            .@"border-block" => |*v| css.generic.eql(BorderBlock, v, &rhs.@"border-block"),
+            .@"border-block-start" => |*v| css.generic.eql(BorderBlockStart, v, &rhs.@"border-block-start"),
+            .@"border-block-end" => |*v| css.generic.eql(BorderBlockEnd, v, &rhs.@"border-block-end"),
+            .@"border-inline" => |*v| css.generic.eql(BorderInline, v, &rhs.@"border-inline"),
+            .@"border-inline-start" => |*v| css.generic.eql(BorderInlineStart, v, &rhs.@"border-inline-start"),
+            .@"border-inline-end" => |*v| css.generic.eql(BorderInlineEnd, v, &rhs.@"border-inline-end"),
+            .outline => |*v| css.generic.eql(Outline, v, &rhs.outline),
+            .@"outline-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"outline-color"),
+            .@"outline-style" => |*v| css.generic.eql(OutlineStyle, v, &rhs.@"outline-style"),
+            .@"outline-width" => |*v| css.generic.eql(BorderSideWidth, v, &rhs.@"outline-width"),
+            .@"flex-direction" => |*v| css.generic.eql(FlexDirection, &v[0], &v[0]) and v[1].eq(rhs.@"flex-direction"[1]),
+            .@"flex-wrap" => |*v| css.generic.eql(FlexWrap, &v[0], &v[0]) and v[1].eq(rhs.@"flex-wrap"[1]),
+            .@"flex-flow" => |*v| css.generic.eql(FlexFlow, &v[0], &v[0]) and v[1].eq(rhs.@"flex-flow"[1]),
+            .@"flex-grow" => |*v| css.generic.eql(CSSNumber, &v[0], &v[0]) and v[1].eq(rhs.@"flex-grow"[1]),
+            .@"flex-shrink" => |*v| css.generic.eql(CSSNumber, &v[0], &v[0]) and v[1].eq(rhs.@"flex-shrink"[1]),
+            .@"flex-basis" => |*v| css.generic.eql(LengthPercentageOrAuto, &v[0], &v[0]) and v[1].eq(rhs.@"flex-basis"[1]),
+            .flex => |*v| css.generic.eql(Flex, &v[0], &v[0]) and v[1].eq(rhs.flex[1]),
+            .order => |*v| css.generic.eql(CSSInteger, &v[0], &v[0]) and v[1].eq(rhs.order[1]),
+            .@"align-content" => |*v| css.generic.eql(AlignContent, &v[0], &v[0]) and v[1].eq(rhs.@"align-content"[1]),
+            .@"justify-content" => |*v| css.generic.eql(JustifyContent, &v[0], &v[0]) and v[1].eq(rhs.@"justify-content"[1]),
+            .@"place-content" => |*v| css.generic.eql(PlaceContent, v, &rhs.@"place-content"),
+            .@"align-self" => |*v| css.generic.eql(AlignSelf, &v[0], &v[0]) and v[1].eq(rhs.@"align-self"[1]),
+            .@"justify-self" => |*v| css.generic.eql(JustifySelf, v, &rhs.@"justify-self"),
+            .@"place-self" => |*v| css.generic.eql(PlaceSelf, v, &rhs.@"place-self"),
+            .@"align-items" => |*v| css.generic.eql(AlignItems, &v[0], &v[0]) and v[1].eq(rhs.@"align-items"[1]),
+            .@"justify-items" => |*v| css.generic.eql(JustifyItems, v, &rhs.@"justify-items"),
+            .@"place-items" => |*v| css.generic.eql(PlaceItems, v, &rhs.@"place-items"),
+            .@"row-gap" => |*v| css.generic.eql(GapValue, v, &rhs.@"row-gap"),
+            .@"column-gap" => |*v| css.generic.eql(GapValue, v, &rhs.@"column-gap"),
+            .gap => |*v| css.generic.eql(Gap, v, &rhs.gap),
+            .@"box-orient" => |*v| css.generic.eql(BoxOrient, &v[0], &v[0]) and v[1].eq(rhs.@"box-orient"[1]),
+            .@"box-direction" => |*v| css.generic.eql(BoxDirection, &v[0], &v[0]) and v[1].eq(rhs.@"box-direction"[1]),
+            .@"box-ordinal-group" => |*v| css.generic.eql(CSSInteger, &v[0], &v[0]) and v[1].eq(rhs.@"box-ordinal-group"[1]),
+            .@"box-align" => |*v| css.generic.eql(BoxAlign, &v[0], &v[0]) and v[1].eq(rhs.@"box-align"[1]),
+            .@"box-flex" => |*v| css.generic.eql(CSSNumber, &v[0], &v[0]) and v[1].eq(rhs.@"box-flex"[1]),
+            .@"box-flex-group" => |*v| css.generic.eql(CSSInteger, &v[0], &v[0]) and v[1].eq(rhs.@"box-flex-group"[1]),
+            .@"box-pack" => |*v| css.generic.eql(BoxPack, &v[0], &v[0]) and v[1].eq(rhs.@"box-pack"[1]),
+            .@"box-lines" => |*v| css.generic.eql(BoxLines, &v[0], &v[0]) and v[1].eq(rhs.@"box-lines"[1]),
+            .@"flex-pack" => |*v| css.generic.eql(FlexPack, &v[0], &v[0]) and v[1].eq(rhs.@"flex-pack"[1]),
+            .@"flex-order" => |*v| css.generic.eql(CSSInteger, &v[0], &v[0]) and v[1].eq(rhs.@"flex-order"[1]),
+            .@"flex-align" => |*v| css.generic.eql(BoxAlign, &v[0], &v[0]) and v[1].eq(rhs.@"flex-align"[1]),
+            .@"flex-item-align" => |*v| css.generic.eql(FlexItemAlign, &v[0], &v[0]) and v[1].eq(rhs.@"flex-item-align"[1]),
+            .@"flex-line-pack" => |*v| css.generic.eql(FlexLinePack, &v[0], &v[0]) and v[1].eq(rhs.@"flex-line-pack"[1]),
+            .@"flex-positive" => |*v| css.generic.eql(CSSNumber, &v[0], &v[0]) and v[1].eq(rhs.@"flex-positive"[1]),
+            .@"flex-negative" => |*v| css.generic.eql(CSSNumber, &v[0], &v[0]) and v[1].eq(rhs.@"flex-negative"[1]),
+            .@"flex-preferred-size" => |*v| css.generic.eql(LengthPercentageOrAuto, &v[0], &v[0]) and v[1].eq(rhs.@"flex-preferred-size"[1]),
+            .@"margin-top" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-top"),
+            .@"margin-bottom" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-bottom"),
+            .@"margin-left" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-left"),
+            .@"margin-right" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-right"),
+            .@"margin-block-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-block-start"),
+            .@"margin-block-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-block-end"),
+            .@"margin-inline-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-inline-start"),
+            .@"margin-inline-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"margin-inline-end"),
+            .@"margin-block" => |*v| css.generic.eql(MarginBlock, v, &rhs.@"margin-block"),
+            .@"margin-inline" => |*v| css.generic.eql(MarginInline, v, &rhs.@"margin-inline"),
+            .margin => |*v| css.generic.eql(Margin, v, &rhs.margin),
+            .@"padding-top" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-top"),
+            .@"padding-bottom" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-bottom"),
+            .@"padding-left" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-left"),
+            .@"padding-right" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-right"),
+            .@"padding-block-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-block-start"),
+            .@"padding-block-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-block-end"),
+            .@"padding-inline-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-inline-start"),
+            .@"padding-inline-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"padding-inline-end"),
+            .@"padding-block" => |*v| css.generic.eql(PaddingBlock, v, &rhs.@"padding-block"),
+            .@"padding-inline" => |*v| css.generic.eql(PaddingInline, v, &rhs.@"padding-inline"),
+            .padding => |*v| css.generic.eql(Padding, v, &rhs.padding),
+            .@"scroll-margin-top" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-top"),
+            .@"scroll-margin-bottom" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-bottom"),
+            .@"scroll-margin-left" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-left"),
+            .@"scroll-margin-right" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-right"),
+            .@"scroll-margin-block-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-block-start"),
+            .@"scroll-margin-block-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-block-end"),
+            .@"scroll-margin-inline-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-inline-start"),
+            .@"scroll-margin-inline-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-margin-inline-end"),
+            .@"scroll-margin-block" => |*v| css.generic.eql(ScrollMarginBlock, v, &rhs.@"scroll-margin-block"),
+            .@"scroll-margin-inline" => |*v| css.generic.eql(ScrollMarginInline, v, &rhs.@"scroll-margin-inline"),
+            .@"scroll-margin" => |*v| css.generic.eql(ScrollMargin, v, &rhs.@"scroll-margin"),
+            .@"scroll-padding-top" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-top"),
+            .@"scroll-padding-bottom" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-bottom"),
+            .@"scroll-padding-left" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-left"),
+            .@"scroll-padding-right" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-right"),
+            .@"scroll-padding-block-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-block-start"),
+            .@"scroll-padding-block-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-block-end"),
+            .@"scroll-padding-inline-start" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-inline-start"),
+            .@"scroll-padding-inline-end" => |*v| css.generic.eql(LengthPercentageOrAuto, v, &rhs.@"scroll-padding-inline-end"),
+            .@"scroll-padding-block" => |*v| css.generic.eql(ScrollPaddingBlock, v, &rhs.@"scroll-padding-block"),
+            .@"scroll-padding-inline" => |*v| css.generic.eql(ScrollPaddingInline, v, &rhs.@"scroll-padding-inline"),
+            .@"scroll-padding" => |*v| css.generic.eql(ScrollPadding, v, &rhs.@"scroll-padding"),
+            .@"font-weight" => |*v| css.generic.eql(FontWeight, v, &rhs.@"font-weight"),
+            .@"font-size" => |*v| css.generic.eql(FontSize, v, &rhs.@"font-size"),
+            .@"font-stretch" => |*v| css.generic.eql(FontStretch, v, &rhs.@"font-stretch"),
+            .@"font-family" => |*v| css.generic.eql(BabyList(FontFamily), v, &rhs.@"font-family"),
+            .@"font-style" => |*v| css.generic.eql(FontStyle, v, &rhs.@"font-style"),
+            .@"font-variant-caps" => |*v| css.generic.eql(FontVariantCaps, v, &rhs.@"font-variant-caps"),
+            .@"line-height" => |*v| css.generic.eql(LineHeight, v, &rhs.@"line-height"),
+            .font => |*v| css.generic.eql(Font, v, &rhs.font),
+            .@"text-decoration-color" => |*v| css.generic.eql(CssColor, &v[0], &v[0]) and v[1].eq(rhs.@"text-decoration-color"[1]),
+            .@"text-emphasis-color" => |*v| css.generic.eql(CssColor, &v[0], &v[0]) and v[1].eq(rhs.@"text-emphasis-color"[1]),
+            .direction => |*v| css.generic.eql(Direction, v, &rhs.direction),
+            .composes => |*v| css.generic.eql(Composes, v, &rhs.composes),
+            .@"mask-image" => |*v| css.generic.eql(SmallList(Image, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-image"[1]),
+            .@"mask-mode" => |*v| css.generic.eql(SmallList(MaskMode, 1), v, &rhs.@"mask-mode"),
+            .@"mask-repeat" => |*v| css.generic.eql(SmallList(BackgroundRepeat, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-repeat"[1]),
+            .@"mask-position-x" => |*v| css.generic.eql(SmallList(HorizontalPosition, 1), v, &rhs.@"mask-position-x"),
+            .@"mask-position-y" => |*v| css.generic.eql(SmallList(VerticalPosition, 1), v, &rhs.@"mask-position-y"),
+            .@"mask-position" => |*v| css.generic.eql(SmallList(Position, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-position"[1]),
+            .@"mask-clip" => |*v| css.generic.eql(SmallList(MaskClip, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-clip"[1]),
+            .@"mask-origin" => |*v| css.generic.eql(SmallList(GeometryBox, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-origin"[1]),
+            .@"mask-size" => |*v| css.generic.eql(SmallList(BackgroundSize, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-size"[1]),
+            .@"mask-composite" => |*v| css.generic.eql(SmallList(MaskComposite, 1), v, &rhs.@"mask-composite"),
+            .@"mask-type" => |*v| css.generic.eql(MaskType, v, &rhs.@"mask-type"),
+            .mask => |*v| css.generic.eql(SmallList(Mask, 1), &v[0], &v[0]) and v[1].eq(rhs.mask[1]),
+            .@"mask-border-source" => |*v| css.generic.eql(Image, v, &rhs.@"mask-border-source"),
+            .@"mask-border-mode" => |*v| css.generic.eql(MaskBorderMode, v, &rhs.@"mask-border-mode"),
+            .@"mask-border-slice" => |*v| css.generic.eql(BorderImageSlice, v, &rhs.@"mask-border-slice"),
+            .@"mask-border-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), v, &rhs.@"mask-border-width"),
+            .@"mask-border-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), v, &rhs.@"mask-border-outset"),
+            .@"mask-border-repeat" => |*v| css.generic.eql(BorderImageRepeat, v, &rhs.@"mask-border-repeat"),
+            .@"mask-border" => |*v| css.generic.eql(MaskBorder, v, &rhs.@"mask-border"),
+            .@"-webkit-mask-composite" => |*v| css.generic.eql(SmallList(WebKitMaskComposite, 1), v, &rhs.@"-webkit-mask-composite"),
+            .@"mask-source-type" => |*v| css.generic.eql(SmallList(WebKitMaskSourceType, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-source-type"[1]),
+            .@"mask-box-image" => |*v| css.generic.eql(BorderImage, &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image"[1]),
+            .@"mask-box-image-source" => |*v| css.generic.eql(Image, &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-source"[1]),
+            .@"mask-box-image-slice" => |*v| css.generic.eql(BorderImageSlice, &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-slice"[1]),
+            .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-width"[1]),
+            .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-outset"[1]),
+            .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &v[0]) and v[1].eq(rhs.@"mask-box-image-repeat"[1]),
+            .all, .unparsed => true,
+            .custom => |*c| c.eql(&rhs.custom),
+        };
+    }
 };
 pub const PropertyId = union(PropertyIdTag) {
     @"background-color",
@@ -7576,6 +8693,11 @@ pub const PropertyId = union(PropertyIdTag) {
             }
         }
         unreachable;
+    }
+
+    pub fn hash(this: *const PropertyId, hasher: *std.hash.Wyhash) void {
+        const tag = @intFromEnum(this.*);
+        hasher.update(std.mem.asBytes(&tag));
     }
 };
 pub const PropertyIdTag = enum(u16) {

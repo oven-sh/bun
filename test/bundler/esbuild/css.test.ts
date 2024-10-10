@@ -21,7 +21,7 @@ describe('bundler', () => {
       api.expectFile('/out.js').toEqualIgnoringWhitespace(`
 /* entry.css */
 body {
-        background: white;
+        background: #fff;
         color: #000;
 }`)
     },

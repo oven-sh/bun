@@ -276,6 +276,10 @@ pub const AlignSelf = union(enum) {
 
         pub fn __generateToCss() void {}
 
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
         pub fn parse(input: *css.Parser) css.Result(@This()) {
             const overflow = OverflowPosition.parse(input).asValue();
             const self_position = switch (SelfPosition.parse(input)) {

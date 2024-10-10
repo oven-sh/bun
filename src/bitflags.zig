@@ -70,5 +70,9 @@ pub fn Bitflags(comptime T: type) type {
         pub fn neq(lhs: T, rhs: T) bool {
             return asBits(lhs) != asBits(rhs);
         }
+
+        pub fn hash(this: *const T, hasher: *std.hash.Wyhash) void {
+            hasher.update(std.mem.asBytes(this));
+        }
     };
 }

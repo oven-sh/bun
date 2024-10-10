@@ -40,6 +40,14 @@ pub const Display = union(enum) {
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [visibility](https://drafts.csswg.org/css-display-3/#visibility) property.
@@ -99,15 +107,15 @@ pub const DisplayPair = struct {
             }
 
             if (outside == null) {
-                if (input.tryParse(DisplayOutside.parse, .{}).isOk()) {
-                    outside = input.tryParse(DisplayOutside.parse, .{}).result;
+                if (input.tryParse(DisplayOutside.parse, .{}).asValue()) |o| {
+                    outside = o;
                     continue;
                 }
             }
 
             if (inside == null) {
-                if (input.tryParse(DisplayInside.parse, .{}).isOk()) {
-                    inside = input.tryParse(DisplayInside.parse, .{}).result;
+                if (input.tryParse(DisplayInside.parse, .{}).asValue()) |i| {
+                    inside = i;
                     continue;
                 }
             }
@@ -203,6 +211,10 @@ pub const DisplayPair = struct {
                 try dest.writeStr("list-item");
             }
         }
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

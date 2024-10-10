@@ -39,6 +39,9 @@ pub const Time = union(enum) {
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn parse(input: *css.Parser) Result(Time) {
         var calc_result = switch (input.tryParse(Calc(Time).parse, .{})) {

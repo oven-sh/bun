@@ -76,6 +76,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
     "deepClone",
     "parse",
     "toCss",
+    "eql",
   ];
 
   return `
@@ -86,7 +87,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   // - eql()
   // - parse()
   // - toCss()
-  //
+  // 
   // We do this string concatenation thing so we get all the errors at once,
   // instead of relying on Zig semantic analysis which usualy stops at the first error.
   comptime {
@@ -235,6 +236,21 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
     }
     return null;
   }
+
+  pub fn eql(lhs: *const Property, rhs: *const Property) bool {
+    if (@intFromEnum(lhs.*) != @intFromEnum(rhs.*)) return false;
+    return switch (lhs.*) {
+      ${Object.entries(property_defs)
+        .map(([name, meta]) => {
+
+          if (meta.valid_prefixes !== undefined) return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, &v[0], &v[0]) and v[1].eq(rhs.${escapeIdent(name)}[1]),`;
+          return `.${escapeIdent(name)} => |*v| css.generic.eql(${meta.ty}, v, &rhs.${escapeIdent(name)}),`;
+        })
+        .join("\n")}
+      .all, .unparsed => true,
+      .custom => |*c| c.eql(&rhs.custom),
+    };
+  }
 `;
 }
 
@@ -363,6 +379,11 @@ function generatePropertyIdImpl(property_defs: Record<string, PropertyDef>): str
       }
     }
     unreachable;
+  }
+
+  pub fn hash(this: *const PropertyId, hasher: *std.hash.Wyhash) void {
+    const tag = @intFromEnum(this.*);
+    hasher.update(std.mem.asBytes(&tag));
   }
 `;
 }

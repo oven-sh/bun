@@ -59,6 +59,10 @@ pub const DashedIdentReference = struct {
 
         return dest.writeDashedIdent(&this.ident, false);
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 pub const DashedIdentFns = DashedIdent;
@@ -105,6 +109,10 @@ pub const DashedIdent = struct {
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// A CSS [`<ident>`](https://www.w3.org/TR/css-values-4/#css-css-identifier).
@@ -126,6 +134,10 @@ pub const Ident = struct {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -174,6 +186,10 @@ pub const CustomIdent = struct {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 

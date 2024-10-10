@@ -154,4 +154,10 @@ pub const Url = struct {
     pub fn eql(this: *const Url, other: *const Url) bool {
         return this.import_record_idx == other.import_record_idx;
     }
+
+    // TODO: dedupe import records??
+    // This might not fucking work
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };

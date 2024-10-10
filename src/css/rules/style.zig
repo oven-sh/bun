@@ -40,12 +40,10 @@ pub fn StyleRule(comptime R: type) type {
         /// Returns a hash of this rule for use when deduplicating.
         /// Includes the selectors and properties.
         pub fn hashKey(this: *const This) u64 {
-            _ = this; // autofix
-            // var hasher = std.hash.Wyhash.init(0);
-            // this.selectors.hash(&hasher);
-            // this.declarations.hashProperties(&hasher);
-            // return hasher.finish();
-            @panic(css.todo_stuff.depth);
+            var hasher = std.hash.Wyhash.init(0);
+            this.selectors.hash(&hasher);
+            this.declarations.hashPropertyIds(&hasher);
+            return hasher.final();
         }
 
         pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {

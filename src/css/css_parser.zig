@@ -107,6 +107,7 @@ pub const MinifyError = errors_.MinifyError;
 pub const MinifyErr = errors_.MinifyErr;
 
 pub const generic = @import("./generics.zig");
+pub const HASH_SEED = generic.HASH_SEED;
 
 pub const ImportConditions = css_rules.import.ImportConditions;
 
@@ -872,6 +873,11 @@ pub fn DefineEnumProperty(comptime T: type) type {
 
         pub inline fn deepClone(this: *const T, _: std.mem.Allocator) T {
             return this.*;
+        }
+
+        pub fn hash(this: *const T, hasher: *std.hash.Wyhash) void {
+            const tag = @intFromEnum(this.*);
+            hasher.update(std.mem.asBytes(&tag));
         }
     };
 }
@@ -5274,6 +5280,8 @@ pub const Token = union(TokenKind) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
 
     dimension: Dimension,
@@ -5323,6 +5331,10 @@ pub const Token = union(TokenKind) {
 
     pub fn eql(lhs: *const Token, rhs: *const Token) bool {
         return implementEql(Token, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return implementHash(@This(), this, hasher);
     }
 
     /// Return whether this token represents a parse error.
@@ -5583,6 +5595,10 @@ const Num = struct {
     pub fn eql(lhs: *const Num, rhs: *const Num) bool {
         return implementEql(Num, lhs, rhs);
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return implementHash(@This(), this, hasher);
+    }
 };
 
 const Dimension = struct {
@@ -5592,6 +5608,10 @@ const Dimension = struct {
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return implementHash(@This(), this, hasher);
     }
 };
 
@@ -6206,6 +6226,62 @@ pub inline fn implementEql(comptime T: type, this: *const T, other: *const T) bo
                 }
             }
             return true;
+        },
+        else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
+}
+
+pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
+    const tyinfo = @typeInfo(T);
+    if (comptime T == void) return;
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        return hasher.update(std.mem.asBytes(&this));
+    }
+    if (comptime T == []const u8) {
+        return hasher.update(this.*);
+    }
+    if (comptime @typeInfo(T) == .Pointer) {
+        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+    }
+    if (comptime @typeInfo(T) == .Optional) {
+        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+    }
+    return switch (tyinfo) {
+        .Optional => unreachable,
+        .Pointer => unreachable,
+        .Array => {
+            if (comptime @typeInfo(T) == .Optional) {
+                @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+            }
+        },
+        .Struct => {
+            inline for (tyinfo.Struct.fields) |field| {
+                if (comptime generic.hasHash(field.type)) {
+                    generic.hash(field.type, &@field(this, field.name), hasher);
+                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                    implementHash(field.type, &@field(this, field.name), hasher);
+                } else {
+                    @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
+                }
+            }
+            return;
+        },
+        .Union => {
+            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+            const enum_fields = bun.meta.EnumFields(T);
+            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
+                if (enum_field.value == @intFromEnum(this.*)) {
+                    const field = union_field;
+                    if (comptime generic.hasHash(field.type)) {
+                        generic.hash(field.type, &@field(this, field.name), hasher);
+                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                        implementHash(field.type, &@field(this, field.name), hasher);
+                    } else {
+                        @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
+                    }
+                }
+            }
+            return;
         },
         else => @compileError("Unsupported type: " ++ @typeName(T)),
     };

@@ -30,12 +30,6 @@ pub const DeclarationBlock = struct {
 
     const This = @This();
 
-    pub fn eql(this: *const This, other: *const This) bool {
-        _ = this; // autofix
-        _ = other; // autofix
-        @panic(css.todo_stuff.depth);
-    }
-
     pub fn isEmpty(this: *const This) bool {
         return this.declarations.items.len == 0 and this.important_declarations.items.len == 0;
     }
@@ -169,6 +163,20 @@ pub const DeclarationBlock = struct {
         this.declarations = handler.decls;
         important_handler.decls = .{};
         handler.decls = .{};
+    }
+
+    pub fn hashPropertyIds(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        for (this.declarations.items) |*decl| {
+            decl.propertyId().hash(hasher);
+        }
+
+        for (this.important_declarations.items) |*decl| {
+            decl.propertyId().hash(hasher);
+        }
+    }
+
+    pub fn eql(this: *const This, other: *const This) bool {
+        return css.implementEql(@This(), this, other);
     }
 };
 

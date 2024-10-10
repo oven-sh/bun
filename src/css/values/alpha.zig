@@ -53,6 +53,10 @@ pub const AlphaValue = struct {
         return css.implementEql(@This(), lhs, rhs);
     }
 
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }

@@ -58,6 +58,10 @@ pub const attrs = struct {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
+            }
         };
     }
 
@@ -104,6 +108,10 @@ pub const attrs = struct {
                 }
                 return dest.writeChar(']');
             }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
+            }
         };
     }
 
@@ -115,6 +123,10 @@ pub const attrs = struct {
 
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
+            }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
             }
         };
     }
@@ -130,10 +142,16 @@ pub const attrs = struct {
                 pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                     return css.implementEql(@This(), lhs, rhs);
                 }
+
+                pub fn __generateHash() void {}
             },
 
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
+            }
+
+            pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+                return css.implementHash(@This(), this, hasher);
             }
         };
     }
@@ -158,6 +176,10 @@ pub const attrs = struct {
                 .substring => "*=",
                 .suffix => "$=",
             });
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
         }
     };
 
@@ -707,6 +729,8 @@ pub const PseudoClass = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
     dir: struct {
@@ -716,6 +740,8 @@ pub const PseudoClass = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
 
     // https://drafts.csswg.org/selectors-4/#useraction-pseudos
@@ -836,6 +862,8 @@ pub const PseudoClass = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The CSS modules :global() pseudo class.
     global: struct {
@@ -845,6 +873,8 @@ pub const PseudoClass = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
 
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
@@ -858,6 +888,8 @@ pub const PseudoClass = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// An unknown functional pseudo class.
     custom_function: struct {
@@ -869,6 +901,8 @@ pub const PseudoClass = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
 
     pub fn isEquivalent(this: *const PseudoClass, other: *const PseudoClass) bool {
@@ -883,6 +917,10 @@ pub const PseudoClass = union(enum) {
 
     pub fn eql(lhs: *const PseudoClass, rhs: *const PseudoClass) bool {
         return css.implementEql(PseudoClass, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -1393,14 +1431,6 @@ pub fn GenericSelectorList(comptime Impl: type) type {
 
         const This = @This();
 
-        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
-            return .{ .v = this.v.deepClone(allocator) };
-        }
-
-        pub fn eql(lhs: *const This, rhs: *const This) bool {
-            return lhs.eql(rhs);
-        }
-
         pub fn anyHasPseudoElement(this: *const This) bool {
             for (this.v.slice()) |*sel| {
                 if (sel.hasPseudoElement()) return true;
@@ -1577,6 +1607,18 @@ pub fn GenericSelectorList(comptime Impl: type) type {
             result.v.append(allocator, selector);
             return result;
         }
+
+        pub fn deepClone(this: *const @This(), allocator: Allocator) This {
+            return .{ .v = this.v.deepClone(allocator) };
+        }
+
+        pub fn eql(lhs: *const This, rhs: *const This) bool {
+            return lhs.eql(rhs);
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
+        }
     };
 }
 
@@ -1699,6 +1741,10 @@ pub fn GenericSelector(comptime Impl: type) type {
                 return result;
             }
         };
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
+        }
     };
 }
 
@@ -1722,6 +1768,8 @@ pub fn GenericComponent(comptime Impl: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+
+            pub fn __generateHash() void {}
         },
 
         explicit_universal_type,
@@ -1737,6 +1785,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+            pub fn __generateHash() void {}
         },
         /// Used only when local_name is already lowercase.
         attribute_in_no_namespace: struct {
@@ -1749,6 +1798,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+            pub fn __generateHash() void {}
         },
         /// Use a Box in the less common cases with more data to keep size_of::<Component>() small.
         attribute_other: *attrs.AttrSelectorWithOptionalNamespace(Impl),
@@ -1806,6 +1856,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
                 return css.implementEql(@This(), lhs, rhs);
             }
+            pub fn __generateHash() void {}
         },
         /// The `:has` pseudo-class.
         ///
@@ -1872,6 +1923,10 @@ pub fn GenericComponent(comptime Impl: type) type {
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
         }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
+        }
     };
 }
 
@@ -1883,10 +1938,6 @@ pub const NthSelectorData = struct {
     is_function: bool,
     a: i32,
     b: i32,
-
-    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
-        return css.implementEql(@This(), lhs, rhs);
-    }
 
     /// Returns selector data for :only-{child,of-type}
     pub fn only(of_type: bool) NthSelectorData {
@@ -1962,6 +2013,14 @@ pub const NthSelectorData = struct {
             try dest.writeFmt("{}n{s}{d}", .{ this.a, numberSign(this.b), this.b });
         }
     }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// The properties that comprise an :nth- pseudoclass as of Selectors 4 (e.g.,
@@ -1974,6 +2033,10 @@ pub fn NthOfSelectorData(comptime Impl: type) type {
 
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+            return css.implementHash(@This(), this, hasher);
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
@@ -2085,6 +2148,10 @@ pub const SpecifityAndFlags = struct {
 
     pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
         return this.flags.intersects(SelectorFlags{ .has_pseudo = true });
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -2270,6 +2337,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The [::cue-region()](https://w3c.github.io/webvtt/#cue-region-selector) functional pseudo element.
     cue_region_function: struct {
@@ -2279,6 +2348,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition) pseudo element.
     view_transition,
@@ -2290,6 +2361,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition-image-pair()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-image-pair-pt-name-selector) functional pseudo element.
     view_transition_image_pair: struct {
@@ -2299,6 +2372,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition-old()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-old-pt-name-selector) functional pseudo element.
     view_transition_old: struct {
@@ -2308,6 +2383,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// The [::view-transition-new()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-new-pt-name-selector) functional pseudo element.
     view_transition_new: struct {
@@ -2317,6 +2394,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// An unknown pseudo element.
     custom: struct {
@@ -2326,6 +2405,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
     /// An unknown functional pseudo element.
     custom_function: struct {
@@ -2337,6 +2418,8 @@ pub const PseudoElement = union(enum) {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     },
 
     pub fn isEquivalent(this: *const PseudoElement, other: *const PseudoElement) bool {
@@ -2349,6 +2432,10 @@ pub const PseudoElement = union(enum) {
 
     pub fn eql(this: *const PseudoElement, other: *const PseudoElement) bool {
         return css.implementEql(PseudoElement, this, other);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn getNecessaryPrefixes(this: *PseudoElement, targets: css.targets.Targets) css.VendorPrefix {
@@ -3404,6 +3491,8 @@ pub fn LocalName(comptime Impl: type) type {
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
             return css.implementEql(@This(), lhs, rhs);
         }
+
+        pub fn __generateHash() void {}
     };
 }
 
@@ -3487,6 +3576,10 @@ pub const ViewTransitionPartName = union(enum) {
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {

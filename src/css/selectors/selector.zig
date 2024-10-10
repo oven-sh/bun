@@ -22,6 +22,8 @@ pub const Component = parser.Component;
 pub const PseudoClass = parser.PseudoClass;
 pub const PseudoElement = parser.PseudoElement;
 
+const debug = bun.Output.scoped(.CSS_SELECTORS, false);
+
 /// Our implementation of the `SelectorImpl` interface
 ///
 pub const impl = struct {
@@ -502,19 +504,19 @@ pub const serialize = struct {
         var is_relative = __is_relative;
 
         if (comptime bun.Environment.isDebug) {
-            std.debug.print("Selector components:\n", .{});
+            debug("Selector components:\n", .{});
             for (selector.components.items) |*comp| {
-                std.debug.print(" {}\n", .{comp});
+                debug(" {}\n", .{comp});
             }
 
-            std.debug.print("Compound selector iter\n", .{});
+            debug("Compound selector iter\n", .{});
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
-                    std.debug.print("  {}, ", .{c});
+                    debug("  {}, ", .{c});
                 }
             }
-            std.debug.print("\n", .{});
+            debug("\n", .{});
         }
 
         // Compound selectors invert the order of their contents, so we need to

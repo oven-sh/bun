@@ -142,7 +142,11 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
-            return implementEql(@This(), lhs, rhs);
+            if (lhs.len() != rhs.len()) return false;
+            for (lhs.slice(), rhs.slice()) |*a, *b| {
+                if (!generic.eql(T, a, b)) return false;
+            }
+            return true;
         }
 
         /// Shallow clone
@@ -156,6 +160,12 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         pub fn deinit(this: *@This(), allocator: Allocator) void {
             if (this.spilled()) {
                 allocator.free(this.data.heap.ptr[0..this.data.heap.len]);
+            }
+        }
+
+        pub fn hash(this: *const @This(), hasher: anytype) void {
+            for (this.slice()) |*item| {
+                css.generic.hash(T, item, hasher);
             }
         }
 
@@ -262,23 +272,23 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         fn tryGrow(this: *@This(), allocator: Allocator, new_cap: u32) void {
             const unspilled = !this.spilled();
             const ptr, const __len, const cap = this.tripleMut();
-            const len_ = __len.*;
-            bun.assert(new_cap >= len_);
+            const length = __len.*;
+            bun.assert(new_cap >= length);
             if (new_cap <= N) {
                 if (unspilled) return;
                 this.data = .{ .inlined = undefined };
-                @memcpy(ptr[0..len_], this.data.inlined[0..len_]);
-                this.capacity = len_;
-                allocator.free(ptr[0..len_]);
+                @memcpy(ptr[0..length], this.data.inlined[0..length]);
+                this.capacity = length;
+                allocator.free(ptr[0..length]);
             } else if (new_cap != cap) {
                 const new_alloc: [*]T = if (unspilled) new_alloc: {
                     const new_alloc = allocator.alloc(T, new_cap) catch bun.outOfMemory();
-                    @memcpy(ptr[0..len_], new_alloc);
+                    @memcpy(new_alloc[0..length], ptr[0..length]);
                     break :new_alloc new_alloc.ptr;
                 } else new_alloc: {
-                    break :new_alloc (allocator.realloc(ptr[0..len_], new_cap * @sizeOf(T)) catch bun.outOfMemory()).ptr;
+                    break :new_alloc (allocator.realloc(ptr[0..length], new_cap * @sizeOf(T)) catch bun.outOfMemory()).ptr;
                 };
-                this.data = .{ .heap = .{ .ptr = new_alloc, .len = len_ } };
+                this.data = .{ .heap = .{ .ptr = new_alloc, .len = length } };
                 this.capacity = new_cap;
             }
         }

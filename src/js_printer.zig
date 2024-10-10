@@ -3784,7 +3784,7 @@ fn NewPrinter(
                 },
             }
 
-            if (item.kind != .normal) {
+            if (item.kind != .normal and item.kind != .accessor) {
                 if (comptime is_json) {
                     bun.unreachablePanic("item.kind must be normal in json, received: {any}", .{item.kind});
                 }

@@ -13296,6 +13296,11 @@ fn NewParser_(
                                             return try p.parseProperty(.set, opts, null);
                                         }
                                     },
+                                    .p_accessor => {
+                                        if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_accessor) {
+                                            return try p.parseProperty(.accessor, opts, null);
+                                        }
+                                    },
                                     .p_async => {
                                         if (!opts.is_async and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_async and !p.lexer.has_newline_before) {
                                             opts.is_async = true;
@@ -13473,7 +13478,7 @@ fn NewParser_(
 
             // Parse a class field with an optional initial value
             if (opts.is_class and
-                kind == .normal and !opts.is_async and
+                (kind == .normal or kind == .accessor) and !opts.is_async and
                 !opts.is_generator and
                 p.lexer.token != .t_open_paren and
                 !has_type_parameters and
@@ -13772,7 +13777,6 @@ fn NewParser_(
                 // This property may turn out to be a type in TypeScript, which should be ignored
                 if (try p.parseProperty(.normal, &opts, null)) |property| {
                     properties.append(property) catch unreachable;
-
                     // Forbid decorators on class constructors
                     if (opts.ts_decorators.len > 0) {
                         switch ((property.key orelse p.panic("Internal error: Expected property {any} to have a key.", .{property})).data) {
@@ -21690,6 +21694,7 @@ fn NewParser_(
                 }
 
                 var constructor_function: ?*E.Function = null;
+                var out_properties = Property.List.init(&.{});
                 for (class.properties) |*property| {
                     if (property.kind == .class_static_block) {
                         const old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
@@ -21789,7 +21794,128 @@ fn NewParser_(
                             property.initializer = p.visitExpr(val);
                         }
                     }
+
+                    if (property.kind == .accessor) {
+                        if (@as(Expr.Tag, property.key.?.data) != .e_string and @as(Expr.Tag, property.key.?.data) != .e_private_identifier) {
+                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key must be a string or private identifier") catch unreachable;
+                            out_properties.push(p.allocator, property.*) catch unreachable;
+                        } else if (property.flags.contains(.is_method)) {
+                            p.log.addError(p.source, property.value.?.loc, "'accessor' property cannot be a method") catch unreachable;
+                            out_properties.push(p.allocator, property.*) catch unreachable;
+                        } else {
+                            // 1. change property name to #name
+                            var old_property_name: string = undefined;
+                            var new_property_name: string = undefined;
+                            var prop_name_ref: Ref = undefined;
+                            var accessor_key: Expr = undefined;
+                            const is_private_prop = @as(Expr.Tag, property.key.?.data) == .e_string;
+
+                            const loc = property.key.?.loc;
+
+                            if (is_private_prop) {
+                                old_property_name = property.key.?.data.e_string.string(p.allocator) catch unreachable;
+                                new_property_name = std.fmt.allocPrint(p.allocator, "#{s}", .{old_property_name}) catch unreachable;
+                                accessor_key = p.newExpr(E.String{ .data = old_property_name }, loc);
+                            } else {
+                                old_property_name = p.symbols.items[property.key.?.data.e_private_identifier.ref.innerIndex()].original_name;
+                                new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}", .{old_property_name[1..]}) catch unreachable;
+                                accessor_key = property.key.?;
+                            }
+
+                            prop_name_ref = p.generateTempRefKind(.private_field, new_property_name);
+                            property.key = p.newExpr(E.PrivateIdentifier{ .ref = prop_name_ref }, loc);
+                            property.kind = .normal;
+
+                            out_properties.push(p.allocator, property.*) catch unreachable;
+
+                            // 2. generate getter and setter
+                            out_properties.push(p.allocator, Property{
+                                .kind = .get,
+                                .ts_decorators = property.ts_decorators,
+                                .key = accessor_key,
+                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .value = p.newExpr(E.Function{
+                                    .func = .{
+                                        .body = .{
+                                            .loc = loc,
+                                            .stmts = p.allocator.dupe(
+                                                Stmt,
+                                                &.{p.s(
+                                                    S.Return{
+                                                        .value = p.newExpr(
+                                                            E.Index{
+                                                                .target = p.newExpr(E.This{}, loc),
+                                                                .index = p.newExpr(E.PrivateIdentifier{
+                                                                    .ref = prop_name_ref,
+                                                                }, loc),
+                                                            },
+                                                            loc,
+                                                        ),
+                                                    },
+                                                    loc,
+                                                )},
+                                            ) catch bun.outOfMemory(),
+                                        },
+                                    },
+                                }, loc),
+                            }) catch unreachable;
+
+                            const underscore_ref = p.declareGeneratedSymbol(.other, "_") catch unreachable;
+                            out_properties.push(p.allocator, Property{
+                                .kind = .set,
+                                .ts_decorators = property.ts_decorators,
+                                .key = accessor_key,
+                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .value = p.newExpr(E.Function{
+                                    .func = .{
+                                        .args = p.allocator.dupe(Arg, &.{
+                                            .{
+                                                .binding = p.b(
+                                                    B.Identifier{
+                                                        .ref = underscore_ref.ref,
+                                                    },
+                                                    loc,
+                                                ),
+                                            },
+                                        }) catch bun.outOfMemory(),
+                                        .body = .{
+                                            .loc = loc,
+                                            .stmts = p.allocator.dupe(
+                                                Stmt,
+                                                &.{p.s(
+                                                    S.SExpr{
+                                                        .value = Expr.assign(
+                                                            p.newExpr(
+                                                                E.Index{
+                                                                    .target = p.newExpr(E.This{}, loc),
+                                                                    .index = p.newExpr(E.PrivateIdentifier{
+                                                                        .ref = prop_name_ref,
+                                                                    }, loc),
+                                                                },
+                                                                loc,
+                                                            ),
+                                                            p.newExpr(
+                                                                E.Identifier{
+                                                                    .ref = underscore_ref.ref,
+                                                                },
+                                                                loc,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    loc,
+                                                )},
+                                            ) catch bun.outOfMemory(),
+                                        },
+                                    },
+                                }, loc),
+                            }) catch unreachable;
+                        }
+                    } else {
+                        out_properties.push(p.allocator, property.*) catch unreachable;
+                    }
                 }
+
+                class.properties = out_properties.slice();
 
                 // note: our version assumes useDefineForClassFields is true
                 if (comptime is_typescript_enabled) {
@@ -22730,15 +22856,22 @@ fn NewParser_(
         /// When not transpiling we dont use the renamer, so our solution is to generate really
         /// hard to collide with variables, instead of actually making things collision free
         pub fn generateTempRef(p: *P, default_name: ?string) Ref {
-            return p.generateTempRefWithScope(default_name, p.current_scope);
+            return p.generateTempRefWithScope(default_name, .other, p.current_scope);
         }
 
-        pub fn generateTempRefWithScope(p: *P, default_name: ?string, scope: *Scope) Ref {
+        pub fn generateTempRefKind(p: *P, kind: Symbol.Kind, default_name: ?string) Ref {
+            return p.generateTempRefWithScope(default_name, kind, p.current_scope);
+        }
+
+        pub fn generateTempRefWithScope(p: *P, default_name: ?string, kind: Symbol.Kind, scope: *Scope) Ref {
             const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
-                break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();
+                if (kind.isPrivate())
+                    break :brk std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory()
+                else
+                    break :brk std.fmt.allocPrint(p.allocator, "#__bun_temp_ref_{x}$", .{p.temp_ref_count}) catch bun.outOfMemory();
             };
-            const ref = p.newSymbol(.other, name) catch bun.outOfMemory();
+            const ref = p.newSymbol(kind, name) catch bun.outOfMemory();
 
             p.temp_refs_to_declare.append(p.allocator, .{
                 .ref = ref,
@@ -23118,7 +23251,7 @@ fn NewParser_(
 
                 ctx_storage.* = .{
                     .hasher = std.hash.Wyhash.init(0),
-                    .signature_cb = p.generateTempRefWithScope("_s", scope),
+                    .signature_cb = p.generateTempRefWithScope("_s", .other, scope),
                     .user_hooks = .{},
                 };
 

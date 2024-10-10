@@ -235,6 +235,7 @@ pub const PropertyModifierKeyword = enum {
     p_readonly,
     p_set,
     p_static,
+    p_accessor,
 
     pub const List = ComptimeStringMap(PropertyModifierKeyword, .{
         .{ "abstract", .p_abstract },
@@ -248,6 +249,7 @@ pub const PropertyModifierKeyword = enum {
         .{ "readonly", .p_readonly },
         .{ "set", .p_set },
         .{ "static", .p_static },
+        .{ "accessor", .p_accessor },
     });
 };
 

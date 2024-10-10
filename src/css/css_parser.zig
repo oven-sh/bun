@@ -6579,6 +6579,17 @@ pub const to_css = struct {
         return;
     }
 
+    pub fn fromBabyList(comptime T: type, this: *const bun.BabyList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const len = this.len;
+        for (this.sliceConst(), 0..) |*val, idx| {
+            try val.toCss(W, dest);
+            if (idx < len - 1) {
+                try dest.delim(',', false);
+            }
+        }
+        return;
+    }
+
     pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         const MAX_LEN = comptime maxDigits(T);
         var buf: [MAX_LEN]u8 = undefined;
@@ -6656,11 +6667,8 @@ pub inline fn copysign(self: f32, sign: f32) f32 {
 pub fn deepClone(comptime V: type, allocator: Allocator, list: *const ArrayList(V)) ArrayList(V) {
     var newlist = ArrayList(V).initCapacity(allocator, list.items.len) catch bun.outOfMemory();
 
-    for (list.items) |item| {
-        newlist.appendAssumeCapacity(switch (V) {
-            i32, i64, u32, u64, f32, f64 => item,
-            else => item.deepClone(allocator),
-        });
+    for (list.items) |*item| {
+        newlist.appendAssumeCapacity(generic.deepClone(V, item, allocator));
     }
 
     return newlist;

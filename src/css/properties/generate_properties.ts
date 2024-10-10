@@ -35,7 +35,7 @@ type PropertyDef = {
 const OUTPUT_FILE = "src/css/properties/properties_generated.zig";
 
 async function generateCode(property_defs: Record<string, PropertyDef>) {
-  const EMIT_COMPLETED_MD_FILE = false;
+  const EMIT_COMPLETED_MD_FILE = true;
   if (EMIT_COMPLETED_MD_FILE) {
     const completed = Object.entries(property_defs).map(([name, meta]) => `- [x] \`${name}\``).join("\n");
     await Bun.$`echo ${completed} > completed.md`
@@ -161,11 +161,11 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           if (meta.valid_prefixes !== undefined) {
-            const clone_value = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v[0]" : "v[0].deepClone(allocator)";
-            return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = .{ ${clone_value}, v[1] } },`;
+            const clone_expr = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v[0]" : "v[0].deepClone(allocator)";
+            return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = .{ ${clone_expr}, v[1] } },`;
           }
-          const clone_value = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v.*" : "v.deepClone(allocator)";
-          return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = ${clone_value} },`;
+          const clone_expr = (meta.ty === "CSSNumber" || meta.ty === "CSSInteger") ? "v.*" : meta.ty.includes("BabyList(") ? `css.generic.deepClone(${meta.ty}, v, allocator)` : "v.deepClone(allocator)";
+          return `.${escapeIdent(name)} => |*v| .{ .${escapeIdent(name)} = ${clone_expr} },`;
         })
         .join("\n")}
       .all => |*a| return .{ .all = a.deepClone(allocator) },
@@ -199,7 +199,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
       ${Object.entries(property_defs)
         .map(([name, meta]) => {
           const value = meta.valid_prefixes === undefined ? "value" : "value[0]";
-          const to_css = meta.ty === "CSSNumber" ? `CSSNumberFns.toCss(&${value}, W, dest)` : meta.ty === "CSSInteger" ? `CSSIntegerFns.toCss(&${value}, W, dest)` : `${value}.toCss(W, dest)`;
+          const to_css = meta.ty === "CSSNumber" ? `CSSNumberFns.toCss(&${value}, W, dest)` : meta.ty === "CSSInteger" ? `CSSIntegerFns.toCss(&${value}, W, dest)` : meta.ty.includes("ArrayList") ? `css.generic.toCss(${meta.ty}, ${value}, W, dest)` : `${value}.toCss(W, dest)`;
           return `.${escapeIdent(name)} => |*value| ${to_css},`;
         })
         .join("\n")}
@@ -1028,6 +1028,7 @@ generateCode({
   margin: {
     ty: "Margin",
     shorthand: true,
+    eval_branch_quota: 5000,
   },
   "padding-top": {
     ty: "LengthPercentageOrAuto",
@@ -1161,31 +1162,31 @@ generateCode({
     ty: "ScrollPadding",
     shorthand: true,
   },
-  // "font-weight": {
-  //   ty: "FontWeight",
-  // },
-  // "font-size": {
-  //   ty: "FontSize",
-  // },
-  // "font-stretch": {
-  //   ty: "FontStretch",
-  // },
-  // "font-family": {
-  //   ty: "ArrayList(FontFamily)",
-  // },
-  // "font-style": {
-  //   ty: "FontStyle",
-  // },
-  // "font-variant-caps": {
-  //   ty: "FontVariantCaps",
-  // },
-  // "line-height": {
-  //   ty: "LineHeight",
-  // },
-  // font: {
-  //   ty: "Font",
-  //   shorthand: true,
-  // },
+  "font-weight": {
+    ty: "FontWeight",
+  },
+  "font-size": {
+    ty: "FontSize",
+  },
+  "font-stretch": {
+    ty: "FontStretch",
+  },
+  "font-family": {
+    ty: "BabyList(FontFamily)",
+  },
+  "font-style": {
+    ty: "FontStyle",
+  },
+  "font-variant-caps": {
+    ty: "FontVariantCaps",
+  },
+  "line-height": {
+    ty: "LineHeight",
+  },
+  font: {
+    ty: "Font",
+    shorthand: true,
+  },
   // "vertical-align": {
   //   ty: "VerticalAlign",
   // },
@@ -1796,14 +1797,14 @@ const ScrollMargin = margin_padding.ScrollMargin;
 const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
 const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
 const ScrollPadding = margin_padding.ScrollPadding;
-// const FontWeight = font.FontWeight;
-// const FontSize = font.FontSize;
-// const FontStretch = font.FontStretch;
-// const FontFamily = font.FontFamily;
-// const FontStyle = font.FontStyle;
-// const FontVariantCaps = font.FontVariantCaps;
-// const LineHeight = font.LineHeight;
-// const Font = font.Font;
+const FontWeight = font.FontWeight;
+const FontSize = font.FontSize;
+const FontStretch = font.FontStretch;
+const FontFamily = font.FontFamily;
+const FontStyle = font.FontStyle;
+const FontVariantCaps = font.FontVariantCaps;
+const LineHeight = font.LineHeight;
+const Font = font.Font;
 // const VerticalAlign = font.VerticalAlign;
 // const Transition = transition.Transition;
 // const AnimationNameList = animation.AnimationNameList;
@@ -1900,6 +1901,7 @@ const Position = position.Position;
 
 const Result = css.Result;
 
+const BabyList = bun.BabyList;
 const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 

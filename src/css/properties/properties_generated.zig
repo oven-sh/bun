@@ -137,14 +137,14 @@ const ScrollMargin = margin_padding.ScrollMargin;
 const ScrollPaddingBlock = margin_padding.ScrollPaddingBlock;
 const ScrollPaddingInline = margin_padding.ScrollPaddingInline;
 const ScrollPadding = margin_padding.ScrollPadding;
-// const FontWeight = font.FontWeight;
-// const FontSize = font.FontSize;
-// const FontStretch = font.FontStretch;
-// const FontFamily = font.FontFamily;
-// const FontStyle = font.FontStyle;
-// const FontVariantCaps = font.FontVariantCaps;
-// const LineHeight = font.LineHeight;
-// const Font = font.Font;
+const FontWeight = font.FontWeight;
+const FontSize = font.FontSize;
+const FontStretch = font.FontStretch;
+const FontFamily = font.FontFamily;
+const FontStyle = font.FontStyle;
+const FontVariantCaps = font.FontVariantCaps;
+const LineHeight = font.LineHeight;
+const Font = font.Font;
 // const VerticalAlign = font.VerticalAlign;
 // const Transition = transition.Transition;
 // const AnimationNameList = animation.AnimationNameList;
@@ -241,6 +241,7 @@ const Position = position.Position;
 
 const Result = css.Result;
 
+const BabyList = bun.BabyList;
 const ArrayList = std.ArrayListUnmanaged;
 const SmallList = css.SmallList;
 pub const Property = union(PropertyIdTag) {
@@ -434,6 +435,14 @@ pub const Property = union(PropertyIdTag) {
     @"scroll-padding-block": ScrollPaddingBlock,
     @"scroll-padding-inline": ScrollPaddingInline,
     @"scroll-padding": ScrollPadding,
+    @"font-weight": FontWeight,
+    @"font-size": FontSize,
+    @"font-stretch": FontStretch,
+    @"font-family": BabyList(FontFamily),
+    @"font-style": FontStyle,
+    @"font-variant-caps": FontVariantCaps,
+    @"line-height": LineHeight,
+    font: Font,
     @"text-decoration-color": struct { CssColor, VendorPrefix },
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
     direction: Direction,
@@ -2655,6 +2664,102 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(ScrollPadding) ++ ": does not have a toCss() function.\n";
             }
 
+            if (!@hasDecl(FontWeight, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FontWeight) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FontWeight, "parse")) {
+                compile_error = compile_error ++ @typeName(FontWeight) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FontWeight, "toCss")) {
+                compile_error = compile_error ++ @typeName(FontWeight) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontSize, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FontSize) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FontSize, "parse")) {
+                compile_error = compile_error ++ @typeName(FontSize) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FontSize, "toCss")) {
+                compile_error = compile_error ++ @typeName(FontSize) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontStretch, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FontStretch) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FontStretch, "parse")) {
+                compile_error = compile_error ++ @typeName(FontStretch) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FontStretch, "toCss")) {
+                compile_error = compile_error ++ @typeName(FontStretch) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(BabyList(FontFamily), "deepClone")) {
+                compile_error = compile_error ++ @typeName(BabyList(FontFamily)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(BabyList(FontFamily), "parse")) {
+                compile_error = compile_error ++ @typeName(BabyList(FontFamily)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(BabyList(FontFamily), "toCss")) {
+                compile_error = compile_error ++ @typeName(BabyList(FontFamily)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontStyle, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FontStyle) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FontStyle, "parse")) {
+                compile_error = compile_error ++ @typeName(FontStyle) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FontStyle, "toCss")) {
+                compile_error = compile_error ++ @typeName(FontStyle) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(FontVariantCaps, "deepClone")) {
+                compile_error = compile_error ++ @typeName(FontVariantCaps) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(FontVariantCaps, "parse")) {
+                compile_error = compile_error ++ @typeName(FontVariantCaps) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(FontVariantCaps, "toCss")) {
+                compile_error = compile_error ++ @typeName(FontVariantCaps) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(LineHeight, "deepClone")) {
+                compile_error = compile_error ++ @typeName(LineHeight) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(LineHeight, "parse")) {
+                compile_error = compile_error ++ @typeName(LineHeight) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(LineHeight, "toCss")) {
+                compile_error = compile_error ++ @typeName(LineHeight) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(Font, "deepClone")) {
+                compile_error = compile_error ++ @typeName(Font) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(Font, "parse")) {
+                compile_error = compile_error ++ @typeName(Font) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(Font, "toCss")) {
+                compile_error = compile_error ++ @typeName(Font) ++ ": does not have a toCss() function.\n";
+            }
+
             if (!@hasDecl(CssColor, "deepClone")) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a deepClone() function.\n";
             }
@@ -4133,6 +4238,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .margin => {
+                @setEvalBranchQuota(5000);
                 if (css.generic.parseWithOptions(Margin, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .margin = c } };
@@ -4367,6 +4473,62 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(ScrollPadding, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"scroll-padding" = c } };
+                    }
+                }
+            },
+            .@"font-weight" => {
+                if (css.generic.parseWithOptions(FontWeight, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-weight" = c } };
+                    }
+                }
+            },
+            .@"font-size" => {
+                if (css.generic.parseWithOptions(FontSize, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-size" = c } };
+                    }
+                }
+            },
+            .@"font-stretch" => {
+                if (css.generic.parseWithOptions(FontStretch, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-stretch" = c } };
+                    }
+                }
+            },
+            .@"font-family" => {
+                if (css.generic.parseWithOptions(BabyList(FontFamily), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-family" = c } };
+                    }
+                }
+            },
+            .@"font-style" => {
+                if (css.generic.parseWithOptions(FontStyle, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-style" = c } };
+                    }
+                }
+            },
+            .@"font-variant-caps" => {
+                if (css.generic.parseWithOptions(FontVariantCaps, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"font-variant-caps" = c } };
+                    }
+                }
+            },
+            .@"line-height" => {
+                if (css.generic.parseWithOptions(LineHeight, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"line-height" = c } };
+                    }
+                }
+            },
+            .font => {
+                if (css.generic.parseWithOptions(Font, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .font = c } };
                     }
                 }
             },
@@ -4802,6 +4964,14 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-block" => .@"scroll-padding-block",
             .@"scroll-padding-inline" => .@"scroll-padding-inline",
             .@"scroll-padding" => .@"scroll-padding",
+            .@"font-weight" => .@"font-weight",
+            .@"font-size" => .@"font-size",
+            .@"font-stretch" => .@"font-stretch",
+            .@"font-family" => .@"font-family",
+            .@"font-style" => .@"font-style",
+            .@"font-variant-caps" => .@"font-variant-caps",
+            .@"line-height" => .@"line-height",
+            .font => .font,
             .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
             .direction => .direction,
@@ -5031,6 +5201,14 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-block" => |*v| .{ .@"scroll-padding-block" = v.deepClone(allocator) },
             .@"scroll-padding-inline" => |*v| .{ .@"scroll-padding-inline" = v.deepClone(allocator) },
             .@"scroll-padding" => |*v| .{ .@"scroll-padding" = v.deepClone(allocator) },
+            .@"font-weight" => |*v| .{ .@"font-weight" = v.deepClone(allocator) },
+            .@"font-size" => |*v| .{ .@"font-size" = v.deepClone(allocator) },
+            .@"font-stretch" => |*v| .{ .@"font-stretch" = v.deepClone(allocator) },
+            .@"font-family" => |*v| .{ .@"font-family" = css.generic.deepClone(BabyList(FontFamily), v, allocator) },
+            .@"font-style" => |*v| .{ .@"font-style" = v.deepClone(allocator) },
+            .@"font-variant-caps" => |*v| .{ .@"font-variant-caps" = v.deepClone(allocator) },
+            .@"line-height" => |*v| .{ .@"line-height" = v.deepClone(allocator) },
+            .font => |*v| .{ .font = v.deepClone(allocator) },
             .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
             .direction => |*v| .{ .direction = v.deepClone(allocator) },
@@ -5266,6 +5444,14 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-block" => .{ "scroll-padding-block", VendorPrefix{ .none = true } },
             .@"scroll-padding-inline" => .{ "scroll-padding-inline", VendorPrefix{ .none = true } },
             .@"scroll-padding" => .{ "scroll-padding", VendorPrefix{ .none = true } },
+            .@"font-weight" => .{ "font-weight", VendorPrefix{ .none = true } },
+            .@"font-size" => .{ "font-size", VendorPrefix{ .none = true } },
+            .@"font-stretch" => .{ "font-stretch", VendorPrefix{ .none = true } },
+            .@"font-family" => .{ "font-family", VendorPrefix{ .none = true } },
+            .@"font-style" => .{ "font-style", VendorPrefix{ .none = true } },
+            .@"font-variant-caps" => .{ "font-variant-caps", VendorPrefix{ .none = true } },
+            .@"line-height" => .{ "line-height", VendorPrefix{ .none = true } },
+            .font => .{ "font", VendorPrefix{ .none = true } },
             .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
             .direction => .{ "direction", VendorPrefix{ .none = true } },
@@ -5502,6 +5688,14 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-block" => |*value| value.toCss(W, dest),
             .@"scroll-padding-inline" => |*value| value.toCss(W, dest),
             .@"scroll-padding" => |*value| value.toCss(W, dest),
+            .@"font-weight" => |*value| value.toCss(W, dest),
+            .@"font-size" => |*value| value.toCss(W, dest),
+            .@"font-stretch" => |*value| value.toCss(W, dest),
+            .@"font-family" => |*value| value.toCss(W, dest),
+            .@"font-style" => |*value| value.toCss(W, dest),
+            .@"font-variant-caps" => |*value| value.toCss(W, dest),
+            .@"line-height" => |*value| value.toCss(W, dest),
+            .font => |*value| value.toCss(W, dest),
             .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
             .direction => |*value| value.toCss(W, dest),
@@ -5600,6 +5794,7 @@ pub const Property = union(PropertyIdTag) {
             .@"scroll-padding-block" => |*v| return v.longhand(property_id),
             .@"scroll-padding-inline" => |*v| return v.longhand(property_id),
             .@"scroll-padding" => |*v| return v.longhand(property_id),
+            .font => |*v| return v.longhand(property_id),
             .mask => |*v| {
                 if (!v[1].eq(property_id.prefix())) return null;
                 return v[0].longhand(property_id);
@@ -5801,6 +5996,14 @@ pub const PropertyId = union(PropertyIdTag) {
     @"scroll-padding-block",
     @"scroll-padding-inline",
     @"scroll-padding",
+    @"font-weight",
+    @"font-size",
+    @"font-stretch",
+    @"font-family",
+    @"font-style",
+    @"font-variant-caps",
+    @"line-height",
+    font,
     @"text-decoration-color": VendorPrefix,
     @"text-emphasis-color": VendorPrefix,
     direction,
@@ -6036,6 +6239,14 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"scroll-padding-block" => VendorPrefix.empty(),
             .@"scroll-padding-inline" => VendorPrefix.empty(),
             .@"scroll-padding" => VendorPrefix.empty(),
+            .@"font-weight" => VendorPrefix.empty(),
+            .@"font-size" => VendorPrefix.empty(),
+            .@"font-stretch" => VendorPrefix.empty(),
+            .@"font-family" => VendorPrefix.empty(),
+            .@"font-style" => VendorPrefix.empty(),
+            .@"font-variant-caps" => VendorPrefix.empty(),
+            .@"line-height" => VendorPrefix.empty(),
+            .font => VendorPrefix.empty(),
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
             .direction => VendorPrefix.empty(),
@@ -6643,6 +6854,30 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "scroll-padding")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"scroll-padding";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-weight")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"font-weight";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-size")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"font-size";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-stretch")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"font-stretch";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-family")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"font-family";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-style")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"font-style";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font-variant-caps")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"font-variant-caps";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "line-height")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"line-height";
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "font")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .font;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-decoration-color")) {
             const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
@@ -6935,6 +7170,14 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"scroll-padding-block" => .@"scroll-padding-block",
             .@"scroll-padding-inline" => .@"scroll-padding-inline",
             .@"scroll-padding" => .@"scroll-padding",
+            .@"font-weight" => .@"font-weight",
+            .@"font-size" => .@"font-size",
+            .@"font-stretch" => .@"font-stretch",
+            .@"font-family" => .@"font-family",
+            .@"font-style" => .@"font-style",
+            .@"font-variant-caps" => .@"font-variant-caps",
+            .@"line-height" => .@"line-height",
+            .font => .font,
             .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
             .direction => .direction,
@@ -7238,6 +7481,14 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"scroll-padding-block" => {},
             .@"scroll-padding-inline" => {},
             .@"scroll-padding" => {},
+            .@"font-weight" => {},
+            .@"font-size" => {},
+            .@"font-stretch" => {},
+            .@"font-family" => {},
+            .@"font-style" => {},
+            .@"font-variant-caps" => {},
+            .@"line-height" => {},
+            .font => {},
             .@"text-decoration-color" => |*p| {
                 p.insert(pre);
             },
@@ -7514,6 +7765,14 @@ pub const PropertyIdTag = enum(u16) {
     @"scroll-padding-block",
     @"scroll-padding-inline",
     @"scroll-padding",
+    @"font-weight",
+    @"font-size",
+    @"font-stretch",
+    @"font-family",
+    @"font-style",
+    @"font-variant-caps",
+    @"line-height",
+    font,
     @"text-decoration-color",
     @"text-emphasis-color",
     direction,

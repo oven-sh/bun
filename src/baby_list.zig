@@ -14,6 +14,29 @@ pub fn BabyList(comptime Type: type) type {
 
         pub const Elem = Type;
 
+        pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
+            return switch (input.parseCommaSeparated(Type, bun.css.generic.parseFor(Type))) {
+                .result => |v| return .{ .result = ListType{
+                    .ptr = v.items.ptr,
+                    .len = @intCast(v.items.len),
+                    .cap = @intCast(v.capacity),
+                } },
+                .err => |e| return .{ .err = e },
+            };
+        }
+
+        pub fn toCss(this: *const ListType, comptime W: type, dest: *bun.css.Printer(W)) bun.css.PrintErr!void {
+            return bun.css.to_css.fromBabyList(Type, this, W, dest);
+        }
+
+        pub fn eql(lhs: *const ListType, rhs: *const ListType) bool {
+            if (lhs.len != rhs.len) return false;
+            for (lhs.sliceConst(), 0..) |*item, i| {
+                if (!bun.css.generic.eql(Type, item, &rhs.ptr[i])) return false;
+            }
+            return true;
+        }
+
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
             this.len = @as(u32, @truncate(slice_.len));
@@ -286,6 +309,11 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn slice(this: ListType) callconv(bun.callconv_inline) []Type {
+            @setRuntimeSafety(false);
+            return this.ptr[0..this.len];
+        }
+
+        pub fn sliceConst(this: *const ListType) callconv(bun.callconv_inline) []const Type {
             @setRuntimeSafety(false);
             return this.ptr[0..this.len];
         }

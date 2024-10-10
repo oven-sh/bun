@@ -6510,6 +6510,10 @@ pub const CallFrame = opaque {
             pub inline fn slice(self: *const @This()) []const JSValue {
                 return self.ptr[0..self.len];
             }
+
+            pub inline fn all(self: *const @This()) []const JSValue {
+                return self.ptr[0..];
+            }
         };
     }
 

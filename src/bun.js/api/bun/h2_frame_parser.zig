@@ -739,6 +739,7 @@ pub const H2FrameParser = struct {
     ref_count: u8 = 1,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
+    /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
     pub const StreamResumableIterator = struct {
         parser: *H2FrameParser,
         index: u32 = 0,
@@ -746,12 +747,9 @@ pub const H2FrameParser = struct {
             return .{ .index = 0, .parser = parser };
         }
         pub fn next(this: *StreamResumableIterator) ?*Stream {
-            const capacity = this.parser.streams.unmanaged.capacity();
-            if (this.index > capacity) {
-                return null;
-            }
             var it = this.parser.streams.iterator();
-            // resume the iterator from the same index
+            if (it.index > it.hm.capacity()) return null;
+            // resume the iterator from the same index if possible
             it.index = this.index;
             while (it.next()) |item| {
                 this.index = it.index;

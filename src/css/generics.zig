@@ -30,7 +30,7 @@ pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
             .array_list => return input.parseCommaSeparated(result.child, parseFor(result.child)),
-            .baby_list => @panic("Unsupported right now lol soz"),
+            .baby_list => {},
             .small_list => {},
         }
     }
@@ -59,7 +59,7 @@ pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
             .array_list => return input.parseCommaSeparated(result.child, parseFor(result.child)),
-            .baby_list => @panic("Unsupported right now lol soz"),
+            .baby_list => {},
             .small_list => {},
         }
     }
@@ -99,7 +99,7 @@ pub fn hasToCss(comptime T: type) bool {
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
             .array_list => return true,
-            .baby_list => @panic("Unsupported right now lol soz"),
+            .baby_list => return true,
             .small_list => return true,
         }
     }
@@ -127,7 +127,7 @@ pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *P
             .array_list => {
                 return css.to_css.fromList(result.child, this, W, dest);
             },
-            .baby_list => @panic("Unsupported right now lol soz"),
+            .baby_list => {},
             .small_list => {},
         }
     }
@@ -177,7 +177,7 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         return switch (result.list) {
             .array_list => eqlList(result.child, lhs, rhs),
-            .baby_list => @compileError("zack do this plz"),
+            .baby_list => return lhs.eql(rhs),
             .small_list => lhs.eql(rhs),
         };
     }

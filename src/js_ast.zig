@@ -888,6 +888,7 @@ pub const G = struct {
             normal,
             get,
             set,
+            accessor,
             spread,
             declare,
             abstract,

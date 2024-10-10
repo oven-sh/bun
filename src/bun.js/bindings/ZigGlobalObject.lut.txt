@@ -23,7 +23,6 @@
   structuredClone                 functionStructuredClone                              Function 2
   
   global                          GlobalObject_getGlobalThis                           PropertyCallback
-  EventSource                     getEventSourceConstructor                            PropertyCallback
   
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
   File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty

@@ -947,7 +947,7 @@ describe("publish", async () => {
     { user: "bin2", bin: { bin1: "bin1.js", bin2: "bin2.js" } },
     { user: "bin3", directories: { bin: "bins" } },
   ]) {
-    test.only(`can publish and install binaries with ${JSON.stringify(info.bin)}`, async () => {
+    test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
       const publishDir = tmpdirSync();
       const bunfig = await authBunfig("binaries-" + info.user);
 
@@ -998,17 +998,21 @@ describe("publish", async () => {
         exists(join(packageDir, "node_modules", ".bin", "bin2")),
         exists(join(packageDir, "node_modules", ".bin", "bin3")),
         exists(join(packageDir, "node_modules", ".bin", "moredir", "bin4")),
+        exists(join(packageDir, "node_modules", ".bin", "publish-pkg-bins")),
       ]);
 
       switch (info.user) {
         case "bin1": {
-          expect(results).toEqual([true, false, false, false]);
+          expect(results).toEqual([false, false, false, false, true]);
+          break;
         }
         case "bin2": {
-          expect(results).toEqual([true, true, false, false]);
+          expect(results).toEqual([true, true, false, false, false]);
+          break;
         }
         case "bin3": {
-          expect(results).toEqual([false, false, true, true]);
+          expect(results).toEqual([false, false, true, true, false]);
+          break;
         }
       }
     });

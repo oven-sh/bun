@@ -1194,7 +1194,6 @@ pub const PublishCommand = struct {
                         try writer.print(",\"directories\":{{\"bin\":\"{s}\"}}", .{dir});
                     },
                 }
-                try writer.print("}}", .{});
             }
 
             try writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{

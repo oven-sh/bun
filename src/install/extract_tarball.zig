@@ -153,6 +153,26 @@ pub fn buildURLWithPrinter(
     }
 }
 
+const EnsureReadPermissions = struct {
+    fn apply(dir: std.fs.Dir, path: []const u8) !void {
+        const file = try dir.openFile(path, .{ .mode = .read_write });
+        defer file.close();
+        const stat = try file.stat();
+        const new_mode = stat.mode | 0o444;
+        try file.chmod(new_mode);
+    }
+
+    fn walkApply(dir: std.fs.Dir) !void {
+        var walker = try dir.walk(bun.default_allocator);
+        defer walker.deinit();
+
+        while (try walker.next()) |entry| {
+            if (entry.kind != .file) continue;
+            try apply(dir, entry.path);
+        }
+    }
+};
+
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
@@ -278,18 +298,35 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 var dirname_reader = DirnameReader{ .outdirname = &resolved };
 
                 switch (PackageManager.verbose_install) {
-                    inline else => |log| _ = try Archiver.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        *DirnameReader,
-                        &dirname_reader,
-                        .{
-                            // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
-                            .depth_to_skip = 1,
-                            .log = log,
-                        },
-                    ),
+                    inline else => |log| {
+                        const extracted_count = try Archiver.extractToDir(
+                            zlib_pool.data.list.items,
+                            extract_destination,
+                            null,
+                            *DirnameReader,
+                            &dirname_reader,
+                            .{
+                                // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
+                                .depth_to_skip = 1,
+                                .log = log,
+                            },
+                        );
+
+                        // Apply read permissions to all extracted files
+                        EnsureReadPermissions.walkApply(extract_destination) catch |err| {
+                            this.package_manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                this.package_manager.allocator,
+                                "{s} Failed to set read permissions for some files",
+                                .{@errorName(err)},
+                            ) catch unreachable;
+                            return error.InstallFailed;
+                        };
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("[{s}] Extracted {} files and ensured read permissions", .{ name, extracted_count });
+                        }
+                    },
                 }
 
                 // This tag is used to know which version of the package was
@@ -304,20 +341,37 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 }
             },
             else => switch (PackageManager.verbose_install) {
-                inline else => |log| _ = try Archiver.extractToDir(
-                    zlib_pool.data.list.items,
-                    extract_destination,
-                    null,
-                    void,
-                    {},
-                    .{
-                        .log = log,
-                        // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
-                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
-                        .depth_to_skip = 1,
-                        .npm = true,
-                    },
-                ),
+                inline else => |log| {
+                    const extracted_count = try Archiver.extractToDir(
+                        zlib_pool.data.list.items,
+                        extract_destination,
+                        null,
+                        void,
+                        {},
+                        .{
+                            .log = log,
+                            // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
+                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
+                            .depth_to_skip = 1,
+                            .npm = true,
+                        },
+                    );
+
+                    // Apply read permissions to all extracted files
+                    EnsureReadPermissions.walkApply(extract_destination) catch |err| {
+                        this.package_manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.package_manager.allocator,
+                            "{s} Failed to set read permissions for some files",
+                            .{@errorName(err)},
+                        ) catch unreachable;
+                        return error.InstallFailed;
+                    };
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("[{s}] Extracted {} files and ensured read permissions", .{ name, extracted_count });
+                    }
+                },
             },
         }
 

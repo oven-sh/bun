@@ -11,7 +11,7 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { access, mkdir, readlink, rm, writeFile, stat } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, sep } from "path";
 import {
@@ -8204,4 +8204,36 @@ cache = false
   expect(await new Response(stderr).text()).toContain("Saved lockfile");
   expect(await new Response(stdout).text()).toContain("installed @~39/empty@1.0.0");
   expect(await exited).toBe(0);
+});
+
+it("should ensure files has at least read permission", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        protobufjs: "6.11.4",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(await new Response(stdout).text()).not.toBeEmpty();
+  expect(await new Response(stderr).text()).toBeEmpty();
+  expect(await exited).toBe(0);
+
+  // 读取 package.json 的 mode 权限
+  const stat = await fs.stat(join(package_dir, "node_modules", "protobufjs/minimal.js"));
+
+  // should be -rw-r-----@
+  expect(stat.mode).toBe(33188);
 });

@@ -313,13 +313,6 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
 
     const array = JSC.JSValue.createEmptyArray(env, len);
     array.ensureStillAlive();
-
-    var i: u32 = 0;
-    while (i < len) : (i += 1) {
-        array.putIndex(env, i, JSValue.jsUndefined());
-    }
-
-    array.ensureStillAlive();
     result.set(env, array);
     return .ok;
 }

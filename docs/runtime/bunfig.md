@@ -376,10 +376,10 @@ To configure a CA certificate, use `install.ca` or `install.cafile` to specify a
 
 ```toml
 [install]
-# the CA certificate as a string
+# The CA certificate as a string
 ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 
-# a path to a CA certificate
+# A path to a CA certificate file. The file can contain multiple certificates.
 cafile = "path/to/cafile"
 ```
 

@@ -5246,10 +5246,14 @@ pub const Property = union(PropertyIdTag) {
         };
     }
 
+    /// We're going to have this empty for now since not every property has a deinit function.
+    /// It's not strictly necessary since all allocations are into an arena.
+    /// It's mostly intended as a performance optimization in the case where mimalloc arena is used,
+    /// since it can reclaim the memory and use it for subsequent allocations.
+    /// I haven't benchmarked that though, so I don't actually know how much faster it would actually make it.
     pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
-        _ = this; // autofix
-        _ = allocator; // autofix
-        @panic(css.todo_stuff.depth);
+        _ = this;
+        _ = allocator;
     }
 
     pub inline fn __toCssHelper(this: *const Property) struct { []const u8, VendorPrefix } {

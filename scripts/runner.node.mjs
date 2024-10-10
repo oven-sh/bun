@@ -588,8 +588,8 @@ async function spawnCitgmTest(execPath, testPath) {
   };
 
   const result = await spawnSafe({
-    command: resolve(join(import.meta.dirname, "run-citgm-test.ts")),
-    args: [execPath, testPath],
+    command: execPath,
+    args: [resolve(join(import.meta.dirname, "run-citgm-test.ts")), execPath, testPath],
     cwd: cwd,
     timeout: timeout,
     env: bunEnv,

@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative, sep } from "node:path";
+import { join, basename, dirname, relative, sep, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
@@ -168,7 +168,7 @@ async function runTests() {
   const revision = getRevision(execPath);
   console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath);
+  const tests = await getRelevantTests(testsPath);
   console.log("Running tests:", tests.length);
 
   let i = 0;
@@ -221,6 +221,11 @@ async function runTests() {
 
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
+      if (testPath.startsWith("https://")) {
+        // ecosystem tests
+        await runTest(testPath, async () => spawnCitgmTest(execPath, testPath));
+        continue;
+      }
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
@@ -559,6 +564,52 @@ async function spawnBunTest(execPath, testPath) {
 }
 
 /**
+ * @param {string} execPath
+ * @param {string} testPath
+ * @returns {Promise<TestResult>}
+ */
+async function spawnCitgmTest(execPath, testPath) {
+  const timeout = testTimeout;
+  const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
+
+  const bunEnv = {
+    ...process.env,
+    GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    FORCE_COLOR: "1",
+    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    BUN_DEBUG_QUIET_LOGS: "1",
+    BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+    BUN_JSC_randomIntegrityAuditRate: "1.0",
+    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+    BUN_INSTALL_CACHE_DIR: tmpdirPath,
+    SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
+    TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+  };
+
+  const result = await spawnSafe({
+    command: execPath,
+    args: [resolve(join(import.meta.dirname, "run-citgm-test.ts")), execPath, testPath],
+    cwd: cwd,
+    timeout: timeout,
+    env: bunEnv,
+    stdout: chunk => pipeTestStdout(process.stdout, chunk),
+    stderr: chunk => pipeTestStdout(process.stderr, chunk),
+  });
+  const { ok, error, stdout } = result;
+  return {
+    testPath: testPath,
+    ok,
+    status: ok ? "pass" : "fail",
+    error: error,
+    errors: [],
+    tests: [],
+    stdout: stdout,
+    stdoutPreview: stdout,
+  };
+}
+
+/**
  * @param {string} testPath
  * @returns {number}
  */
@@ -819,6 +870,7 @@ function isJavaScript(path) {
 function isTest(path) {
   if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
+  if (path.startsWith("https://")) return true; // ecosystem tests
   return isTestStrict(path);
 }
 
@@ -838,7 +890,7 @@ function isHidden(path) {
  * @param {string} cwd
  * @returns {string[]}
  */
-function getTests(cwd) {
+async function getTests(cwd) {
   function* getFiles(cwd, path) {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
@@ -854,15 +906,21 @@ function getTests(cwd) {
       }
     }
   }
-  return [...getFiles(cwd, "")].sort();
+  // prettier-ignore
+  return [
+    ...Array.from(getFiles(cwd, "")),
+    ...(await import("./citgm-items.mjs")).default
+      .filter(v => !(v[2] && isWindows))
+      .map(v => v[1]),
+  ].sort();
 }
 
 /**
  * @param {string} cwd
  * @returns {string[]}
  */
-function getRelevantTests(cwd) {
-  const tests = getTests(cwd);
+async function getRelevantTests(cwd) {
+  const tests = await getTests(cwd);
   const availableTests = [];
   const filteredTests = [];
 

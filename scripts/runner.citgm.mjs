@@ -120,7 +120,7 @@ const clone_dir = tmpdirSync();
   console.log("---");
 }
 
-{
+if (require(`${clone_dir}/package.json`).dependencies?.length) {
   console.log(`${clone_dir}/package.json`);
   console.log();
   const cmd = exec_path;

@@ -1550,7 +1550,7 @@ pub const H2FrameParser = struct {
                 // reach backpressure
                 const result = stream.flushQueue(this, &written);
                 switch (result) {
-                    .flushed, .no_action => continue, //nothing is change
+                    .flushed, .no_action => continue, // we can continue
                     .backpressure => return written, // backpressure we need to return
                 }
             }

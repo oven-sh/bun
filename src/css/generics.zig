@@ -27,6 +27,13 @@ const IdentFns = css.IdentFns;
 
 pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
     if (T != f32 and T != i32 and @hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        switch (result.list) {
+            .array_list => return input.parseCommaSeparated(result.child, parseFor(result.child)),
+            .baby_list => @panic("Unsupported right now lol soz"),
+            .small_list => {},
+        }
+    }
     return switch (T) {
         f32 => CSSNumberFns.parse(input),
         CSSInteger => CSSIntegerFns.parse(input),
@@ -48,6 +55,13 @@ pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
     if (comptime @typeInfo(T) == .Optional) {
         const TT = std.meta.Child(T);
         return .{ .result = parse(TT, input).asValue() };
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        switch (result.list) {
+            .array_list => return input.parseCommaSeparated(result.child, parseFor(result.child)),
+            .baby_list => @panic("Unsupported right now lol soz"),
+            .small_list => {},
+        }
     }
     return switch (T) {
         f32 => CSSNumberFns.parse(input),
@@ -78,6 +92,17 @@ pub fn hasToCss(comptime T: type) bool {
         const TT = std.meta.Child(T);
         return hasToCss(TT);
     }
+    if (tyinfo == .Optional) {
+        const TT = std.meta.Child(T);
+        return hasToCss(TT);
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        switch (result.list) {
+            .array_list => return true,
+            .baby_list => @panic("Unsupported right now lol soz"),
+            .small_list => return true,
+        }
+    }
     return switch (T) {
         f32 => true,
         else => @hasDecl(T, "toCss"),
@@ -88,6 +113,23 @@ pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *P
     if (@typeInfo(T) == .Pointer) {
         const TT = std.meta.Child(T);
         return toCss(TT, this.*, W, dest);
+    }
+    if (@typeInfo(T) == .Optional) {
+        const TT = std.meta.Child(T);
+
+        if (this.*) |*val| {
+            return toCss(TT, val, W, dest);
+        }
+        return;
+    }
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        switch (result.list) {
+            .array_list => {
+                return css.to_css.fromList(result.child, this, W, dest);
+            },
+            .baby_list => @panic("Unsupported right now lol soz"),
+            .small_list => {},
+        }
     }
     return switch (T) {
         f32 => CSSNumberFns.toCss(this, W, dest),
@@ -180,7 +222,17 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
-            .baby_list => @panic("Not implemented."),
+            .baby_list => {
+                var ret = bun.BabyList(result.child){
+                    .ptr = (allocator.alloc(result.child, this.len) catch bun.outOfMemory()).ptr,
+                    .len = this.len,
+                    .cap = this.len,
+                };
+                for (this.sliceConst(), ret.ptr[0..this.len]) |*old, *new| {
+                    new.* = bun.css.generic.deepClone(result.child, old, allocator);
+                }
+                return ret;
+            },
             .small_list => this.deepClone(allocator),
         };
     }

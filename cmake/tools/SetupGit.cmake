@@ -11,7 +11,7 @@ if(NOT GIT_PROGRAM)
   return()
 endif()
 
-set(GIT_MERGEBASE_COMMAND ${GIT_PROGRAM} merge-base --fork-point origin/main HEAD)
+set(GIT_MERGEBASE_COMMAND ${GIT_PROGRAM} merge-base origin/main HEAD)
 
 execute_process(
   COMMAND

@@ -3266,6 +3266,8 @@ class Http2Server extends net.Server {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }
     super(options, connectionListener);
+    this.setMaxListeners(0);
+
     this.on("newListener", setupCompat);
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);
@@ -3303,6 +3305,7 @@ class Http2SecureServer extends tls.Server {
       throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
     }
     super(options, connectionListener);
+    this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (typeof onRequestHandler === "function") {
       this.on("request", onRequestHandler);

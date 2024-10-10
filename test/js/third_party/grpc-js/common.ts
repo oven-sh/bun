@@ -213,7 +213,7 @@ export class MockSubchannel implements SubchannelInterface {
   unref(): void {}
   getChannelzRef(): SubchannelRef {
     return {
-      kind: EntityTypes.subchannel,
+      kind: "subchannel",
       id: -1,
       name: this.address,
     };

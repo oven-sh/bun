@@ -17,18 +17,19 @@
 
 // Allow `any` data type for testing runtime type checking.
 // tslint:disable no-any
-import * as assert from 'assert';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { ServerCredentials } from '../src';
+import assert from "assert";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { ServerCredentials } from "@grpc/grpc-js/build/src";
+import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 
-const ca = readFileSync(join(__dirname, 'fixtures', 'ca.pem'));
-const key = readFileSync(join(__dirname, 'fixtures', 'server1.key'));
-const cert = readFileSync(join(__dirname, 'fixtures', 'server1.pem'));
+const ca = readFileSync(join(__dirname, "fixtures", "ca.pem"));
+const key = readFileSync(join(__dirname, "fixtures", "server1.key"));
+const cert = readFileSync(join(__dirname, "fixtures", "server1.pem"));
 
-describe('Server Credentials', () => {
-  describe('createInsecure', () => {
-    it('creates insecure credentials', () => {
+describe("Server Credentials", () => {
+  describe("createInsecure", () => {
+    it("creates insecure credentials", () => {
       const creds = ServerCredentials.createInsecure();
 
       assert.strictEqual(creds._isSecure(), false);
@@ -36,15 +37,15 @@ describe('Server Credentials', () => {
     });
   });
 
-  describe('createSsl', () => {
-    it('accepts a buffer and array as the first two arguments', () => {
+  describe("createSsl", () => {
+    it("accepts a buffer and array as the first two arguments", () => {
       const creds = ServerCredentials.createSsl(ca, []);
 
       assert.strictEqual(creds._isSecure(), true);
       assert.strictEqual(creds._getSettings()?.ca, ca);
     });
 
-    it('accepts a boolean as the third argument', () => {
+    it("accepts a boolean as the third argument", () => {
       const creds = ServerCredentials.createSsl(ca, [], true);
 
       assert.strictEqual(creds._isSecure(), true);
@@ -53,7 +54,7 @@ describe('Server Credentials', () => {
       assert.strictEqual(settings?.requestCert, true);
     });
 
-    it('accepts an object with two buffers in the second argument', () => {
+    it("accepts an object with two buffers in the second argument", () => {
       const keyCertPairs = [{ private_key: key, cert_chain: cert }];
       const creds = ServerCredentials.createSsl(null, keyCertPairs);
 
@@ -63,7 +64,7 @@ describe('Server Credentials', () => {
       assert.deepStrictEqual(settings?.key, [key]);
     });
 
-    it('accepts multiple objects in the second argument', () => {
+    it("accepts multiple objects in the second argument", () => {
       const keyCertPairs = [
         { private_key: key, cert_chain: cert },
         { private_key: key, cert_chain: cert },
@@ -76,27 +77,27 @@ describe('Server Credentials', () => {
       assert.deepStrictEqual(settings?.key, [key, key]);
     });
 
-    it('fails if the second argument is not an Array', () => {
+    it("fails if the second argument is not an Array", () => {
       assert.throws(() => {
-        ServerCredentials.createSsl(ca, 'test' as any);
+        ServerCredentials.createSsl(ca, "test" as any);
       }, /TypeError: keyCertPairs must be an array/);
     });
 
-    it('fails if the first argument is a non-Buffer value', () => {
+    it("fails if the first argument is a non-Buffer value", () => {
       assert.throws(() => {
-        ServerCredentials.createSsl('test' as any, []);
+        ServerCredentials.createSsl("test" as any, []);
       }, /TypeError: rootCerts must be null or a Buffer/);
     });
 
-    it('fails if the third argument is a non-boolean value', () => {
+    it("fails if the third argument is a non-boolean value", () => {
       assert.throws(() => {
-        ServerCredentials.createSsl(ca, [], 'test' as any);
+        ServerCredentials.createSsl(ca, [], "test" as any);
       }, /TypeError: checkClientCertificate must be a boolean/);
     });
 
-    it('fails if the array elements are not objects', () => {
+    it("fails if the array elements are not objects", () => {
       assert.throws(() => {
-        ServerCredentials.createSsl(ca, ['test'] as any);
+        ServerCredentials.createSsl(ca, ["test"] as any);
       }, /TypeError: keyCertPair\[0\] must be an object/);
 
       assert.throws(() => {
@@ -104,16 +105,16 @@ describe('Server Credentials', () => {
       }, /TypeError: keyCertPair\[0\] must be an object/);
     });
 
-    it('fails if the object does not have a Buffer private key', () => {
-      const keyCertPairs: any = [{ private_key: 'test', cert_chain: cert }];
+    it("fails if the object does not have a Buffer private key", () => {
+      const keyCertPairs: any = [{ private_key: "test", cert_chain: cert }];
 
       assert.throws(() => {
         ServerCredentials.createSsl(null, keyCertPairs);
       }, /TypeError: keyCertPair\[0\].private_key must be a Buffer/);
     });
 
-    it('fails if the object does not have a Buffer cert chain', () => {
-      const keyCertPairs: any = [{ private_key: key, cert_chain: 'test' }];
+    it("fails if the object does not have a Buffer cert chain", () => {
+      const keyCertPairs: any = [{ private_key: key, cert_chain: "test" }];
 
       assert.throws(() => {
         ServerCredentials.createSsl(null, keyCertPairs);

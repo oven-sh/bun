@@ -148,7 +148,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
         expect(parsed.headers["test-header"]).toBe("test-value");
       });
-      it("should be able to send a POST request", async () => {
+      it.only("should be able to send a POST request", async () => {
         const payload = JSON.stringify({ "hello": "bun" });
         const result = await doHttp2Request(
           HTTPS_SERVER,

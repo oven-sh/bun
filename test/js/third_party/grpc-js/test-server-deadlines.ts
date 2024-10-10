@@ -17,33 +17,29 @@
 
 // Allow `any` data type for testing runtime type checking.
 // tslint:disable no-any
-import * as assert from 'assert';
-import * as path from 'path';
+import assert from "assert";
+import * as path from "path";
 
-import * as grpc from '../src';
-import { Server, ServerCredentials } from '../src';
-import { ServiceError } from '../src/call';
-import { ServiceClient, ServiceClientConstructor } from '../src/make-client';
-import {
-  sendUnaryData,
-  ServerUnaryCall,
-  ServerWritableStream,
-} from '../src/server-call';
+import * as grpc from "@grpc/grpc-js/build/src";
+import { Server, ServerCredentials } from "@grpc/grpc-js/build/src";
+import { ServiceError } from "@grpc/grpc-js/build/src/call";
+import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+import { sendUnaryData, ServerUnaryCall, ServerWritableStream } from "@grpc/grpc-js/build/src/server-call";
+import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
 
-import { loadProtoFile } from './common';
+import { loadProtoFile } from "./common";
 
 const clientInsecureCreds = grpc.credentials.createInsecure();
 const serverInsecureCreds = ServerCredentials.createInsecure();
 
-describe('Server deadlines', () => {
+describe("Server deadlines", () => {
   let server: Server;
   let client: ServiceClient;
 
   before(done => {
-    const protoFile = path.join(__dirname, 'fixtures', 'test_service.proto');
+    const protoFile = path.join(__dirname, "fixtures", "test_service.proto");
     const testServiceDef = loadProtoFile(protoFile);
-    const testServiceClient =
-      testServiceDef.TestService as ServiceClientConstructor;
+    const testServiceClient = testServiceDef.TestService as ServiceClientConstructor;
 
     server = new Server();
     server.addService(testServiceClient.service, {
@@ -54,7 +50,7 @@ describe('Server deadlines', () => {
       },
     });
 
-    server.bindAsync('localhost:0', serverInsecureCreds, (err, port) => {
+    server.bindAsync("localhost:0", serverInsecureCreds, (err, port) => {
       assert.ifError(err);
       client = new testServiceClient(`localhost:${port}`, clientInsecureCreds);
       server.start();
@@ -67,74 +63,49 @@ describe('Server deadlines', () => {
     server.tryShutdown(done);
   });
 
-  it('works with deadlines', done => {
+  it("works with deadlines", done => {
     const metadata = new grpc.Metadata();
-    const {
-      path,
-      requestSerialize: serialize,
-      responseDeserialize: deserialize,
-    } = client.unary as any;
+    const { path, requestSerialize: serialize, responseDeserialize: deserialize } = client.unary as any;
 
-    metadata.set('grpc-timeout', '100m');
-    client.makeUnaryRequest(
-      path,
-      serialize,
-      deserialize,
-      {},
-      metadata,
-      {},
-      (error: any, response: any) => {
-        assert(error);
-        assert.strictEqual(error.code, grpc.status.DEADLINE_EXCEEDED);
-        assert.strictEqual(error.details, 'Deadline exceeded');
-        done();
-      }
-    );
+    metadata.set("grpc-timeout", "100m");
+    client.makeUnaryRequest(path, serialize, deserialize, {}, metadata, {}, (error: any, response: any) => {
+      assert(error);
+      assert.strictEqual(error.code, grpc.status.DEADLINE_EXCEEDED);
+      assert.strictEqual(error.details, "Deadline exceeded");
+      done();
+    });
   });
 
-  it('rejects invalid deadline', done => {
+  it("rejects invalid deadline", done => {
     const metadata = new grpc.Metadata();
-    const {
-      path,
-      requestSerialize: serialize,
-      responseDeserialize: deserialize,
-    } = client.unary as any;
+    const { path, requestSerialize: serialize, responseDeserialize: deserialize } = client.unary as any;
 
-    metadata.set('grpc-timeout', 'Infinity');
-    client.makeUnaryRequest(
-      path,
-      serialize,
-      deserialize,
-      {},
-      metadata,
-      {},
-      (error: any, response: any) => {
-        assert(error);
-        assert.strictEqual(error.code, grpc.status.INTERNAL);
-        assert.match(error.details, /^Invalid grpc-timeout value/);
-        done();
-      }
-    );
+    metadata.set("grpc-timeout", "Infinity");
+    client.makeUnaryRequest(path, serialize, deserialize, {}, metadata, {}, (error: any, response: any) => {
+      assert(error);
+      assert.strictEqual(error.code, grpc.status.INTERNAL);
+      assert.match(error.details, /^Invalid grpc-timeout value/);
+      done();
+    });
   });
 });
 
-describe('Cancellation', () => {
+describe("Cancellation", () => {
   let server: Server;
   let client: ServiceClient;
   let inHandler = false;
   let cancelledInServer = false;
 
   before(done => {
-    const protoFile = path.join(__dirname, 'fixtures', 'test_service.proto');
+    const protoFile = path.join(__dirname, "fixtures", "test_service.proto");
     const testServiceDef = loadProtoFile(protoFile);
-    const testServiceClient =
-      testServiceDef.TestService as ServiceClientConstructor;
+    const testServiceClient = testServiceDef.TestService as ServiceClientConstructor;
 
     server = new Server();
     server.addService(testServiceClient.service, {
       serverStream(stream: ServerWritableStream<any, any>) {
         inHandler = true;
-        stream.on('cancelled', () => {
+        stream.on("cancelled", () => {
           stream.write({});
           stream.end();
           cancelledInServer = true;
@@ -142,7 +113,7 @@ describe('Cancellation', () => {
       },
     });
 
-    server.bindAsync('localhost:0', serverInsecureCreds, (err, port) => {
+    server.bindAsync("localhost:0", serverInsecureCreds, (err, port) => {
       assert.ifError(err);
       client = new testServiceClient(`localhost:${port}`, clientInsecureCreds);
       server.start();
@@ -155,13 +126,13 @@ describe('Cancellation', () => {
     server.tryShutdown(done);
   });
 
-  it('handles requests cancelled by the client', done => {
+  it("handles requests cancelled by the client", done => {
     const call = client.serverStream({});
 
-    call.on('data', assert.ifError);
-    call.on('error', (error: ServiceError) => {
+    call.on("data", assert.ifError);
+    call.on("error", (error: ServiceError) => {
       assert.strictEqual(error.code, grpc.status.CANCELLED);
-      assert.strictEqual(error.details, 'Cancelled on client');
+      assert.strictEqual(error.details, "Cancelled on client");
       waitForServerCancel();
     });
 

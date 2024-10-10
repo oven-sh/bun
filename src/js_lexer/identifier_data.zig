@@ -60,7 +60,7 @@ const id_end_count = id_end_range[1] - id_end_range[0] + 1;
 pub const IDStartType = std.bit_set.StaticBitSet(id_start_count + 1);
 pub const IDContinueType = std.bit_set.StaticBitSet(id_end_count + 1);
 
-const id_start: IDStartType = brk: {
+pub const id_start: IDStartType = brk: {
     var bits: IDStartType = IDStartType.initEmpty();
     var i: usize = 0;
 
@@ -76,7 +76,7 @@ const id_start: IDStartType = brk: {
     break :brk bits;
 };
 
-const id_continue: IDContinueType = brk: {
+pub const id_continue: IDContinueType = brk: {
     var bits: IDContinueType = IDContinueType.initEmpty();
     var i: usize = 0;
 
@@ -94,10 +94,10 @@ const id_continue: IDContinueType = brk: {
 
 const Cache = @import("./identifier_cache.zig");
 
-pub fn main() anyerror!void {
-    var id_start_cached = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
-    var id_continue_cached = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
+pub const id_start_cached = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
+pub const id_continue_cached = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
 
+fn main() anyerror!void {
     const id_continue_data = std.mem.asBytes(&id_continue.masks);
     const id_start_data = std.mem.asBytes(&id_start.masks);
 

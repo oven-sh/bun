@@ -262,6 +262,8 @@ pub const Arguments = struct {
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
+        clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -776,6 +778,14 @@ pub const Arguments = struct {
 
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
+            }
+
+            if (args.option("--banner")) |banner| {
+                ctx.bundler_options.banner = banner;
+            }
+
+            if (args.option("--footer")) |footer| {
+                ctx.bundler_options.footer = footer;
             }
 
             const experimental_css = args.flag("--experimental-css");
@@ -1402,6 +1412,8 @@ pub const Command = struct {
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
             bytecode: bool = false,
+            banner: []const u8 = "",
+            footer: []const u8 = "",
             experimental_css: bool = false,
         };
 

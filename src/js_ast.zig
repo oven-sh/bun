@@ -8698,6 +8698,14 @@ pub const ServerComponentBoundary = struct {
                 bun.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
                 return l.list.items(.reference_source_index)[i];
             }
+
+            pub fn bitSet(scbs: Slice, alloc: std.mem.Allocator, input_file_count: usize) !bun.bit_set.DynamicBitSetUnmanaged {
+                var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(alloc, input_file_count);
+                for (scbs.list.items(.source_index)) |source_index| {
+                    scb_bitset.set(source_index);
+                }
+                return scb_bitset;
+            }
         };
 
         pub const Adapter = struct {

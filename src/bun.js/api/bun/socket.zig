@@ -239,7 +239,7 @@ const Handlers = struct {
             .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
-            if (opts.getOwnTruthyComptime(globalObject, pair.@"1")) |callback_value| {
+            if (opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
                     exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
                     return null;
@@ -254,7 +254,7 @@ const Handlers = struct {
             return null;
         }
 
-        if (opts.getOwnTruthy(globalObject, "binaryType")) |binary_type_value| {
+        if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
                 exception.* = JSC.toInvalidArguments("Expected \"binaryType\" to be a string", .{}, globalObject).asObjectRef();
                 return null;
@@ -341,13 +341,13 @@ pub const SocketConfig = struct {
         }
 
         hostname_or_unix: {
-            if (opts.getOwnTruthy(globalObject, "fd")) |fd_| {
+            if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     break :hostname_or_unix;
                 }
             }
 
-            if (opts.getOwnTruthy(globalObject, "unix")) |unix_socket| {
+            if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
                 if (!unix_socket.isString()) {
                     exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
                     return null;
@@ -365,17 +365,17 @@ pub const SocketConfig = struct {
                 }
             }
 
-            if (opts.getOwnTruthy(globalObject, "exclusive")) |_| {
+            if (opts.getTruthy(globalObject, "exclusive")) |_| {
                 exclusive = true;
             }
 
-            if (opts.getOwnTruthy(globalObject, "hostname") orelse opts.getOwnTruthy(globalObject, "host")) |hostname| {
+            if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
                 if (!hostname.isString()) {
                     exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
                     return null;
                 }
 
-                var port_value = opts.getOwn(globalObject, "port") orelse JSValue.zero;
+                var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
                 hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
 
                 if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
@@ -423,7 +423,7 @@ pub const SocketConfig = struct {
             return null;
         }
 
-        var handlers = Handlers.fromJS(globalObject, opts.getOwn(globalObject, "socket") orelse JSValue.zero, exception) orelse {
+        var handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
             hostname_or_unix.deinit();
             return null;
         };
@@ -542,7 +542,7 @@ pub const Listener = struct {
 
         var exception: JSC.C.JSValueRef = null;
 
-        const socket_obj = opts.getOwn(globalObject, "socket") orelse {
+        const socket_obj = opts.get(globalObject, "socket") orelse {
             globalObject.throw("Expected \"socket\" object", .{});
             return .zero;
         };
@@ -1069,7 +1069,7 @@ pub const Listener = struct {
         vm.eventLoop().ensureWaker();
 
         var connection: Listener.UnixOrHost = blk: {
-            if (opts.getOwnTruthy(globalObject, "fd")) |fd_| {
+            if (opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     const fd = fd_.asFileDescriptor();
                     break :blk .{ .fd = fd };
@@ -2308,7 +2308,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             var exception: JSC.C.JSValueRef = null;
 
-            const socket_obj = opts.getOwn(globalObject, "socket") orelse {
+            const socket_obj = opts.get(globalObject, "socket") orelse {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
@@ -3082,7 +3082,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const socket_obj = opts.getOwn(globalObject, "socket") orelse {
+            const socket_obj = opts.get(globalObject, "socket") orelse {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
@@ -4007,7 +4007,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         return .zero;
     }
 
-    const socket_obj = opts.getOwn(globalObject, "socket") orelse {
+    const socket_obj = opts.get(globalObject, "socket") orelse {
         globalObject.throw("Expected \"socket\" option", .{});
         return .zero;
     };

@@ -21,9 +21,15 @@ else()
   set(buns ${bun})
 endif()
 
-# Some commands use this path, and some do not.
-# In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
+
+if(RELEASE OR CI)
+  set(DEFAULT_CODEGEN_EMBED ON)
+else()
+  set(DEFAULT_CODEGEN_EMBED OFF)
+endif()
+
+optionx(CODEGEN_EMBED BOOL "If codegen files should be embedded in the binary" DEFAULT ${DEFAULT_CODEGEN_EMBED})
 
 if((NOT DEFINED CONFIGURE_DEPENDS AND NOT CI) OR CONFIGURE_DEPENDS)
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
@@ -32,39 +38,6 @@ else()
 endif()
 
 # --- Codegen ---
-
-set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
-set(BUN_ZIG_IDENTIFIER_SCRIPT ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig)
-
-file(GLOB BUN_ZIG_IDENTIFIER_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_ZIG_IDENTIFIER_SCRIPT}
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/*.zig
-)
-
-set(BUN_ZIG_IDENTIFIER_OUTPUTS
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_continue_bitset.blob
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_continue_bitset.meta.blob
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_start_bitset.blob
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_start_bitset.meta.blob
-)
-
-register_command(
-  TARGET
-    bun-identifier-data
-  COMMENT
-    "Generating src/js_lexer/*.blob"
-  COMMAND
-    ${ZIG_EXECUTABLE}
-      run
-      ${CMAKE_ZIG_FLAGS}
-      ${BUN_ZIG_IDENTIFIER_SCRIPT}
-  SOURCES
-    ${BUN_ZIG_IDENTIFIER_SOURCES}
-  TARGETS
-    clone-zig
-  OUTPUTS
-    ${BUN_ZIG_IDENTIFIER_OUTPUTS}
-)
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
 
@@ -76,7 +49,7 @@ file(GLOB BUN_ERROR_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_ERROR_SOURCE}/img/*
 )
 
-set(BUN_ERROR_OUTPUT ${BUN_ERROR_SOURCE}/dist)
+set(BUN_ERROR_OUTPUT ${CODEGEN_PATH}/bun-error)
 set(BUN_ERROR_OUTPUTS
   ${BUN_ERROR_OUTPUT}/index.js
   ${BUN_ERROR_OUTPUT}/bun-error.css
@@ -114,13 +87,13 @@ register_command(
 )
 
 set(BUN_FALLBACK_DECODER_SOURCE ${CWD}/src/fallback.ts)
-set(BUN_FALLBACK_DECODER_OUTPUT ${CWD}/src/fallback.out.js)
+set(BUN_FALLBACK_DECODER_OUTPUT ${CODEGEN_PATH}/fallback-decoder.js)
 
 register_command(
   TARGET
     bun-fallback-decoder
   COMMENT
-    "Building src/fallback.out.js"
+    "Building fallback-decoder.js"
   COMMAND
     ${ESBUILD_EXECUTABLE} ${ESBUILD_ARGS}
       ${BUN_FALLBACK_DECODER_SOURCE}
@@ -137,7 +110,7 @@ register_command(
 )
 
 set(BUN_RUNTIME_JS_SOURCE ${CWD}/src/runtime.bun.js)
-set(BUN_RUNTIME_JS_OUTPUT ${CWD}/src/runtime.out.js)
+set(BUN_RUNTIME_JS_OUTPUT ${CODEGEN_PATH}/runtime.out.js)
 
 register_command(
   TARGET
@@ -167,7 +140,7 @@ file(GLOB BUN_NODE_FALLBACKS_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_NODE_FALLBACKS_SOURCE}/*.js
 )
 
-set(BUN_NODE_FALLBACKS_OUTPUT ${BUN_NODE_FALLBACKS_SOURCE}/out)
+set(BUN_NODE_FALLBACKS_OUTPUT ${CODEGEN_PATH}/node-fallbacks)
 set(BUN_NODE_FALLBACKS_OUTPUTS)
 foreach(source ${BUN_NODE_FALLBACKS_SOURCES})
   get_filename_component(filename ${source} NAME)
@@ -187,7 +160,7 @@ register_command(
   TARGET
     bun-node-fallbacks
   COMMENT
-    "Building src/node-fallbacks/*.js"
+    "Building node-fallbacks/*.js"
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
@@ -491,7 +464,6 @@ list(APPEND BUN_ZIG_SOURCES
 )
 
 set(BUN_ZIG_GENERATED_SOURCES
-  ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}
   ${BUN_RUNTIME_JS_OUTPUT}
@@ -547,7 +519,8 @@ register_command(
       -Dsha=${REVISION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
-      -Dgenerated-code=${CODEGEN_PATH}
+      -Dcodegen_path=${CODEGEN_PATH}
+      -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS

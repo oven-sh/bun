@@ -583,41 +583,39 @@ pub const ServerConfig = struct {
 
         const log = Output.scoped(.SSLConfig, false);
 
-        pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+        pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
             var ctx_opts: uws.us_bun_socket_context_options_t = .{};
 
-            if (this_) |ssl_config| {
-                if (ssl_config.key_file_name != null)
-                    ctx_opts.key_file_name = ssl_config.key_file_name;
-                if (ssl_config.cert_file_name != null)
-                    ctx_opts.cert_file_name = ssl_config.cert_file_name;
-                if (ssl_config.ca_file_name != null)
-                    ctx_opts.ca_file_name = ssl_config.ca_file_name;
-                if (ssl_config.dh_params_file_name != null)
-                    ctx_opts.dh_params_file_name = ssl_config.dh_params_file_name;
-                if (ssl_config.passphrase != null)
-                    ctx_opts.passphrase = ssl_config.passphrase;
-                ctx_opts.ssl_prefer_low_memory_usage = @intFromBool(ssl_config.low_memory_mode);
+            if (this.key_file_name != null)
+                ctx_opts.key_file_name = this.key_file_name;
+            if (this.cert_file_name != null)
+                ctx_opts.cert_file_name = this.cert_file_name;
+            if (this.ca_file_name != null)
+                ctx_opts.ca_file_name = this.ca_file_name;
+            if (this.dh_params_file_name != null)
+                ctx_opts.dh_params_file_name = this.dh_params_file_name;
+            if (this.passphrase != null)
+                ctx_opts.passphrase = this.passphrase;
+            ctx_opts.ssl_prefer_low_memory_usage = @intFromBool(this.low_memory_mode);
 
-                if (ssl_config.key) |key| {
-                    ctx_opts.key = key.ptr;
-                    ctx_opts.key_count = ssl_config.key_count;
-                }
-                if (ssl_config.cert) |cert| {
-                    ctx_opts.cert = cert.ptr;
-                    ctx_opts.cert_count = ssl_config.cert_count;
-                }
-                if (ssl_config.ca) |ca| {
-                    ctx_opts.ca = ca.ptr;
-                    ctx_opts.ca_count = ssl_config.ca_count;
-                }
-
-                if (ssl_config.ssl_ciphers != null) {
-                    ctx_opts.ssl_ciphers = ssl_config.ssl_ciphers;
-                }
-                ctx_opts.request_cert = ssl_config.request_cert;
-                ctx_opts.reject_unauthorized = ssl_config.reject_unauthorized;
+            if (this.key) |key| {
+                ctx_opts.key = key.ptr;
+                ctx_opts.key_count = this.key_count;
             }
+            if (this.cert) |cert| {
+                ctx_opts.cert = cert.ptr;
+                ctx_opts.cert_count = this.cert_count;
+            }
+            if (this.ca) |ca| {
+                ctx_opts.ca = ca.ptr;
+                ctx_opts.ca_count = this.ca_count;
+            }
+
+            if (this.ssl_ciphers != null) {
+                ctx_opts.ssl_ciphers = this.ssl_ciphers;
+            }
+            ctx_opts.request_cert = this.request_cert;
+            ctx_opts.reject_unauthorized = this.reject_unauthorized;
 
             return ctx_opts;
         }

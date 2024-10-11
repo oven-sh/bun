@@ -288,6 +288,21 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_value <=> integer conversion", () => {
+    it("works", () => {
+      checkSameOutput("test_number_integer_conversions_from_js", []);
+      checkSameOutput("test_number_integer_conversions", []);
+    });
+  });
+
+  describe("arrays", () => {
+    describe("napi_create_array_with_length", () => {
+      it("creates an array with empty slots", () => {
+        checkSameOutput("test_create_array_with_length", []);
+      });
+    });
+  });
+
   describe("napi_throw functions", () => {
     it("has the right code and message", () => {
       checkSameOutput("test_throw_functions_exhaustive", []);

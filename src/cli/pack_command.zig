@@ -1410,8 +1410,8 @@ pub const PackCommand = struct {
             return;
         }
 
-        const bin_info = try getPackageBins(ctx.allocator, json.root);
-        defer for (bin_info) |bin| ctx.allocator.free(bin.path);
+        const bins = try getPackageBins(ctx.allocator, json.root);
+        defer for (bins) |bin| ctx.allocator.free(bin.path);
 
         var print_buf = std.ArrayList(u8).init(ctx.allocator);
         defer print_buf.deinit();
@@ -1548,7 +1548,7 @@ pub const PackCommand = struct {
                     archive,
                     entry,
                     &print_buf,
-                    bin_info,
+                    bins,
                 );
             }
 
@@ -1575,7 +1575,7 @@ pub const PackCommand = struct {
                     archive,
                     entry,
                     &print_buf,
-                    bin_info,
+                    bins,
                 );
             }
         }

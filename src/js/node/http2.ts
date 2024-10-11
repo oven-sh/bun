@@ -1850,14 +1850,10 @@ class Http2Stream extends Duplex {
         throw new RangeError("Invalid error code");
       }
       this.rstCode = code;
-      if (this.writableFinished) {
-        markStreamClosed(this);
+      markStreamClosed(this);
 
-        session[bunHTTP2Native]?.rstStream(this.#id, code || 0);
-        this[bunHTTP2Session] = null;
-      } else {
-        this.once("finish", Http2Stream.#rstStream);
-      }
+      session[bunHTTP2Native]?.rstStream(this.#id, code || 0);
+      this[bunHTTP2Session] = null;
     }
 
     if (typeof callback === "function") {

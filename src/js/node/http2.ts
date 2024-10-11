@@ -1662,7 +1662,6 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  Destroyed = 1 << 6, // 1000000 = 64
 }
 function markWritableDone(stream: Http2Stream) {
   const final = stream[bunHTTP2StreamFinal];

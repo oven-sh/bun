@@ -44,4 +44,203 @@ nativeTests.test_get_exception = (_, value) => {
   }
 };
 
+nativeTests.test_get_property = () => {
+  const objects = [
+    {},
+    { foo: "bar" },
+    {
+      get foo() {
+        throw new Error("get foo");
+      },
+    },
+    {
+      set foo(newValue) {},
+    },
+    new Proxy(
+      {},
+      {
+        get(_target, key) {
+          throw new Error(`proxy get ${key}`);
+        },
+      },
+    ),
+  ];
+  const keys = [
+    "foo",
+    {
+      toString() {
+        throw new Error("toString");
+      },
+    },
+    {
+      [Symbol.toPrimitive]() {
+        throw new Error("Symbol.toPrimitive");
+      },
+    },
+  ];
+
+  for (const object of objects) {
+    for (const key of keys) {
+      try {
+        const ret = nativeTests.perform_get(object, key);
+        console.log("native function returned", ret);
+      } catch (e) {
+        console.log("threw", e.toString());
+      }
+    }
+  }
+};
+
+nativeTests.test_number_integer_conversions_from_js = () => {
+  const i32 = { min: -(2 ** 31), max: 2 ** 31 - 1 };
+  const u32Max = 2 ** 32 - 1;
+  // this is not the actual max value for i64, but rather the highest double that is below the true max value
+  const i64 = { min: -(2 ** 63), max: 2 ** 63 - 1024 };
+
+  const i32Cases = [
+    // special values
+    [Infinity, 0],
+    [-Infinity, 0],
+    [NaN, 0],
+    // normal
+    [0.0, 0],
+    [1.0, 1],
+    [-1.0, -1],
+    // truncation
+    [1.25, 1],
+    [-1.25, -1],
+    // limits
+    [i32.min, i32.min],
+    [i32.max, i32.max],
+    // wrap around
+    [i32.min - 1.0, i32.max],
+    [i32.max + 1.0, i32.min],
+    [i32.min - 2.0, i32.max - 1],
+    [i32.max + 2.0, i32.min + 1],
+    // type errors
+    ["5", undefined],
+    [new Number(5), undefined],
+  ];
+
+  for (const [input, expectedOutput] of i32Cases) {
+    const actualOutput = nativeTests.double_to_i32(input);
+    console.log(`${input} as i32 => ${actualOutput}`);
+    if (actualOutput !== expectedOutput) {
+      console.error("wrong");
+    }
+  }
+
+  const u32Cases = [
+    // special values
+    [Infinity, 0],
+    [-Infinity, 0],
+    [NaN, 0],
+    // normal
+    [0.0, 0],
+    [1.0, 1],
+    // truncation
+    [1.25, 1],
+    [-1.25, u32Max],
+    // limits
+    [u32Max, u32Max],
+    // wrap around
+    [-1.0, u32Max],
+    [u32Max + 1.0, 0],
+    [-2.0, u32Max - 1],
+    [u32Max + 2.0, 1],
+    // type errors
+    ["5", undefined],
+    [new Number(5), undefined],
+  ];
+
+  for (const [input, expectedOutput] of u32Cases) {
+    const actualOutput = nativeTests.double_to_u32(input);
+    console.log(`${input} as u32 => ${actualOutput}`);
+    if (actualOutput !== expectedOutput) {
+      console.error("wrong");
+    }
+  }
+
+  const i64Cases = [
+    // special values
+    [Infinity, 0],
+    [-Infinity, 0],
+    [NaN, 0],
+    // normal
+    [0.0, 0],
+    [1.0, 1],
+    [-1.0, -1],
+    // truncation
+    [1.25, 1],
+    [-1.25, -1],
+    // limits
+    [i64.min, i64.min],
+    [i64.max, i64.max],
+    // clamp
+    [i64.min - 4096.0, i64.min],
+    // this one clamps to the exact max value of i64 (2**63 - 1), which is then rounded
+    // to exactly 2**63 since that's the closest double that can be represented
+    [i64.max + 4096.0, 2 ** 63],
+    // type errors
+    ["5", undefined],
+    [new Number(5), undefined],
+  ];
+
+  for (const [input, expectedOutput] of i64Cases) {
+    const actualOutput = nativeTests.double_to_i64(input);
+    console.log(
+      `${typeof input == "number" ? input.toFixed(2) : input} as i64 => ${typeof actualOutput == "number" ? actualOutput.toFixed(2) : actualOutput}`,
+    );
+    if (actualOutput !== expectedOutput) {
+      console.error("wrong");
+    }
+  }
+};
+
+nativeTests.test_create_array_with_length = () => {
+  for (const size of [0, 5]) {
+    const array = nativeTests.make_empty_array(size);
+    console.log("length =", array.length);
+    // should be 0 as array contains empty slots
+    console.log("number of keys =", Object.keys(array).length);
+  }
+};
+
+nativeTests.test_throw_functions_exhaustive = () => {
+  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
+    for (const code of [undefined, "", "error code"]) {
+      for (const msg of [undefined, "", "error message"]) {
+        try {
+          nativeTests.throw_error(code, msg, errorKind);
+          console.log(`napi_throw_${errorKind}(${code ?? "nullptr"}, ${msg ?? "nullptr"}) did not throw`);
+        } catch (e) {
+          console.log(
+            `napi_throw_${errorKind} threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+          );
+        }
+      }
+    }
+  }
+};
+
+nativeTests.test_create_error_functions_exhaustive = () => {
+  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
+    // null (JavaScript null) is changed to nullptr by the native function
+    for (const code of [undefined, null, "", 42, "error code"]) {
+      for (const msg of [undefined, null, "", 42, "error message"]) {
+        try {
+          nativeTests.create_and_throw_error(code, msg, errorKind);
+          console.log(
+            `napi_create_${errorKind}(${code === null ? "nullptr" : code}, ${msg === null ? "nullptr" : msg}) did not make an error`,
+          );
+        } catch (e) {
+          console.log(
+            `create_and_throw_error(${errorKind}) threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+          );
+        }
+      }
+    }
+  }
+};
+
 module.exports = nativeTests;

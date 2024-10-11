@@ -718,7 +718,7 @@ pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
-pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
         var value: ReturnType = undefined;
         var ran = false;
@@ -3296,14 +3296,11 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-pub fn runtimeEmbedFile(
+pub inline fn resolveSourcePath(
     comptime root: enum { codegen, src },
-    comptime sub_path: []const u8,
-) []const u8 {
-    comptime assert(Environment.isDebug);
-    comptime assert(!Environment.embed_code);
-
-    const abs_path = comptime path: {
+    comptime sub_path: string,
+) string {
+    return comptime path: {
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
@@ -3315,6 +3312,19 @@ pub fn runtimeEmbedFile(
         }) catch
             @compileError(unreachable))[0..].*;
         break :path &resolved;
+    };
+}
+
+pub fn runtimeEmbedFile(
+    comptime root: enum { codegen, src, src_eager },
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.codegen_embed);
+
+    const abs_path = switch (root) {
+        .codegen => resolveSourcePath(.codegen, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
     const static = struct {
@@ -3328,11 +3338,16 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
                 , .{ abs_path, e });
             };
         }
     };
+
+    if (root == .src_eager and static.once.done) {
+        static.once.done = false;
+        default_allocator.free(static.storage);
+    }
 
     static.once.call();
 
@@ -3863,12 +3878,14 @@ pub const bytecode_extension = ".jsc";
 /// An typed index into an array or other structure.
 /// maxInt is reserved for an empty state.
 ///
-/// `const Index = bun.GenericIndex(u32, opaque{})
+/// const Thing = struct {};
+/// const Index = bun.GenericIndex(u32, Thing)
 ///
-/// The empty opaque prevents Zig from memoizing the
+/// The second argument prevents Zig from memoizing the
 /// call, which would otherwise make all indexes
 /// equal to each other.
 pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    const null_value = std.math.maxInt(backing_int);
     return enum(backing_int) {
         _,
         const Index = @This();
@@ -3876,19 +3893,31 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             _ = uid;
         }
 
-        pub fn toOptional(oi: @This()) Optional {
-            return @enumFromInt(@intFromEnum(oi));
+        /// Prefer this over @enumFromInt to assert the int is in range
+        pub fn init(int: backing_int) callconv(callconv_inline) Index {
+            bun.assert(int != null_value); // would be confused for null
+            return @enumFromInt(int);
+        }
+
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
+        pub fn get(i: @This()) callconv(callconv_inline) backing_int {
+            bun.assert(@intFromEnum(i) != null_value); // memory corruption
+            return @intFromEnum(i);
+        }
+
+        pub fn toOptional(oi: @This()) callconv(callconv_inline) Optional {
+            return @enumFromInt(oi.get());
         }
 
         pub const Optional = enum(backing_int) {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub fn init(maybe: ?Index) ?Index {
-                return if (maybe) |i| @enumFromInt(@intFromEnum(i)) else .none;
+            pub fn init(maybe: ?Index) callconv(callconv_inline) ?Index {
+                return if (maybe) |i| i.toOptional() else .none;
             }
 
-            pub fn unwrap(oi: Optional) ?Index {
+            pub fn unwrap(oi: Optional) callconv(callconv_inline) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
         };
@@ -3898,4 +3927,54 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 comptime {
     // Must be nominal
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}
+
+/// Reverse of the slice index operator.
+/// Given `&slice[index] == item`, returns the `index` needed.
+/// The item must be in the slice.
+pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    bun.assert(isSliceInBufferT(T, slice, item[0..1]));
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    const index = @divExact(offset, @sizeOf(T));
+    return index;
+}
+
+/// Copied from zig std. Modified to accept arguments.
+pub fn once(comptime f: anytype) Once(f) {
+    return Once(f){};
+}
+
+/// Copied from zig std. Modified to accept arguments.
+///
+/// An object that executes the function `f` just once.
+/// It is undefined behavior if `f` re-enters the same Once instance.
+pub fn Once(comptime f: anytype) type {
+    return struct {
+        done: bool = false,
+        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+
+        /// Call the function `f`.
+        /// If `call` is invoked multiple times `f` will be executed only the
+        /// first time.
+        /// The invocations are thread-safe.
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            if (@atomicLoad(bool, &self.done, .acquire))
+                return;
+
+            return self.callSlow(args);
+        }
+
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            @setCold(true);
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // The first thread to acquire the mutex gets to run the initializer
+            if (!self.done) {
+                @call(.auto, f, args);
+                @atomicStore(bool, &self.done, true, .release);
+            }
+        }
+    };
 }

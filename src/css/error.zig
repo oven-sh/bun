@@ -284,6 +284,7 @@ pub const SelectorError = union(enum) {
     unexpected_token_in_attribute_selector: css.Token,
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
+    unexpected_selector_after_pseudo_element: css.Token,
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {

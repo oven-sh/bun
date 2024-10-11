@@ -382,6 +382,10 @@ fn parse_selector(
         }
 
         if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
+            const source_location = input.currentSourceLocation();
+            if (input.next().asValue()) |next| {
+                return .{ .err = source_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = next.* })) };
+            }
             break;
         }
 
@@ -2246,6 +2250,7 @@ pub const SelectorParseErrorKind = union(enum) {
     unsupported_pseudo_class_or_element: []const u8,
     no_qualified_name_in_attribute_selector: css.Token,
     unexpected_token_in_attribute_selector: css.Token,
+    unexpected_selector_after_pseudo_element: css.Token,
     invalid_qual_name_in_attr: css.Token,
     expected_bar_in_attr: css.Token,
     empty_selector,
@@ -2287,6 +2292,7 @@ pub const SelectorParseErrorKind = union(enum) {
             .bad_value_in_attr => |token| .{ .bad_value_in_attr = token },
             .explicit_namespace_unexpected_token => |token| .{ .explicit_namespace_unexpected_token = token },
             .unexpected_ident => |ident| .{ .unexpected_ident = ident },
+            .unexpected_selector_after_pseudo_element => |tok| .{ .unexpected_selector_after_pseudo_element = tok },
         };
     }
 };

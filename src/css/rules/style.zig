@@ -98,7 +98,7 @@ pub fn StyleRule(comptime R: type) type {
         fn toCssBase(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
             const supports_nesting = this.rules.v.items.len == 0 or
-                css.Targets.shouldCompileSame(
+                !css.Targets.shouldCompileSame(
                 &dest.targets,
                 .nesting,
             );
@@ -187,7 +187,11 @@ pub fn StyleRule(comptime R: type) type {
             } else {
                 try Helpers.end(W, dest, has_declarations);
                 try Helpers.newline(this, W, dest, supports_nesting, len);
-                try dest.withContext(&this.selectors, this, This.toCss);
+                try dest.withContext(&this.selectors, this, struct {
+                    pub fn toCss(self: *const This, WW: type, d: *Printer(WW)) PrintErr!void {
+                        return self.rules.toCss(WW, d);
+                    }
+                }.toCss);
             }
         }
 

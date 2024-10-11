@@ -441,42 +441,9 @@ pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
 pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status;
-pub export fn napi_get_value_int32(_: napi_env, value_: napi_value, result_: ?*i32) napi_status {
-    log("napi_get_value_int32", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(i32);
-    return .ok;
-}
-pub export fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status {
-    log("napi_get_value_uint32", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(u32);
-    return .ok;
-}
-pub export fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status {
-    log("napi_get_value_int64", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(i64);
-    return .ok;
-}
+pub extern fn napi_get_value_int32(_: napi_env, value_: napi_value, result: ?*i32) napi_status;
+pub extern fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status;
+pub extern fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status;
 pub export fn napi_get_value_bool(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_get_value_bool", .{});
     const result = result_ orelse {

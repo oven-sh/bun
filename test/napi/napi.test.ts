@@ -281,6 +281,13 @@ describe("napi", () => {
       checkSameOutput("test_get_property", []);
     });
   });
+
+  describe("napi_value <=> integer conversion", () => {
+    it("works", () => {
+      checkSameOutput("test_number_integer_conversions_from_js", []);
+      checkSameOutput("test_number_integer_conversions", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

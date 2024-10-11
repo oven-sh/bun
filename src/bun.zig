@@ -3296,25 +3296,35 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src, src_eager },
-    comptime sub_path: []const u8,
-) []const u8 {
-    comptime assert(Environment.isDebug);
-    comptime assert(!Environment.embed_code);
-
-    const abs_path = comptime path: {
+pub inline fn resolveSourcePath(
+    comptime root: enum { codegen, src },
+    comptime sub_path: string,
+) string {
+    return comptime path: {
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
                 .codegen => Environment.codegen_path,
-                .src, .src_eager => Environment.base_path ++ "/src",
+                .src => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
             @compileError(unreachable))[0..].*;
         break :path &resolved;
+    };
+}
+
+pub fn runtimeEmbedFile(
+    comptime root: enum { codegen, src, src_eager },
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.codegen_embed);
+
+    const abs_path = switch (root) {
+        .codegen => resolveSourcePath(.codegen, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
     const static = struct {
@@ -3328,7 +3338,7 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
                 , .{ abs_path, e });
             };
         }

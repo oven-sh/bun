@@ -44,4 +44,88 @@ nativeTests.test_get_exception = (_, value) => {
   }
 };
 
+nativeTests.test_get_property = () => {
+  const objects = [
+    {},
+    { foo: "bar" },
+    {
+      get foo() {
+        throw new Error("get foo");
+      },
+    },
+    {
+      set foo(newValue) {},
+    },
+    new Proxy(
+      {},
+      {
+        get(_target, key) {
+          throw new Error(`proxy get ${key}`);
+        },
+      },
+    ),
+  ];
+  const keys = [
+    "foo",
+    {
+      toString() {
+        throw new Error("toString");
+      },
+    },
+    {
+      [Symbol.toPrimitive]() {
+        throw new Error("Symbol.toPrimitive");
+      },
+    },
+  ];
+
+  for (const object of objects) {
+    for (const key of keys) {
+      try {
+        const ret = nativeTests.perform_get(object, key);
+        console.log("native function returned", ret);
+      } catch (e) {
+        console.log("threw", e.toString());
+      }
+    }
+  }
+};
+
+nativeTests.test_throw_functions_exhaustive = () => {
+  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
+    for (const code of [undefined, "", "error code"]) {
+      for (const msg of [undefined, "", "error message"]) {
+        try {
+          nativeTests.throw_error(code, msg, errorKind);
+          console.log(`napi_throw_${errorKind}(${code ?? "nullptr"}, ${msg ?? "nullptr"}) did not throw`);
+        } catch (e) {
+          console.log(
+            `napi_throw_${errorKind} threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+          );
+        }
+      }
+    }
+  }
+};
+
+nativeTests.test_create_error_functions_exhaustive = () => {
+  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
+    // null (JavaScript null) is changed to nullptr by the native function
+    for (const code of [undefined, null, "", 42, "error code"]) {
+      for (const msg of [undefined, null, "", 42, "error message"]) {
+        try {
+          nativeTests.create_and_throw_error(code, msg, errorKind);
+          console.log(
+            `napi_create_${errorKind}(${code === null ? "nullptr" : code}, ${msg === null ? "nullptr" : msg}) did not make an error`,
+          );
+        } catch (e) {
+          console.log(
+            `create_and_throw_error(${errorKind}) threw ${e.name}: message ${JSON.stringify(e.message)}, code ${JSON.stringify(e.code)}`,
+          );
+        }
+      }
+    }
+  }
+};
+
 module.exports = nativeTests;

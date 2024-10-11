@@ -1745,7 +1745,7 @@ class Http2Stream extends Duplex {
   sendTrailers(headers) {
     const session = this[bunHTTP2Session];
 
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
       error.code = "ERR_HTTP2_INVALID_STREAM";
       throw error;

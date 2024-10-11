@@ -3201,7 +3201,7 @@ pub const ParseTask = struct {
                     )) {
                         .result => |v| v,
                         .err => |e| {
-                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{}", .{e.kind}) catch unreachable;
+                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
                             return error.SyntaxError;
                         },
                     };

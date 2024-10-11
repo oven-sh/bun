@@ -237,6 +237,18 @@ pub fn Printer(comptime Writer: type) type {
             return this.writeStr(str) catch std.mem.Allocator.Error.OutOfMemory;
         }
 
+        pub fn writeComment(this: *This, comment: []const u8) PrintErr!void {
+            _ = this.dest.writeAll(comment) catch {
+                return this.addFmtError();
+            };
+            const new_lines = std.mem.count(u8, comment, "\n");
+            this.line += @intCast(new_lines);
+            this.col = 0;
+            const last_line_start = comment.len - (std.mem.lastIndexOfScalar(u8, comment, '\n') orelse comment.len);
+            this.col += @intCast(last_line_start);
+            return;
+        }
+
         /// Writes a raw string to the underlying destination.
         ///
         /// NOTE: Is is assumed that the string does not contain any newline characters.

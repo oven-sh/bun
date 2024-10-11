@@ -96,16 +96,14 @@ pub const FlexFlow = struct {
                     direction = value;
                     continue;
                 }
-
-                if (wrap == null) {
-                    if (input.tryParse(FlexWrap.parse, .{}).asValue()) |value| {
-                        wrap = value;
-                        continue;
-                    }
-                }
-
-                break;
             }
+            if (wrap == null) {
+                if (input.tryParse(FlexWrap.parse, .{}).asValue()) |value| {
+                    wrap = value;
+                    continue;
+                }
+            }
+            break;
         }
 
         return .{

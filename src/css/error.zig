@@ -140,6 +140,18 @@ pub const ErrorLocation = struct {
     line: u32,
     /// The column number, starting from 1.
     column: u32,
+
+    pub fn withFilename(this: ErrorLocation, filename: []const u8) ErrorLocation {
+        return ErrorLocation{
+            .filename = filename,
+            .line = this.line,
+            .column = this.column,
+        };
+    }
+
+    pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}:{d}:{d}", .{ this.filename, this.line, this.column });
+    }
 };
 
 /// A printer error type.

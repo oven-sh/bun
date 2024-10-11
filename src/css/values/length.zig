@@ -389,6 +389,23 @@ pub const LengthValue = union(enum) {
     pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
         return css.implementHash(@This(), this, hasher);
     }
+
+    pub fn tryAdd(this: *const LengthValue, _: std.mem.Allocator, rhs: *const LengthValue) ?LengthValue {
+        if (@intFromEnum(this.*) == @intFromEnum(rhs.*)) {
+            inline for (bun.meta.EnumFields(LengthValue)) |field| {
+                if (field.value == @intFromEnum(this.*)) {
+                    return @unionInit(LengthValue, field.name, @field(this, field.name) + @field(rhs, field.name));
+                }
+            }
+            unreachable;
+        }
+        if (this.toPx()) |a| {
+            if (rhs.toPx()) |b| {
+                return .{ .px = a + b };
+            }
+        }
+        return null;
+    }
 };
 
 /// A CSS [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) value, with support for `calc()`.

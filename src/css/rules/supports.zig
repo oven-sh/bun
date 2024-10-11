@@ -256,7 +256,14 @@ pub const SupportsCondition = union(enum) {
                     if (res.isOk()) return res;
                 }
             },
-            .open_curly => {},
+            .open_paren => {
+                const res = input.tryParse(struct {
+                    pub fn parseFn(i: *css.Parser) Result(SupportsCondition) {
+                        return i.parseNestedBlock(SupportsCondition, {}, css.voidWrap(SupportsCondition, parse));
+                    }
+                }.parseFn, .{});
+                if (res.isOk()) return res;
+            },
             else => return .{ .err = location.newUnexpectedTokenError(tok.*) },
         }
 

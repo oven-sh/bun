@@ -5275,14 +5275,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return if (value.isEmpty()) null else value;
     }
 
-    extern fn JSC__JSValue__getIfPropertyExistsImplString(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
-
-    pub fn getWithString(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
-        var property_name_str = bun.String.init(property_name);
-        const value = JSC__JSValue__getIfPropertyExistsImplString(this, global, &property_name_str);
-        return if (@intFromEnum(value) != 0) value else return null;
-    }
-
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
 
     /// Get *own* property value (i.e. does not resolve property in the prototype chain)

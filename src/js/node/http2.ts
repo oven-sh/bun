@@ -1738,7 +1738,7 @@ class Http2Stream extends Duplex {
     assertSession(session);
     markStreamClosed(this);
 
-    session[bunHTTP2Native]?.rstStream(this.#id, this.this.rstCode);
+    session[bunHTTP2Native]?.rstStream(this.#id, this.rstCode);
     this[bunHTTP2Session] = null;
   }
 

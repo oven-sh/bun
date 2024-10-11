@@ -3031,6 +3031,19 @@ pub const ParseTask = struct {
 
     threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
 
+    fn getEmptyCSSAST(
+        log: *Logger.Log,
+        bundler: *Bundler,
+        opts: js_parser.Parser.Options,
+        allocator: std.mem.Allocator,
+        source: Logger.Source,
+    ) !JSAst {
+        const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
+        return ast;
+    }
+
     fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
         const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
         return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
@@ -3412,7 +3425,13 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| try getEmptyAST(
+            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
+                log,
+                bundler,
+                opts,
+                allocator,
+                source,
+            ) else try getEmptyAST(
                 log,
                 bundler,
                 opts,

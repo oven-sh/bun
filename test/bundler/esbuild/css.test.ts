@@ -27,6 +27,17 @@ body {
     },
   });
 
+  itBundled("css/CSSEntryPointEmpty", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `\n`,
+    },
+    outfile: '/out.js',
+    onAfterBundle(api) {
+      api.expectFile('/out.js').toEqualIgnoringWhitespace(`
+/* a.css */`)
+    },
+  });
 
   itBundled("css/CSSAtImportMissing", {
     experimentalCss: true,

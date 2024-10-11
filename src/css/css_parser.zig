@@ -2601,6 +2601,16 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
         const This = @This();
 
+        pub fn empty(allocator: Allocator) This {
+            return This{
+                .rules = .{},
+                .sources = .{},
+                .source_map_urls = .{},
+                .license_comments = .{},
+                .options = ParserOptions.default(allocator, null),
+            };
+        }
+
         /// Minify and transform the style sheet for the provided browser targets.
         pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) Maybe(void, Err(MinifyErrorKind)) {
             const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);

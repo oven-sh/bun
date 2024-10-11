@@ -34,128 +34,6 @@ const DotEnv = bun.DotEnv;
 const Open = @import("../open.zig");
 
 pub const PublishCommand = struct {
-    pub const Bins = union(enum) {
-        str: []const u8,
-        dir: []const u8,
-        obj: List,
-
-        pub const List = std.ArrayListUnmanaged(struct { []const u8, []const u8 });
-
-        const NormalizeFromJSONError = OOM || error{};
-
-        pub fn normalizeFromJSON(allocator: std.mem.Allocator, root: Expr) NormalizeFromJSONError!?@This() {
-            var normalize_buf: bun.PathBuffer = undefined;
-            if (root.get("bin")) |bin| {
-                switch (bin.data) {
-                    .e_string => |bin_str| {
-                        return .{
-                            .str = try allocator.dupe(
-                                u8,
-                                strings.withoutPrefixComptime(
-                                    path.normalizeBuf(
-                                        try bin_str.string(allocator),
-                                        &normalize_buf,
-                                        .posix,
-                                    ),
-                                    "./",
-                                ),
-                            ),
-                        };
-                    },
-                    .e_object => |bin_obj| {
-                        var bins = try List.initCapacity(allocator, bin_obj.properties.len);
-
-                        for (bin_obj.properties.slice()) |prop| {
-                            const key = key: {
-                                if (prop.key) |key| {
-                                    if (key.isString() and key.data.e_string.len() != 0) {
-                                        break :key try allocator.dupe(
-                                            u8,
-                                            strings.withoutPrefixComptime(
-                                                // replace separators
-                                                path.normalizeBuf(
-                                                    try key.data.e_string.string(allocator),
-                                                    &normalize_buf,
-                                                    .posix,
-                                                ),
-                                                "./",
-                                            ),
-                                        );
-                                    }
-                                }
-
-                                // TODO(dylan-conway): error or warn? npm warns
-                                continue;
-                            };
-                            if (key.len == 0) {
-                                // TODO(dylan-conway): error or warn? npm warns
-                                continue;
-                            }
-
-                            const value = value: {
-                                if (prop.value) |value| {
-                                    if (value.isString() and value.data.e_string.len() != 0) {
-                                        break :value try allocator.dupe(
-                                            u8,
-                                            strings.withoutPrefixComptime(
-                                                // replace separators
-                                                path.normalizeBuf(
-                                                    try value.data.e_string.string(allocator),
-                                                    &normalize_buf,
-                                                    .posix,
-                                                ),
-                                                "./",
-                                            ),
-                                        );
-                                    }
-                                }
-
-                                // TODO(dylan-conway): error or warn? npm warns
-                                continue;
-                            };
-                            if (value.len == 0) {
-                                // TODO(dylan-conway): error or warn? npm warns
-                                continue;
-                            }
-
-                            try bins.append(allocator, .{ key, value });
-                        }
-
-                        return .{ .obj = bins };
-                    },
-                    else => {
-                        // TODO(dylan-conway): error or warn? npm warns
-                        return null;
-                    },
-                }
-            }
-
-            if (root.get("directories")) |dirs| {
-                if (dirs.get("bin")) |bin| {
-                    const bin_dir = bin.asString(allocator) orelse {
-                        // TODO(dylan-conway): error or warn? npm warns
-                        return null;
-                    };
-                    return .{
-                        .dir = try allocator.dupe(
-                            u8,
-                            strings.withoutPrefixComptime(
-                                path.normalizeBuf(
-                                    bin_dir,
-                                    &normalize_buf,
-                                    .posix,
-                                ),
-                                "./",
-                            ),
-                        ),
-                    };
-                }
-            }
-
-            return null;
-        }
-    };
-
     pub fn Context(comptime directory_publish: bool) type {
         return struct {
             manager: *PackageManager,
@@ -169,7 +47,8 @@ pub const PublishCommand = struct {
             shasum: sha.SHA1.Digest,
             integrity: sha.SHA512.Digest,
             uses_workspaces: bool,
-            bins: ?Bins,
+
+            normalized_pkg_info: string,
 
             publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
             postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null else {},
@@ -286,9 +165,7 @@ pub const PublishCommand = struct {
 
                 const package_json_contents = maybe_package_json_contents orelse return error.MissingPackageJSON;
 
-                const package_name, const package_version, const bins = package_info: {
-                    defer ctx.allocator.free(package_json_contents);
-
+                const package_name, const package_version, const json = package_info: {
                     const source = logger.Source.initPathString("package.json", package_json_contents);
                     const json = JSON.parsePackageJSONUTF8(&source, manager.log, ctx.allocator) catch |err| {
                         return switch (err) {
@@ -336,17 +213,7 @@ pub const PublishCommand = struct {
                     const version = try json.getStringCloned(ctx.allocator, "version") orelse return error.MissingPackageVersion;
                     if (version.len == 0) return error.InvalidPackageVersion;
 
-                    if (json.get("bin")) |bin| {
-                        break :package_info .{
-                            name, version, Bins.normalizeFromJSON(ctx.allocator, bin) catch |err| {
-                                switch (err) {
-                                    error.OutOfMemory => |oom| return oom,
-                                }
-                            },
-                        };
-                    }
-
-                    break :package_info .{ name, version, null };
+                    break :package_info .{ name, version, json };
                 };
 
                 var shasum: sha.SHA1.Digest = undefined;
@@ -362,6 +229,17 @@ pub const PublishCommand = struct {
 
                 sha512.update(tarball_bytes);
                 sha512.final(&integrity);
+
+                const normalized_pkg_info = try normalizedPackage(
+                    ctx.allocator,
+                    manager,
+                    package_name,
+                    package_version,
+                    json,
+                    shasum,
+                    integrity,
+                    abs_tarball_path,
+                );
 
                 Pack.Context.printSummary(
                     .{
@@ -386,7 +264,7 @@ pub const PublishCommand = struct {
                     .uses_workspaces = false,
                     .command_ctx = ctx,
                     .script_env = {},
-                    .bins = bins,
+                    .normalized_pkg_info = normalized_pkg_info,
                 };
             }
 
@@ -642,7 +520,7 @@ pub const PublishCommand = struct {
         // dry-run stops here
         if (ctx.manager.options.dry_run) return;
 
-        const publish_req_body = try constructPublishRequestBody(directory_publish, ctx, registry);
+        const publish_req_body = try constructPublishRequestBody(directory_publish, ctx);
 
         var print_buf: std.ArrayListUnmanaged(u8) = .{};
         defer print_buf.deinit(ctx.allocator);
@@ -993,6 +871,270 @@ pub const PublishCommand = struct {
         };
     }
 
+    pub fn normalizedPackage(
+        allocator: std.mem.Allocator,
+        manager: *PackageManager,
+        package_name: string,
+        package_version: string,
+        package_json: Expr,
+        shasum: sha.SHA1.Digest,
+        integrity: sha.SHA512.Digest,
+        abs_tarball_path: stringZ,
+    ) OOM!string {
+        const registry = manager.scopeForPackageName(package_name);
+
+        var buf: std.ArrayListUnmanaged(u8) = .{};
+        var writer = buf.writer(allocator);
+
+        const version_without_build_tag = Dependency.withoutBuildTag(package_version);
+
+        try writer.print("\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\"", .{
+            version_without_build_tag,
+            package_name,
+            version_without_build_tag,
+        });
+
+        try writer.print(",\"_id\":\"{s}@{s}\"", .{
+            package_name,
+            version_without_build_tag,
+        });
+
+        try writer.print(",\"_integrity\":\"{}\"", .{
+            bun.fmt.integrity(integrity, .full),
+        });
+
+        // creates "bin" or "directories.bin"
+        {
+            const workspace_root = bun.sys.openA(
+                strings.withoutSuffixComptime(manager.original_package_json_path, "package.json"),
+                bun.O.DIRECTORY,
+                0,
+            ).unwrap() catch |err| {
+                Output.err(err, "failed to open workspace directory", .{});
+                Global.crash();
+            };
+            defer _ = bun.sys.close(workspace_root);
+            try normalizedBin(allocator, &buf, package_name, package_json, workspace_root);
+        }
+
+        try writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{
+            Environment.reported_nodejs_version,
+            // TODO: npm version,
+            "10.8.3",
+        });
+
+        try writer.print(",\"dist\":{{\"integrity\":\"{}\",\"shasum\":\"{s}\"", .{
+            bun.fmt.integrity(integrity, .full),
+            bun.fmt.bytesToHex(shasum, .lower),
+        });
+
+        try writer.print(",\"tarball\":\"http://{s}/{s}/-/{s}\"}}}}", .{
+            strings.withoutTrailingSlash(registry.url.href),
+            package_name,
+            std.fs.path.basename(abs_tarball_path),
+        });
+
+        return buf.items;
+    }
+
+    fn normalizedBin(
+        allocator: std.mem.Allocator,
+        buf: *std.ArrayListUnmanaged(u8),
+        package_name: string,
+        package_json: Expr,
+        workspace_root: bun.FileDescriptor,
+    ) OOM!void {
+        var writer = buf.writer(allocator);
+        var path_buf: bun.PathBuffer = undefined;
+        if (package_json.get("bin")) |bin| {
+            switch (bin.data) {
+                .e_string => |bin_str| {
+                    const normalized = strings.withoutPrefixComptimeZ(
+                        path.normalizeBufZ(
+                            try bin_str.string(allocator),
+                            &path_buf,
+                            .posix,
+                        ),
+                        "./",
+                    );
+                    if (!bun.sys.existsAt(workspace_root, normalized)) {
+                        Output.warn("bin '{s}' does not exist", .{normalized});
+                    }
+                    try writer.print(",\"bin\":{{\"{s}\":{}}}", .{
+                        package_name,
+                        bun.fmt.formatJSONStringUTF8(normalized),
+                    });
+                },
+                .e_object => |bin_obj| {
+                    var first = true;
+                    for (bin_obj.properties.slice()) |bin_prop| {
+                        const key = key: {
+                            if (bin_prop.key) |key| {
+                                if (key.isString() and key.data.e_string.len() != 0) {
+                                    break :key try allocator.dupeZ(
+                                        u8,
+                                        strings.withoutPrefixComptime(
+                                            path.normalizeBuf(
+                                                try key.data.e_string.string(allocator),
+                                                &path_buf,
+                                                .posix,
+                                            ),
+                                            "./",
+                                        ),
+                                    );
+                                }
+                            }
+
+                            continue;
+                        };
+
+                        if (key.len == 0) {
+                            continue;
+                        }
+
+                        const value = value: {
+                            if (bin_prop.value) |value| {
+                                if (value.isString() and value.data.e_string.len() != 0) {
+                                    break :value strings.withoutPrefixComptimeZ(
+                                        // replace separators
+                                        path.normalizeBufZ(
+                                            try value.data.e_string.string(allocator),
+                                            &path_buf,
+                                            .posix,
+                                        ),
+                                        "./",
+                                    );
+                                }
+                            }
+
+                            continue;
+                        };
+                        if (value.len == 0) {
+                            continue;
+                        }
+
+                        if (!bun.sys.existsAt(workspace_root, value)) {
+                            Output.warn("bin '{s}' does not exist", .{value});
+                        }
+
+                        if (first) {
+                            first = false;
+                            try writer.print(",\"bin\":{{\"{s}\":{}", .{
+                                key,
+                                bun.fmt.formatJSONStringUTF8(value),
+                            });
+                        } else {
+                            try writer.print(",\"{s}\":{}", .{
+                                key,
+                                bun.fmt.formatJSONStringUTF8(value),
+                            });
+                        }
+                    }
+
+                    if (!first) {
+                        try writer.writeAll("}");
+                    }
+                },
+                else => {},
+            }
+        } else if (package_json.get("directories")) |directories| {
+            if (directories.get("bin")) |bin| {
+                const bin_dir_str = bin.asString(allocator) orelse {
+                    return;
+                };
+                const normalized_bin_dir = try allocator.dupeZ(
+                    u8,
+                    strings.withoutTrailingSlash(
+                        strings.withoutPrefixComptime(
+                            path.normalizeBuf(
+                                bin_dir_str,
+                                &path_buf,
+                                .posix,
+                            ),
+                            "./",
+                        ),
+                    ),
+                );
+
+                if (normalized_bin_dir.len == 0) {
+                    return;
+                }
+
+                try writer.print(",\"directories\":{{\"bin\":{}}}", .{
+                    bun.fmt.formatJSONStringUTF8(normalized_bin_dir),
+                });
+
+                const bin_dir = bun.sys.openat(workspace_root, normalized_bin_dir, bun.O.DIRECTORY, 0).unwrap() catch |err| {
+                    if (err == error.ENOENT) {
+                        Output.warn("bin directory '{s}' does not exist", .{normalized_bin_dir});
+                        return;
+                    } else {
+                        Output.err(err, "failed to open bin directory: '{s}'", .{normalized_bin_dir});
+                        Global.crash();
+                    }
+                };
+
+                var dirs: std.ArrayListUnmanaged(struct { std.fs.Dir, string }) = .{};
+                defer dirs.deinit(allocator);
+
+                try dirs.append(allocator, .{ bin_dir.asDir(), normalized_bin_dir });
+
+                var first = true;
+
+                while (dirs.popOrNull()) |dir_info| {
+                    var dir, const dir_subpath = dir_info;
+                    defer dir.close();
+
+                    var iter = bun.DirIterator.iterate(dir, .u8);
+                    while (iter.next().unwrap() catch null) |entry| {
+                        const name, const subpath = name_and_subpath: {
+                            const name = entry.name.slice();
+                            const join = std.fmt.bufPrintZ(&path_buf, "{s}{s}{s}", .{
+                                dir_subpath,
+                                // only using posix separators
+                                if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,
+                                strings.withoutTrailingSlash(name),
+                            }) catch unreachable;
+
+                            break :name_and_subpath .{ join[join.len - name.len ..][0..name.len :0], join };
+                        };
+
+                        if (name.len == 0 or (name.len == 1 and name[0] == '.') or (name.len == 2 and name[0] == '.' and name[1] == '.')) {
+                            continue;
+                        }
+
+                        if (first) {
+                            first = false;
+                            try writer.print(",\"bin\":{{{}:{}", .{
+                                bun.fmt.formatJSONStringUTF8(std.fs.path.basenamePosix(subpath)),
+                                bun.fmt.formatJSONStringUTF8(subpath),
+                            });
+                        } else {
+                            try writer.print(",{}:{}", .{
+                                bun.fmt.formatJSONStringUTF8(std.fs.path.basenamePosix(subpath)),
+                                bun.fmt.formatJSONStringUTF8(subpath),
+                            });
+                        }
+
+                        if (entry.kind == .directory) {
+                            const subdir = dir.openDirZ(name, .{ .iterate = true }) catch {
+                                continue;
+                            };
+                            // only need to clone the directories
+                            try dirs.append(allocator, .{ subdir, try allocator.dupeZ(u8, subpath) });
+                        }
+                    }
+                }
+
+                if (!first) {
+                    try writer.writeAll("}");
+                }
+            }
+        }
+
+        // no bins
+    }
+
     fn constructPublishHeaders(
         allocator: std.mem.Allocator,
         print_buf: *std.ArrayListUnmanaged(u8),
@@ -1112,7 +1254,6 @@ pub const PublishCommand = struct {
     fn constructPublishRequestBody(
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
-        registry: *const Npm.Registry.Scope,
     ) OOM![]const u8 {
         const tag = if (ctx.manager.options.publish_config.tag.len > 0)
             ctx.manager.options.publish_config.tag
@@ -1143,76 +1284,8 @@ pub const PublishCommand = struct {
 
         // "versions"
         {
-            try writer.print(",\"versions\":{{\"{s}\":{{\"name\":\"{s}\",\"version\":\"{s}\"", .{
-                version_without_build_tag,
-                ctx.package_name,
-                version_without_build_tag,
-            });
-
-            try writer.print(",\"_id\": \"{s}@{s}\"", .{
-                ctx.package_name,
-                version_without_build_tag,
-            });
-
-            try writer.print(",\"_integrity\":\"{}\"", .{
-                bun.fmt.integrity(ctx.integrity, .full),
-            });
-
-            if (ctx.bins) |bins| {
-                switch (bins) {
-                    .obj => |obj| {
-                        try writer.print(",\"bin\":{{", .{});
-                        for (0..obj.items.len) |i| {
-                            const key, const value = obj.items[i];
-                            if (!bun.sys.exists(value)) {
-                                Output.warn("bin '{s}' does not exist", .{value});
-                            }
-                            try writer.print("\"{s}\":\"{s}\"{s}", .{
-                                key,
-                                value,
-                                if (i == obj.items.len - 1) "" else ",",
-                            });
-                        }
-                        try writer.print("}}", .{});
-                    },
-                    .str => |str| {
-                        try writer.print(",\"bin\":{{", .{});
-                        if (!bun.sys.exists(str)) {
-                            Output.warn("bin '{s}' does not exist", .{str});
-                        }
-                        try writer.print("\"{s}\":\"{s}\"", .{
-                            // becomes the package name
-                            ctx.package_name,
-                            str,
-                        });
-                        try writer.print("}}", .{});
-                    },
-                    .dir => |dir| {
-                        if (!bun.sys.exists(dir)) {
-                            Output.warn("bin directory '{s}' does not exist", .{dir});
-                        }
-                        try writer.print(",\"directories\":{{\"bin\":\"{s}\"}}", .{dir});
-                    },
-                }
-            }
-
-            try writer.print(",\"_nodeVersion\":\"{s}\",\"_npmVersion\":\"{s}\"", .{
-                Environment.reported_nodejs_version,
-                // TODO: npm version
-                "10.8.3",
-            });
-
-            try writer.print(",\"dist\":{{\"integrity\":\"{}\",\"shasum\":\"{s}\"", .{
-                bun.fmt.integrity(ctx.integrity, .full),
-                bun.fmt.bytesToHex(ctx.shasum, .lower),
-            });
-
-            // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/libnpmpublish/lib/publish.js#L118
-            // https:// -> http://
-            try writer.print(",\"tarball\":\"http://{s}/{s}/-/{s}\"}}}}}}", .{
-                strings.withoutTrailingSlash(registry.url.href),
-                ctx.package_name,
-                std.fs.path.basename(ctx.abs_tarball_path),
+            try writer.print(",\"versions\":{{{s}}}", .{
+                ctx.normalized_pkg_info,
             });
         }
 

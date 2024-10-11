@@ -957,7 +957,6 @@ describe("publish", async () => {
         ...info,
       };
 
-      console.log("publishJson", publishJson);
       await Promise.all([
         rm(join(import.meta.dir, "packages", "publish-pkg-bins"), { recursive: true, force: true }),
         write(
@@ -996,22 +995,23 @@ describe("publish", async () => {
       const results = await Promise.all([
         exists(join(packageDir, "node_modules", ".bin", "bin1")),
         exists(join(packageDir, "node_modules", ".bin", "bin2")),
-        exists(join(packageDir, "node_modules", ".bin", "bin3")),
-        exists(join(packageDir, "node_modules", ".bin", "moredir", "bin4")),
+        exists(join(packageDir, "node_modules", ".bin", "bin3.js")),
+        exists(join(packageDir, "node_modules", ".bin", "bin4.js")),
+        exists(join(packageDir, "node_modules", ".bin", "moredir", "bin4.js")),
         exists(join(packageDir, "node_modules", ".bin", "publish-pkg-bins")),
       ]);
 
       switch (info.user) {
         case "bin1": {
-          expect(results).toEqual([false, false, false, false, true]);
+          expect(results).toEqual([false, false, false, false, false, true]);
           break;
         }
         case "bin2": {
-          expect(results).toEqual([true, true, false, false, false]);
+          expect(results).toEqual([true, true, false, false, false, false]);
           break;
         }
         case "bin3": {
-          expect(results).toEqual([false, false, true, true, false]);
+          expect(results).toEqual([false, false, true, true, true, false]);
           break;
         }
       }

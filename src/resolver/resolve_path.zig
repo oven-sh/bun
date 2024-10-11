@@ -1147,6 +1147,12 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
     return normalizeBufT(u8, str, buf, _platform);
 }
 
+pub fn normalizeBufZ(str: []const u8, buf: []u8, comptime _platform: Platform) [:0]u8 {
+    const norm = normalizeBufT(u8, str, buf, _platform);
+    buf[norm.len] = 0;
+    return buf[0..norm.len :0];
+}
+
 pub fn normalizeBufT(comptime T: type, str: []const T, buf: []T, comptime _platform: Platform) []T {
     if (str.len == 0) {
         buf[0] = '.';

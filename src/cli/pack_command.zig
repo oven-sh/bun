@@ -1148,12 +1148,7 @@ pub const PackCommand = struct {
             }
         }
 
-        const bins: if (for_publish) ?Publish.Bins else void = if (comptime for_publish)
-            Publish.Bins.normalizeFromJSON(ctx.allocator, json.root) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => |oom| return oom,
-                }
-            };
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
         var this_bundler: bun.bundler.Bundler = undefined;
 
@@ -1408,7 +1403,7 @@ pub const PackCommand = struct {
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
                     .script_env = this_bundler.env,
-                    .bins = bins,
+                    .normalized_pkg_info = "",
                 };
             }
 
@@ -1508,7 +1503,7 @@ pub const PackCommand = struct {
 
         var entry = Archive.Entry.new2(archive);
 
-        const package_json = archive_with_progress: {
+        {
             var progress: if (log_level == .silent) void else Progress = if (comptime log_level == .silent) {} else .{};
             var node = if (comptime log_level == .silent) {} else node: {
                 progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
@@ -1518,7 +1513,7 @@ pub const PackCommand = struct {
             };
             defer if (comptime log_level != .silent) node.end();
 
-            entry, const edited_package_json = try editAndArchivePackageJSON(ctx, archive, entry, root_dir, json);
+            entry = try archivePackageJSON(ctx, archive, entry, root_dir, edited_package_json);
             if (comptime log_level != .silent) node.completeOne();
 
             while (pack_queue.removeOrNull()) |pathname| {
@@ -1583,9 +1578,7 @@ pub const PackCommand = struct {
                     bin_info,
                 );
             }
-
-            break :archive_with_progress edited_package_json;
-        };
+        }
 
         entry.free();
 
@@ -1663,12 +1656,24 @@ pub const PackCommand = struct {
             ctx.stats.packed_size = size;
         };
 
+        const normalized_pkg_info: if (for_publish) string else void = if (comptime for_publish)
+            try Publish.normalizedPackage(
+                ctx.allocator,
+                manager,
+                package_name,
+                package_version,
+                json.root,
+                shasum,
+                integrity,
+                abs_tarball_dest,
+            );
+
         printArchivedFilesAndPackages(
             ctx,
             root_dir,
             false,
             pack_list,
-            package_json.len,
+            edited_package_json.len,
         );
 
         if (comptime !for_publish) {
@@ -1723,7 +1728,7 @@ pub const PackCommand = struct {
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
                 .script_env = this_bundler.env,
-                .bins = bins,
+                .normalized_pkg_info = normalized_pkg_info,
             };
         }
     }
@@ -1794,15 +1799,13 @@ pub const PackCommand = struct {
         }
     };
 
-    fn editAndArchivePackageJSON(
+    fn archivePackageJSON(
         ctx: *Context,
         archive: *Archive,
         entry: *Archive.Entry,
         root_dir: std.fs.Dir,
-        json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
-    ) OOM!struct { *Archive.Entry, string } {
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
-
+        edited_package_json: string,
+    ) OOM!*Archive.Entry {
         const stat = bun.sys.fstatat(bun.toFD(root_dir), "package.json").unwrap() catch |err| {
             Output.err(err, "failed to stat package.json", .{});
             Global.crash();
@@ -1827,7 +1830,7 @@ pub const PackCommand = struct {
 
         ctx.stats.unpacked_size += @intCast(archive.writeData(edited_package_json));
 
-        return .{ entry.clear(), edited_package_json };
+        return entry.clear();
     }
 
     fn addArchiveEntry(

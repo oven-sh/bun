@@ -2072,7 +2072,7 @@ function formatArray(ctx, value, recurseTimes) {
 }
 
 function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
-  if (value instanceof Buffer) {
+  if (Buffer.isBuffer(value)) {
     BufferModule ??= require("node:buffer");
     const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
     ctx.maxArrayLength = MathMin(ctx.maxArrayLength, INSPECT_MAX_BYTES);

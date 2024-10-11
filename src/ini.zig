@@ -962,6 +962,32 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.asProperty("ca")) |query| {
+        if (query.expr.asUtf8StringLiteral()) |str| {
+            install.ca = .{
+                .str = str,
+            };
+        } else if (query.expr.isArray()) {
+            const arr = query.expr.data.e_array;
+            var list = try allocator.alloc([]const u8, arr.items.len);
+            var i: usize = 0;
+            for (arr.items.slice()) |item| {
+                list[i] = try item.asStringCloned(allocator) orelse continue;
+                i += 1;
+            }
+
+            install.ca = .{
+                .list = list,
+            };
+        }
+    }
+
+    if (out.asProperty("cafile")) |query| {
+        if (try query.expr.asStringCloned(allocator)) |cafile| {
+            install.cafile = cafile;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes

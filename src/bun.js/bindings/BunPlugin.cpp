@@ -50,11 +50,11 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     if (callframe->argumentCount() < 2) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() requires at least 2 arguments"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::RegExpObject* filter = nullptr;
     if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
@@ -63,28 +63,28 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     if (!filter) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() expects first argument to be an object with a filter RegExp"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     String namespaceString = String();
     if (JSValue namespaceValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "namespace"_s))) {
         if (namespaceValue.isString()) {
             namespaceString = namespaceValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            RETURN_IF_EXCEPTION(scope, {});
             if (!isValidNamespaceString(namespaceString)) {
                 throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
-                return JSValue::encode(jsUndefined());
+                return {};
             }
         }
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() expects second argument to be a function"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     plugin.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
@@ -100,7 +100,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     if (callframe->argumentCount() < 2) {
         throwException(globalObject, scope, createError(globalObject, "module() needs 2 arguments: a module ID and a function to call"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSValue moduleIdValue = callframe->uncheckedArgument(0);
@@ -108,30 +108,30 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     if (!moduleIdValue.isString()) {
         throwException(globalObject, scope, createError(globalObject, "module() expects first argument to be a string for the module ID"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (!functionValue.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "module() expects second argument to be a function"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     String moduleId = moduleIdValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (moduleId.isEmpty()) {
         throwException(globalObject, scope, createError(globalObject, "virtual module cannot be blank"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (Bun::isBuiltinModule(moduleId)) {
         throwException(globalObject, scope, createError(globalObject, makeString("module() cannot be used to override builtin module \""_s, moduleId, "\""_s)));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (moduleId.startsWith("."_s)) {
         throwException(globalObject, scope, createError(globalObject, "virtual module cannot start with \".\""_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
@@ -156,11 +156,11 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 
     if (callframe->argumentCount() < 2) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() requires at least 2 arguments"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::RegExpObject* filter = nullptr;
     if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
@@ -169,29 +169,29 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 
     if (!filter) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() expects first argument to be an object with a filter RegExp"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     String namespaceString = String();
     if (JSValue namespaceValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "namespace"_s))) {
         if (namespaceValue.isString()) {
             namespaceString = namespaceValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            RETURN_IF_EXCEPTION(scope, {});
             if (!isValidNamespaceString(namespaceString)) {
                 throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
-                return JSValue::encode(jsUndefined());
+                return {};
             }
         }
 
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() expects second argument to be a function"_s));
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     plugin.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
@@ -259,20 +259,22 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callframe->argumentCount() < 1) {
         JSC::throwTypeError(globalObject, throwScope, "plugin needs at least one argument (an object)"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSC::JSObject* obj = callframe->uncheckedArgument(0).getObject();
     if (!obj) {
         JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
+        return {};
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
     JSC::JSValue setupFunctionValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!setupFunctionValue || setupFunctionValue.isUndefinedOrNull() || !setupFunctionValue.isCell() || !setupFunctionValue.isCallable()) {
         JSC::throwTypeError(globalObject, throwScope, "plugin needs a setup() function"_s);
+        return {};
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (JSValue targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s))) {
         if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
@@ -323,7 +325,7 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     JSC::CallData callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), args);
 
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
@@ -566,7 +568,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue result = mock->executeOnce(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSValue());
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (result && result.isObject()) {
             while (JSC::JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result)) {

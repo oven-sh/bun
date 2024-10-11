@@ -186,8 +186,10 @@ pub fn getCwdWindowsU8(buf: []u8) MaybeBuf(u8) {
     }
 }
 
+const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
+
 pub fn getCwdWindowsU16(buf: []u16) MaybeBuf(u16) {
-    const len: u32 = windows.GetCurrentDirectoryW(buf.len, &buf);
+    const len: u32 = strings.convertUTF8toUTF16InBuffer(&buf, withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir));
     if (len == 0) {
         // Indirectly calls std.os.windows.kernel32.GetLastError().
         return MaybeBuf(u16).errnoSys(0, Syscall.Tag.getcwd).?;
@@ -195,28 +197,14 @@ pub fn getCwdWindowsU16(buf: []u16) MaybeBuf(u16) {
     return MaybeBuf(u16){ .result = buf[0..len] };
 }
 
-pub fn getCwdWindowsT(comptime T: type, buf: []T) MaybeBuf(T) {
-    comptime validatePathT(T, "getCwdWindowsT");
-    return if (T == u16)
-        getCwdWindowsU16(buf)
-    else
-        getCwdWindowsU8(buf);
-}
-
 pub fn getCwdU8(buf: []u8) MaybeBuf(u8) {
-    const cached_cwd = strings.withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir);
+    const cached_cwd = withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir);
     @memcpy(buf[0..cached_cwd.len], cached_cwd);
     return MaybeBuf(u8){ .result = buf[0..cached_cwd.len] };
 }
 
 pub fn getCwdU16(buf: []u16) MaybeBuf(u16) {
-    if (comptime Environment.isWindows) {
-        return getCwdWindowsU16(&buf);
-    }
-    const u8Buf: bun.PathBuffer = undefined;
-    const result = strings.convertUTF8toUTF16InBuffer(&buf, bun.getcwd(strings.convertUTF16ToUTF8InBuffer(&u8Buf, buf))) catch {
-        return MaybeBuf(u16).errnoSys(0, Syscall.Tag.getcwd).?;
-    };
+    const result = strings.convertUTF8toUTF16InBuffer(&buf, withoutTrailingSlash(bun.fs.FileSystem.instance.top_level_dir));
     return MaybeBuf(u16){ .result = result };
 }
 
@@ -1114,6 +1102,21 @@ pub inline fn joinPosixT(comptime T: type, paths: []const []const T, buf: []T, b
         return comptime L(T, CHAR_STR_DOT);
     }
     return normalizePosixT(T, joined, buf);
+}
+
+export fn Bun__Node__Path_joinWTF(lhs: *bun.String, rhs_ptr: [*]const u8, rhs_len: usize, result: *bun.String) void {
+    const rhs = rhs_ptr[0..rhs_len];
+    var buf: [PATH_SIZE(u8)]u8 = undefined;
+    var buf2: [PATH_SIZE(u8)]u8 = undefined;
+    var slice = lhs.toUTF8(bun.default_allocator);
+    defer slice.deinit();
+    if (Environment.isWindows) {
+        const win = joinWindowsT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
+        result.* = bun.String.createUTF8(win);
+    } else {
+        const posix = joinPosixT(u8, &.{ slice.slice(), rhs }, &buf, &buf2);
+        result.* = bun.String.createUTF8(posix);
+    }
 }
 
 /// Based on Node v21.6.1 path.win32.join:

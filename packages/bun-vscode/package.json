@@ -1,6 +1,6 @@
 {
   "name": "bun-vscode",
-  "version": "0.0.8",
+  "version": "0.0.15",
   "author": "oven",
   "repository": {
     "type": "git",
@@ -8,11 +8,13 @@
   },
   "main": "dist/extension.js",
   "devDependencies": {
+    "@types/bun": "^1.1.10",
     "@types/vscode": "^1.60.0",
     "@vscode/debugadapter": "^1.56.0",
     "@vscode/debugadapter-testsupport": "^1.56.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^2.20.1",
-    "bun-types": "^0.7.3",
     "esbuild": "^0.19.2",
     "typescript": "^5.0.0"
   },
@@ -43,6 +45,7 @@
     "build": "node scripts/build.mjs",
     "pretest": "bun run build",
     "test": "node scripts/test.mjs",
+    "dev": "vscode-test --config scripts/dev.mjs",
     "prepublish": "npm version patch && bun run build",
     "publish": "cd extension && bunx vsce publish"
   },

@@ -21,10 +21,10 @@ fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSV
     const min = arguments[0].to(i64);
     const max = arguments[1].to(i64);
 
-    if (min > validators.NUMBER__MAX_SAFE_INTEGER or min < validators.NUMBER__MIN_SAFE_INTEGER) {
+    if (min > JSC.MAX_SAFE_INTEGER or min < JSC.MIN_SAFE_INTEGER) {
         return globalThis.throwInvalidArgumentRangeValue("min", "It must be a safe integer type number", min);
     }
-    if (max > validators.NUMBER__MAX_SAFE_INTEGER) {
+    if (max > JSC.MAX_SAFE_INTEGER) {
         return globalThis.throwInvalidArgumentRangeValue("max", "It must be a safe integer type number", max);
     }
     if (min >= max) {

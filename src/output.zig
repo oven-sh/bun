@@ -103,26 +103,32 @@ pub const Source = struct {
         return no_color.len != 0;
     }
 
-    pub fn isForceColor() bool {
-        const force_color = bun.getenvZ("FORCE_COLOR") orelse return false;
+    pub fn getForceColorDepth() ?ColorDepth {
+        const force_color = bun.getenvZ("FORCE_COLOR") orelse return null;
         // Supported by Node.js, if set will ignore NO_COLOR.
+        // - "0" to indicate no color support
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
-        return force_color.len == 0 or
-            strings.eqlComptime(force_color, "1") or
-            strings.eqlComptime(force_color, "true") or
-            strings.eqlComptime(force_color, "2") or
-            strings.eqlComptime(force_color, "3");
+        if (strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "")) {
+            return ColorDepth.@"16";
+        }
+
+        if (strings.eqlComptime(force_color, "2")) {
+            return ColorDepth.@"256";
+        }
+        if (strings.eqlComptime(force_color, "3")) {
+            return ColorDepth.@"16m";
+        }
+
+        return ColorDepth.none;
+    }
+
+    pub fn isForceColor() bool {
+        return (getForceColorDepth() orelse ColorDepth.none) != .none;
     }
 
     pub fn isColorTerminal() bool {
-        if (bun.getenvZ("COLORTERM")) |color_term| {
-            return !strings.eqlComptime(color_term, "0");
-        }
-        if (bun.getenvZ("TERM")) |term| {
-            return !strings.eqlComptime(term, "dumb");
-        }
         if (Environment.isWindows) {
             // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
             // Windows 10 build 10586 is the first Windows release that supports 256 colors.
@@ -130,7 +136,8 @@ pub const Source = struct {
             // Every other version supports 16 colors.
             return true;
         }
-        return false;
+
+        return colorDepth() != .none;
     }
 
     export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
@@ -262,6 +269,131 @@ pub const Source = struct {
         }
     };
 
+    pub const ColorDepth = enum {
+        none,
+        @"16",
+        @"256",
+        @"16m",
+    };
+    var lazy_color_depth: ColorDepth = .none;
+    var color_depth_once = std.once(getColorDepthOnce);
+    fn getColorDepthOnce() void {
+        if (getForceColorDepth()) |depth| {
+            lazy_color_depth = depth;
+            return;
+        }
+
+        if (isNoColor()) {
+            return;
+        }
+
+        const term = bun.getenvZ("TERM") orelse "";
+        if (strings.eqlComptime(term, "dumb")) {
+            return;
+        }
+
+        if (bun.getenvZ("TMUX") != null) {
+            lazy_color_depth = .@"256";
+            return;
+        }
+
+        if (bun.getenvZ("CI")) |ci| {
+            inline for (.{ "APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS" }) |ci_env| {
+                if (strings.eqlComptime(ci, ci_env)) {
+                    lazy_color_depth = .@"256";
+                    return;
+                }
+            }
+
+            lazy_color_depth = .@"16";
+            return;
+        }
+
+        if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
+            if (strings.eqlComptime(term_program, "iTerm.app")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+
+            if (strings.eqlComptime(term_program, "WezTerm")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+
+            if (strings.eqlComptime(term_program, "ghostty")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+        }
+
+        var has_color_term_set = false;
+
+        if (bun.getenvZ("COLORTERM")) |color_term| {
+            if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
+                lazy_color_depth = .@"16m";
+                return;
+            }
+            has_color_term_set = true;
+        }
+
+        if (term.len > 0) {
+            if (strings.hasPrefixComptime(term, "xterm-256")) {
+                lazy_color_depth = .@"256";
+                return;
+            }
+            const pairs = .{
+                .{ "st", ColorDepth.@"16" },
+                .{ "hurd", ColorDepth.@"16" },
+                .{ "eterm", ColorDepth.@"16" },
+                .{ "gnome", ColorDepth.@"16" },
+                .{ "kterm", ColorDepth.@"16" },
+                .{ "mosh", ColorDepth.@"16m" },
+                .{ "putty", ColorDepth.@"16" },
+                .{ "cons25", ColorDepth.@"16" },
+                .{ "cygwin", ColorDepth.@"16" },
+                .{ "dtterm", ColorDepth.@"16" },
+                .{ "mlterm", ColorDepth.@"16" },
+                .{ "console", ColorDepth.@"16" },
+                .{ "jfbterm", ColorDepth.@"16" },
+                .{ "konsole", ColorDepth.@"16" },
+                .{ "terminator", ColorDepth.@"16m" },
+                .{ "xterm-ghostty", ColorDepth.@"16m" },
+                .{ "rxvt-unicode-24bit", ColorDepth.@"16m" },
+            };
+
+            inline for (pairs) |pair| {
+                if (strings.eqlComptime(term, pair[0])) {
+                    lazy_color_depth = pair[1];
+                    return;
+                }
+            }
+
+            if (strings.includes(term, "con") or
+                strings.includes(term, "ansi") or
+                strings.includes(term, "rxvt") or
+                strings.includes(term, "color") or
+                strings.includes(term, "linux") or
+                strings.includes(term, "vt100") or
+                strings.includes(term, "xterm") or
+                strings.includes(term, "screen"))
+            {
+                lazy_color_depth = .@"16";
+                return;
+            }
+        }
+
+        if (has_color_term_set) {
+            lazy_color_depth = .@"16";
+            return;
+        }
+
+        lazy_color_depth = .none;
+    }
+    pub fn colorDepth() ColorDepth {
+        color_depth_once.call();
+        return lazy_color_depth;
+    }
+
     pub fn set(new_source: *const Source) void {
         source = new_source.*;
 
@@ -269,13 +401,6 @@ pub const Source = struct {
         if (!stdout_stream_set) {
             stdout_stream_set = true;
             if (comptime Environment.isNative) {
-                var enable_color: ?bool = null;
-                if (isForceColor()) {
-                    enable_color = true;
-                } else if (isNoColor() or !isColorTerminal()) {
-                    enable_color = false;
-                }
-
                 const is_stdout_tty = bun_stdio_tty[1] != 0;
                 if (is_stdout_tty) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
@@ -284,6 +409,15 @@ pub const Source = struct {
                 const is_stderr_tty = bun_stdio_tty[2] != 0;
                 if (is_stderr_tty) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
+                }
+
+                var enable_color: ?bool = null;
+                if (isForceColor()) {
+                    enable_color = true;
+                } else if (isNoColor()) {
+                    enable_color = false;
+                } else if (isColorTerminal() and (is_stdout_tty or is_stderr_tty)) {
+                    enable_color = true;
                 }
 
                 enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
@@ -569,7 +703,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),
@@ -578,10 +712,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 
     if (comptime !Environment.isDebug and !Environment.enable_logs) {
         return struct {
-            pub fn isVisible() bool {
+            pub inline fn isVisible() bool {
                 return false;
             }
-            pub fn log(comptime _: string, _: anytype) void {}
+            pub inline fn log(comptime _: string, _: anytype) void {}
         };
     }
 
@@ -870,12 +1004,12 @@ pub const DebugTimer = struct {
     }
 };
 
-/// Print a blue note message
+/// Print a blue note message to stderr
 pub inline fn note(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<blue>note<r><d>:<r> " ++ fmt, args);
 }
 
-/// Print a yellow warning message
+/// Print a yellow warning message to stderr
 pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }

@@ -33,7 +33,9 @@ class NapiHandleScopeImpl;
 } // namespace Bun
 
 namespace v8 {
+namespace shim {
 class GlobalInternals;
+} // namespace shim
 } // namespace v8
 
 #include "root.h"
@@ -289,7 +291,7 @@ public:
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
-    v8::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
+    v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -393,9 +395,8 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
-    // This is set when doing `require('module')._resolveFilename = ...`
-    // a hack used by Next.js to inject their versions of webpack and react
-    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+    LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
+    LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
 
@@ -576,13 +577,15 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
 
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
-    LazyProperty<JSGlobalObject, v8::GlobalInternals> m_V8GlobalInternals;
+    LazyProperty<JSGlobalObject, v8::shim::GlobalInternals> m_V8GlobalInternals;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+
+    bool hasOverridenModuleResolveFilenameFunction = false;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

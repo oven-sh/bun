@@ -2275,7 +2275,7 @@ pub const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                            if (val.get(ctx.ptr(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
                         }
@@ -2327,7 +2327,7 @@ pub const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                            if (val.get(ctx.ptr(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
                         }
@@ -2498,7 +2498,7 @@ pub const Arguments = struct {
                         recursive = boolean;
                     }
 
-                    if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (val.get(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                         if (exception.* != null) return null;
                     }
@@ -2559,7 +2559,7 @@ pub const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                            if (val.get(ctx.ptr(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
                         }
@@ -2630,7 +2630,7 @@ pub const Arguments = struct {
                     },
                     else => {
                         if (val.isObject()) {
-                            if (val.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                            if (val.get(ctx.ptr(), "encoding")) |encoding_| {
                                 encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
 
@@ -2941,7 +2941,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2953,16 +2954,15 @@ pub const Arguments = struct {
                 return null;
             }) orelse {
                 if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "data must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
+                    _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
                 }
                 return null;
             };
             if (exception.* != null) return null;
+            if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
+                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
+                return null;
+            }
 
             var args = Write{
                 .fd = fd,
@@ -3065,7 +3065,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = Buffer.fromJS(ctx.ptr(), arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer: Buffer = Buffer.fromJS(ctx.ptr(), buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "buffer is required",
@@ -3096,6 +3097,7 @@ pub const Arguments = struct {
                 .buffer = buffer,
             };
 
+            var defined_length = false;
             if (arguments.next()) |current| {
                 arguments.eat();
                 if (current.isNumber() or current.isBigInt()) {
@@ -3108,13 +3110,10 @@ pub const Arguments = struct {
 
                     const arg_length = arguments.next().?;
                     arguments.eat();
+                    defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = arg_length.to(u52);
-                    }
-                    if (args.length == 0) {
-                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
-                        return null;
                     }
 
                     if (arguments.next()) |arg_position| {
@@ -3134,6 +3133,7 @@ pub const Arguments = struct {
                         if (num.isNumber() or num.isBigInt()) {
                             args.length = num.to(u52);
                         }
+                        defined_length = true;
                     }
 
                     if (current.getTruthy(ctx.ptr(), "position")) |num| {
@@ -3142,6 +3142,12 @@ pub const Arguments = struct {
                         }
                     }
                 }
+            }
+
+            if (defined_length and args.length > 0 and buffer.slice().len == 0) {
+                var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
+                return null;
             }
 
             return args;
@@ -3208,7 +3214,7 @@ pub const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                    if (arg.get(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse {
                                 if (exception.* == null) {
@@ -3447,7 +3453,7 @@ pub const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
+                    if (arg.get(ctx.ptr(), "encoding")) |encoding_| {
                         if (!encoding_.isUndefinedOrNull()) {
                             encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse {
                                 if (exception.* == null) {
@@ -3463,7 +3469,7 @@ pub const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "bufferSize")) |buffer_size_| {
+                    if (arg.get(ctx.ptr(), "bufferSize")) |buffer_size_| {
                         buffer_size = buffer_size_.toInt32();
                         if (buffer_size < 0) {
                             if (exception.* == null) {
@@ -3622,7 +3628,7 @@ pub const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (arg.get(ctx.ptr(), "mode")) |mode_| {
                         stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             if (exception.* != null) {
                                 JSC.throwInvalidArguments(
@@ -3636,7 +3642,7 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding| {
+                    if (arg.get(ctx.ptr(), "encoding")) |encoding| {
                         stream.encoding = Encoding.fromJS(encoding, ctx.ptr()) orelse {
                             if (exception.* != null) {
                                 JSC.throwInvalidArguments(
@@ -3664,7 +3670,7 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "fd")) |flags| {
+                    if (arg.get(ctx.ptr(), "fd")) |flags| {
                         fd = JSC.Node.fileDescriptorFromJS(ctx, flags, exception) orelse {
                             if (exception.* != null) {
                                 JSC.throwInvalidArguments(
@@ -3678,23 +3684,23 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "autoClose")) |autoClose| {
+                    if (arg.get(ctx.ptr(), "autoClose")) |autoClose| {
                         stream.autoClose = autoClose.toBoolean();
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "emitClose")) |emitClose| {
+                    if (arg.get(ctx.ptr(), "emitClose")) |emitClose| {
                         stream.emitClose = emitClose.toBoolean();
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
+                    if (arg.get(ctx.ptr(), "start")) |start| {
                         stream.start = start.coerce(i32, ctx);
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "end")) |end| {
+                    if (arg.get(ctx.ptr(), "end")) |end| {
                         stream.end = end.coerce(i32, ctx);
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "highWaterMark")) |highwaterMark| {
+                    if (arg.get(ctx.ptr(), "highWaterMark")) |highwaterMark| {
                         stream.highwater_mark = highwaterMark.toU32();
                     }
                 }
@@ -3760,7 +3766,7 @@ pub const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (arg.get(ctx.ptr(), "mode")) |mode_| {
                         stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             if (exception.* != null) {
                                 JSC.throwInvalidArguments(
@@ -3774,7 +3780,7 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding| {
+                    if (arg.get(ctx.ptr(), "encoding")) |encoding| {
                         stream.encoding = Encoding.fromJS(encoding, ctx.ptr()) orelse {
                             if (exception.* != null) {
                                 JSC.throwInvalidArguments(
@@ -3802,7 +3808,7 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "fd")) |flags| {
+                    if (arg.get(ctx.ptr(), "fd")) |flags| {
                         fd = JSC.Node.fileDescriptorFromJS(ctx, flags, exception) orelse {
                             if (exception.* != null) {
                                 JSC.throwInvalidArguments(
@@ -3816,15 +3822,15 @@ pub const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "autoClose")) |autoClose| {
+                    if (arg.get(ctx.ptr(), "autoClose")) |autoClose| {
                         stream.autoClose = autoClose.toBoolean();
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "emitClose")) |emitClose| {
+                    if (arg.get(ctx.ptr(), "emitClose")) |emitClose| {
                         stream.emitClose = emitClose.toBoolean();
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
+                    if (arg.get(ctx.ptr(), "start")) |start| {
                         stream.start = start.toInt32();
                     }
                 }
@@ -5147,6 +5153,11 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        const len1 = args.buffer.slice().len;
+        const len2 = args.length;
+        if (len1 == 0 or len2 == 0) {
+            return Maybe(Return.Read).initResult(.{ .bytes_read = 0 });
+        }
         return if (args.position != null)
             this._pread(
                 args,

@@ -155,7 +155,6 @@ pub const PathPair = struct {
     }
 };
 
-// this is ripped from esbuild, comments included
 pub const SideEffects = enum {
     /// The default value conservatively considers all files to have side effects.
     has_side_effects,
@@ -621,7 +620,7 @@ pub const Resolver = struct {
             .fs = _fs,
             .log = log,
             .extension_order = opts.extension_order.default.default,
-            .care_about_browser_field = opts.target.isWebLike(),
+            .care_about_browser_field = opts.target == .browser,
         };
     }
 
@@ -652,144 +651,8 @@ pub const Resolver = struct {
             }
         }
     }
+
     var tracing_start: i128 = if (FeatureFlags.tracing) 0 else undefined;
-
-    pub const bunFrameworkPackagePrefix = "bun-framework-";
-    pub fn resolveFramework(
-        r: *ThisResolver,
-        package: string,
-        pair: *PackageJSON.FrameworkRouterPair,
-        comptime preference: PackageJSON.LoadFramework,
-        comptime load_defines: bool,
-    ) !void {
-        // We want to enable developers to integrate frameworks without waiting on official support.
-        // But, we still want the command to do the actual framework integration to be succinct
-        // This lets users type "--use next" instead of "--use bun-framework-next"
-        // If they're using a local file path, we skip this.
-        if (isPackagePath(package)) {
-            var prefixed_package_buf: [512]u8 = undefined;
-            // Prevent the extra lookup if the package is already prefixed, i.e. avoid "bun-framework-next-bun-framework-next"
-            if (strings.startsWith(package, bunFrameworkPackagePrefix) or package.len + bunFrameworkPackagePrefix.len >= prefixed_package_buf.len) {
-                return r._resolveFramework(package, pair, preference, load_defines) catch |err| {
-                    switch (err) {
-                        error.ModuleNotFound => {
-                            Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>bun add -d {s}<r>\n   <b>bun bun --use {s}<r>", .{ package, package, package });
-                            Global.exit(1);
-                        },
-                        else => {
-                            return err;
-                        },
-                    }
-                };
-            }
-
-            prefixed_package_buf[0..bunFrameworkPackagePrefix.len].* = bunFrameworkPackagePrefix.*;
-            bun.copy(u8, prefixed_package_buf[bunFrameworkPackagePrefix.len..], package);
-            const prefixed_name = prefixed_package_buf[0 .. bunFrameworkPackagePrefix.len + package.len];
-            return r._resolveFramework(prefixed_name, pair, preference, load_defines) catch |err| {
-                switch (err) {
-                    error.ModuleNotFound => {
-                        return r._resolveFramework(package, pair, preference, load_defines) catch |err2| {
-                            switch (err2) {
-                                error.ModuleNotFound => {
-                                    Output.prettyErrorln("<r><red>ResolveError<r> can't find framework: <b>\"{s}\"<r>.\n\nMaybe it's not installed? Try running this:\n\n   <b>bun add -d {s}\n   <b>bun bun --use {s}<r>", .{ package, prefixed_name, package });
-                                    Global.exit(1);
-                                },
-                                else => {
-                                    return err;
-                                },
-                            }
-                        };
-                    },
-                    else => {
-                        return err;
-                    },
-                }
-            };
-        }
-
-        return r._resolveFramework(package, pair, preference, load_defines) catch |err| {
-            switch (err) {
-                error.ModuleNotFound => {
-                    Output.prettyError("<r><red>ResolveError<r> can't find local framework: <b>\"{s}\"<r>.", .{package});
-                    Global.exit(1);
-                },
-                else => {
-                    return err;
-                },
-            }
-        };
-    }
-
-    fn _resolveFramework(
-        r: *ThisResolver,
-        package: string,
-        pair: *PackageJSON.FrameworkRouterPair,
-        comptime preference: PackageJSON.LoadFramework,
-        comptime load_defines: bool,
-    ) !void {
-
-        // TODO: make this only parse package.json once
-        var result = try r.resolve(r.fs.top_level_dir, package, .internal);
-        // support passing a package.json or path to a package
-        const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
-
-        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
-
-        pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
-        const dir = pkg.source.path.sourceDir();
-
-        var buf: bun.PathBuffer = undefined;
-
-        pair.framework.resolved_dir = pkg.source.path.sourceDir();
-
-        if (pair.framework.client.isEnabled()) {
-            var parts = [_]string{ dir, pair.framework.client.path };
-            const abs = r.fs.abs(&parts);
-            pair.framework.client.path = try r.allocator.dupe(u8, abs);
-            pair.framework.resolved = true;
-        }
-
-        if (pair.framework.server.isEnabled()) {
-            var parts = [_]string{ dir, pair.framework.server.path };
-            const abs = r.fs.abs(&parts);
-            pair.framework.server.path = try r.allocator.dupe(u8, abs);
-            pair.framework.resolved = true;
-        }
-
-        if (pair.framework.fallback.isEnabled()) {
-            var parts = [_]string{ dir, pair.framework.fallback.path };
-            const abs = r.fs.abs(&parts);
-            pair.framework.fallback.path = try r.allocator.dupe(u8, abs);
-            pair.framework.resolved = true;
-        }
-
-        if (pair.loaded_routes) {
-            const chosen_dir: string = brk: {
-                if (pair.router.possible_dirs.len > 0) {
-                    for (pair.router.possible_dirs) |route_dir| {
-                        var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, route_dir };
-                        const abs = r.fs.join(&parts);
-                        // must end in trailing slash
-                        break :brk (std.posix.realpath(abs, &buf) catch continue);
-                    }
-                    return error.MissingRouteDir;
-                } else {
-                    var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
-                    const abs = r.fs.join(&parts);
-                    // must end in trailing slash
-                    break :brk std.posix.realpath(abs, &buf) catch return error.MissingRouteDir;
-                }
-            };
-
-            var out = try r.allocator.alloc(u8, chosen_dir.len + 1);
-            bun.copy(u8, out, chosen_dir);
-            out[out.len - 1] = '/';
-            pair.router.dir = out;
-            pair.router.routes_enabled = true;
-        }
-    }
-
     pub fn resolveAndAutoInstall(
         r: *ThisResolver,
         source_dir: string,
@@ -894,7 +757,7 @@ pub const Resolver = struct {
                         .primary = Path.init(import_path),
                     },
                     .is_external = true,
-                    .module_type = .esm,
+                    .module_type = if (!kind.isFromCSS()) .esm else .unknown,
                 },
             };
         }
@@ -1046,6 +909,29 @@ pub const Resolver = struct {
 
             .failure => |e| return e,
         }
+    }
+
+    /// Runs a resolution but also checking if a Bun Bake framework has an
+    /// override. This is used in one place in the bundler.
+    pub fn resolveWithFramework(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        if (r.opts.framework) |f| {
+            if (f.built_in_modules.get(import_path)) |mod| {
+                switch (mod) {
+                    .code => {
+                        return .{
+                            .import_kind = kind,
+                            .path_pair = .{ .primary = Fs.Path.initWithNamespace(import_path, "node") },
+                            .is_external = false,
+                            .module_type = .esm,
+                            .primary_side_effects_data = .no_side_effects__pure_data,
+                        };
+                    },
+                    .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point),
+                }
+                return .{};
+            }
+        }
+        return r.resolve(source_dir, import_path, kind);
     }
 
     const ModuleTypeMap = bun.ComptimeStringMap(options.ModuleType, .{
@@ -1686,6 +1572,21 @@ pub const Resolver = struct {
         const second_bust = r.dir_cache.remove(path);
         dev("Bust {s} = {}, {}", .{ path, first_bust, second_bust });
         return first_bust or second_bust;
+    }
+
+    /// bust both the named file and a parent directory, because `./hello` can resolve
+    /// to `./hello.js` or `./hello/index.js`
+    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source: []const u8, specifier: []const u8) bool {
+        if (!(bun.strings.startsWith(specifier, "./") or
+            bun.strings.startsWith(specifier, "../"))) return false;
+        if (!std.fs.path.isAbsolute(import_source)) return false;
+
+        const joined = bun.path.joinAbs(import_source, .auto, specifier);
+        const dir = bun.path.dirname(joined, .auto);
+
+        const a = r.bustDirCache(dir);
+        const b = r.bustDirCache(joined);
+        return a or b;
     }
 
     pub fn loadNodeModules(
@@ -2750,7 +2651,7 @@ pub const Resolver = struct {
 
         // We want to walk in a straight line from the topmost directory to the desired directory
         // For each directory we visit, we get the entries, but not traverse into child directories
-        // (unless those child directores are in the queue)
+        // (unless those child directories are in the queue)
         // We go top-down instead of bottom-up to increase odds of reusing previously open file handles
         // "/home/jarred/Code/node_modules/react/cjs/react.development.js"
         //       ^

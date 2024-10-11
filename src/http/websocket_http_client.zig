@@ -517,7 +517,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            for (response.headers) |header| {
+            for (response.headers.list) |header| {
                 switch (header.name.len) {
                     "Connection".len => {
                         if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection", false)) {

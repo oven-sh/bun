@@ -6,6 +6,7 @@ const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors"
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
+const { validateFunction } = require("internal/validators");
 
 const {
   getHeader,
@@ -130,13 +131,6 @@ function validateMsecs(numberlike: any, field: string) {
   }
 
   return numberlike;
-}
-function validateFunction(callable: any, field: string) {
-  if (typeof callable !== "function") {
-    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
 }
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
@@ -1581,6 +1575,19 @@ class ClientRequest extends OutgoingMessage {
       proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
     } else {
       url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
+      // support agent proxy url/string for http/https
+      try {
+        // getters can throw
+        const agentProxy = this.#agent?.proxy;
+        // this should work for URL like objects and strings
+        proxy = agentProxy?.href || agentProxy;
+      } catch {}
+    }
+
+    let keepalive = true;
+    const agentKeepalive = this.#agent?.keepalive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
     }
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
@@ -1593,6 +1600,7 @@ class ClientRequest extends OutgoingMessage {
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        keepalive,
       };
 
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
@@ -1676,7 +1684,6 @@ class ClientRequest extends OutgoingMessage {
 
   constructor(input, options, cb) {
     super();
-
     if (typeof input === "string") {
       const urlStr = input;
       try {
@@ -1793,7 +1800,17 @@ class ClientRequest extends OutgoingMessage {
     if (options.pfx) {
       throw new Error("pfx is not supported");
     }
+
     if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+    else {
+      let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
+      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      else {
+        // popular https-proxy-agent uses connectOpts
+        agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
+        if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      }
+    }
     if (options.ca) {
       if (!isValidTLSArray(options.ca))
         throw new TypeError(

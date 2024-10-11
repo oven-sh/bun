@@ -93,6 +93,8 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.experimental_css = ctx.bundler_options.experimental_css;
+
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {
@@ -107,9 +109,6 @@ pub const Run = struct {
 
         b.options.env.behavior = .load_all_without_inlining;
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };
@@ -252,9 +251,6 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.configureRouter(false) catch {
-            failWithBuildError(vm);
-        };
         b.configureDefines() catch {
             failWithBuildError(vm);
         };

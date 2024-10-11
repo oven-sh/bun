@@ -464,9 +464,9 @@ pub const TextEncoderStreamEncoder = struct {
         };
         // In a previous benchmark, counting the length took about as much time as allocating the buffer.
         //
-        // Benchmark	Time %	CPU (ns)	Iterations	Ratio
-        // 288.00 ms   13.5%	288.00 ms	 	  simdutf::arm64::implementation::convert_latin1_to_utf8(char const*, unsigned long, char*) const
-        // 278.00 ms   13.0%	278.00 ms	 	  simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
+        // Benchmark    Time %    CPU (ns)    Iterations    Ratio
+        // 288.00 ms   13.5%    288.00 ms           simdutf::arm64::implementation::convert_latin1_to_utf8(char const*, unsigned long, char*) const
+        // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
         var buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, input.len + prepend_replacement_len) catch {

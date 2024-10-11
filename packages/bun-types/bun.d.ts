@@ -1497,13 +1497,35 @@ declare module "bun" {
     kind: ImportKind;
   }
 
-  type ModuleFormat = "esm"; // later: "cjs", "iife"
-
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
     target?: Target; // default: "browser"
-    format?: ModuleFormat; // later: "cjs", "iife"
+    /**
+     * Output module format. Top-level await is only supported for `"esm"`.
+     *
+     * Can be:
+     * - `"esm"`
+     * - `"cjs"` (**experimental**)
+     * - `"iife"` (**experimental**)
+     *
+     * @default "esm"
+     */
+    format?: /**
+
+     * ECMAScript Module format
+     */
+    | "esm"
+      /**
+       * CommonJS format
+       * **Experimental**
+       */
+      | "cjs"
+      /**
+       * IIFE format
+       * **Experimental**
+       */
+      | "iife";
     naming?:
       | string
       | {
@@ -1561,6 +1583,35 @@ declare module "bun" {
     //       /** Only works when runtime=automatic */
     //       importSource?: string; // default: "react"
     //     };
+
+    /**
+     * Generate bytecode for the output. This can dramatically improve cold
+     * start times, but will make the final output larger and slightly increase
+     * memory usage.
+     *
+     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     *
+     * Must be `target: "bun"`
+     * @default false
+     */
+    bytecode?: boolean;
+    /**
+     * Add a banner to the bundled code such as "use client";
+     */
+    banner?: string;
+    /**
+     * Add a footer to the bundled code such as a comment block like
+     *
+     * `// made with bun!`
+     */
+    footer?: string;
+
+    /**
+     * **Experimental**
+     *
+     * Enable CSS support.
+     */
+    experimentalCss?: boolean;
   }
 
   namespace Password {
@@ -1781,7 +1832,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
   }
 
@@ -2282,7 +2333,7 @@ declare module "bun" {
      */
     development?: boolean;
 
-    error?: (this: Server, request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 
     /**
      * Uniquely identify a server instance with an ID
@@ -2660,7 +2711,7 @@ declare module "bun" {
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
-    stop(closeActiveConnections?: boolean): void;
+    stop(closeActiveConnections?: boolean): Promise<void>;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -3029,6 +3080,87 @@ declare module "bun" {
 
   type StringLike = string | { toString(): string };
 
+  type ColorInput =
+    | { r: number; g: number; b: number; a?: number }
+    | [number, number, number]
+    | [number, number, number, number]
+    | Uint8Array
+    | Uint8ClampedArray
+    | Float32Array
+    | Float64Array
+    | string
+    | number
+    | { toString(): string };
+
+  function color(
+    input: ColorInput,
+    outputFormat?: /**
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
+      /**
+       * 256 color ANSI color string, for use in terminals which don't support true color
+       *
+       * Tries to match closest 24-bit color to 256 color palette
+       */
+      | "ansi256"
+      /**
+       * Lowercase hex color string without alpha
+       * @example #aabb11
+       */
+      | "hex"
+      /**
+       * RGB color string without alpha
+       * rgb(100, 200, 200)
+       */
+      | "rgb"
+      /**
+       * RGB color string with alpha
+       * rgba(100, 200, 200, 0.5)
+       */
+      | "rgba"
+      | "hsl"
+      | "lab"
+      | "css"
+      | "lab"
+      | "HEX",
+  ): string | null;
+
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGB color
+     * @example [100, 200, 200]
+     */
+    outputFormat: "[rgb]",
+  ): [number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An array of numbers representing the RGBA color
+     * @example [100, 200, 200, 255]
+     */
+    outputFormat: "[rgba]",
+  ): [number, number, number, number] | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGB color
+     * @example { r: 100, g: 200, b: 200 }
+     */
+    outputFormat: "{rgb}",
+  ): { r: number; g: number; b: number } | null;
+  function color(
+    input: ColorInput,
+    /**
+     * An object representing the RGBA color
+     * @example { r: 100, g: 200, b: 200, a: 0.5 }
+     */
+    outputFormat: "{rgba}",
+  ): { r: number; g: number; b: number; a: number } | null;
+  function color(input: ColorInput, outputFormat: "number"): number | null;
+
   interface Semver {
     /**
      * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
@@ -3264,8 +3396,9 @@ declare module "bun" {
      * Create a new hasher
      *
      * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
+     * @param hmacKey Optional key for HMAC. Must be a string or `TypedArray`. If not provided, the hasher will be a non-HMAC hasher.
      */
-    constructor(algorithm: SupportedCryptoAlgorithms);
+    constructor(algorithm: SupportedCryptoAlgorithms, hmacKey?: string | NodeJS.TypedArray);
 
     /**
      * Update the hash with data
@@ -3828,7 +3961,7 @@ declare module "bun" {
      *
      * In a future version of Bun, this will be used in error messages.
      */
-    name?: string;
+    name: string;
 
     /**
      * The target JavaScript environment the plugin should be applied to.
@@ -4615,6 +4748,32 @@ declare module "bun" {
        * @default cmds[0]
        */
       argv0?: string;
+
+      /**
+       * An {@link AbortSignal} that can be used to abort the subprocess.
+       *
+       * This is useful for aborting a subprocess when some other part of the
+       * program is aborted, such as a `fetch` response.
+       *
+       * Internally, this works by calling `subprocess.kill(1)`.
+       *
+       * @example
+       * ```ts
+       * const controller = new AbortController();
+       * const { signal } = controller;
+       * const start = performance.now();
+       * const subprocess = Bun.spawn({
+       *  cmd: ["sleep", "100"],
+       *  signal,
+       * });
+       * await Bun.sleep(1);
+       * controller.abort();
+       * await subprocess.exited;
+       * const end = performance.now();
+       * console.log(end - start); // 1ms instead of 101ms
+       * ```
+       */
+      signal?: AbortSignal;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -5117,6 +5276,12 @@ declare module "bun" {
    * "0.2.0"
    */
   const version: string;
+
+  /**
+   * The current version of Bun with the shortened commit sha of the build
+   * @example "v1.1.30 (d09df1af)"
+   */
+  const version_with_sha: string;
 
   /**
    * The git sha at the time the currently-running version of Bun was compiled

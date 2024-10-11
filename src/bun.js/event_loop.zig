@@ -380,10 +380,8 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-const BrotliDecoder = JSC.API.BrotliDecoder;
-const BrotliEncoder = JSC.API.BrotliEncoder;
-const ZlibDecoder = JSC.API.ZlibDecoder;
-const ZlibEncoder = JSC.API.ZlibEncoder;
+const NativeZlib = JSC.API.NativeZlib;
+const NativeBrotli = JSC.API.NativeBrotli;
 
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
@@ -466,10 +464,8 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    BrotliEncoder,
-    BrotliDecoder,
-    ZlibEncoder,
-    ZlibDecoder,
+    NativeZlib,
+    NativeBrotli,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -484,13 +480,10 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
-
-    bun.kit.DevServer.BundleTask,
-    bun.kit.DevServer.HotReloadTask,
-
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
+    bun.bake.DevServer.HotReloadTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -1024,18 +1017,15 @@ pub const EventLoop = struct {
                     transform_task.deinit();
                 },
                 @field(Task.Tag, @typeName(HotReloadTask)) => {
-                    var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
-                    transform_task.*.run();
+                    const transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.run();
                     transform_task.deinit();
                     // special case: we return
                     return 0;
                 },
-                @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                    const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                    transform_task.*.run();
-                    transform_task.deinit();
-                    // special case: we return
-                    return 0;
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+                    hmr_task.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
@@ -1224,20 +1214,12 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
-                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeZlib))) => {
+                    var any: *NativeZlib = task.get(NativeZlib).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
-                    var any: *BrotliDecoder = task.get(BrotliDecoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibEncoder))) => {
-                    var any: *ZlibEncoder = task.get(ZlibEncoder).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ZlibDecoder))) => {
-                    var any: *ZlibDecoder = task.get(ZlibDecoder).?;
+                @field(Task.Tag, typeBaseName(@typeName(NativeBrotli))) => {
+                    var any: *NativeBrotli = task.get(NativeBrotli).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
@@ -1257,15 +1239,9 @@ pub const EventLoop = struct {
                     var any: *ServerAllConnectionsClosedTask = task.get(ServerAllConnectionsClosedTask).?;
                     any.runFromJSThread(virtual_machine);
                 },
-                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
-                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
-                },
 
-                else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                } else {
-                    log("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
-                    unreachable;
+                else => {
+                    bun.Output.panic("Unexpected tag: {s}", .{@tagName(task.tag())});
                 },
             }
 
@@ -1288,8 +1264,14 @@ pub const EventLoop = struct {
         _ = this.tickConcurrentWithCount();
     }
 
+    /// Check whether refConcurrently has been called but the change has not yet been applied to the
+    /// underlying event loop's `active` counter
+    pub fn hasPendingRefs(this: *const EventLoop) bool {
+        return this.concurrent_ref.load(.seq_cst) > 0;
+    }
+
     fn updateCounts(this: *EventLoop) void {
-        const delta = this.concurrent_ref.swap(0, .monotonic);
+        const delta = this.concurrent_ref.swap(0, .seq_cst);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
             if (delta > 0) {
@@ -1642,14 +1624,13 @@ pub const EventLoop = struct {
     }
 
     pub fn refConcurrently(this: *EventLoop) void {
-        // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchAdd(1, .monotonic);
+        _ = this.concurrent_ref.fetchAdd(1, .seq_cst);
         this.wakeup();
     }
 
     pub fn unrefConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchSub(1, .monotonic);
+        _ = this.concurrent_ref.fetchSub(1, .seq_cst);
         this.wakeup();
     }
 };
@@ -1709,8 +1690,7 @@ pub const MiniVM = struct {
     }
 
     pub inline fn incrementPendingUnrefCounter(this: @This()) void {
-        _ = this; // autofix
-
+        _ = this;
         @panic("FIXME TODO");
     }
 

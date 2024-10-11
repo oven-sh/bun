@@ -140,6 +140,7 @@ pub const DeclarationBlock = struct {
                     if (!handled) {
                         hndlr.decls.append(ctx.allocator, prop.*) catch bun.outOfMemory();
                         // replacing with a property which does not require allocation
+                        // to "delete"
                         prop.* = css.Property{ .all = .@"revert-layer" };
                     }
                 }
@@ -177,6 +178,10 @@ pub const DeclarationBlock = struct {
 
     pub fn eql(this: *const This, other: *const This) bool {
         return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

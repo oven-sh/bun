@@ -3192,7 +3192,7 @@ pub const ParseTask = struct {
                     const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
-                    const css_ast =
+                    var css_ast =
                         switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
                         allocator,
                         source_code,
@@ -3205,6 +3205,13 @@ pub const ParseTask = struct {
                             return error.SyntaxError;
                         },
                     };
+                    if (css_ast.minify(allocator, bun.css.MinifyOptions{
+                        .targets = .{},
+                        .unused_symbols = .{},
+                    }).asErr()) |e| {
+                        log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
+                        return error.MinifyError;
+                    }
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
                     var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
                     ast.css = css_ast_heap;

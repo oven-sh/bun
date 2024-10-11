@@ -1253,9 +1253,12 @@ pub fn ValidQualifiedRuleParser(comptime T: type) void {
 }
 
 pub const DefaultAtRule = struct {
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
+    pub fn toCss(_: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return dest.newError(.fmt_error, null);
+    }
+
+    pub fn deepClone(_: *const @This(), _: std.mem.Allocator) @This() {
+        return .{};
     }
 };
 

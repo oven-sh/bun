@@ -51,7 +51,7 @@ pub fn StyleRule(comptime R: type) type {
                 .selectors = this.selectors.deepClone(allocator),
                 .vendor_prefix = this.vendor_prefix,
                 .declarations = this.declarations.deepClone(allocator),
-                // .rules = this.rules.deepClone(allocator),
+                .rules = this.rules.deepClone(allocator),
                 .loc = this.loc,
             };
         }
@@ -204,6 +204,20 @@ pub fn StyleRule(comptime R: type) type {
                     unused = true;
                 }
             }
+
+            // TODO: this
+            // let pure_css_modules = context.pure_css_modules;
+            // if context.pure_css_modules {
+            //   if !self.selectors.0.iter().all(is_pure_css_modules_selector) {
+            //     return Err(MinifyError {
+            //       kind: crate::error::MinifyErrorKind::ImpureCSSModuleSelector,
+            //       loc: self.loc,
+            //     });
+            //   }
+
+            //   // Parent rule contained id or class, so child rules don't need to.
+            //   context.pure_css_modules = false;
+            // }
 
             context.handler_context.context = .style_rule;
             this.declarations.minify(context.handler, context.important_handler, &context.handler_context);

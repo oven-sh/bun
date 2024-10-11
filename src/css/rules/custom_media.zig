@@ -21,7 +21,7 @@ pub const CustomMediaRule = struct {
 
     const This = @This();
 
-    pub fn deepClone(this: *This, allocator: std.mem.Allocator) This {
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
         return This{
             .name = this.name,
             .query = this.query.deepClone(allocator),

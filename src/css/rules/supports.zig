@@ -402,5 +402,9 @@ pub fn SupportsRule(comptime R: type) type {
             _ = parent_is_unused; // autofix
             @panic(css.todo_stuff.depth);
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }

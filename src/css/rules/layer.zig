@@ -154,6 +154,10 @@ pub fn LayerBlockRule(comptime R: type) type {
             try dest.newline();
             try dest.writeChar('}');
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }
 
@@ -174,5 +178,9 @@ pub const LayerStatementRule = struct {
         try dest.writeStr("@layer ");
         try css.to_css.fromList(LayerName, &this.names, W, dest);
         try dest.writeChar(';');
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

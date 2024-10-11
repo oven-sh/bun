@@ -36,7 +36,16 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         const HeapData = struct {
             len: u32,
             ptr: [*]T,
+
+            pub fn initCapacity(allocator: Allocator, capacity: u32) HeapData {
+                return .{
+                    .len = 0,
+                    .ptr = (allocator.alloc(T, capacity) catch bun.outOfMemory()).ptr,
+                };
+            }
         };
+
+        const This = @This();
 
         pub fn parse(input: *Parser) Result(@This()) {
             const parseFn = comptime voidWrap(T, generic.parseFor(T));
@@ -68,6 +77,13 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     try dest.delim(',', false);
                 }
             }
+        }
+
+        pub fn withOne(val: T) @This() {
+            var ret = This{};
+            ret.capacity = 1;
+            ret.data.inlined[0] = val;
+            return ret;
         }
 
         pub inline fn at(this: *const @This(), idx: u32) *const T {
@@ -176,6 +192,19 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         pub inline fn isEmpty(this: *const @This()) bool {
             return this.len() == 0;
+        }
+
+        pub fn initCapacity(allocator: Allocator, capacity: u32) @This() {
+            if (capacity > N) {
+                var list: This = .{};
+                list.capacity = capacity;
+                list.data = .{ .heap = HeapData.initCapacity(allocator, capacity) };
+                return list;
+            }
+
+            return .{
+                .capacity = 0,
+            };
         }
 
         pub fn insert(

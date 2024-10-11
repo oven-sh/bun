@@ -1613,7 +1613,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         }
 
         pub fn eql(lhs: *const This, rhs: *const This) bool {
-            return lhs.eql(rhs);
+            return lhs.v.eql(&rhs.v);
         }
 
         pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {

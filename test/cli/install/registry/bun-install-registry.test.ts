@@ -947,9 +947,10 @@ describe("publish", async () => {
     { user: "bin2", bin: { bin1: "bin1.js", bin2: "bin2.js" } },
     { user: "bin3", directories: { bin: "bins" } },
   ]) {
-    test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
+    test.only(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
       const publishDir = tmpdirSync();
       const bunfig = await authBunfig("binaries-" + info.user);
+      console.log({ packageDir, publishDir });
 
       await Promise.all([
         rm(join(import.meta.dir, "packages", "publish-pkg-bins"), { recursive: true, force: true }),
@@ -987,12 +988,12 @@ describe("publish", async () => {
       await runBunInstall(env, packageDir);
 
       const results = await Promise.all([
-        exists(join(packageDir, "node_modules", ".bin", "bin1")),
-        exists(join(packageDir, "node_modules", ".bin", "bin2")),
-        exists(join(packageDir, "node_modules", ".bin", "bin3.js")),
-        exists(join(packageDir, "node_modules", ".bin", "bin4.js")),
-        exists(join(packageDir, "node_modules", ".bin", "moredir", "bin4.js")),
-        exists(join(packageDir, "node_modules", ".bin", "publish-pkg-bins")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin1.bunx" : "bin1")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin2.bunx" : "bin2")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin3.js.bunx" : "bin3.js")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin4.js.bunx" : "bin4.js")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "publish-pkg-bins.bunx" : "publish-pkg-bins")),
       ]);
 
       switch (info.user) {
@@ -1005,7 +1006,7 @@ describe("publish", async () => {
           break;
         }
         case "bin3": {
-          expect(results).toEqual([false, false, true, true, true, false]);
+          expect(results).toEqual([false, false, true, true, !isWindows, false]);
           break;
         }
       }

@@ -156,7 +156,7 @@ export function replaceModules(modules: any) {
 export const serverManifest = {};
 export const clientManifest = {};
 
-if (side === 'server') {
+if (side === "server") {
   const server_module = new HotModule("bun:bake/server");
   server_module.__esModule = true;
   server_module.exports = { serverManifest, clientManifest };

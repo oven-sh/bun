@@ -1,4 +1,4 @@
-import { DataViewReader } from './reader';
+import { DataViewReader } from "./reader";
 
 export const enum BundlerMessageKind {
   err = 0,
@@ -33,7 +33,7 @@ export interface BundlerNote {
 
 export function decodeSerializedErrorPayload(arrayBuffer: DataView, start: number) {
   const r = new DataViewReader(arrayBuffer, start);
-  const messageCount = r.u32()
+  const messageCount = r.u32();
   const messages = new Array(messageCount);
   for (let i = 0; i < messageCount; i++) {
     const kind = r.u8();
@@ -45,9 +45,9 @@ export function decodeSerializedErrorPayload(arrayBuffer: DataView, start: numbe
 
 /** First byte is already read in. */
 function readLogMsg(r: DataViewReader, kind: BundlerMessageKind) {
-  const message = r.string32()
+  const message = r.string32();
   const location = readBundlerMessageLocationOrNull(r);
-  const noteCount =r.u32();
+  const noteCount = r.u32();
   const notes = new Array(noteCount);
   for (let i = 0; i < noteCount; i++) {
     notes[i] = readLogData(r);
@@ -57,7 +57,7 @@ function readLogMsg(r: DataViewReader, kind: BundlerMessageKind) {
     message,
     location,
     notes,
-  }
+  };
 }
 
 function readLogData(r: DataViewReader): BundlerNote | null {
@@ -67,9 +67,9 @@ function readLogData(r: DataViewReader): BundlerNote | null {
   };
 }
 
-function readBundlerMessageLocationOrNull(r: DataViewReader) :BundlerMessageLocation|null {
+function readBundlerMessageLocationOrNull(r: DataViewReader): BundlerMessageLocation | null {
   const line = r.u32();
-  if(line == 0) return null;
+  if (line == 0) return null;
 
   const column = r.u32();
   const namespace = r.string32();

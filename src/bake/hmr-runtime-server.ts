@@ -38,13 +38,11 @@ server_exports = {
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          const mod = loadModule(uid,LoadModuleType.AssertPresent);
+          const mod = loadModule(uid, LoadModuleType.AssertPresent);
           const { exports, __esModule } = mod;
-          const exp = __esModule
-            ? exports
-            : (mod._ext_exports ??= { ...exports, default: exports });
+          const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
 
-          for(const exportName of Object.keys(exp)) {
+          for (const exportName of Object.keys(exp)) {
             serverManifest[uid] = {
               id: uid,
               name: exportName,
@@ -57,7 +55,7 @@ server_exports = {
       }
     }
 
-    if(componentManifestDelete) {
+    if (componentManifestDelete) {
       for (const fileName of componentManifestDelete) {
         const client = clientManifest[fileName];
         for (const exportName in client) {
@@ -66,6 +64,5 @@ server_exports = {
         delete clientManifest[fileName];
       }
     }
-
   },
 };

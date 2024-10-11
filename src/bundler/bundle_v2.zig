@@ -384,12 +384,8 @@ pub const BundleV2 = struct {
         return &this.linker.loop;
     }
 
-    pub fn hasErrors(this:*BundleV2) bool {
-        return this.bundler.log.hasErrors() or 
-        if(this.bundler.options.dev_server) |dev|
-            dev.incremental_result.failures_added.items.len > 0 
-        else 
-            false;
+    pub fn hasErrors(this: *BundleV2) bool {
+        return this.bundler.log.hasErrors();
     }
 
     /// Most of the time, accessing .bundler directly is OK. This is only
@@ -428,6 +424,7 @@ pub const BundleV2 = struct {
         /// Files which are Server Component Boundaries
         scb_bitset: ?bun.bit_set.DynamicBitSetUnmanaged,
         scb_list: ServerComponentBoundary.List.Slice,
+        parts: []BabyList(js_ast.Part),
 
         const MAX_REDIRECTS: usize = 64;
 
@@ -435,8 +432,17 @@ pub const BundleV2 = struct {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
-        pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool) void {
+        pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool, comptime is_dev_server: bool) void {
             if (source_index.isInvalid()) return;
+
+            if (is_dev_server) {
+                // The dev server runs linking step with failed files.
+                // These files are filtered out via the lack of any parts.
+                //
+                // Actual empty files will contain a part exporting an empty object.
+                if (v.parts[source_index.get()].len == 0)
+                    return;
+            }
 
             if (v.visited.isSet(source_index.get())) {
                 if (comptime check_dynamic_imports) {
@@ -451,8 +457,8 @@ pub const BundleV2 = struct {
             if (v.scb_bitset) |scb_bitset| {
                 if (scb_bitset.isSet(source_index.get())) {
                     const scb_index = v.scb_list.getIndex(source_index.get()) orelse unreachable;
-                    v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports);
-                    v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports);
+                    v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports, is_dev_server);
+                    v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports, is_dev_server);
                 }
             }
 
@@ -483,14 +489,14 @@ pub const BundleV2 = struct {
                             }
                         }
 
-                        v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
+                        v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports, is_dev_server);
                     }
                 }
 
                 // Redirects replace the source file with another file
                 if (getRedirectId(v.redirects[source_index.get()])) |redirect_id| {
                     const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
-                    v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
+                    v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports, is_dev_server);
                     return;
                 }
             }
@@ -505,7 +511,7 @@ pub const BundleV2 = struct {
         }
     };
 
-    pub fn findReachableFiles(this: *BundleV2) ![]Index {
+    pub fn findReachableFiles(this: *BundleV2, comptime is_dev_server: bool) ![]Index {
         const trace = tracer(@src(), "findReachableFiles");
         defer trace.end();
 
@@ -533,17 +539,20 @@ pub const BundleV2 = struct {
                 this.graph.server_component_boundaries.slice()
             else
                 undefined, // will never be read since the above bitset is `null`
+
+            .parts = if (is_dev_server) this.graph.ast.items(.parts) else &.{},
         };
         defer visitor.visited.deinit();
 
         // If we don't include the runtime, __toESM or __toCommonJS will not get
         // imported and weird things will happen
-        visitor.visit(Index.runtime, false, false);
+        if (!is_dev_server)
+            visitor.visit(Index.runtime, false, false, is_dev_server);
 
         switch (this.bundler.options.code_splitting) {
             inline else => |check_dynamic_imports| {
                 for (this.graph.entry_points.items) |entry_point| {
-                    visitor.visit(entry_point, false, comptime check_dynamic_imports);
+                    visitor.visit(entry_point, false, comptime check_dynamic_imports, is_dev_server);
                 }
             },
         }
@@ -933,9 +942,7 @@ pub const BundleV2 = struct {
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
-            runtime_parse_task.task = .{
-                .callback = &ParseTask.callback,
-            };
+            runtime_parse_task.task = .{ .callback = &ParseTask.callback };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
@@ -944,7 +951,7 @@ pub const BundleV2 = struct {
 
         // Bake reserves two source indexes at the start of the file list, but
         // gets its content set after the scan+parse phase, but before linking.
-        try this.reserveSourceIndexesForKit();
+        try this.reserveSourceIndexesForBake();
 
         {
             // Setup entry points
@@ -1001,8 +1008,8 @@ pub const BundleV2 = struct {
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
     /// at the same time in one pass over the SBC list.
-    /// 
-///
+    ///
+    ///
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
@@ -1283,7 +1290,7 @@ pub const BundleV2 = struct {
 
         try this.processServerComponentManifestFiles();
 
-        const reachable_files = try this.findReachableFiles();
+        const reachable_files = try this.findReachableFiles(false);
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
 
         try this.processFilesToCopy(reachable_files);
@@ -1298,7 +1305,7 @@ pub const BundleV2 = struct {
             unique_key,
         );
 
-        return try this.linker.generateChunksInParallel(chunks);
+        return try this.linker.generateChunksInParallel(chunks, false);
     }
 
     pub fn processFilesToCopy(
@@ -1865,7 +1872,6 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-        bake_entry_points: []const BakeEntryPoint,
     ) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
@@ -1873,20 +1879,14 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        if (comptime FeatureFlags.help_catch_memory_issues) {
-            this.graph.heap.gc(true);
-            bun.Mimalloc.mi_collect(true);
-        }
+        this.graph.heap.helpCatchMemoryIssues();
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, bake_entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, &.{}));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
 
-        if (comptime FeatureFlags.help_catch_memory_issues) {
-            this.graph.heap.gc(true);
-            bun.Mimalloc.mi_collect(true);
-        }
+        this.graph.heap.helpCatchMemoryIssues();
 
         if (this.bundler.log.errors > 0) {
             return error.BuildFailed;
@@ -1894,19 +1894,13 @@ pub const BundleV2 = struct {
 
         try this.processServerComponentManifestFiles();
 
-        if (comptime FeatureFlags.help_catch_memory_issues) {
-            this.graph.heap.gc(true);
-            bun.Mimalloc.mi_collect(true);
-        }
+        this.graph.heap.helpCatchMemoryIssues();
 
         try this.cloneAST();
 
-        if (comptime FeatureFlags.help_catch_memory_issues) {
-            this.graph.heap.gc(true);
-            bun.Mimalloc.mi_collect(true);
-        }
+        this.graph.heap.helpCatchMemoryIssues();
 
-        const reachable_files = try this.findReachableFiles();
+        const reachable_files = try this.findReachableFiles(false);
 
         try this.processFilesToCopy(reachable_files);
 
@@ -1922,7 +1916,69 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks);
+        return try this.linker.generateChunksInParallel(chunks, false);
+    }
+
+    /// Results are indexed into the dev server
+    pub fn runFromBakeDevServer(
+        this: *BundleV2,
+        bake_entry_points: []const BakeEntryPoint,
+    ) !Chunk {
+        this.unique_key = std.crypto.random.int(u64);
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(&.{}, bake_entry_points));
+        this.waitForParse();
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        try this.cloneAST();
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        const reachable_files = try this.findReachableFiles(true);
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        // HMR skips most of the linker! All linking errors are converted into
+        // runtime errors to avoid a more complicated dependency graph. For
+        // example, if you remove an exported symbol, we only rebuild the
+        // changed file, then detect the missing export at runtime.
+        //
+        // Additionally, notice that we run this code generation even if we have
+        // files that failed. This allows having a large build graph (importing
+        // a new npm dependency), where one file that fails doesnt prevent the
+        // passing files to get cached in the incremental graph.
+
+        // The linker still has to be initialized as code generation expects it
+        try this.linker.load(
+            this,
+            this.graph.entry_points.items,
+            this.graph.server_component_boundaries,
+            reachable_files,
+        );
+
+        // try this.linker.scanImportsAndExports();
+        try this.linker.treeShakingAndCodeSplitting();
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        // Only one chunk!
+        var chunk = try this.linker.computeChunksForBakeDevServer();
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        // Symbol following is needed for the rename to rename import namespaces
+        this.linker.graph.symbols.followAll();
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        try this.linker.generateChunksInParallel((&chunk)[0..1], true);
+
+        this.graph.heap.helpCatchMemoryIssues();
+
+        return chunk;
     }
 
     pub fn enqueueOnResolvePluginIfNeeded(
@@ -1971,7 +2027,7 @@ pub const BundleV2 = struct {
                     parse.path.namespace,
                     parse.path.text,
                 });
-                var load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
+                const load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
                 load.* = JSC.API.JSBundler.Load.create(
                     this.completion.?,
                     parse.source_index,
@@ -2009,7 +2065,7 @@ pub const BundleV2 = struct {
         return path_clone.dupeAllocFixPretty(this.graph.allocator);
     }
 
-    fn reserveSourceIndexesForKit(this: *BundleV2) !void {
+    fn reserveSourceIndexesForBake(this: *BundleV2) !void {
         const fw = this.framework orelse return;
         _ = fw.server_components orelse return;
 
@@ -2088,7 +2144,7 @@ pub const BundleV2 = struct {
                     inline else => |is_server| {
                         const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
-                            if(this.bundler.options.dev_server != null) {
+                            if (this.bundler.options.dev_server != null) {
                                 import_record.is_external_without_side_effects = true;
                                 import_record.source_index = Index.invalid;
                             } else {
@@ -2304,13 +2360,14 @@ pub const BundleV2 = struct {
             }
 
             if (this.bundler.options.dev_server) |dev_server| {
+                import_record.source_index = Index.invalid;
+                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+                import_record.path.text = rel;
+                import_record.path.pretty = rel;
+                import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                import_record.is_external_without_side_effects = true;
+
                 if (!dev_server.isFileStale(path.text, renderer)) {
-                    import_record.source_index = Index.invalid;
-                    const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                    import_record.path.text = rel;
-                    import_record.path.pretty = rel;
-                    import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
             }
@@ -2385,7 +2442,7 @@ pub const BundleV2 = struct {
         defer trace.end();
         defer bun.default_allocator.destroy(parse_result);
 
-        var graph = &this.graph;
+        const graph = &this.graph;
 
         var diff: isize = -1;
 
@@ -2399,6 +2456,7 @@ pub const BundleV2 = struct {
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
         defer resolve_queue.deinit();
         var process_log = true;
+
         if (parse_result.value == .success) {
             resolve_queue = runResolutionForParseTask(parse_result, this);
             if (parse_result.value == .err) {
@@ -2408,7 +2466,7 @@ pub const BundleV2 = struct {
 
         // To minimize contention, watchers are appended by the bundler thread.
         if (this.bun_watcher) |watcher| {
-        if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
+            if (parse_result.watcher_data.fd != bun.invalid_fd and parse_result.watcher_data.fd != .zero) {
                 const source = switch (parse_result.value) {
                     inline .empty, .err => |data| graph.input_files.items(.source)[data.source_index.get()],
                     .success => |val| val.source,
@@ -2602,7 +2660,11 @@ pub const BundleV2 = struct {
 
                 if (process_log) {
                     if (this.bundler.options.dev_server) |dev_server| {
-                        dev_server.handleParseTaskFailure(err.target.bakeGraph(), this.graph.input_files.items(.source)[err.source_index.get()].path.text,&err.log,) catch bun.outOfMemory();
+                        dev_server.handleParseTaskFailure(
+                            err.target.bakeGraph(),
+                            this.graph.input_files.items(.source)[err.source_index.get()].path.text,
+                            &err.log,
+                        ) catch bun.outOfMemory();
                     } else if (err.log.msgs.items.len > 0) {
                         err.log.cloneToWithRecycled(this.bundler.log, true) catch unreachable;
                     } else {
@@ -2614,6 +2676,10 @@ pub const BundleV2 = struct {
                             .{ @errorName(err.err), @tagName(err.step) },
                         ) catch unreachable;
                     }
+                }
+
+                if (Environment.allow_assert and this.bundler.options.dev_server != null) {
+                    bun.assert(this.graph.ast.items(.parts)[err.source_index.get()].len == 0);
                 }
             },
         }
@@ -2787,11 +2853,9 @@ pub fn BundleThread(CompletionStruct: type) type {
                 completion.log = out_log;
             }
 
-            completion.result = .{
-                .value = .{
-                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}),
-                },
-            };
+            completion.result = .{ .value = .{
+                .output_files = try this.runFromJSInNewThread(bundler.options.entry_points),
+            } };
 
             var out_log = Logger.Log.init(bun.default_allocator);
             this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
@@ -3251,7 +3315,7 @@ pub const ParseTask = struct {
         this: *ThreadPool.Worker,
         step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
-    ) anyerror! Result.Success {
+    ) anyerror!Result.Success {
         const allocator = this.allocator;
 
         var data = this.data;
@@ -3337,20 +3401,13 @@ pub const ParseTask = struct {
             this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
-            task.contents_or_fd = .{
-                .fd = .{
-                    .file = bun.invalid_fd,
-                    .dir = bun.invalid_fd
-                }
-            };
+            task.contents_or_fd = .{ .fd = .{ .file = bun.invalid_fd, .dir = bun.invalid_fd } };
         } else {
-            task.contents_or_fd = .{
-                .fd = .{
-                    .file = entry.fd,
-                    .dir = bun.invalid_fd,
-                }
-            };
-    }
+            task.contents_or_fd = .{ .fd = .{
+                .file = entry.fd,
+                .dir = bun.invalid_fd,
+            } };
+        }
         step.* = .parse;
 
         const is_empty = strings.isAllWhitespace(entry.contents);
@@ -3475,9 +3532,23 @@ pub const ParseTask = struct {
         bun.assert(this.source_index.isValid()); // forgot to set source_index
 
         const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-        const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast|
-            .{ .success = ast }
-        else |err| value: {
+        const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast| value: {
+            // When using HMR, always flag asts with errors as parse failures.
+            // Not done outside of the dev server out of fear of breaking existing code.
+            if (this.ctx.bundler.options.dev_server != null and ast.log.hasErrors()) {
+                break :value .{
+                    .err = .{
+                        .err = error.SyntaxError,
+                        .step = .parse,
+                        .log = ast.log,
+                        .source_index = this.source_index,
+                        .target = this.known_target,
+                    },
+                };
+            }
+
+            break :value .{ .success = ast };
+        } else |err| value: {
             if (err == error.EmptyAST) {
                 log.deinit();
                 break :value .{ .empty = .{
@@ -3561,8 +3632,8 @@ pub const ServerComponentParseTask = struct {
                 worker.allocator,
             )) |success|
                 .{ .success = success }
-            else |err| switch(err) {
-                error.OutOfMemory => bun.outOfMemory(),   
+            else |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
             },
 
             .watcher_data = ParseTask.Result.WatcherData.none,
@@ -4565,11 +4636,8 @@ pub const LinkerContext = struct {
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
 
-    pub fn hasErrors(this:*LinkerContext) bool {
-        return this.log.hasErrors() or if(this.dev_server) |dev|
-            dev.incremental_result.failures_added.items.len > 0 
-        else 
-            false;
+    pub fn hasErrors(this: *LinkerContext) bool {
+        return this.log.hasErrors();
     }
 
     pub const LinkerOptions = struct {
@@ -4869,47 +4937,7 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "computeChunks");
         defer trace.end();
 
-        // The dev server never compiles chunks, and requires every reachable
-        // file to be printed, So the logic is special-cased.
-        if (this.dev_server != null) {
-            var js_chunks = try std.ArrayListUnmanaged(Chunk).initCapacity(this.allocator, 1);
-            const entry_bits = &this.graph.files.items(.entry_bits)[0];
-
-            // Exclude runtime because it is already embedded
-            const reachable_files = if (this.graph.reachable_files[0].isRuntime())
-                this.graph.reachable_files[1..]
-            else
-                this.graph.reachable_files;
-
-            const part_ranges = try this.allocator.alloc(PartRange, reachable_files.len);
-
-            const parts = this.parse_graph.ast.items(.parts);
-            for (reachable_files, part_ranges) |source_index, *part_range| {
-                part_range.* = .{
-                    .source_index = source_index,
-                    .part_index_begin = 0,
-                    .part_index_end = parts[source_index.get()].len,
-                };
-            }
-
-            js_chunks.appendAssumeCapacity(.{
-                .entry_point = .{
-                    .entry_point_id = 0,
-                    .source_index = 0,
-                    .is_entry_point = true,
-                },
-                .entry_bits = entry_bits.*,
-                .content = .{
-                    .javascript = .{
-                        // TODO(@paperdave): this ptrCast should not be needed.
-                        .files_in_chunk_order = @ptrCast(this.graph.reachable_files),
-                        .parts_in_chunk_in_order = part_ranges,
-                    },
-                },
-                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-            });
-            return js_chunks.items;
-        }
+        bun.assert(this.dev_server == null); // use computeChunksForDevServer
 
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         const stack_all = stack_fallback.get();
@@ -4983,10 +5011,10 @@ pub const LinkerContext = struct {
                 const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
                 if (css_source_indices.len > 0) {
                     const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
-                    var css_files_wth_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                    var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            css_files_wth_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            css_files_with_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
                         }
                     }
                     const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
@@ -5004,7 +5032,7 @@ pub const LinkerContext = struct {
                                 .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
                             },
                         },
-                        .files_with_parts_in_chunk = css_files_wth_parts_in_chunk,
+                        .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
                         .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                     };
                 }
@@ -5164,6 +5192,45 @@ pub const LinkerContext = struct {
         }
 
         return chunks;
+    }
+
+    // The dev server never compiles chunks, and requires every reachable
+    // file to be printed; the logic is special-cased.
+    pub fn computeChunksForBakeDevServer(this: *LinkerContext) !Chunk {
+        bun.assert(this.dev_server != null);
+
+        // Exclude runtime because it is already embedded
+        const reachable_files = if (this.graph.reachable_files[0].isRuntime())
+            this.graph.reachable_files[1..]
+        else
+            this.graph.reachable_files;
+
+        const part_ranges = try this.allocator.alloc(PartRange, reachable_files.len);
+
+        const parts = this.parse_graph.ast.items(.parts);
+        for (reachable_files, part_ranges) |source_index, *part_range| {
+            part_range.* = .{
+                .source_index = source_index,
+                .part_index_begin = 0,
+                .part_index_end = parts[source_index.get()].len,
+            };
+        }
+
+        return .{
+            .entry_point = .{
+                .entry_point_id = 0,
+                .source_index = 0,
+                .is_entry_point = true,
+            },
+            .content = .{
+                .javascript = .{
+                    // TODO(@paperdave): this ptrCast should not be needed.
+                    .files_in_chunk_order = @ptrCast(this.graph.reachable_files),
+                    .parts_in_chunk_in_order = part_ranges,
+                },
+            },
+            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+        };
     }
 
     pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
@@ -10481,8 +10548,8 @@ pub const LinkerContext = struct {
         }
     }
 
-    /// The conversion logic is completely different for format .kit_internal_hmr
-    fn convertStmtsForChunkForKit(
+    /// The conversion logic is completely different for format .internal_bake_dev
+    fn convertStmtsForChunkForBake(
         c: *LinkerContext,
         source_index: u32,
         stmts: *StmtList,
@@ -10622,7 +10689,7 @@ pub const LinkerContext = struct {
             bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
 
             for (parts) |part| {
-                c.convertStmtsForChunkForKit(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
+                c.convertStmtsForChunkForBake(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
                     return .{ .err = err };
             }
 
@@ -11297,7 +11364,7 @@ pub const LinkerContext = struct {
         shifts: []sourcemap.SourceMapShifts,
     };
 
-    pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
+    pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
         const trace = tracer(@src(), "generateChunksInParallel");
         defer trace.end();
 
@@ -11483,11 +11550,7 @@ pub const LinkerContext = struct {
             //
             // When this isnt the initial bundle, concatenation as usual would produce a
             // broken module. It is DevServer's job to create and send HMR patches.
-            if (c.dev_server) |dev_server| {
-                bun.assert(chunks.len == 1);
-                try dev_server.finalizeBundle(c, &chunks[0]);
-                return std.ArrayList(options.OutputFile).init(bun.default_allocator);
-            }
+            if (is_dev_server) return;
 
             {
                 debug(" START {d} postprocess chunks", .{chunks.len});

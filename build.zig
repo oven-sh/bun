@@ -476,6 +476,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "bake.client.js", .import = "bake-codegen/bake.client.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "bake.error.js", .import = "bake-codegen/bake.error.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bake.server.js", .import = "bake-codegen/bake.server.js", .enable = opts.shouldEmbedCode() },
     }) |entry| {
         if (!@hasField(@TypeOf(entry), "enable") or entry.enable) {

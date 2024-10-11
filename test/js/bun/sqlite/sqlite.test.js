@@ -587,8 +587,17 @@ it("db.query()", () => {
     }
   })(domjit);
 
-  // iterate (no args)
+  // statement iterator
   let i;
+  i = 0;
+  for (const row of db.query("SELECT * FROM test")) {
+    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
+    i === 1 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 2, name: "World" }));
+    i++;
+  }
+  expect(i).toBe(2);
+
+  // iterate (no args)
   i = 0;
   for (const row of db.query("SELECT * FROM test").iterate()) {
     i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
@@ -604,6 +613,23 @@ it("db.query()", () => {
     i++;
   }
   expect(i).toBe(1);
+
+  // interrupted iterating, then call all()
+  const stmt = db.query("SELECT * FROM test");
+  i = 0;
+  for (const row of stmt) {
+    i === 0 && expect(JSON.stringify(row)).toBe(JSON.stringify({ id: 1, name: "Hello" }));
+    i++;
+    break;
+  }
+  expect(i).toBe(1);
+  rows = stmt.all();
+  expect(JSON.stringify(rows)).toBe(
+    JSON.stringify([
+      { id: 1, name: "Hello" },
+      { id: 2, name: "World" },
+    ]),
+  );
 
   db.close();
 

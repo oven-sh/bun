@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -36,6 +38,13 @@ napi_value ok(napi_env env) {
 
 static void run_gc(const Napi::CallbackInfo &info) {
   info[0].As<Napi::Function>().Call(0, nullptr);
+}
+
+// calls napi_typeof and asserts it returns napi_ok
+static napi_valuetype get_typeof(napi_env env, napi_value value) {
+  napi_valuetype result;
+  assert(napi_typeof(env, value, &result) == napi_ok);
+  return result;
 }
 
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
@@ -232,8 +241,7 @@ napi_value test_napi_delete_property(const Napi::CallbackInfo &info) {
 
   // info[0] is a function to run the GC
   napi_value object = info[1];
-  napi_valuetype type;
-  assert(napi_typeof(env, object, &type) == napi_ok);
+  napi_valuetype type = get_typeof(env, object);
   assert(type == napi_object);
 
   napi_value key;
@@ -543,8 +551,7 @@ napi_value test_napi_ref(const Napi::CallbackInfo &info) {
   napi_value from_ref;
   assert(napi_get_reference_value(env, ref, &from_ref) == napi_ok);
   assert(from_ref != nullptr);
-  napi_valuetype typeof_result;
-  assert(napi_typeof(env, from_ref, &typeof_result) == napi_ok);
+  napi_valuetype typeof_result = get_typeof(env, from_ref);
   assert(typeof_result == napi_object);
   return ok(env);
 }
@@ -632,14 +639,110 @@ napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
   napi_value exception;
   assert(napi_get_and_clear_last_exception(env, &exception) == napi_ok);
 
-  napi_valuetype type;
-  assert(napi_typeof(env, exception, &type) == napi_ok);
+  napi_valuetype type = get_typeof(env, exception);
   printf("typeof thrown exception = %s\n", napi_valuetype_to_string(type));
 
   assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
   assert(!is_pending);
 
   return exception;
+}
+
+// throw_error(code: string|undefined, msg: string|undefined,
+// error_kind: 'error'|'type_error'|'range_error'|'syntax_error')
+// if code and msg are JS undefined then change them to nullptr
+napi_value throw_error(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value js_code = info[0];
+  napi_value js_msg = info[1];
+  napi_value js_error_kind = info[2];
+  const char *code = nullptr;
+  const char *msg = nullptr;
+  char code_buf[256] = {0}, msg_buf[256] = {0}, error_kind_buf[256] = {0};
+
+  if (get_typeof(env, js_code) == napi_string) {
+    assert(napi_get_value_string_utf8(env, js_code, code_buf, sizeof code_buf,
+                                      nullptr) == napi_ok);
+    code = code_buf;
+  }
+  if (get_typeof(env, js_msg) == napi_string) {
+    assert(napi_get_value_string_utf8(env, js_msg, msg_buf, sizeof msg_buf,
+                                      nullptr) == napi_ok);
+    msg = msg_buf;
+  }
+  assert(napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
+                                    sizeof error_kind_buf, nullptr) == napi_ok);
+
+  std::map<std::string,
+           napi_status (*)(napi_env, const char *code, const char *msg)>
+      functions{{"error", napi_throw_error},
+                {"type_error", napi_throw_type_error},
+                {"range_error", napi_throw_range_error},
+                {"syntax_error", node_api_throw_syntax_error}};
+
+  auto throw_function = functions[error_kind_buf];
+
+  if (msg == nullptr) {
+    assert(throw_function(env, code, msg) == napi_invalid_arg);
+    return ok(env);
+  } else {
+    assert(throw_function(env, code, msg) == napi_ok);
+    return nullptr;
+  }
+}
+
+// create_and_throw_error(code: any, msg: any,
+// error_kind: 'error'|'type_error'|'range_error'|'syntax_error')
+// if code and msg are JS null then change them to nullptr
+napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value js_code = info[0];
+  napi_value js_msg = info[1];
+  napi_value js_error_kind = info[2];
+  char error_kind_buf[256] = {0};
+
+  if (get_typeof(env, js_code) == napi_null) {
+    js_code = nullptr;
+  }
+  if (get_typeof(env, js_msg) == napi_null) {
+    js_msg = nullptr;
+  }
+
+  assert(napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
+                                    sizeof error_kind_buf, nullptr) == napi_ok);
+
+  std::map<std::string, napi_status (*)(napi_env, napi_value code,
+                                        napi_value msg, napi_value *)>
+      functions{{"error", napi_create_error},
+                {"type_error", napi_create_type_error},
+                {"range_error", napi_create_range_error},
+                {"syntax_error", node_api_create_syntax_error}};
+
+  auto create_error_function = functions[error_kind_buf];
+
+  napi_value err;
+  napi_status create_status = create_error_function(env, js_code, js_msg, &err);
+  // cases that should fail:
+  // - js_msg is nullptr
+  // - js_msg is not a string
+  // - js_code is not nullptr and not a string
+  // also we need to make sure not to call get_typeof with nullptr, since it
+  // asserts that napi_typeof succeeded
+  if (!js_msg || get_typeof(env, js_msg) != napi_string ||
+      (js_code && get_typeof(env, js_code) != napi_string)) {
+    // bun and node may return different errors here depending on in what order
+    // the parameters are checked, but what's important is that there is an
+    // error
+    assert(create_status == napi_string_expected ||
+           create_status == napi_invalid_arg);
+    return ok(env);
+  } else {
+    assert(create_status == napi_ok);
+    assert(napi_throw(env, err) == napi_ok);
+    return nullptr;
+  }
 }
 
 napi_value eval_wrapper(const Napi::CallbackInfo &info) {
@@ -658,8 +761,7 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
   napi_value value;
 
   // if key is a string, try napi_get_named_property
-  napi_valuetype type;
-  assert(napi_typeof(env, key, &type) == napi_ok);
+  napi_valuetype type = get_typeof(env, key);
   if (type == napi_string) {
     char buf[1024];
     assert(napi_get_value_string_utf8(env, key, buf, 1024, nullptr) == napi_ok);
@@ -669,8 +771,7 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
            status == napi_pending_exception || status == napi_generic_failure);
     if (status == napi_ok) {
       assert(value != nullptr);
-      assert(napi_typeof(env, value, &type) == napi_ok);
-      printf("value type = %d\n", type);
+      printf("value type = %d\n", get_typeof(env, value));
     } else {
       return ok(env);
     }
@@ -681,8 +782,7 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
          status == napi_pending_exception || status == napi_generic_failure);
   if (status == napi_ok) {
     assert(value != nullptr);
-    assert(napi_typeof(env, value, &type) == napi_ok);
-    printf("value type = %d\n", type);
+    printf("value type = %d\n", get_typeof(env, value));
     return value;
   } else {
     return ok(env);
@@ -914,6 +1014,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("test_number_integer_conversions",
               Napi::Function::New(env, test_number_integer_conversions));
   exports.Set("make_empty_array", Napi::Function::New(env, make_empty_array));
+  exports.Set("throw_error", Napi::Function::New(env, throw_error));
+  exports.Set("create_and_throw_error",
+              Napi::Function::New(env, create_and_throw_error));
 
   return exports;
 }

@@ -271,8 +271,14 @@ describe("napi", () => {
       checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("cannot see locals from around its invocation", () => {
-      // variable is declared on main.js:18, but it should not be in scope for the eval'd code
-      checkSameOutput("eval_wrapper", ["shouldNotExist"]);
+      // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
+      // this doesn't use checkSameOutput because V8 and JSC use different error messages for a missing variable
+      let bunResult = runOn(bunExe(), "eval_wrapper", ["shouldNotExist"]);
+      // remove all debug logs
+      bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+      expect(bunResult).toBe(
+        `synchronously threw ReferenceError: message "Can't find variable: shouldNotExist", code undefined`,
+      );
     });
   });
 
@@ -294,6 +300,17 @@ describe("napi", () => {
       it("creates an array with empty slots", () => {
         checkSameOutput("test_create_array_with_length", []);
       });
+    });
+  });
+
+  describe("napi_throw functions", () => {
+    it("has the right code and message", () => {
+      checkSameOutput("test_throw_functions_exhaustive", []);
+    });
+  });
+  describe("napi_create_error functions", () => {
+    it("has the right code and message", () => {
+      checkSameOutput("test_create_error_functions_exhaustive", []);
     });
   });
 });

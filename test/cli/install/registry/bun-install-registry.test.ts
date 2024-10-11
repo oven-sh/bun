@@ -951,12 +951,6 @@ describe("publish", async () => {
       const publishDir = tmpdirSync();
       const bunfig = await authBunfig("binaries-" + info.user);
 
-      const publishJson = {
-        name: "publish-pkg-bins",
-        version: "1.1.1",
-        ...info,
-      };
-
       await Promise.all([
         rm(join(import.meta.dir, "packages", "publish-pkg-bins"), { recursive: true, force: true }),
         write(
@@ -1017,6 +1011,60 @@ describe("publish", async () => {
       }
     });
   }
+
+  test("dependencies are installed", async () => {
+    const publishDir = tmpdirSync();
+    const bunfig = await authBunfig("manydeps");
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-deps"), { recursive: true, force: true }),
+      write(
+        join(publishDir, "package.json"),
+        JSON.stringify(
+          {
+            name: "publish-pkg-deps",
+            version: "1.1.1",
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+            peerDependencies: {
+              "a-dep": "1.0.1",
+            },
+            optionalDependencies: {
+              "basic-1": "1.0.0",
+            },
+          },
+          null,
+          2,
+        ),
+      ),
+      write(join(publishDir, "bunfig.toml"), bunfig),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "publish-pkg-deps": "1.1.1",
+          },
+        }),
+      ),
+    ]);
+
+    let { out, err, exitCode } = await publish(env, publishDir);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(out).toContain("+ publish-pkg-deps@1.1.1");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const results = await Promise.all([
+      exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+      exists(join(packageDir, "node_modules", "a-dep", "package.json")),
+      exists(join(packageDir, "node_modules", "basic-1", "package.json")),
+    ]);
+
+    expect(results).toEqual([true, true, true]);
+  });
 
   test("can publish workspace package", async () => {
     const bunfig = await authBunfig("workspace");

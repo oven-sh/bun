@@ -557,6 +557,8 @@ pub const JSBundler = struct {
             self.public_path.deinit();
             self.conditions.deinit();
             self.drop.deinit();
+            self.banner.deinit();
+            self.footer.deinit();
         }
     };
 

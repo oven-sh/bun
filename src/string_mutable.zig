@@ -172,17 +172,16 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
 
-    pub inline fn appendSlice(self: *MutableString, slice: []const u8) !void {
-        try self.list.appendSlice(self.allocator, slice);
+    pub inline fn appendSlice(self: *MutableString, items: []const u8) !void {
+        try self.list.appendSlice(self.allocator, items);
     }
 
-    pub inline fn appendSliceExact(self: *MutableString, slice: []const u8) !void {
+    pub inline fn appendSliceExact(self: *MutableString, items: []const u8) !void {
         if (slice.len == 0) return;
-
-        try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
+        try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + items.len);
         var end = self.list.items.ptr + self.list.items.len;
-        self.list.items.len += slice.len;
-        @memcpy(end[0..slice.len], slice);
+        self.list.items.len += items.len;
+        @memcpy(end[0..items.len], items);
     }
 
     pub inline fn reset(
@@ -237,7 +236,7 @@ pub const MutableString = struct {
         return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
-    pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
+    pub fn slice(self: *MutableString) []u8 {
         return self.list.items;
     }
 
@@ -263,10 +262,6 @@ pub const MutableString = struct {
         self.list.shrinkAndFree(self.allocator, length);
         return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
-
-    // pub fn deleteAt(self: *MutableString, i: usize)  {
-    //     self.list.swapRemove(i);
-    // }
 
     pub fn containsChar(self: *const MutableString, char: u8) bool {
         return self.indexOfChar(char) != null;

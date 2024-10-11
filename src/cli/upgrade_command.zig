@@ -559,7 +559,7 @@ pub const UpgradeCommand = struct {
                 else => return error.HTTPError,
             }
 
-            const bytes = zip_file_buffer.toOwnedSliceLeaky();
+            const bytes = zip_file_buffer.slice();
 
             progress.end();
             refresher.refresh();

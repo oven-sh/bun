@@ -12307,6 +12307,16 @@ pub const PackageManager = struct {
             this.names = packages.items(.name);
             this.bins = packages.items(.bin);
             this.resolutions = packages.items(.resolution);
+
+            // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
+            // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
+            if (this.successfully_installed.bit_length < this.lockfile.packages.len) {
+                const new = Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len) catch bun.outOfMemory();
+                var old = this.successfully_installed;
+                defer old.deinit(bun.default_allocator);
+                old.copyInto(new);
+                this.successfully_installed = new;
+            }
         }
 
         /// Install versions of a package which are waiting on a network request

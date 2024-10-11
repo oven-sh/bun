@@ -296,13 +296,6 @@ pub export fn napi_create_array(env: napi_env, result_: ?*napi_value) napi_statu
     result.set(env, JSValue.createEmptyArray(env, 0));
     return .ok;
 }
-const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
-    var args: [128]JSC.JSValue = undefined;
-    for (args, 0..) |_, i| {
-        args[i] = JSValue.jsUndefined();
-    }
-    break :brk args;
-};
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result_: ?*napi_value) napi_status {
     log("napi_create_array_with_length", .{});
     const result = result_ orelse {

@@ -35,7 +35,30 @@ body {
     outfile: '/out.js',
     onAfterBundle(api) {
       api.expectFile('/out.js').toEqualIgnoringWhitespace(`
-/* a.css */`)
+/* entry.css */`)
+    },
+  });
+
+  itBundled("css/CSSNesting", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `
+body {
+	h1 {
+		color: white;
+	}
+}`,
+    },
+    outfile: '/out.js',
+    onAfterBundle(api) {
+      api.expectFile('/out.js').toEqualIgnoringWhitespace(`
+/* entry.css */
+body {
+	&h1 {
+		color: #fff;
+	}
+}
+`)
     },
   });
 

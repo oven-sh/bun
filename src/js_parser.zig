@@ -13559,6 +13559,7 @@ fn NewParser_(
                     .flags = Flags.Property.init(.{
                         .is_computed = is_computed,
                         .is_static = opts.is_static,
+                        .is_accessor = kind == .accessor,
                     }),
                     .key = key,
                     .initializer = initializer,
@@ -17635,7 +17636,7 @@ fn NewParser_(
                         return expr;
                     }
 
-                    _ = p.visitClass(expr.loc, e_, Ref.None);
+                    _ = p.visitClass(expr.loc, e_, Ref.None) catch bun.outOfMemory();
                 },
                 else => {},
             }
@@ -19289,7 +19290,7 @@ fn NewParser_(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    _ = p.visitClass(s2.loc, &class.class, data.default_name.ref.?);
+                                    _ = p.visitClass(s2.loc, &class.class, data.default_name.ref.?) catch bun.outOfMemory();
 
                                     if (p.is_control_flow_dead)
                                         return;
@@ -20037,7 +20038,7 @@ fn NewParser_(
                         }
                     }
 
-                    _ = p.visitClass(stmt.loc, &data.class, Ref.None);
+                    _ = p.visitClass(stmt.loc, &data.class, Ref.None) catch bun.outOfMemory();
 
                     // Remove the export flag inside a namespace
                     const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
@@ -20886,7 +20887,7 @@ fn NewParser_(
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.
-                            const descriptor_kind: Expr = if (!prop.flags.contains(.is_method))
+                            const descriptor_kind: Expr = if (!prop.flags.contains(.is_method) and !prop.flags.contains(.is_accessor))
                                 p.newExpr(E.Undefined{}, loc)
                             else
                                 p.newExpr(E.Null{}, loc);
@@ -21644,7 +21645,7 @@ fn NewParser_(
             return res;
         }
 
-        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class, default_name_ref: Ref) Ref {
+        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class, default_name_ref: Ref) !Ref {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -21804,57 +21805,57 @@ fn NewParser_(
                     var out_properties = Property.List.init(&.{});
                     for (class.properties) |*property| {
                         if (property.kind != .accessor) {
-                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
+                            try out_properties.push(p.allocator, property.*);
                             continue;
                         }
                         if (@as(Expr.Tag, property.key.?.data) != .e_string and @as(Expr.Tag, property.key.?.data) != .e_private_identifier) {
-                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key must be a string or private identifier") catch bun.outOfMemory();
-                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
+                            try p.log.addError(p.source, property.key.?.loc, "'accessor' property key must be a string or private identifier");
+                            try out_properties.push(p.allocator, property.*);
                         } else if (property.flags.contains(.is_method)) {
-                            p.log.addError(p.source, property.value.?.loc, "'accessor' property cannot be a method") catch bun.outOfMemory();
-                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
+                            try p.log.addError(p.source, property.value.?.loc, "'accessor' property cannot be a method");
+                            try out_properties.push(p.allocator, property.*);
                         } else if (property.flags.contains(.is_computed)) {
-                            p.log.addError(p.source, property.key.?.loc, "'accessor' property key cannot be computed") catch bun.outOfMemory();
-                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
+                            try p.log.addError(p.source, property.key.?.loc, "'accessor' property key cannot be computed");
+                            try out_properties.push(p.allocator, property.*);
                         } else {
                             // 1. change property name to #name
                             var old_property_name: string = undefined;
                             var new_property_name: string = undefined;
                             var prop_name_ref: Ref = undefined;
                             var accessor_key: Expr = undefined;
-                            const is_private_prop = @as(Expr.Tag, property.key.?.data) == .e_string;
+                            const is_private_prop = @as(Expr.Tag, property.key.?.data) != .e_string;
 
                             const loc = property.key.?.loc;
 
-                            if (is_private_prop) {
-                                old_property_name = property.key.?.data.e_string.string(p.allocator) catch bun.outOfMemory();
-                                new_property_name = std.fmt.allocPrint(p.allocator, "#{s}", .{old_property_name}) catch bun.outOfMemory();
+                            if (!is_private_prop) {
+                                old_property_name = try property.key.?.data.e_string.string(p.allocator);
+                                new_property_name = try std.fmt.allocPrint(p.allocator, "#{s}", .{old_property_name});
                                 accessor_key = p.newExpr(E.String{ .data = old_property_name }, loc);
                             } else {
                                 old_property_name = p.symbols.items[property.key.?.data.e_private_identifier.ref.innerIndex()].original_name;
-                                new_property_name = std.fmt.allocPrint(p.allocator, "#_{s}", .{old_property_name[1..]}) catch bun.outOfMemory();
+                                new_property_name = try std.fmt.allocPrint(p.allocator, "#_{s}", .{old_property_name[1..]});
                                 accessor_key = property.key.?;
                             }
 
                             prop_name_ref = p.generateTempRefKind(.private_field, new_property_name);
-                            p.current_scope.generated.push(p.allocator, prop_name_ref) catch bun.outOfMemory();
+                            try p.current_scope.generated.push(p.allocator, prop_name_ref);
 
                             property.key = p.newExpr(E.PrivateIdentifier{ .ref = prop_name_ref }, loc);
                             property.kind = .normal;
 
-                            out_properties.push(p.allocator, property.*) catch bun.outOfMemory();
+                            try out_properties.push(p.allocator, property.*);
 
                             // 2. generate getter and setter
-                            out_properties.push(p.allocator, Property{
+                            try out_properties.push(p.allocator, Property{
                                 .kind = .get,
                                 .ts_decorators = property.ts_decorators,
                                 .key = accessor_key,
-                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .flags = Flags.Property.init(.{ .is_method = true, .is_static = property.flags.contains(.is_static) }),
                                 .value = p.newExpr(E.Function{
                                     .func = .{
                                         .body = .{
                                             .loc = loc,
-                                            .stmts = p.allocator.dupe(
+                                            .stmts = try p.allocator.dupe(
                                                 Stmt,
                                                 &.{p.s(
                                                     S.Return{
@@ -21870,21 +21871,21 @@ fn NewParser_(
                                                     },
                                                     loc,
                                                 )},
-                                            ) catch bun.outOfMemory(),
+                                            ),
                                         },
                                     },
                                 }, loc),
-                            }) catch bun.outOfMemory();
+                            });
 
-                            const underscore_ref = p.declareGeneratedSymbol(.other, "_") catch bun.outOfMemory();
-                            out_properties.push(p.allocator, Property{
+                            const underscore_ref = try p.declareGeneratedSymbol(.other, "_");
+                            try out_properties.push(p.allocator, Property{
                                 .kind = .set,
                                 .ts_decorators = property.ts_decorators,
                                 .key = accessor_key,
-                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .flags = Flags.Property.init(.{ .is_method = true, .is_static = property.flags.contains(.is_static) }),
                                 .value = p.newExpr(E.Function{
                                     .func = .{
-                                        .args = p.allocator.dupe(Arg, &.{
+                                        .args = try p.allocator.dupe(Arg, &.{
                                             .{
                                                 .binding = p.b(
                                                     B.Identifier{
@@ -21893,10 +21894,10 @@ fn NewParser_(
                                                     loc,
                                                 ),
                                             },
-                                        }) catch bun.outOfMemory(),
+                                        }),
                                         .body = .{
                                             .loc = loc,
-                                            .stmts = p.allocator.dupe(
+                                            .stmts = try p.allocator.dupe(
                                                 Stmt,
                                                 &.{p.s(
                                                     S.SExpr{
@@ -21920,11 +21921,11 @@ fn NewParser_(
                                                     },
                                                     loc,
                                                 )},
-                                            ) catch bun.outOfMemory(),
+                                            ),
                                         },
                                     },
                                 }, loc),
-                            }) catch bun.outOfMemory();
+                            });
                         }
                     }
                     class.properties = out_properties.slice();

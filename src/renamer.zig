@@ -730,9 +730,9 @@ pub const NumberRenamer = struct {
         /// Caller must use an arena allocator
         pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator, input_name: []const u8) UnusedName {
             var name = if (input_name[0] == '#')
-                allocator.dupe(u8, input_name) catch unreachable
+                std.fmt.allocPrint(allocator, "#{s}", .{bun.MutableString.ensureValidIdentifier(input_name[1..], temp_allocator) catch unreachable}) catch bun.outOfMemory()
             else
-                bun.MutableString.ensureValidIdentifier(input_name, temp_allocator) catch unreachable;
+                bun.MutableString.ensureValidIdentifier(input_name, temp_allocator) catch bun.outOfMemory();
 
             switch (NameUse.find(this, name)) {
                 .unused => {},

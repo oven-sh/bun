@@ -3329,7 +3329,8 @@ fn NewPrinter(
                 .e_template_part,
                 => {
                     if (Environment.isDebug)
-                        Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
+                        //Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
+                        p.fmt("/* Unexpected expression of type .{s} */", .{@tagName(expr.data)}) catch bun.outOfMemory();
                 },
             }
         }

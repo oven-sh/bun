@@ -1,3 +1,7 @@
+/**
+ * THIS TEST WILL NOT WORK IF YOU ARE ON AT&T INTERNET THAT OVERRIDES YOUR DNS RESOLVER
+ * TO ALWAYS RESOLVE TO THEIR SPAMMY, AD-RIDDEN, PERSONAL-DATA-MINING, DNS SERVER!
+ */
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";

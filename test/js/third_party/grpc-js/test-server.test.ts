@@ -36,7 +36,7 @@ import { ProtoGrpcType as TestServiceGrpcType } from "./generated/test_service";
 import { Request__Output } from "./generated/Request";
 import { CompressionAlgorithms } from "@grpc/grpc-js/build/src/compression-algorithms";
 import { SecureContextOptions } from "tls";
-import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { afterEach as after, beforeEach as before, describe, it, afterEach, beforeEach } from "bun:test";
 
 const loadedTestServiceProto = protoLoader.loadSync(path.join(__dirname, "fixtures/test_service.proto"), {
   keepCase: true,
@@ -659,7 +659,7 @@ describe("Echo service", () => {
     server.forceShutdown();
   });
 
-  it.todo("should echo the recieved message directly", done => {
+  it("should echo the recieved message directly", done => {
     client.echo({ value: "test value", value2: 3 }, (error: ServiceError, response: any) => {
       assert.ifError(error);
       assert.deepStrictEqual(response, { value: "test value", value2: 3 });
@@ -801,7 +801,8 @@ describe("Echo service", () => {
   });
 });
 
-describe("Connection injector", () => {
+// We dont allow connection injections yet on node:http nor node:http2
+describe.todo("Connection injector", () => {
   let tcpServer: net.Server;
   let server: Server;
   let client: ServiceClient;
@@ -824,7 +825,7 @@ describe("Connection injector", () => {
 
   before(done => {
     server = new Server();
-    const creds = ServerCredentials.createSsl(null, [{ private_key: key, cert_chain: cert }]);
+    const creds = ServerCredentials.createSsl(null, [{ private_key: key, cert_chain: cert }], false);
     const connectionInjector = server.createConnectionInjector(creds);
     tcpServer = net.createServer(socket => {
       connectionInjector.injectConnection(socket);
@@ -846,7 +847,7 @@ describe("Connection injector", () => {
     server.forceShutdown();
   });
 
-  it.todo("should respond to a request", done => {
+  it("should respond to a request", done => {
     client.echo({ value: "test value", value2: 3 }, (error: ServiceError, response: any) => {
       assert.ifError(error);
       assert.deepStrictEqual(response, { value: "test value", value2: 3 });
@@ -1173,7 +1174,7 @@ describe("Compressed requests", () => {
       });
     });
 
-    it.todo("Should handle large messages", done => {
+    it("Should handle large messages", done => {
       let longMessage = "";
       for (let i = 0; i < 400000; i++) {
         const letter = "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)];

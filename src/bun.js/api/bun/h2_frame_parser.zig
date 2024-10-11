@@ -1923,6 +1923,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
     pub fn handleRSTStreamFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        log("handleRSTStreamFrame {s}", .{data});
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "RST_STREAM frame on connection stream", this.lastStreamID, true);
             return data.len;
@@ -2633,8 +2634,8 @@ pub const H2FrameParser = struct {
 
         state.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(stream.windowSize));
         state.put(globalObject, JSC.ZigString.static("state"), JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-        state.put(globalObject, JSC.ZigString.static("localClose"), JSC.JSValue.jsNumber(@as(i32, if (stream.canSendData()) 1 else 0)));
-        state.put(globalObject, JSC.ZigString.static("remoteClose"), JSC.JSValue.jsNumber(@as(i32, if (stream.canReceiveData()) 1 else 0)));
+        state.put(globalObject, JSC.ZigString.static("localClose"), JSC.JSValue.jsNumber(@as(i32, if (stream.canSendData()) 0 else 1)));
+        state.put(globalObject, JSC.ZigString.static("remoteClose"), JSC.JSValue.jsNumber(@as(i32, if (stream.canReceiveData()) 0 else 1)));
         // TODO: sumDependencyWeight
         state.put(globalObject, JSC.ZigString.static("sumDependencyWeight"), JSC.JSValue.jsNumber(0));
         state.put(globalObject, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(stream.weight));

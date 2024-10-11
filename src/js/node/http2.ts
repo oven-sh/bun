@@ -101,13 +101,12 @@ const [H2FrameParser, assertSettings, getPackedSettings, getUnpackedSettings] = 
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
-const bunHTTP2StreamResponded = Symbol.for("::bunhttp2hasResponded::");
 const bunHTTP2StreamReadQueue = Symbol.for("::bunhttp2ReadQueue::");
-const bunHTTP2Closed = Symbol.for("::bunhttp2closed::");
 
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
-const bunHTTP2WantTrailers = Symbol.for("::bunhttp2WantTrailers::");
-const bunHTTP2StreamEnded = Symbol.for("::bunhttp2StreamEnded::");
+const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
+
+const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
@@ -1655,15 +1654,42 @@ function pushToStream(stream, data) {
   }
   queue.push(data);
 }
+
+enum StreamState {
+  EndedCalled = 1 << 0, // 00001 = 1
+  WantTrailer = 1 << 1, // 00010 = 2
+  FinalCalled = 1 << 2, // 00100 = 4
+  Closed = 1 << 3, // 01000 = 8
+  StreamResponded = 1 << 4, // 10000 = 16
+  WritableClosed = 1 << 5, // 100000 = 32
+}
+function markWritableDone(stream: Http2Stream) {
+  const final = stream[bunHTTP2StreamFinal];
+  if (typeof final === "function") {
+    stream[bunHTTP2StreamFinal] = null;
+    final();
+    stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed | StreamState.FinalCalled;
+    return;
+  }
+  stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
+}
+function markStreamClosed(stream: Http2Stream) {
+  const status = stream[bunHTTP2StreamStatus];
+
+  if ((status & StreamState.Closed) === 0) {
+    stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+    markWritableDone(stream);
+  }
+}
+
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
-  [bunHTTP2StreamEnded]: boolean = false;
-  [bunHTTP2WantTrailers]: boolean = false;
-  [bunHTTP2Closed]: boolean = false;
+  [bunHTTP2StreamFinal]: VoidFunction | null = null;
+  [bunHTTP2StreamStatus]: number = 0;
+
   rstCode: number | undefined = undefined;
   [bunHTTP2StreamReadQueue]: Array<Buffer> = $createFIFO();
-  [bunHTTP2StreamResponded]: boolean = false;
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -1707,10 +1733,19 @@ class Http2Stream extends Duplex {
     return this.#sentTrailers;
   }
 
+  static #rstStream() {
+    const session = this[bunHTTP2Session];
+    assertSession(session);
+    markStreamClosed(this);
+
+    session[bunHTTP2Native]?.rstStream(this.#id, this.this.rstCode);
+    this[bunHTTP2Session] = null;
+  }
+
   sendTrailers(headers) {
     const session = this[bunHTTP2Session];
 
-    if (this.destroyed || this.closed) {
+    if (this.destroyed) {
       const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
       error.code = "ERR_HTTP2_INVALID_STREAM";
       throw error;
@@ -1723,7 +1758,7 @@ class Http2Stream extends Duplex {
     }
     assertSession(session);
 
-    if (!this[bunHTTP2WantTrailers]) {
+    if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
       const error = new Error(
         `ERR_HTTP2_TRAILERS_NOT_READY: Trailing headers cannot be sent until after the wantTrailers event is emitted`,
       );
@@ -1762,7 +1797,7 @@ class Http2Stream extends Duplex {
   }
 
   get closed() {
-    return this[bunHTTP2Closed];
+    return (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
   }
 
   get destroyed() {
@@ -1807,38 +1842,55 @@ class Http2Stream extends Duplex {
     return false;
   }
   close(code, callback) {
-    if (!this[bunHTTP2Closed]) {
+    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
 
       if (code < 0 || code > 13) {
         throw new RangeError("Invalid error code");
       }
-      this[bunHTTP2Closed] = true;
-      session[bunHTTP2Native]?.rstStream(this.#id, code || 0);
       this.rstCode = code;
+      if (this.writableFinished) {
+        markStreamClosed(this);
+
+        session[bunHTTP2Native]?.rstStream(this.#id, code || 0);
+        this[bunHTTP2Session] = null;
+      } else {
+        this.once("finish", Http2Stream.#rstStream);
+      }
     }
+
     if (typeof callback === "function") {
       this.once("close", callback);
     }
   }
   _destroy(err, callback) {
-    if (!this[bunHTTP2Closed]) {
-      this[bunHTTP2Closed] = true;
-
+    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
-
-      session[bunHTTP2Native]?.rstStream(this.#id, 0);
       this.rstCode = 0;
+      if (this.writableFinished) {
+        markStreamClosed(this);
+
+        session[bunHTTP2Native]?.rstStream(this.#id, 0);
+        this[bunHTTP2Session] = null;
+      } else {
+        this.once("finish", Http2Stream.#rstStream);
+      }
     }
-    this[bunHTTP2Session] = null;
 
     callback(err);
   }
 
   _final(callback) {
-    callback();
+    const status = this[bunHTTP2StreamStatus];
+
+    if ((status & StreamState.WritableClosed) !== 0 || (status & StreamState.Closed) !== 0) {
+      callback();
+      this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
+    } else {
+      this[bunHTTP2StreamFinal] = callback;
+    }
   }
 
   _read(size) {
@@ -1854,14 +1906,16 @@ class Http2Stream extends Duplex {
   }
 
   end(chunk, encoding, callback) {
-    if (this[bunHTTP2StreamEnded]) {
+    const status = this[bunHTTP2StreamStatus];
+
+    if ((status & StreamState.EndedCalled) !== 0) {
       typeof callback == "function" && callback();
       return;
     }
     if (!chunk) {
       chunk = Buffer.alloc(0);
     }
-    this[bunHTTP2StreamEnded] = true;
+    this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
     return super.end(chunk, encoding, callback);
   }
 
@@ -1888,7 +1942,7 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, this[bunHTTP2StreamEnded], callback);
+        native.writeStream(this.#id, chunk, (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0, callback);
         return;
       }
     }
@@ -1903,7 +1957,7 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native.writeStream(this.#id, chunk, this[bunHTTP2StreamEnded], callback);
+        native.writeStream(this.#id, chunk, (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0, callback);
         return;
       }
     }
@@ -2157,14 +2211,6 @@ function connectWithProtocol(protocol: string, options: Http2ConnectOptions | st
   return tls.connect(options, listener);
 }
 
-function emitWantTrailersNT(streams, streamId) {
-  const stream = streams.get(streamId);
-  if (stream) {
-    stream[bunHTTP2WantTrailers] = true;
-    stream.emit("wantTrailers");
-  }
-}
-
 function emitConnectNT(self, socket) {
   self.emit("connect", self, socket);
 }
@@ -2176,12 +2222,11 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       stream.rstCode = error;
       error_instance = streamErrorFromCode(error);
     }
-    stream[bunHTTP2Closed] = true;
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
     }
-
+    markStreamClosed(stream);
     if (destroy) stream.destroy(error_instance, stream.rstCode);
     else {
       stream.emit("error", error_instance);
@@ -2271,10 +2316,8 @@ class ServerHttp2Session extends Http2Session {
     aborted(self: ServerHttp2Session, stream: ServerHttp2Session, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
 
-      if (!stream[bunHTTP2Closed]) {
-        stream[bunHTTP2Closed] = true;
-      }
       stream.rstCode = constants.NGHTTP2_CANCEL;
+      markStreamClosed(stream);
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;
@@ -2303,12 +2346,15 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2Closed] = true;
+        markStreamClosed(stream);
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
         }
+      } else if (state === 5) {
+        // 5 = local closed aka write is closed
+        markWritableDone(stream);
       }
     },
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
@@ -2329,7 +2375,8 @@ class ServerHttp2Session extends Http2Session {
         stream.emit("continue");
         return;
       }
-      if (stream[bunHTTP2StreamResponded]) {
+      const status = stream[bunHTTP2StreamStatus];
+      if ((status & StreamState.StreamResponded) !== 0) {
         try {
           stream.emit("trailers", headers, flags, rawheaders);
         } catch {
@@ -2338,7 +2385,7 @@ class ServerHttp2Session extends Http2Session {
       } else {
         self[kServer].emit("stream", stream, headers, flags, rawheaders);
 
-        stream[bunHTTP2StreamResponded] = true;
+        stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
         self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
@@ -2374,11 +2421,12 @@ class ServerHttp2Session extends Http2Session {
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
     },
-    wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Session) {
+    wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
       if (!self || typeof stream !== "object") return;
+      const status = stream[bunHTTP2StreamStatus];
+      if ((status & StreamState.WantTrailer) !== 0) return;
 
-      if (stream[bunHTTP2WantTrailers]) return;
-      stream[bunHTTP2WantTrailers] = true;
+      stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
       stream.emit("wantTrailers");
     },
     goaway(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
@@ -2685,9 +2733,7 @@ class ClientHttp2Session extends Http2Session {
     aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
 
-      if (!stream[bunHTTP2Closed]) {
-        stream[bunHTTP2Closed] = true;
-      }
+      markStreamClosed(stream);
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
@@ -2714,12 +2760,15 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2Closed] = true;
+        markStreamClosed(stream);
         self.#connections--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
         }
+      } else if (state === 5) {
+        // 5 = local closed aka write is closed
+        markWritableDone(stream);
       }
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
@@ -2735,14 +2784,15 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
-      if (stream[bunHTTP2StreamResponded]) {
+      const status = stream[bunHTTP2StreamStatus];
+      if ((status & StreamState.StreamResponded) !== 0) {
         try {
-          stream.emit(stream[bunHTTP2StreamEnded] ? "trailers" : "headers", headers, flags, rawheaders);
+          stream.emit((status & StreamState.EndedCalled) !== 0 ? "trailers" : "headers", headers, flags, rawheaders);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
-        stream[bunHTTP2StreamResponded] = true;
+        stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
         self.emit("stream", stream, headers, flags, rawheaders);
         stream.emit("response", headers, flags, rawheaders);
       }
@@ -2782,9 +2832,9 @@ class ClientHttp2Session extends Http2Session {
 
     wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
       if (!self || typeof stream !== "object") return;
-
-      if (stream[bunHTTP2WantTrailers]) return;
-      stream[bunHTTP2WantTrailers] = true;
+      const status = stream[bunHTTP2StreamStatus];
+      if ((status & StreamState.WantTrailer) !== 0) return;
+      stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
       stream.emit("wantTrailers");
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {

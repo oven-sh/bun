@@ -1,3 +1,4 @@
+// This implements error deserialization from the WebSocket protocol
 import { DataViewReader } from "./reader";
 
 export const enum BundlerMessageKind {
@@ -33,6 +34,7 @@ export interface BundlerNote {
 
 export function decodeSerializedErrorPayload(arrayBuffer: DataView, start: number) {
   const r = new DataViewReader(arrayBuffer, start);
+  const owner = r.u32();
   const messageCount = r.u32();
   const messages = new Array(messageCount);
   for (let i = 0; i < messageCount; i++) {
@@ -40,6 +42,7 @@ export function decodeSerializedErrorPayload(arrayBuffer: DataView, start: numbe
     // TODO: JS errors
     messages[i] = readLogMsg(r, kind);
   }
+  console.log({owner, messageCount, messages});
   return messages;
 }
 

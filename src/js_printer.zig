@@ -4940,15 +4940,8 @@ fn NewPrinter(
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
                 },
-                else => {
-                    var slice = p.writer.slice();
-                    const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
-
-                    if (to_print.len > 0) {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
-                    } else {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
-                    }
+                else => |tag| {
+                    Output.panic("Unexpected tag in printStmt: .{s}", .{@tagName(tag)});
                 },
             }
         }

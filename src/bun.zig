@@ -3315,15 +3315,22 @@ pub inline fn resolveSourcePath(
     };
 }
 
+const RuntimeEmbedRoot = enum {
+    codegen,
+    src,
+    src_eager,
+    codegen_eager,
+};
+
 pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src, src_eager },
+    comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
 ) []const u8 {
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.codegen_embed);
 
     const abs_path = switch (root) {
-        .codegen => resolveSourcePath(.codegen, sub_path),
+        .codegen, .codegen_eager => resolveSourcePath(.codegen, sub_path),
         .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
@@ -3344,7 +3351,7 @@ pub fn runtimeEmbedFile(
         }
     };
 
-    if (root == .src_eager and static.once.done) {
+    if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
         default_allocator.free(static.storage);
     }

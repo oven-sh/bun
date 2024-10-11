@@ -49,7 +49,7 @@ vm: *VirtualMachine,
 /// across all loaded modules.
 /// (Request, Id, Meta) => Response
 server_fetch_function_callback: JSC.Strong,
-/// (modules: any, clientComponentsAdd: null|string[], clientComponentsRemove: null|string[]) => Promise<void>
+/// (modules: any, clientComponentsAdd: null|string[], clientComponentsRemove: null|string[]) => Promise<null|[string, any][]>
 server_register_update_callback: JSC.Strong,
 
 // Watching
@@ -156,6 +156,22 @@ pub fn init(options: Options) !*DevServer {
         }
     else
         null;
+
+    // In debug builds, run the code generator in watch mode.
+    if (Environment.isDebug and !Environment.codegen_embed) {
+        var proc = std.process.Child.init(&.{
+            "bun",
+            "run",
+            Environment.base_path ++ "/src/codegen/bake-codegen.ts",
+            "--codegen_root=" ++ Environment.codegen_path,
+            "--debug",
+            "--live",
+        }, bun.default_allocator);
+        proc.spawn() catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            Output.debugWarn("Failed to run codegen in watch mode: {}", .{err});
+        };
+    }
 
     const app = App.create(.{});
 
@@ -360,6 +376,8 @@ fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: bake.Graph
     bundler.options.minify_identifiers = false;
     bundler.options.minify_whitespace = false;
 
+    bundler.options.experimental_css = true;
+
     bundler.options.dev_server = dev;
     bundler.options.framework = &dev.framework;
 
@@ -420,6 +438,7 @@ fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
             .unqueued => bun.assertWithLocation(false, @src()),
             .bundler_failure => {
                 resp.corked(sendSerializedFailures, .{
+                    dev,
                     resp,
                     route.bundler_failure_logs.keys(),
                     .bundler,
@@ -428,6 +447,7 @@ fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
             },
             .evaluation_failure => {
                 resp.corked(sendSerializedFailures, .{
+                    dev,
                     resp,
                     (&(route.evaluate_failure orelse @panic("missing error")))[0..1],
                     .evaluation,
@@ -494,6 +514,7 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
         .unqueued => bun.assertWithLocation(false, @src()),
         .bundler_failure => {
             resp.corked(sendSerializedFailures, .{
+                dev,
                 resp,
                 route.bundler_failure_logs.keys(),
                 .bundler,
@@ -502,6 +523,7 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
         },
         .evaluation_failure => {
             resp.corked(sendSerializedFailures, .{
+                dev,
                 resp,
                 (&(route.evaluate_failure orelse @panic("missing error")))[0..1],
                 .evaluation,
@@ -556,7 +578,7 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
     ) catch |err| {
         const fail = try SerializedFailure.initFromJs(.none, global.takeException(err));
         defer fail.deinit();
-        sendSerializedFailures(resp, &.{fail}, .runtime);
+        dev.sendSerializedFailures(resp, &.{fail}, .runtime);
         return;
     };
 
@@ -566,12 +588,11 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
             .pending => unreachable, // was waited for
             .fulfilled => |r| result = r,
             .rejected => |e| {
-                _ = e;
-                @panic("TODO");
-                // const fail: Failure = .{ .request_handler = e };
-                // fail.printToConsole(route);
-                // fail.sendAsHttpResponse(resp, route);
-                // return;
+                dev.vm.printErrorLikeObjectToConsole(e);
+                const fail = try SerializedFailure.initFromJs(.none, e);
+                defer fail.deinit();
+                dev.sendSerializedFailures(resp, &.{fail}, .runtime);
+                return;
             },
         }
     }
@@ -800,37 +821,54 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
 }
 
 fn indexFailures(dev: *DevServer) !void {
-    for (dev.incremental_result.failures_added.items) |fail| {
-        dev.incremental_result.routes_affected.clearRetainingCapacity();
+    inline for (.{
+        .{ .add, dev.incremental_result.failures_added.items },
+        .{ .del, dev.incremental_result.failures_removed.items },
+    }) |tuple| {
+        const kind: enum { add, del }, const list = tuple;
+        for (list) |fail| {
+            dev.incremental_result.routes_affected.clearRetainingCapacity();
 
-        var sfa_state = std.heap.stackFallback(65536, dev.allocator);
-        const sfa = sfa_state.get();
-        dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
-        defer dev.server_graph.affected_by_trace.deinit(sfa);
+            var sfa_state = std.heap.stackFallback(65536, dev.allocator);
+            const sfa = sfa_state.get();
+            dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
+            defer dev.server_graph.affected_by_trace.deinit(sfa);
 
-        dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count());
-        defer dev.client_graph.affected_by_trace.deinit(sfa);
+            dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count());
+            defer dev.client_graph.affected_by_trace.deinit(sfa);
 
-        switch (fail.getOwner()) {
-            .none, .route => unreachable,
-            inline .server, .client => |index, tag| {
-                const g = switch (tag) {
-                    .server => &dev.server_graph,
-                    .client => &dev.client_graph,
-                    else => @compileError(unreachable),
-                };
-                try g.traceDependencies(index, .no_stop);
-            },
+            switch (fail.getOwner()) {
+                .none, .route => unreachable,
+                inline .server, .client => |index, tag| {
+                    const g = switch (tag) {
+                        .server => &dev.server_graph,
+                        .client => &dev.client_graph,
+                        else => @compileError(unreachable),
+                    };
+                    try g.traceDependencies(index, .no_stop);
+                },
+            }
+
+            for (dev.incremental_result.routes_affected.items) |route_index| {
+                const route = &dev.routes[route_index.get()];
+                switch (kind) {
+                    .add => {
+                        try route.bundler_failure_logs.put(dev.allocator, fail, {});
+                        route.server_state = .bundler_failure;
+                    },
+                    .del => {
+                        _ = route.bundler_failure_logs.swapRemove(fail);
+                        if (route.bundler_failure_logs.count() == 0) {
+                            route.server_state = .loaded;
+                        }
+                    },
+                }
+            }
+
+            if (kind == .del) {
+                fail.deinit();
+            }
         }
-
-        for (dev.incremental_result.routes_affected.items) |route| {
-            try dev.routes[route.get()].bundler_failure_logs.put(dev.allocator, fail, {});
-            dev.routes[route.get()].server_state = .bundler_failure;
-        }
-    }
-
-    for (dev.incremental_result.failures_removed.items) |*item| {
-        item.deinit();
     }
 }
 
@@ -929,7 +967,7 @@ pub const HotUpdateContext = struct {
 pub fn finalizeBundle(
     dev: *DevServer,
     bv2: *bun.bundle_v2.BundleV2,
-    chunk: *const bun.bundle_v2.Chunk,
+    chunk: *const [2]bun.bundle_v2.Chunk,
 ) !void {
     const input_file_sources = bv2.graph.input_files.items(.source);
     const import_records = bv2.graph.ast.items(.import_records);
@@ -957,8 +995,8 @@ pub fn finalizeBundle(
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into it's `IncrementalGraph(...).FileIndex`
     for (
-        chunk.content.javascript.parts_in_chunk_in_order,
-        chunk.compile_results_for_chunk,
+        chunk[0].content.javascript.parts_in_chunk_in_order,
+        chunk[0].compile_results_for_chunk,
     ) |part_range, compile_result| {
         try dev.receiveChunk(
             &ctx,
@@ -967,6 +1005,8 @@ pub fn finalizeBundle(
             compile_result,
         );
     }
+
+    _ = chunk[1].content.css; // TODO: Index CSS files
 
     dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.client_graph.bundled_files.count());
     defer dev.client_graph.affected_by_trace = .{};
@@ -978,7 +1018,7 @@ pub fn finalizeBundle(
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
-    for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+    for (chunk[0].content.javascript.parts_in_chunk_in_order) |part_range| {
         try dev.processChunkDependencies(
             &ctx,
             part_range.source_index,
@@ -1065,6 +1105,7 @@ fn sendJavaScriptSource(code: []const u8, resp: *Response) void {
 }
 
 fn sendSerializedFailures(
+    dev: *DevServer,
     resp: *Response,
     failures: []const SerializedFailure,
     kind: enum { runtime, bundler, evaluation },
@@ -1084,7 +1125,7 @@ fn sendSerializedFailures(
             \\</head>
             \\<body>
             \\<noscript><p style="font:24px sans-serif;">Bun requires JavaScript enabled in the browser to receive hot reloading events.</p></noscript>
-            \\<script id="bun-error-payload" type="text/bun-error-payload">
+            \\<script>let error=Uint8Array.from(atob("
         ,
             .{ .page_title = switch (k) {
                 .bundler => "Bundling Error",
@@ -1095,18 +1136,28 @@ fn sendSerializedFailures(
 
     assert(failures.len > 0);
 
+    var sfb = std.heap.stackFallback(65536, dev.allocator);
+    var arena_state = std.heap.ArenaAllocator.init(sfb.get());
+    defer arena_state.deinit();
+
     for (failures) |fail| {
-        _ = resp.write(fail.data);
+        // TODO: make this entirely use stack memory.
+        const len = bun.base64.encodeLen(fail.data);
+        const buf = arena_state.allocator().alloc(u8, len) catch bun.outOfMemory();
+        const encoded = buf[0..bun.base64.encode(buf, fail.data)];
+        _ = resp.write(encoded);
+
+        _ = arena_state.reset(.retain_capacity);
     }
 
-    const pre = "</script><script>";
+    const pre = "\"),c=>c.charCodeAt(0));";
     const post = "</script></body></html>";
 
-    if (Environment.embed_code) {
+    if (Environment.codegen_embed) {
         _ = resp.end(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post);
     } else {
         _ = resp.write(pre);
-        _ = resp.write(bun.runtimeEmbedFile(.codegen, "bake.error.js"));
+        _ = resp.write(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
         _ = resp.end(post, false);
     }
 }
@@ -1249,6 +1300,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// This is a file is an entry point to the framework.
                     /// Changing this will always cause a full page reload.
                     is_special_framework_file: bool,
+
+                    kind: enum { js, css },
                 };
 
                 comptime {
@@ -1373,11 +1426,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .client => {
                     if (gop.found_existing) {
                         bun.default_allocator.free(gop.value_ptr.code());
+
+                        if (gop.value_ptr.flags.failed) {
+                            const kv = g.failures.fetchSwapRemove(file_index) orelse
+                                Output.panic("Missing failure in IncrementalGraph", .{});
+                            try dev.incremental_result.failures_removed.append(
+                                dev.allocator,
+                                kv.value,
+                            );
+                        }
                     }
                     gop.value_ptr.* = File.init(code, .{
                         .failed = false,
                         .is_component_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = false,
+                        .kind = .js,
                     });
                     try g.current_chunk_parts.append(dev.allocator, file_index);
                 },
@@ -1749,6 +1812,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .failed = false,
                         .is_component_root = false,
                         .is_special_framework_file = false,
+                        .kind = .js,
                     });
                 },
                 .server => {
@@ -1799,6 +1863,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .failed = true,
                         .is_component_root = false,
                         .is_special_framework_file = false,
+                        .kind = .js,
                     });
                 },
                 .server => {
@@ -1827,7 +1892,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .server => .{ .server = file_index },
                 .client => .{ .client = file_index },
             };
-            std.debug.print("Failure index {}\n", .{fail_owner});
+            std.debug.print("Failure inserted {}\n", .{fail_owner});
             const failure = try SerializedFailure.initFromLog(fail_owner, log.msgs.items);
 
             const fail_gop = try g.failures.getOrPut(dev.allocator, file_index);
@@ -2432,6 +2497,13 @@ pub const SerializedFailure = struct {
     };
 
     const ErrorKind = enum(u8) {
+        // A log message. The `logger.Kind` is encoded here.
+        bundler_log_err = 0,
+        bundler_log_warn = 1,
+        bundler_log_note = 2,
+        bundler_log_debug = 3,
+        bundler_log_verbose = 4,
+
         /// new Error(message)
         js_error,
         /// new TypeError(message)
@@ -2447,13 +2519,6 @@ pub const SerializedFailure = struct {
         js_primitive,
         /// new AggregateError(errors, message)
         js_aggregate,
-
-        // A log message. The `logger.Kind` is encoded here.
-        bundler_log_err = 0,
-        bundler_log_warn = 1,
-        bundler_log_note = 2,
-        bundler_log_debug = 3,
-        bundler_log_verbose = 4,
     };
 
     pub fn initFromJs(owner: Owner, value: JSValue) !SerializedFailure {
@@ -2490,6 +2555,10 @@ pub const SerializedFailure = struct {
 
         try w.writeInt(u32, @intCast(messages.len), .little);
 
+        for (messages) |*msg| {
+            try writeLogMsg(msg, w);
+        }
+
         // Avoid-recloning if it is was moved to the hap
         const data = if (payload.items.ptr == &sfb.buffer)
             try bun.default_allocator.dupe(u8, payload.items)
@@ -2503,11 +2572,11 @@ pub const SerializedFailure = struct {
 
     const Writer = std.ArrayList(u8).Writer;
 
-    fn writeLogMsg(msg: bun.logger.Msg, w: *Writer) !void {
+    fn writeLogMsg(msg: *const bun.logger.Msg, w: Writer) !void {
         try w.writeByte(switch (msg.kind) {
-            inline else => |k| @field(ErrorKind, "bundler_log_" ++ @tagName(k)),
+            inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))),
         });
-        try writeLogData(msg.data);
+        try writeLogData(msg.data, w);
         const notes = msg.notes orelse &.{};
         try w.writeInt(u32, @intCast(notes.len), .little);
         for (notes) |note| {
@@ -2515,7 +2584,7 @@ pub const SerializedFailure = struct {
         }
     }
 
-    fn writeLogData(data: bun.logger.Data, w: *Writer) !void {
+    fn writeLogData(data: bun.logger.Data, w: Writer) !void {
         try writeString32(data.text, w);
         if (data.location) |loc| {
             assert(loc.line >= 0); // one based and not negative
@@ -2534,7 +2603,7 @@ pub const SerializedFailure = struct {
         }
     }
 
-    fn writeString32(data: []const u8, w: *Writer) !void {
+    fn writeString32(data: []const u8, w: Writer) !void {
         try w.writeInt(u32, @intCast(data.len), .little);
         try w.writeAll(data);
     }
@@ -2824,8 +2893,8 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     // This list of routes affected excludes client code. This means changing
     // a client component wont count as a route to trigger a reload on.
     if (dev.incremental_result.routes_affected.items.len > 0) {
-        var sfb2 = std.heap.stackFallback(4096, bun.default_allocator);
-        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 4096) catch
+        var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
+        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
             unreachable; // enough space
         defer payload.deinit();
         payload.appendAssumeCapacity('R');
@@ -2849,6 +2918,11 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     if (dev.incremental_result.client_components_affected.items.len > 0) {
         dev.incremental_result.routes_affected.clearRetainingCapacity();
         dev.server_graph.affected_by_trace.setAll(false);
+
+        var sfa_state = std.heap.stackFallback(65536, dev.allocator);
+        const sfa = sfa_state.get();
+        dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
+        defer dev.server_graph.affected_by_trace.deinit(sfa);
 
         for (dev.incremental_result.client_components_affected.items) |index| {
             try dev.server_graph.traceDependencies(index, .no_stop);

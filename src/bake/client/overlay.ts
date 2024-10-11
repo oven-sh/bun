@@ -1,27 +1,25 @@
 import { css } from "../macros" with { type: "macro" };
 
+if (side !== 'client') throw new Error('Not client side!');
+
 // Create a root element to contain all our our DOM nodes.
 var root!: HTMLElement;
-var mount;
+function mount() {
+  const wrap = document.createElement("bun-hmr");
+  wrap.setAttribute(
+    "style",
+    "position:absolute;display:block;top:0;left:0;width:100%;height:100%;background:transparent",
+  );
+  const shadow = wrap.attachShadow({ mode: "open" });
 
-if (side === "client") {
-  mount = function mount() {
-    const wrap = document.createElement("bun-hmr");
-    wrap.setAttribute(
-      "style",
-      "position:absolute;display:block;top:0;left:0;width:100%;height:100%;background:transparent",
-    );
-    const shadow = wrap.attachShadow({ mode: "open" });
+  const sheet = new CSSStyleSheet();
+  sheet.replace(css("client/overlay.css", IS_BUN_DEVELOPMENT));
+  shadow.adoptedStyleSheets = [sheet];
 
-    const sheet = new CSSStyleSheet();
-    sheet.replace(css("client/overlay.css", IS_BUN_DEVELOPMENT));
-    shadow.adoptedStyleSheets = [sheet];
-
-    root = document.createElement("main");
-    shadow.appendChild(root);
-    document.body.appendChild(wrap);
-  };
-}
+  root = document.createElement("main");
+  shadow.appendChild(root);
+  document.body.appendChild(wrap);
+};
 
 export function showErrorOverlay(e) {
   mount();

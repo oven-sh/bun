@@ -424,7 +424,6 @@ pub const BundleV2 = struct {
         /// Files which are Server Component Boundaries
         scb_bitset: ?bun.bit_set.DynamicBitSetUnmanaged,
         scb_list: ServerComponentBoundary.List.Slice,
-        parts: []BabyList(js_ast.Part),
 
         const MAX_REDIRECTS: usize = 64;
 
@@ -432,17 +431,8 @@ pub const BundleV2 = struct {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
-        pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool, comptime is_dev_server: bool) void {
+        pub fn visit(v: *@This(), source_index: Index, was_dynamic_import: bool, comptime check_dynamic_imports: bool) void {
             if (source_index.isInvalid()) return;
-
-            if (is_dev_server) {
-                // The dev server runs linking step with failed files.
-                // These files are filtered out via the lack of any parts.
-                //
-                // Actual empty files will contain a part exporting an empty object.
-                if (v.parts[source_index.get()].len == 0)
-                    return;
-            }
 
             if (v.visited.isSet(source_index.get())) {
                 if (comptime check_dynamic_imports) {
@@ -457,8 +447,8 @@ pub const BundleV2 = struct {
             if (v.scb_bitset) |scb_bitset| {
                 if (scb_bitset.isSet(source_index.get())) {
                     const scb_index = v.scb_list.getIndex(source_index.get()) orelse unreachable;
-                    v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports, is_dev_server);
-                    v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports, is_dev_server);
+                    v.visit(Index.init(v.scb_list.list.items(.reference_source_index)[scb_index]), false, check_dynamic_imports);
+                    v.visit(Index.init(v.scb_list.list.items(.ssr_source_index)[scb_index]), false, check_dynamic_imports);
                 }
             }
 
@@ -489,14 +479,14 @@ pub const BundleV2 = struct {
                             }
                         }
 
-                        v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports, is_dev_server);
+                        v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
                     }
                 }
 
                 // Redirects replace the source file with another file
                 if (getRedirectId(v.redirects[source_index.get()])) |redirect_id| {
                     const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
-                    v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports, is_dev_server);
+                    v.visit(Index.source(redirect_source_index), was_dynamic_import, check_dynamic_imports);
                     return;
                 }
             }
@@ -511,7 +501,7 @@ pub const BundleV2 = struct {
         }
     };
 
-    pub fn findReachableFiles(this: *BundleV2, comptime is_dev_server: bool) ![]Index {
+    pub fn findReachableFiles(this: *BundleV2) ![]Index {
         const trace = tracer(@src(), "findReachableFiles");
         defer trace.end();
 
@@ -539,20 +529,17 @@ pub const BundleV2 = struct {
                 this.graph.server_component_boundaries.slice()
             else
                 undefined, // will never be read since the above bitset is `null`
-
-            .parts = if (is_dev_server) this.graph.ast.items(.parts) else &.{},
         };
         defer visitor.visited.deinit();
 
         // If we don't include the runtime, __toESM or __toCommonJS will not get
         // imported and weird things will happen
-        if (!is_dev_server)
-            visitor.visit(Index.runtime, false, false, is_dev_server);
+        visitor.visit(Index.runtime, false, false);
 
         switch (this.bundler.options.code_splitting) {
             inline else => |check_dynamic_imports| {
                 for (this.graph.entry_points.items) |entry_point| {
-                    visitor.visit(entry_point, false, comptime check_dynamic_imports, is_dev_server);
+                    visitor.visit(entry_point, false, comptime check_dynamic_imports);
                 }
             },
         }
@@ -1293,7 +1280,7 @@ pub const BundleV2 = struct {
 
         try this.processServerComponentManifestFiles();
 
-        const reachable_files = try this.findReachableFiles(false);
+        const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
 
         try this.processFilesToCopy(reachable_files);
@@ -1905,7 +1892,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        const reachable_files = try this.findReachableFiles(false);
+        const reachable_files = try this.findReachableFiles();
 
         try this.processFilesToCopy(reachable_files);
 
@@ -1924,11 +1911,9 @@ pub const BundleV2 = struct {
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
-    /// Results are indexed into the dev server
-    pub fn runFromBakeDevServer(
-        this: *BundleV2,
-        bake_entry_points: []const BakeEntryPoint,
-    ) !Chunk {
+    /// Dev Server uses this instead to run a subset of the bundler, where
+    /// it indexes the chunks into IncrementalGraph on it's own.
+    pub fn runFromBakeDevServer(this: *BundleV2, bake_entry_points: []const BakeEntryPoint) ![2]Chunk {
         this.unique_key = std.crypto.random.int(u64);
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -1942,7 +1927,33 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        const reachable_files = try this.findReachableFiles(true);
+        this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
+
+        // Separate non-failing files into two lists: JS and CSS
+        const js_reachable_files, const css_asts = reachable_files: {
+            var css_asts = try BabyList(bun.css.BundlerStyleSheet).initCapacity(this.graph.allocator, this.graph.css_file_count);
+            var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
+
+            for (this.graph.ast.items(.parts)[1..], this.graph.ast.items(.css)[1..], 1..) |part_list, maybe_css, index| {
+                // Dev Server proceeds even with failed files.
+                // These files are filtered out via the lack of any parts.
+                //
+                // Actual empty files will contain a part exporting an empty object.
+                if (part_list.len != 0) {
+                    if (maybe_css) |css| {
+                        css_asts.appendAssumeCapacity(css.*);
+                    } else {
+                        js_files.appendAssumeCapacity(Index.init(index));
+                        // Mark every part live.
+                        for (part_list.slice()) |*p| {
+                            p.is_live = true;
+                        }
+                    }
+                }
+            }
+
+            break :reachable_files .{ js_files.items, css_asts };
+        };
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -1957,33 +1968,76 @@ pub const BundleV2 = struct {
         // passing files to get cached in the incremental graph.
 
         // The linker still has to be initialized as code generation expects it
+        // TODO: ???
         try this.linker.load(
             this,
             this.graph.entry_points.items,
             this.graph.server_component_boundaries,
-            reachable_files,
+            js_reachable_files,
         );
 
-        // try this.linker.scanImportsAndExports();
-        try this.linker.treeShakingAndCodeSplitting();
+        this.graph.heap.helpCatchMemoryIssues();
+
+        // Generate chunks
+        const js_part_ranges = try this.graph.allocator.alloc(PartRange, js_reachable_files.len);
+        const parts = this.graph.ast.items(.parts);
+        for (js_reachable_files, js_part_ranges) |source_index, *part_range| {
+            part_range.* = .{
+                .source_index = source_index,
+                .part_index_begin = 0,
+                .part_index_end = parts[source_index.get()].len,
+            };
+        }
+
+        _ = css_asts; // TODO:
+
+        var chunks = [_]Chunk{
+            // One JS chunk
+            .{
+                .entry_point = .{
+                    .entry_point_id = 0,
+                    .source_index = 0,
+                    .is_entry_point = true,
+                },
+                .content = .{
+                    .javascript = .{
+                        // TODO(@paperdave): remove this ptrCast when Source Index is fixed
+                        .files_in_chunk_order = @ptrCast(js_reachable_files),
+                        .parts_in_chunk_in_order = js_part_ranges,
+                    },
+                },
+                .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
+            },
+            // One CSS chunk
+            .{
+                .entry_point = .{
+                    .entry_point_id = 0,
+                    .source_index = 0,
+                    .is_entry_point = true,
+                },
+                .content = .{
+                    .css = .{
+                        // TODO:
+                        .imports_in_chunk_in_order = BabyList(Chunk.CssImportOrder).init(&.{}),
+                        .asts = &.{},
+                    },
+                },
+                .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
+            },
+        };
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        // Only one chunk!
-        var chunk = try this.linker.computeChunksForBakeDevServer();
-
-        this.graph.heap.helpCatchMemoryIssues();
-
-        // Symbol following is needed for the rename to rename import namespaces
+        // Symbol following is needed for things like the JSX runtime to work
         this.linker.graph.symbols.followAll();
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try this.linker.generateChunksInParallel((&chunk)[0..1], true);
+        try this.linker.generateChunksInParallel(&chunks, true);
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        return chunk;
+        return chunks;
     }
 
     pub fn enqueueOnResolvePluginIfNeeded(
@@ -2366,13 +2420,13 @@ pub const BundleV2 = struct {
 
             if (this.bundler.options.dev_server) |dev_server| {
                 import_record.source_index = Index.invalid;
-                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                import_record.path.text = rel;
-                import_record.path.pretty = rel;
-                import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
                 import_record.is_external_without_side_effects = true;
 
                 if (!dev_server.isFileStale(path.text, renderer)) {
+                    const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
+                    import_record.path.text = rel;
+                    import_record.path.pretty = rel;
+                    import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
                     continue;
                 }
             }
@@ -2380,7 +2434,11 @@ pub const BundleV2 = struct {
             const hash_key = path.hashKey();
 
             if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
-                import_record.source_index = Index.init(id);
+                if (this.bundler.options.dev_server != null) {
+                    import_record.path = this.graph.input_files.items(.source)[id].path;
+                } else {
+                    import_record.source_index = Index.init(id);
+                }
                 continue;
             }
 
@@ -2592,15 +2650,21 @@ pub const BundleV2 = struct {
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
-                        import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
+                        if (this.bundler.options.dev_server == null)
+                            import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
                     }
                     var list = pending_entry.value.list();
                     list.deinit(this.graph.allocator);
                 }
 
+                if (result.ast.css != null) {
+                    this.graph.css_file_count += 1;
+                }
+
                 for (import_records.slice(), 0..) |*record, i| {
                     if (path_to_source_index_map.get(record.path.hashKey())) |source_index| {
-                        record.source_index.value = source_index;
+                        if (this.bundler.options.dev_server == null)
+                            record.source_index.value = source_index;
 
                         if (getRedirectId(result.ast.redirect_import_record_index)) |compare| {
                             if (compare == @as(u32, @truncate(i))) {
@@ -3993,6 +4057,10 @@ pub const Graph = struct {
 
     estimated_file_loader_count: usize = 0,
 
+    /// For Bake, a count of the CSS asts is used to make precise
+    /// pre-allocations without re-iterating the file listing.
+    css_file_count: usize = 0,
+
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
 
     kit_referenced_server_data: bool,
@@ -4967,13 +5035,12 @@ pub const LinkerContext = struct {
             entry_bits.set(entry_bit);
 
             if (this.options.experimental_css) {
-                if (this.graph.ast.items(.css)[source_index]) |*css| {
-                    _ = css; // autofix
+                if (this.graph.ast.items(.css)[source_index] != null) {
                     // Create a chunk for the entry point here to ensure that the chunk is
                     // always generated even if the resulting file is empty
                     const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
                     // const css_chunk_entry = try js_chunks.getOrPut();
-                    const order = this.findImportedFilesInCSSOrder(temp_allocator, &[_]Index{Index.init(source_index)});
+                    const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
                     css_chunk_entry.value_ptr.* = .{
                         .entry_point = .{
                             .entry_point_id = entry_bit,
@@ -5199,45 +5266,6 @@ pub const LinkerContext = struct {
         }
 
         return chunks;
-    }
-
-    // The dev server never compiles chunks, and requires every reachable
-    // file to be printed; the logic is special-cased.
-    pub fn computeChunksForBakeDevServer(this: *LinkerContext) !Chunk {
-        bun.assert(this.dev_server != null);
-
-        // Exclude runtime because it is already embedded
-        const reachable_files = if (this.graph.reachable_files[0].isRuntime())
-            this.graph.reachable_files[1..]
-        else
-            this.graph.reachable_files;
-
-        const part_ranges = try this.allocator.alloc(PartRange, reachable_files.len);
-
-        const parts = this.parse_graph.ast.items(.parts);
-        for (reachable_files, part_ranges) |source_index, *part_range| {
-            part_range.* = .{
-                .source_index = source_index,
-                .part_index_begin = 0,
-                .part_index_end = parts[source_index.get()].len,
-            };
-        }
-
-        return .{
-            .entry_point = .{
-                .entry_point_id = 0,
-                .source_index = 0,
-                .is_entry_point = true,
-            },
-            .content = .{
-                .javascript = .{
-                    // TODO(@paperdave): this ptrCast should not be needed.
-                    .files_in_chunk_order = @ptrCast(this.graph.reachable_files),
-                    .parts_in_chunk_in_order = part_ranges,
-                },
-            },
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-        };
     }
 
     pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
@@ -5479,11 +5507,11 @@ pub const LinkerContext = struct {
     // unlike JavaScript import statements, CSS "@import" rules are evaluated every
     // time instead of just the first time.
     //
-    //	  A
-    //	 / \
-    //	B   C
-    //	 \ /
-    //	  D
+    //      A
+    //     / \
+    //    B   C
+    //     \ /
+    //      D
     //
     // If A imports B and then C, B imports D, and C imports D, then the CSS
     // traversal order is D B D C A.
@@ -5544,12 +5572,12 @@ pub const LinkerContext = struct {
                 // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
                 // Any pre-import layers come first
                 // if len(repr.AST.LayersPreImport) > 0 {
-                // 	order = append(order, cssImportOrder{
-                // 		kind:                   cssImportLayers,
-                // 		layers:                 repr.AST.LayersPreImport,
-                // 		conditions:             wrappingConditions,
-                // 		conditionImportRecords: wrappingImportRecords,
-                // 	})
+                //     order = append(order, cssImportOrder{
+                //         kind:                   cssImportLayers,
+                //         layers:                 repr.AST.LayersPreImport,
+                //         conditions:             wrappingConditions,
+                //         conditionImportRecords: wrappingImportRecords,
+                //     })
                 // }
 
                 defer {
@@ -5772,15 +5800,15 @@ pub const LinkerContext = struct {
     //
     // For example:
     //
-    //	// entry.css
-    //	@import "foo.css" supports(display: flex);
-    //	@import "bar.css" supports(display: flex);
+    //    // entry.css
+    //    @import "foo.css" supports(display: flex);
+    //    @import "bar.css" supports(display: flex);
     //
-    //	// foo.css
-    //	@import "lib.css" screen;
+    //    // foo.css
+    //    @import "lib.css" screen;
     //
-    //	// bar.css
-    //	@import "lib.css";
+    //    // bar.css
+    //    @import "lib.css";
     //
     // When we bundle this code we'll get an import order as follows:
     //
@@ -5855,11 +5883,11 @@ pub const LinkerContext = struct {
     // order that JavaScript modules were evaluated in before the top-level await
     // feature was introduced.
     //
-    //	  A
-    //	 / \
-    //	B   C
-    //	 \ /
-    //	  D
+    //      A
+    //     / \
+    //    B   C
+    //     \ /
+    //      D
     //
     // If A imports B and then C, B imports D, and C imports D, then the JavaScript
     // traversal order is D B C A.
@@ -8632,8 +8660,8 @@ pub const LinkerContext = struct {
         // c.maybeAppendLegalComments(c.options.LegalComments, legalCommentList, chunk, &j, slashTag)
 
         // if len(c.options.CSSFooter) > 0 {
-        // 	j.AddString(c.options.CSSFooter)
-        // 	j.AddString("\n")
+        //     j.AddString(c.options.CSSFooter)
+        //     j.AddString("\n")
         // }
 
         chunk.intermediate_output = c.breakOutputIntoPieces(
@@ -11399,6 +11427,7 @@ pub const LinkerContext = struct {
         bun.assert(chunks.len > 0);
 
         {
+            // TODO(@paperdave/bake): instead of running a renamer per chunk, run it per file
             debug(" START {d} renamers", .{chunks.len});
             defer debug("  DONE {d} renamers", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
@@ -14051,7 +14080,7 @@ pub const Chunk = struct {
     };
 
     pub const CssChunk = struct {
-        imports_in_chunk_in_order: BabyList(CssImportOrder) = .{},
+        imports_in_chunk_in_order: BabyList(CssImportOrder),
         /// Multiple imports may refer to the same file/stylesheet, but may need to
         /// wrap them in conditions (e.g. a layer).
         ///

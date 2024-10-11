@@ -1,5 +1,6 @@
 import assert from "node:assert";
-import { existsSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, writeFileSync, rmSync  } from "node:fs";
+import { watch } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 // arg parsing
@@ -14,7 +15,7 @@ for (const arg of process.argv.slice(2)) {
   options[split[0].slice(2)] = value;
 }
 
-let { codegen_root, debug } = options as any;
+let { codegen_root, debug, live } = options as any;
 if (!codegen_root) {
   console.error("Missing --codegen_root=...");
   process.exit(1);
@@ -23,6 +24,8 @@ if (debug === "false" || debug === "0" || debug == "OFF") debug = false;
 
 const base_dir = join(import.meta.dirname, "../bake");
 process.chdir(base_dir); // to make bun build predictable in development
+
+async function run(){
 
 const results = await Promise.allSettled(
   ["client", "server", "error"].map(async file => {
@@ -148,4 +151,20 @@ if (failed.length > 0) {
 
   const empty_file = join(codegen_root, "bake_empty_file");
   if (!existsSync(empty_file)) writeFileSync(empty_file, "this is used to fulfill a cmake dependency");
+}
+}
+
+await run();
+
+if (live) {
+  const watcher = watch(base_dir, { recursive: true }) as any;
+  for await (const event of watcher) {
+    if(event.filename.endsWith('.zig')) continue;
+    if(event.filename.startsWith('.')) continue;
+    try {
+    await run();
+    }catch(e) {
+      console.log(e);
+    }
+  }
 }

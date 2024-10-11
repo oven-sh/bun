@@ -8,4 +8,3 @@ src/react-refresh.js
 test/js/node/test/fixtures
 test/js/node/test/common
 test/snippets
-src/bake/error.template.html

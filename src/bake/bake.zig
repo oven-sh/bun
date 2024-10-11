@@ -325,7 +325,7 @@ pub fn getHmrRuntime(mode: Side) []const u8 {
             .server => @embedFile("bake-codegen/bake.server.js"),
         }
     else switch (mode) {
-        inline else => |m| bun.runtimeEmbedFile(.codegen, "bake." ++ @tagName(m) ++ ".js"),
+        inline else => |m| bun.runtimeEmbedFile(.codegen_eager, "bake." ++ @tagName(m) ++ ".js"),
     };
 }
 

@@ -342,7 +342,7 @@ pub const TablePrinter = struct {
             //  - otherwise: iterate the object properties, and create the columns on-demand
             if (!this.properties.isUndefined()) {
                 for (columns.items[1..]) |*column| {
-                    if (row_value.getWithString(this.globalObject, column.name)) |value| {
+                    if (row_value.getOwn(this.globalObject, column.name)) |value| {
                         column.width = @max(column.width, this.getWidthForValue(value));
                     }
                 }
@@ -436,7 +436,7 @@ pub const TablePrinter = struct {
                     value = row_value;
                 }
             } else if (row_value.isObject()) {
-                value = row_value.getWithString(this.globalObject, col.name) orelse JSValue.zero;
+                value = row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
             }
 
             if (value.isEmpty()) {

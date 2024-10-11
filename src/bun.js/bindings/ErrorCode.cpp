@@ -305,7 +305,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
 
 namespace ERR {
 
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String val_arg_name, WTF::String val_expected_type, JSC::JSValue val_actual_value)
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value)
 {
     auto arg_name = val_arg_name.span8();
     ASSERT(WTF::charactersAreAllASCII(arg_name));
@@ -325,7 +325,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, WTF::String val_expected_type, JSC::JSValue val_actual_value)
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue val_arg_name, const WTF::String& val_expected_type, JSC::JSValue val_actual_value)
 {
     auto arg_name = val_arg_name.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -346,7 +346,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
-JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String arg_name, size_t lower, size_t upper, JSC::JSValue actual)
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, size_t lower, size_t upper, JSC::JSValue actual)
 {
     auto lowerStr = jsNumber(lower).toWTFString(globalObject);
     auto upperStr = jsNumber(upper).toWTFString(globalObject);
@@ -390,7 +390,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     }
     }
 }
-JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, WTF::String msg, JSC::JSValue actual)
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name_val, const WTF::String& msg, JSC::JSValue actual)
 {
     auto arg_name = arg_name_val.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -401,7 +401,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
     return {};
 }
-JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String arg_name, WTF::String msg, JSC::JSValue actual)
+JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& msg, JSC::JSValue actual)
 {
     auto actual_value = JSValueToStringSafe(globalObject, actual);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -411,7 +411,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String name, JSC::JSValue value, WTF::String reason)
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
 {
     ASCIILiteral type;
     {
@@ -428,7 +428,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
     return {};
 }
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::String reason)
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, const WTF::String& reason)
 {
     auto name_string = JSValueToStringSafe(globalObject, name);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -441,14 +441,14 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String encoding)
+JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& encoding)
 {
     auto message = makeString("Unknown encoding: "_s, encoding);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message));
     return {};
 }
 
-JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::String statemsg)
+JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg)
 {
     auto message = makeString("Invalid state: "_s, statemsg);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_STATE, message));
@@ -457,7 +457,7 @@ JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObje
 
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
-    auto message = makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s);
+    auto message = makeString("Cannot create a string longer than "_s, WTF::String ::MaxLength, " characters"_s);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
     return {};
 }

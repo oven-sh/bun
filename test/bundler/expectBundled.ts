@@ -793,7 +793,7 @@ function expectBundled(
           delete bundlerEnv[key];
         }
       }
-      console.log({ cmd });
+
       const { stdout, stderr, success, exitCode } = Bun.spawnSync({
         cmd,
         cwd: root,

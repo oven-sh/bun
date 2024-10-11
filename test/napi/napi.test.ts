@@ -288,6 +288,14 @@ describe("napi", () => {
       checkSameOutput("test_number_integer_conversions", []);
     });
   });
+
+  describe("arrays", () => {
+    describe("napi_create_array_with_length", () => {
+      it("creates an array with empty slots", () => {
+        checkSameOutput("test_create_array_with_length", []);
+      });
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

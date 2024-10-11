@@ -197,4 +197,13 @@ nativeTests.test_number_integer_conversions_from_js = () => {
   }
 };
 
+nativeTests.test_create_array_with_length = () => {
+  for (const size of [0, 5]) {
+    const array = nativeTests.make_empty_array(size);
+    console.log("length =", array.length);
+    // should be 0 as array contains empty slots
+    console.log("number of keys =", Object.keys(array).length);
+  }
+};
+
 module.exports = nativeTests;

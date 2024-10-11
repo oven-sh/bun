@@ -309,7 +309,9 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
         return invalidArg();
     };
 
-    const len = @as(u32, @intCast(length));
+    // JSC createEmptyArray takes u32
+    // Node and V8 convert out-of-bounds array sizes to 0
+    const len = std.math.cast(u32, length) orelse 0;
 
     const array = JSC.JSValue.createEmptyArray(env, len);
     array.ensureStillAlive();

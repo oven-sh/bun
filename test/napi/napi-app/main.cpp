@@ -844,6 +844,16 @@ napi_value test_number_integer_conversions(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value make_empty_array(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value js_size = info[0];
+  uint32_t size;
+  assert(napi_get_value_uint32(env, js_size, &size) == napi_ok);
+  napi_value array;
+  assert(napi_create_array_with_length(env, size, &array) == napi_ok);
+  return array;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -903,6 +913,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("double_to_i64", Napi::Function::New(env, double_to_i64));
   exports.Set("test_number_integer_conversions",
               Napi::Function::New(env, test_number_integer_conversions));
+  exports.Set("make_empty_array", Napi::Function::New(env, make_empty_array));
 
   return exports;
 }

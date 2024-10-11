@@ -18,7 +18,7 @@ export default [
   [0, "https://github.com/chrisdickinson/raf"],
   [0, "https://github.com/standard/eslint-plugin-standard"],
   [0, "https://github.com/cryptocoinjs/bs58"],
-  [0, "https://github.com/broccolijs/broccoli-merge-trees"],
+  [0, "https://github.com/broccolijs/broccoli-merge-trees", 1],
   // 15
   [0, "https://github.com/hughsk/vinyl-source-stream"],
   [0, "https://github.com/mariocasciaro/object-path"],

@@ -148,6 +148,7 @@ export interface BundlerTestInput {
   banner?: string;
   footer?: string;
   define?: Record<string, string | number>;
+  drop?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -416,6 +417,7 @@ function expectBundled(
     env,
     external,
     packages,
+    drop = [],
     files,
     footer,
     format,
@@ -653,6 +655,7 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              drop?.length && drop.map(x => ["--drop=" + x]),
               experimentalCss && "--experimental-css",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
@@ -790,6 +793,7 @@ function expectBundled(
           delete bundlerEnv[key];
         }
       }
+      console.log({ cmd });
       const { stdout, stderr, success, exitCode } = Bun.spawnSync({
         cmd,
         cwd: root,
@@ -988,6 +992,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          drop,
         } as BuildConfig;
 
         if (conditions?.length) {

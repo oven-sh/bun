@@ -1162,6 +1162,7 @@ pub fn definesFromTransformOptions(
     env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
+    drop: []const []const u8,
 ) !*defines.Define {
     const input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -1252,7 +1253,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    const resolved_defines = try defines.DefineData.fromInput(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.fromInput(user_defines, drop, log, allocator);
 
     return try defines.Define.init(
         allocator,
@@ -1420,6 +1421,7 @@ pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
+    drop: []const []const u8 = &.{},
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -1579,6 +1581,7 @@ pub const BundleOptions = struct {
 
                 break :node_env "\"development\"";
             },
+            this.drop,
         );
         this.defines_loaded = true;
     }
@@ -1680,6 +1683,7 @@ pub const BundleOptions = struct {
             .env = Env.init(allocator),
             .transform_options = transform,
             .experimental_css = false,
+            .drop = transform.drop,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));

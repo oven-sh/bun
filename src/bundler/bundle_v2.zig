@@ -1449,6 +1449,7 @@ pub const BundleV2 = struct {
                     .env_files = &.{},
                     .conditions = config.conditions.map.keys(),
                     .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
+                    .drop = config.drop.map.keys(),
                 },
                 completion.env,
             );
@@ -1478,8 +1479,8 @@ pub const BundleV2 = struct {
             bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             bundler.options.experimental_css = config.experimental_css;
-            bundler.options.banner = config.banner.toOwnedSlice();
-            bundler.options.footer = config.footer.toOwnedSlice();
+            bundler.options.banner = config.banner.toOwnedSliceLeaky();
+            bundler.options.footer = config.footer.toOwnedSliceLeaky();
 
             bundler.configureLinker();
             try bundler.configureDefines();

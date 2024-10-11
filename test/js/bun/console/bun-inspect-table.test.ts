@@ -56,3 +56,11 @@ describe("inspect.table (with properties and colors)", () => {
     });
   });
 });
+
+describe("inspect.table (with colors in 2nd position)", () => {
+  withProperties.forEach(([input, properties]) => {
+    test(Bun.inspect(input, { colors: false, sorted: true, compact: true }), () => {
+      expect(inspect.table(input, { colors: true, sorted: true })).toMatchSnapshot();
+    });
+  });
+});

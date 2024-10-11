@@ -580,6 +580,65 @@ const foo = new Foo();
 console.log(foo); // => "foo"
 ```
 
+## `Bun.inspect.table(tabularData, properties, options)`
+
+Format tabular data into a string. Like [`console.table`](https://developer.mozilla.org/en-US/docs/Web/API/console/table_static), except it returns a string rather than printing to the console.
+
+```ts
+console.log(
+  Bun.inspect.table([
+    { a: 1, b: 2, c: 3 },
+    { a: 4, b: 5, c: 6 },
+    { a: 7, b: 8, c: 9 },
+  ]),
+);
+//
+// ┌───┬───┬───┬───┐
+// │   │ a │ b │ c │
+// ├───┼───┼───┼───┤
+// │ 0 │ 1 │ 2 │ 3 │
+// │ 1 │ 4 │ 5 │ 6 │
+// │ 2 │ 7 │ 8 │ 9 │
+// └───┴───┴───┴───┘
+```
+
+Additionally, you can pass an array of property names to display only a subset of properties.
+
+```ts
+console.log(
+  Bun.inspect.table(
+    [
+      { a: 1, b: 2, c: 3 },
+      { a: 4, b: 5, c: 6 },
+    ],
+    ["a", "c"],
+  ),
+);
+//
+// ┌───┬───┬───┐
+// │   │ a │ c │
+// ├───┼───┼───┤
+// │ 0 │ 1 │ 3 │
+// │ 1 │ 4 │ 6 │
+// └───┴───┴───┘
+```
+
+You can also conditionally enable ANSI colors by passing `{ colors: true }`.
+
+```ts
+console.log(
+  Bun.inspect.table(
+    [
+      { a: 1, b: 2, c: 3 },
+      { a: 4, b: 5, c: 6 },
+    ],
+    {
+      colors: true,
+    },
+  ),
+);
+```
+
 ## `Bun.nanoseconds()`
 
 Returns the number of nanoseconds since the current `bun` process started, as a `number`. Useful for high-precision timing and benchmarking.

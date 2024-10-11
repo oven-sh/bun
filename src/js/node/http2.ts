@@ -1662,6 +1662,7 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
+  Destroyed = 1 << 6, // 1000000 = 64
 }
 function markWritableDone(stream: Http2Stream) {
   const final = stream[bunHTTP2StreamFinal];
@@ -1864,15 +1865,18 @@ class Http2Stream extends Duplex {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
-      this.rstCode = 0;
+      const code = err ? NGHTTP2_CANCEL : 0;
+      this.rstCode = code;
       if (this.writableFinished) {
         markStreamClosed(this);
 
-        session[bunHTTP2Native]?.rstStream(this.#id, 0);
+        session[bunHTTP2Native]?.rstStream(this.#id, code);
         this[bunHTTP2Session] = null;
       } else {
         this.once("finish", Http2Stream.#rstStream);
       }
+    } else {
+      this[bunHTTP2Session] = null;
     }
 
     callback(err);
@@ -2431,6 +2435,7 @@ class ServerHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
+
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
     },
@@ -2672,7 +2677,6 @@ class ServerHttp2Session extends Http2Session {
 
     this.#closed = true;
     this.#connected = false;
-    this.destroyed;
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();

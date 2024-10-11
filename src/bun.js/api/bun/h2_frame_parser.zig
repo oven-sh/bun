@@ -1306,6 +1306,8 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
+        // we wanna this to flush as soon as possible
+        this.flushCorked();
         if (emitError) {
             const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
             if (rstCode != .NO_ERROR) {

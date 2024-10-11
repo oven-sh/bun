@@ -23,7 +23,7 @@ export default [
   [0, "https://github.com/hughsk/vinyl-source-stream"],
   [0, "https://github.com/mariocasciaro/object-path"],
   [0, "https://github.com/babel/eslint-plugin-babel"],
-  [0, "https://github.com/ciaranj/node-oauth"],
+  [0, "https://github.com/ciaranj/node-oauth", 1],
   [0, "https://github.com/mathiasbynens/he"],
   // 20
   [0, "https://github.com/hughsk/vinyl-buffer"],

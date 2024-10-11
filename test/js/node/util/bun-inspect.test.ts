@@ -11,6 +11,16 @@ describe("Bun.inspect", () => {
     ).toBe("[custom formatter threw an exception]");
   });
 
+  it("supports compact", () => {
+    expect(Bun.inspect({ a: 1, b: 2 }, { compact: true })).toBe("{ a: 1, b: 2 }");
+    expect(Bun.inspect({ a: 1, b: 2 }, { compact: false })).toBe("{\n  a: 1,\n  b: 2,\n}");
+
+    expect(Bun.inspect({ a: { 0: 1, 1: 2 }, b: 3 }, { compact: true })).toBe('{ a: { "0": 1, "1": 2 }, b: 3 }');
+    expect(Bun.inspect({ a: { 0: 1, 1: 2 }, b: 3 }, { compact: false })).toBe(
+      '{\n  a: {\n    "0": 1,\n    "1": 2,\n  },\n  b: 3,\n}',
+    );
+  });
+
   it("depth < 0 throws", () => {
     expect(() => Bun.inspect({}, { depth: -1 })).toThrow();
     expect(() => Bun.inspect({}, { depth: -13210 })).toThrow();

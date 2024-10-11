@@ -6514,6 +6514,10 @@ pub const CallFrame = opaque {
             pub inline fn all(self: *const @This()) []const JSValue {
                 return self.ptr[0..];
             }
+
+            pub inline fn mut(self: *@This()) []JSValue {
+                return self.ptr[0..];
+            }
         };
     }
 

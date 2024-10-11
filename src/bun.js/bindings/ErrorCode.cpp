@@ -60,12 +60,6 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     return prototype;
 }
 
-extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
-extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value);
-extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
-extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3);
-extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
-
 // clang-format on
 
 #define EXPECT_ARG_COUNT(count__)                                                          \
@@ -515,25 +509,6 @@ static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalOb
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
-extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto message = Message::ERR_INVALID_ARG_TYPE(scope, globalObject, JSValue::decode(val_arg_name), JSValue::decode(val_expected_type), JSValue::decode(val_actual_value));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
-}
-extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    WTF::String message = Message::ERR_INVALID_ARG_TYPE(scope, globalObject, val_arg_name, val_expected_type, JSValue::decode(val_actual_value));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -561,82 +536,7 @@ extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* glo
     return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
 }
 
-extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (arg1 == 0) {
-        JSC::throwTypeError(globalObject, scope, "requires at least 1 argument"_s);
-        return {};
-    }
-
-    auto name1 = JSValue::decode(arg1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (arg2 == 0) {
-        // 1 arg name passed
-        auto message = makeString("The \""_s, name1, "\" argument must be specified"_s);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
-    }
-
-    auto name2 = JSValue::decode(arg2).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (arg3 == 0) {
-        // 2 arg names passed
-        auto message = makeString("The \""_s, name1, "\" and \""_s, name2, "\" arguments must be specified"_s);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
-    }
-
-    auto name3 = JSValue::decode(arg3).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // 3 arg names passed
-    auto message = makeString("The \""_s, name1, "\", \""_s, name2, "\", and \""_s, name3, "\" arguments must be specified"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
-}
-extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS_static(JSC::JSGlobalObject* globalObject, const ZigString* arg1, const ZigString* arg2, const ZigString* arg3)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (arg1 == nullptr) {
-        JSC::throwTypeError(globalObject, scope, "requires at least 1 argument"_s);
-        return {};
-    }
-
-    auto name1 = std::span<const unsigned char>(arg1->ptr, arg1->len);
-    ASSERT(WTF::charactersAreAllASCII(name1));
-
-    if (arg2 == nullptr) {
-        // 1 arg name passed
-        auto message = makeString("The \""_s, name1, "\" argument must be specified"_s);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
-    }
-
-    auto name2 = std::span<const unsigned char>(arg2->ptr, arg2->len);
-    ASSERT(WTF::charactersAreAllASCII(name2));
-
-    if (arg3 == nullptr) {
-        // 2 arg names passed
-        auto message = makeString("The \""_s, name1, "\" and \""_s, name2, "\" arguments must be specified"_s);
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
-    }
-
-    auto name3 = std::span<const unsigned char>(arg3->ptr, arg3->len);
-    ASSERT(WTF::charactersAreAllASCII(name3));
-
-    // 3 arg names passed
-    auto message = makeString("The \""_s, name1, "\", \""_s, name2, "\", and \""_s, name3, "\" arguments must be specified"_s);
-    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_MISSING_ARGS, message));
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    return Bun__ERR_IPC_CHANNEL_CLOSED(globalObject);
-}
-extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject)
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
 }

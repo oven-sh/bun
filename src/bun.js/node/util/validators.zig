@@ -97,15 +97,17 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
     }
     if (!value.isAnyInt()) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {s}", name_args ++ .{value});
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num: i64 = value.asInt52();
     const min: i64 = if (greater_than_zero) 1 else 0;
     const max: i64 = @intCast(std.math.maxInt(u32));
     if (num < min or num > max) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
-    return @truncate(num);
+    return @truncate(@as(u63, @intCast(num)));
 }
 
 pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {

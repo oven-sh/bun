@@ -194,3 +194,12 @@ exports[`console.table expected output for: properties - interesting character 1
 └───┴────────┘
 "
 `;
+
+exports[`console.table expected output for: number keys 1`] = `
+"┌──────┬─────┬─────┐
+│      │ 10  │ 100 │
+├──────┼─────┼─────┤
+│ test │ 123 │ 154 │
+└──────┴─────┴─────┘
+"
+`;

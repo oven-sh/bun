@@ -245,6 +245,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::evalMode() = evalMode;
         JSC::Options::usePromiseTryMethod() = true;
         JSC::Options::useRegExpEscape() = true;
+        JSC::Options::useIteratorHelpers() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG

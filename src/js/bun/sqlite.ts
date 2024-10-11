@@ -267,6 +267,10 @@ class Statement {
     return this.#raw.finalize(...args);
   }
 
+  *[Symbol.iterator]() {
+    yield* this.#iterateNoArgs();
+  }
+
   [Symbol.dispose]() {
     if (!this.isFinalized) {
       this.finalize();

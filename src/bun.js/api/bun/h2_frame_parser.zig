@@ -687,7 +687,7 @@ var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
 
-const ENABLE_AUTO_CORK = true;
+const ENABLE_AUTO_CORK = false;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);

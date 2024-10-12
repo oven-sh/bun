@@ -1306,8 +1306,6 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
-        // we wanna this to flush as soon as possible
-        this.flushCorked();
         if (emitError) {
             const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
             if (rstCode != .NO_ERROR) {
@@ -2838,26 +2836,28 @@ pub const H2FrameParser = struct {
         const writer = this.toWriter();
         const stream_id = stream.id;
         var enqueued = false;
-        defer if (!enqueued) {
-            this.dispatchArbitrary(callback);
-            if (close) {
-                if (stream.waitForTrailers) {
-                    this.dispatch(.onWantTrailers, stream.getIdentifier());
-                } else {
-                    const identifier = stream.getIdentifier();
-                    identifier.ensureStillAlive();
-                    if (stream.state == .HALF_CLOSED_REMOTE) {
-                        stream.state = .CLOSED;
-                        stream.freeResources(this, false);
+        defer {
+            if (!enqueued) {
+                this.dispatchArbitrary(callback);
+                if (close) {
+                    if (stream.waitForTrailers) {
+                        this.dispatch(.onWantTrailers, stream.getIdentifier());
                     } else {
-                        stream.state = .HALF_CLOSED_LOCAL;
-                    }
-                    if (stream.state == .CLOSED) {
-                        this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+                        const identifier = stream.getIdentifier();
+                        identifier.ensureStillAlive();
+                        if (stream.state == .HALF_CLOSED_REMOTE) {
+                            stream.state = .CLOSED;
+                            stream.freeResources(this, false);
+                        } else {
+                            stream.state = .HALF_CLOSED_LOCAL;
+                        }
+                        if (stream.state == .CLOSED) {
+                            this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+                        }
                     }
                 }
             }
-        };
+        }
         const can_close = close and !stream.waitForTrailers;
         if (payload.len == 0) {
             // empty payload we still need to send a frame
@@ -2888,7 +2888,8 @@ pub const H2FrameParser = struct {
                 if (this.hasBackpressure() or this.outboundQueueSize > 0) {
                     enqueued = true;
                     // write the full frame in memory and queue the frame
-                    stream.queueFrame(this, slice, callback, offset >= payload.len and close);
+                    // the callback will only be called after the last frame is sended
+                    stream.queueFrame(this, slice, if (offset >= payload.len) callback else JSC.JSValue.jsUndefined(), offset >= payload.len and close);
                 } else {
                     const padding = stream.getPadding(size, max_size - 1);
                     const payload_size = size + (if (padding != 0) padding + 1 else 0);

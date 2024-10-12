@@ -565,20 +565,30 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     strong_ctx: JSC.Strong = .{},
 
+    needs_drain: bool = false,
+
+    pub fn drainMicrotasks(this: *Handlers) void {
+        if (this.needs_drain) {
+            this.vm.eventLoop().drainMicrotasks();
+        }
+    }
+
     pub fn callEventHandler(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
             return false;
         }
 
-        this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
-
+        _ = callback.call(this.globalObject, thisValue, data) catch |err|
+            this.globalObject.reportActiveExceptionAsUnhandled(err);
+        this.needs_drain = true;
         return true;
     }
 
-    pub fn callArbitraryCallBack(this: *Handlers, callback: JSC.JSValue, thisValue: JSValue, data: []const JSValue) bool {
+    pub fn callWriteCallback(this: *Handlers, callback: JSC.JSValue, data: []const JSValue) bool {
         if (!callback.isCallable(this.globalObject.vm())) return false;
-        this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
+        // this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
+        this.globalObject.queueMicrotask(callback, data);
         return true;
     }
 
@@ -588,7 +598,12 @@ const Handlers = struct {
             return JSC.JSValue.zero;
         }
 
-        return this.vm.eventLoop().runCallbackWithResult(callback, this.globalObject, thisValue, data);
+        const result = callback.call(this.globalObject, thisValue, data) catch |err| {
+            this.globalObject.reportActiveExceptionAsUnhandled(err);
+            return .undefined;
+        };
+        this.needs_drain = true;
+        return result;
     }
 
     pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Handlers {
@@ -687,7 +702,7 @@ var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
 
-const ENABLE_AUTO_CORK = true;
+const ENABLE_AUTO_CORK = false;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
@@ -928,7 +943,7 @@ pub const H2FrameParser = struct {
                 if (this.dataFrameQueue.dequeue()) |frame| {
                     defer {
                         var _frame = frame;
-                        if (_frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value);
+                        if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
                         _frame.deinit(client.allocator);
                     }
                     const no_backpressure = brk: {
@@ -1008,7 +1023,7 @@ pub const H2FrameParser = struct {
                     // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                     // this is fine is like a per-stream CORKING in a frame level
                     if (last_frame.callback.get()) |old_callback| {
-                        client.dispatchArbitrary(old_callback);
+                        client.dispatchWriteCallback(old_callback);
                         last_frame.callback.deinit();
                     }
                     last_frame.callback = JSC.Strong.create(callback, globalThis);
@@ -1036,7 +1051,7 @@ pub const H2FrameParser = struct {
                         // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                         // this is fine is like a per-stream CORKING in a frame level
                         if (last_frame.callback.get()) |old_callback| {
-                            client.dispatchArbitrary(old_callback);
+                            client.dispatchWriteCallback(old_callback);
                             last_frame.callback.deinit();
                         }
                         last_frame.callback = JSC.Strong.create(callback, globalThis);
@@ -1133,7 +1148,7 @@ pub const H2FrameParser = struct {
                 log("dataFrame dropped {}", .{frame.len});
                 client.queuedDataSize -= frame.len;
                 if (!finalizing) {
-                    if (frame.callback.get()) |callback_value| client.dispatchArbitrary(callback_value);
+                    if (frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
                 }
                 frame.deinit(client.allocator);
                 client.outboundQueueSize -= 1;
@@ -1223,6 +1238,7 @@ pub const H2FrameParser = struct {
 
     pub fn abortStream(this: *H2FrameParser, stream: *Stream, abortReason: JSC.JSValue) void {
         log("HTTP_FRAME_RST_STREAM id: {} code: CANCEL", .{stream.id});
+        defer this.handlers.drainMicrotasks();
 
         abortReason.ensureStillAlive();
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
@@ -1410,10 +1426,10 @@ pub const H2FrameParser = struct {
         value.ensureStillAlive();
         return this.handlers.callEventHandlerWithResult(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
-    pub fn dispatchArbitrary(this: *H2FrameParser, callback: JSC.JSValue) void {
+    pub fn dispatchWriteCallback(this: *H2FrameParser, callback: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        _ = this.handlers.callArbitraryCallBack(callback, .undefined, &[_]JSC.JSValue{});
+        _ = this.handlers.callWriteCallback(callback, &[_]JSC.JSValue{});
     }
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
@@ -1563,6 +1579,7 @@ pub const H2FrameParser = struct {
     pub fn flush(this: *H2FrameParser) usize {
         this.ref();
         defer this.unref();
+        defer this.handlers.drainMicrotasks();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -2207,7 +2224,7 @@ pub const H2FrameParser = struct {
         return entry.value_ptr;
     }
 
-    pub fn readBytes(this: *H2FrameParser, bytes: []const u8) usize {
+    fn readBytes(this: *H2FrameParser, bytes: []const u8) usize {
         log("read {}", .{bytes.len});
         if (this.isServer and this.prefaceReceivedLen < 24) {
             // Handle Server Preface
@@ -2463,6 +2480,7 @@ pub const H2FrameParser = struct {
         }
 
         const options = args_list.ptr[0];
+        defer this.handlers.drainMicrotasks();
 
         if (this.loadSettingsFromJSValue(globalObject, options)) {
             this.setSettings(this.localSettings);
@@ -2505,7 +2523,9 @@ pub const H2FrameParser = struct {
         const errorCode = error_code_arg.toInt32();
         if (errorCode < 1 and errorCode > 13) {
             globalObject.throw("invalid errorCode", .{});
+            return .zero;
         }
+        defer this.handlers.drainMicrotasks();
 
         var lastStreamID = this.lastStreamID;
         if (args_list.len >= 2) {
@@ -2553,6 +2573,7 @@ pub const H2FrameParser = struct {
         }
 
         if (args_list.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
+            defer this.handlers.drainMicrotasks();
             const slice = array_buffer.slice();
             this.sendPing(false, slice);
             return .undefined;
@@ -2692,6 +2713,8 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid priority", .{});
             return .zero;
         }
+        defer this.handlers.drainMicrotasks();
+
         var weight = stream.weight;
         var exclusive = stream.exclusive;
         var parent_id = stream.streamDependency;
@@ -2790,6 +2813,8 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid ErrorCode", .{});
             return .zero;
         }
+        defer this.handlers.drainMicrotasks();
+
         const error_code = error_arg.toU32();
         if (error_code > 13) {
             globalObject.throw("Invalid ErrorCode", .{});
@@ -2831,9 +2856,11 @@ pub const H2FrameParser = struct {
         const writer = this.toWriter();
         const stream_id = stream.id;
         var enqueued = false;
+        this.ref();
+
         defer {
             if (!enqueued) {
-                this.dispatchArbitrary(callback);
+                this.dispatchWriteCallback(callback);
                 if (close) {
                     if (stream.waitForTrailers) {
                         this.dispatch(.onWantTrailers, stream.getIdentifier());
@@ -2852,6 +2879,7 @@ pub const H2FrameParser = struct {
                     }
                 }
             }
+            this.unref();
         }
         const can_close = close and !stream.waitForTrailers;
         if (payload.len == 0) {
@@ -2936,6 +2964,8 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
+        defer this.handlers.drainMicrotasks();
+
         stream.waitForTrailers = false;
         this.sendData(stream, "", true, JSC.JSValue.jsUndefined());
 
@@ -2990,6 +3020,7 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected sensitiveHeaders to be an object", .{});
             return .zero;
         }
+        defer this.handlers.drainMicrotasks();
 
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
@@ -3131,7 +3162,7 @@ pub const H2FrameParser = struct {
             return .zero;
         };
         if (!stream.canSendData()) {
-            this.dispatchArbitrary(callback_arg);
+            this.dispatchWriteCallback(callback_arg);
             return JSC.JSValue.jsBoolean(false);
         }
 
@@ -3160,6 +3191,7 @@ pub const H2FrameParser = struct {
             return .zero;
         };
         defer buffer.deinit();
+        defer this.handlers.drainMicrotasks();
 
         this.sendData(stream, buffer.slice(), close, callback_arg);
 
@@ -3192,6 +3224,8 @@ pub const H2FrameParser = struct {
 
     pub fn getNextStream(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
+        defer this.handlers.drainMicrotasks();
+
         const id = this.getNextStreamID();
         _ = this.handleReceivedStreamID(id) orelse {
             return JSC.JSValue.jsNumber(-1);
@@ -3271,6 +3305,8 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected error argument", .{});
             return .undefined;
         }
+        defer this.handlers.drainMicrotasks();
+
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
             if (stream.state != .CLOSED) {
@@ -3315,7 +3351,7 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected sensitiveHeaders to be an object", .{});
             return .zero;
         }
-
+        defer this.handlers.drainMicrotasks();
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
         var encoded_size: usize = 0;
@@ -3642,6 +3678,7 @@ pub const H2FrameParser = struct {
         }
         const buffer = args_list.ptr[0];
         buffer.ensureStillAlive();
+        defer this.handlers.drainMicrotasks();
         if (buffer.asArrayBuffer(globalObject)) |array_buffer| {
             var bytes = array_buffer.byteSlice();
             // read all the bytes
@@ -3659,6 +3696,7 @@ pub const H2FrameParser = struct {
         log("onNativeRead", .{});
         this.ref();
         defer this.unref();
+        defer this.handlers.drainMicrotasks();
         var bytes = data;
         while (bytes.len > 0) {
             const result = this.readBytes(bytes);
@@ -3712,12 +3750,10 @@ pub const H2FrameParser = struct {
     pub fn detachNativeSocket(this: *H2FrameParser) void {
         this.native_socket = .{ .none = {} };
         const native_socket = this.native_socket;
+
         switch (native_socket) {
-            inline .tcp, .tls => |socket| {
+            inline .tcp_writeonly, .tls_writeonly, .tcp, .tls => |socket| {
                 socket.detachNativeCallback();
-                socket.deref();
-            },
-            inline .tcp_writeonly, .tls_writeonly => |socket| {
                 socket.deref();
             },
             .none => {},
@@ -3751,7 +3787,7 @@ pub const H2FrameParser = struct {
             return null;
         };
 
-        const allocator = getAllocator(globalObject);
+        const allocator = bun.default_allocator;
         var this = h2frameparser_allocator.tryGet() catch bun.outOfMemory();
 
         this.* = H2FrameParser{

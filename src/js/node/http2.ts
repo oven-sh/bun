@@ -1861,7 +1861,6 @@ class Http2Stream extends Duplex {
   _destroy(err, callback) {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const { ending } = this._writableState;
-
       if (!ending) {
         // If the writable side of the Http2Stream is still open, emit the
         // 'aborted' event and set the aborted flag.
@@ -2483,15 +2482,11 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this.#parser = null;
-    // this[bunHTTP2Socket] = null;
-    // this.emit("close");
     this.close();
   }
 
   #onError(error: Error) {
     this.#parser = null;
-    // this[bunHTTP2Socket] = null;
-    // this.emit("error", error);
     this.destroy(error);
   }
 
@@ -3126,9 +3121,9 @@ class ClientHttp2Session extends Http2Session {
       this[bunHTTP2Socket] = socket;
     }
     this.#encrypted = socket instanceof TLSSocket;
-    // const nativeSocket = socket[bunSocketInternal];
+    const nativeSocket = socket[bunSocketInternal];
     this.#parser = new H2FrameParser({
-      // native: nativeSocket,
+      native: nativeSocket,
       context: this,
       settings: options,
       handlers: ClientHttp2Session.#Handlers,

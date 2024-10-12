@@ -191,7 +191,6 @@ pub const JSBundler = struct {
                 try this.banner.appendSliceExact(slice.slice());
             }
 
-
             if (try config.getOptional(globalThis, "footer", ZigString.Slice)) |slice| {
                 defer slice.deinit();
                 try this.footer.appendSliceExact(slice.slice());

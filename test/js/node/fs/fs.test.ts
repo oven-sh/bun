@@ -462,7 +462,7 @@ describe("copyFileSync", () => {
 describe("mkdirSync", () => {
   it("should create a directory", () => {
     const now = Date.now().toString();
-    const base = join("fs.test.js", now, ".mkdirSync", "1234", "hi");
+    const base = join(now, ".mkdirSync", "1234", "hi");
     const tempdir = `${tmpdir()}/${base}`;
     expect(existsSync(tempdir)).toBe(false);
 

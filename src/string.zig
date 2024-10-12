@@ -882,7 +882,7 @@ pub const String = extern struct {
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
-        return self.toZigString().encode(enc);
+        return self.toZigString().encodeWithAllocator(bun.default_allocator, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {

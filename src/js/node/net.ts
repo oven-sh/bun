@@ -77,7 +77,7 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kRealListen = Symbol("kRealListen");
 
 function endNT(socket, callback, err) {
-  socket.end();
+  socket.$end();
   callback(err);
 }
 function closeNT(callback, err) {
@@ -141,6 +141,7 @@ const Socket = (function (InternalSocket) {
 
         if (self.#unrefOnConnected) socket.unref();
         self[bunSocketInternal] = socket;
+
         self.connecting = false;
         const options = self[bunTLSConnectOptions];
 
@@ -237,16 +238,17 @@ const Socket = (function (InternalSocket) {
       if (!self) return;
       const callback = self.#writeCallback;
       if (callback) {
-        const chunk = self.#writeChunk;
-        const written = socket.write(chunk);
+        const prevBytesWritten = socket.bytesWritten;
+        const writeChunk = self.#writeChunk;
 
-        if (written < chunk.length) {
-          self.#writeChunk = chunk.slice(written);
-        } else {
-          self.#writeCallback = null;
-          self.#writeChunk = null;
+        if (socket.$write(writeChunk || "", "utf8")) {
+          self.#writeChunk = self.#writeCallback = null;
           callback(null);
+        } else {
+          self.#writeChunk = null;
         }
+
+        self.bytesWritten = socket.bytesWritten - prevBytesWritten;
       }
     }
 
@@ -817,24 +819,23 @@ const Socket = (function (InternalSocket) {
     }
 
     _write(chunk, encoding, callback) {
-      if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
-      var written = this[bunSocketInternal]?.write(chunk);
+      const socket = this[bunSocketInternal];
+      if (!socket) {
+        this.#writeCallback = callback;
+        this.#writeChunk = Buffer.from(chunk, encoding);
+        return;
+      }
 
-      if (written == chunk.length) {
+      let prevBytesWritten = socket.bytesWritten;
+      const success = socket?.$write(chunk, encoding);
+      this.bytesWritten += socket.bytesWritten - prevBytesWritten;
+
+      if (success) {
         callback();
       } else if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
-        if (written > 0) {
-          if (typeof chunk == "string") {
-            chunk = chunk.slice(written);
-          } else {
-            chunk = chunk.subarray(written);
-          }
-        }
-
         this.#writeCallback = callback;
-        this.#writeChunk = chunk;
       }
     }
   },

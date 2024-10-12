@@ -455,7 +455,6 @@ class Http2ServerRequest extends Readable {
 
   _read(nread) {
     const state = this[kState];
-    assert(!state.closed);
     if (!state.didRead) {
       state.didRead = true;
       this[kStream].on("data", onStreamData);

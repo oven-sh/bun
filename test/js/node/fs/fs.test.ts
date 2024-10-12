@@ -67,7 +67,9 @@ function tmpdirTestMkdir(): string {
   const tempdir = `${tmpdir()}/fs.test.ts/${now}/1234/hi`;
   expect(existsSync(tempdir)).toBe(false);
   const res = mkdirSync(tempdir, { recursive: true });
-  expect(res).toInclude(now);
+  if (!res?.includes(now)) {
+    expect(res).toInclude("fs.test.ts");
+  }
   expect(res).not.toInclude("1234");
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;

@@ -2509,12 +2509,8 @@ const ExprIn = struct {
     // Currently this is only used when unwrapping a call to `require()`
     // with `__toESM()`.
     is_immediately_assigned_to_decl: bool = false,
-};
 
-const ExprOut = struct {
-    // True if the child node is an optional chain node (EDot, EIndex, or ECall
-    // with an IsOptionalChain value of true)
-    child_contains_optional_chain: bool = false,
+    property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
 };
 
 const Tup = std.meta.Tuple;
@@ -4870,6 +4866,8 @@ fn NewParser_(
 
         /// We must be careful to avoid revisiting nodes that have scopes.
         is_revisit_for_substitution: bool = false,
+
+        method_call_must_be_replaced_with_undefined: bool = false,
 
         // Inside a TypeScript namespace, an "export declare" statement can be used
         // to cause a namespace to be emitted even though it has no other observable
@@ -16318,6 +16316,11 @@ fn NewParser_(
                             if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
                                 e_.call_can_be_unwrapped_if_unused = true;
                             }
+
+                            // If the user passed --drop=console, drop all property accesses to console.
+                            if (def.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                            }
                         }
 
                         // Substitute uncalled "require" for the require target
@@ -16988,6 +16991,10 @@ fn NewParser_(
                                     if (!define.data.valueless) {
                                         return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                     }
+
+                                    if (define.data.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
+                                        p.method_call_must_be_replaced_with_undefined = true;
+                                    }
                                 }
 
                                 // Copy the side effect flags over in case this expression is unused
@@ -17019,7 +17026,9 @@ fn NewParser_(
                         }
                     }
 
-                    e_.target = p.visitExpr(e_.target);
+                    e_.target = p.visitExprInOut(e_.target, .{
+                        .property_access_for_method_call_maybe_should_replace_with_undefined = in.property_access_for_method_call_maybe_should_replace_with_undefined,
+                    });
 
                     // 'require.resolve' -> .e_require_resolve_call_target
                     if (e_.target.data == .e_require_call_target and
@@ -17291,6 +17300,7 @@ fn NewParser_(
                     const target_was_identifier_before_visit = e_.target.data == .e_identifier;
                     e_.target = p.visitExprInOut(e_.target, .{
                         .has_chain_parent = e_.optional_chain == .continuation,
+                        .property_access_for_method_call_maybe_should_replace_with_undefined = true,
                     });
 
                     // Copy the call side effect flag over if this is a known target
@@ -17346,6 +17356,7 @@ fn NewParser_(
                         defer p.options.ignore_dce_annotations = old_ce;
                         const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
                         defer p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+                        const old_is_control_flow_dead = p.is_control_flow_dead;
 
                         // We want to forcefully fold constants inside of
                         // certain calls even when minification is disabled, so
@@ -17362,8 +17373,28 @@ fn NewParser_(
                             p.should_fold_typescript_constant_expressions = true;
                         }
 
+                        var method_call_should_be_replaced_with_undefined = p.method_call_must_be_replaced_with_undefined;
+
+                        if (method_call_should_be_replaced_with_undefined) {
+                            p.method_call_must_be_replaced_with_undefined = false;
+                            switch (e_.target.data) {
+                                // If we're removing this call, don't count any arguments as symbol uses
+                                .e_index, .e_dot => {
+                                    p.is_control_flow_dead = true;
+                                },
+                                else => {
+                                    method_call_should_be_replaced_with_undefined = false;
+                                },
+                            }
+                        }
+
                         for (e_.args.slice()) |*arg| {
                             arg.* = p.visitExpr(arg.*);
+                        }
+
+                        if (method_call_should_be_replaced_with_undefined) {
+                            p.is_control_flow_dead = old_is_control_flow_dead;
+                            return .{ .data = .{ .e_undefined = .{} }, .loc = expr.loc };
                         }
                     }
 
@@ -18948,7 +18979,13 @@ fn NewParser_(
 
             switch (stmt.data) {
                 // These don't contain anything to traverse
-                .s_debugger, .s_empty, .s_comment => {
+                .s_debugger => {
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+                    if (p.define.drop_debugger) {
+                        return;
+                    }
+                },
+                .s_empty, .s_comment => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                 },
                 .s_type_script => {

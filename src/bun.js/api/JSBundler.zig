@@ -75,6 +75,7 @@ pub const JSBundler = struct {
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         experimental_css: bool = false,
+        drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -350,6 +351,18 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnArray(globalThis, "drop")) |drops| {
+                var iter = drops.arrayIterator(globalThis);
+                while (iter.next()) |entry| {
+                    var slice = entry.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected drop to be an array of strings", .{});
+                        return error.JSError;
+                    };
+                    defer slice.deinit();
+                    try this.drop.insert(slice.slice());
+                }
+            }
+
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
@@ -543,6 +556,9 @@ pub const JSBundler = struct {
             self.rootdir.deinit();
             self.public_path.deinit();
             self.conditions.deinit();
+            self.drop.deinit();
+            self.banner.deinit();
+            self.footer.deinit();
         }
     };
 

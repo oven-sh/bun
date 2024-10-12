@@ -590,7 +590,7 @@ pub fn inspect(
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    var out = ZigString.init(array.toOwnedSliceLeaky()).withEncoding();
+    var out = ZigString.init(array.slice()).withEncoding();
     const ret = out.toJS(globalThis);
     array.deinit();
     return ret;
@@ -3932,7 +3932,7 @@ const TOMLObject = struct {
             return .zero;
         };
 
-        const slice = writer.ctx.buffer.toOwnedSliceLeaky();
+        const slice = writer.ctx.buffer.slice();
         var out = bun.String.fromUTF8(slice);
         defer out.deref();
 

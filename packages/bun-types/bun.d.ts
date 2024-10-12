@@ -1612,6 +1612,11 @@ declare module "bun" {
      * Enable CSS support.
      */
     experimentalCss?: boolean;
+
+    /**
+     * Drop function calls to matching property accesses.
+     */
+    drop?: string[];
   }
 
   namespace Password {

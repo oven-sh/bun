@@ -2911,6 +2911,47 @@ pub const H2FrameParser = struct {
             }
         }
     }
+    pub fn noTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments(1);
+        if (args_list.len < 1) {
+            globalObject.throw("Expected stream, headers and sensitiveHeaders arguments", .{});
+            return .zero;
+        }
+
+        const stream_arg = args_list.ptr[0];
+
+        if (!stream_arg.isNumber()) {
+            globalObject.throw("Expected stream to be a number", .{});
+            return .zero;
+        }
+
+        const stream_id = stream_arg.toU32();
+        if (stream_id == 0 or stream_id > MAX_STREAM_ID) {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        }
+
+        var stream = this.streams.getPtr(@intCast(stream_id)) orelse {
+            globalObject.throw("Invalid stream id", .{});
+            return .zero;
+        };
+        stream.waitForTrailers = false;
+        this.sendData(stream, "", true, JSC.JSValue.jsUndefined());
+
+        if (stream.state == .HALF_CLOSED_REMOTE) {
+            stream.state = .CLOSED;
+        } else {
+            stream.state = .HALF_CLOSED_LOCAL;
+        }
+        if (stream.state == .CLOSED) {
+            const identifier = stream.getIdentifier();
+            identifier.ensureStillAlive();
+            stream.freeResources(this, false);
+            this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
+        }
+        return .undefined;
+    }
 
     pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());

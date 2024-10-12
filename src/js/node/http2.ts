@@ -2353,6 +2353,8 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
+      console.error("server streamError");
+
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -2398,11 +2400,7 @@ class ServerHttp2Session extends Http2Session {
 
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.StreamResponded) !== 0) {
-        try {
-          stream.emit("trailers", headers, flags, rawheaders);
-        } catch {
-          process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
-        }
+        stream.emit("trailers", headers, flags, rawheaders);
       } else {
         self[kServer].emit("stream", stream, headers, flags, rawheaders);
 
@@ -2450,7 +2448,7 @@ class ServerHttp2Session extends Http2Session {
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
 
       if (stream.listenerCount("wantTrailers") === 0) {
-        stream.sendTrailers({});
+        self[bunHTTP2Native]?.noTrailers(stream.id);
       } else {
         stream.emit("wantTrailers");
       }
@@ -2770,6 +2768,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
+      console.error("client streamError");
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -2817,11 +2816,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       if ((status & StreamState.StreamResponded) !== 0) {
-        try {
-          stream.emit("trailers", headers, flags, rawheaders);
-        } catch {
-          process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
-        }
+        stream.emit("trailers", headers, flags, rawheaders);
       } else {
         if (header_status >= 100 && header_status < 200) {
           self.emit("headers", stream, headers, flags, rawheaders);
@@ -2871,7 +2866,7 @@ class ClientHttp2Session extends Http2Session {
       if ((status & StreamState.WantTrailer) !== 0) return;
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
       if (stream.listenerCount("wantTrailers") === 0) {
-        stream.sendTrailers({});
+        self[bunHTTP2Native]?.noTrailers(stream.id);
       } else {
         stream.emit("wantTrailers");
       }

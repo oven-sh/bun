@@ -49,6 +49,10 @@ export default [
         fn: "sendTrailers",
         length: 2,
       },
+      noTrailers: {
+        fn: "noTrailers",
+        length: 1,
+      },
       setStreamPriority: {
         fn: "setStreamPriority",
         length: 2,

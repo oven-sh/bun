@@ -35,8 +35,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * glob
 JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
-    if (min.isUndefined()) min = jsNumber(JSC::minSafeInteger());
-    if (max.isUndefined()) max = jsNumber(JSC::maxSafeInteger());
+    if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
+    if (max.isUndefined()) max = jsDoubleNumber(JSC::maxSafeInteger());
 
     auto value_num = value.asNumber();
     auto min_num = min.toNumber(globalObject);

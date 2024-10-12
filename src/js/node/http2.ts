@@ -2353,8 +2353,6 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
-      console.error("server streamError");
-
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -2768,7 +2766,6 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
-      console.error("client streamError");
       if (!self || typeof stream !== "object") return;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);

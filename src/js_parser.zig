@@ -19430,6 +19430,7 @@ fn NewParser_(
                         }
                     }
 
+                    data.kind = kind;
                     try stmts.append(stmt.*);
 
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
@@ -22155,29 +22156,37 @@ fn NewParser_(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
-                                if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
+                                if (!local.is_export and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
+                                    var any_decl_in_const_values = local.kind == .k_const;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
-                                            const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
-                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref) and symbol.use_count_estimate == 0) {
-                                                continue;
+                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                                                any_decl_in_const_values = true;
+                                                const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
+                                                if (symbol.use_count_estimate == 0) {
+                                                    // Skip declarations that are constants with zero usage
+                                                    continue;
+                                                }
                                             }
                                         }
                                         decls[end] = decl;
                                         end += 1;
                                     }
                                     local.decls.len = @as(u32, @truncate(end));
-                                    if (end == 0) {
-                                        stmt.* = stmt.*.toEmpty();
+                                    if (any_decl_in_const_values) {
+                                        if (end == 0) {
+                                            stmt.* = stmt.*.toEmpty();
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
                             },
                             else => {},
                         }
 
+                        // Break after processing relevant statements
                         break;
                     }
                 }

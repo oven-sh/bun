@@ -987,7 +987,7 @@ for (const nodeExecutable of [nodeExe()]) {
         ]);
       });
 
-      it.only("should not leak memory", () => {
+      it("should not leak memory", () => {
         const { stdout, exitCode } = Bun.spawnSync({
           cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
           env: {

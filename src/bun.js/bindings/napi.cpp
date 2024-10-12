@@ -196,10 +196,11 @@ void NapiRef::clear()
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
-static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
+static uint32_t getPropertyAttributes(napi_property_descriptor prop)
 {
-    const uint32_t attributes = static_cast<uint32_t>(attributes_);
     uint32_t result = 0;
+    const uint32_t attributes = static_cast<uint32_t>(prop.attributes);
+
     if (!(attributes & static_cast<napi_property_attributes>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
@@ -208,20 +209,9 @@ static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
         result |= JSC::PropertyAttribute::DontEnum;
     }
 
-    // if (!(attributes & napi_key_writable)) {
-    //     // result |= JSC::PropertyAttribute::ReadOnly;
-    // }
-
-    return result;
-}
-
-static uint32_t getPropertyAttributes(napi_property_descriptor prop)
-{
-    uint32_t result = getPropertyAttributes(prop.attributes);
-
-    // if (!(prop.getter && !prop.setter)) {
-    //     result |= JSC::PropertyAttribute::ReadOnly;
-    // }
+    if (!(attributes & napi_key_writable || prop.setter != nullptr)) {
+        result |= JSC::PropertyAttribute::ReadOnly;
+    }
 
     return result;
 }
@@ -2014,7 +2004,7 @@ extern "C" napi_status napi_define_class(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (UNLIKELY(!result)) {
+    if (UNLIKELY(!result || !env || (property_count > 0 && !properties))) {
         return napi_invalid_arg;
     }
 

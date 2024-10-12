@@ -3819,7 +3819,7 @@ pub const H2FrameParser = struct {
         }
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
-            stream.freeResources(this, true);
+            stream.freeResources(this, false);
         }
         this.streams.deinit();
     }
@@ -3836,7 +3836,10 @@ pub const H2FrameParser = struct {
         this.ref_count -= 1;
 
         if (ref_count == 1) {
-            this.deinit();
+            // never deinit inside a finalizer
+            const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
+            task.* = JSC.AnyTask.New(H2FrameParser, deinit).init(this);
+            this.globalThis.bunVM().enqueueTask(JSC.Task.init(task));
         }
     }
 

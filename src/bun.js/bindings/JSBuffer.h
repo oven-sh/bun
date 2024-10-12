@@ -41,10 +41,10 @@ std::optional<double> byteLength(JSC::JSString* str, WebCore::BufferEncodingType
 
 namespace Buffer {
 
-const long kMaxLength = MAX_ARRAY_BUFFER_SIZE;
-const long kStringMaxLength = WTF::String::MaxLength;
-const long MAX_LENGTH = MAX_ARRAY_BUFFER_SIZE;
-const long MAX_STRING_LENGTH = WTF::String::MaxLength;
+const size_t kMaxLength = MAX_ARRAY_BUFFER_SIZE;
+const size_t kStringMaxLength = WTF::String::MaxLength;
+const size_t MAX_LENGTH = MAX_ARRAY_BUFFER_SIZE;
+const size_t MAX_STRING_LENGTH = WTF::String::MaxLength;
 
 }
 

@@ -466,6 +466,11 @@ describe("mkdirSync", () => {
     expect(existsSync(tempdir)).toBe(true);
   });
 
+  it("should throw ENOENT for empty string", () => {
+    expect(() => mkdirSync("", { recursive: true })).toThrow("No such file or directory");
+    expect(() => mkdirSync("")).toThrow("No such file or directory");
+  });
+
   it("throws for invalid options", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir2/foo/bar`;
 
@@ -1091,10 +1096,10 @@ describe("readSync", () => {
     closeSync(fd);
   });
 
-  it("works with invalid fd but zero length",()=>{
+  it("works with invalid fd but zero length", () => {
     expect(readSync(2147483640, Buffer.alloc(0))).toBe(0);
     expect(readSync(2147483640, Buffer.alloc(10), 0, 0, 0)).toBe(0);
-  })
+  });
 });
 
 it("writevSync", () => {

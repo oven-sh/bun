@@ -1868,9 +1868,11 @@ class Http2Stream extends Duplex {
           this.emit("aborted");
         }
 
-        // Close the writable side.
+        // at this state destroyed will be true but we need to close the writable side
         this._writableState.destroyed = false;
         this.end();
+        // we now restore the destroyed flag
+        this._writableState.destroyed = true;
       }
 
       const session = this[bunHTTP2Session];

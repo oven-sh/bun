@@ -3070,16 +3070,8 @@ pub const H2FrameParser = struct {
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(4);
-        if (args_list.len < 4) {
-            globalObject.throw("Expected stream, data, endStream and callback arguments", .{});
-            return .zero;
-        }
-
-        const stream_arg = args_list.ptr[0];
-        const data_arg = args_list.ptr[1];
-        const close_arg = args_list.ptr[2];
-        const callback_arg = args_list.ptr[3];
+        const args = callframe.argumentsUndef(5);
+        const stream_arg, const data_arg, const encoding_arg, const close_arg, const callback_arg = args.ptr;
 
         if (!stream_arg.isNumber()) {
             globalObject.throw("Expected stream to be a number", .{});
@@ -3102,20 +3094,33 @@ pub const H2FrameParser = struct {
             return JSC.JSValue.jsBoolean(false);
         }
 
-        if (data_arg.asArrayBuffer(globalObject)) |array_buffer| {
-            const payload = array_buffer.slice();
-            this.sendData(stream, payload, close, callback_arg);
-        } else if (bun.String.tryFromJS(data_arg, globalObject)) |bun_str| {
-            defer bun_str.deref();
-            var zig_str = bun_str.toUTF8WithoutRef(bun.default_allocator);
-            defer zig_str.deinit();
-            const payload = zig_str.slice();
-            this.sendData(stream, payload, close, callback_arg);
-        } else {
-            if (!globalObject.hasException())
-                globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
+        const encoding: JSC.Node.Encoding = brk: {
+            if (encoding_arg == .undefined) {
+                break :brk .utf8;
+            }
+
+            if (!encoding_arg.isString()) {
+                return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
+            }
+
+            break :brk JSC.Node.Encoding.fromJS(encoding_arg, globalObject) orelse {
+                if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "encoding", encoding_arg);
+                return .zero;
+            };
+        };
+
+        var buffer: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.fromJSWithEncoding(
+            globalObject,
+            bun.default_allocator,
+            data_arg,
+            encoding,
+        ) orelse {
+            if (!globalObject.hasException()) return globalObject.throwInvalidArgumentTypeValue("write", "Buffer or String", data_arg);
             return .zero;
-        }
+        };
+        defer buffer.deinit();
+
+        this.sendData(stream, buffer.slice(), close, callback_arg);
 
         return JSC.JSValue.jsBoolean(true);
     }

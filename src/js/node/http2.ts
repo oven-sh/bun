@@ -1690,7 +1690,9 @@ class Http2Stream extends Duplex {
   #sentTrailers: any;
   [kAborted]: boolean = false;
   constructor(streamId, session, headers) {
-    super();
+    super({
+      decodeStrings: false,
+    });
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
@@ -1946,7 +1948,7 @@ class Http2Stream extends Duplex {
         } else {
           for (let i = 0; i < data.length; i++) {
             const { chunk, encoding } = data[i];
-            if (typeof chunk == "string" && encoding !== "ascii" && encoding !== "buffer") {
+            if (typeof chunk === "string" && encoding !== "utf-8" && encoding !== "utf8" && encoding !== "buffer") {
               data[i] = Buffer.from(chunk, encoding);
             } else {
               data[i] = chunk;
@@ -1954,7 +1956,13 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0, callback);
+        native.writeStream(
+          this.#id,
+          chunk,
+          undefined,
+          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+          callback,
+        );
         return;
       }
     }
@@ -1963,13 +1971,17 @@ class Http2Stream extends Duplex {
     }
   }
   _write(chunk, encoding, callback) {
-    if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
-
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        native.writeStream(this.#id, chunk, (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0, callback);
+        native.writeStream(
+          this.#id,
+          chunk,
+          encoding,
+          (this[bunHTTP2StreamStatus] & StreamState.EndedCalled) !== 0,
+          callback,
+        );
         return;
       }
     }

@@ -4929,12 +4929,7 @@ pub const NodeFS = struct {
                         return .{ .result = .{ .none = {} } };
                     },
                     // continue
-                    .NOENT => {
-                        if (len == 0) {
-                            // no path to copy
-                            return .{ .err = err };
-                        }
-                    },
+                    .NOENT => {},
                 }
             },
             .result => {

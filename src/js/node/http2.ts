@@ -2176,12 +2176,13 @@ class ServerHttp2Stream extends Http2Stream {
       error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
       throw error;
     }
+
     if (headers == undefined) {
       headers = {};
-    }
-
-    if (!$isObject(headers)) {
+    } else if (!$isObject(headers)) {
       throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    } else {
+      headers = { ...headers };
     }
 
     const sensitives = headers[sensitiveHeaders];
@@ -3182,10 +3183,10 @@ class ClientHttp2Session extends Http2Session {
 
     if (headers == undefined) {
       headers = {};
-    }
-
-    if (!$isObject(headers)) {
+    } else if (!$isObject(headers)) {
       throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    } else {
+      headers = { ...headers };
     }
 
     const sensitives = headers[sensitiveHeaders];
@@ -3231,8 +3232,11 @@ class ClientHttp2Session extends Http2Session {
     }
 
     if (NoPayloadMethods.has(method.toUpperCase())) {
-      options = options || {};
-      options.endStream = true;
+      if (!options || !$isObject(options)) {
+        options = { endStream: true };
+      } else {
+        options = { ...options, endStream: true };
+      }
     }
     let stream_id: number = this.#parser.getNextStream();
     const req = new ClientHttp2Stream(stream_id, this, headers);

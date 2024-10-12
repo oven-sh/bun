@@ -1864,12 +1864,11 @@ class Http2Stream extends Duplex {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
-      const code = err ? NGHTTP2_CANCEL : 0;
-      this.rstCode = code;
+      this.rstCode = 0;
       if (this.writableFinished) {
         markStreamClosed(this);
 
-        session[bunHTTP2Native]?.rstStream(this.#id, code);
+        session[bunHTTP2Native]?.rstStream(this.#id, 0);
         this[bunHTTP2Session] = null;
       } else {
         this.once("finish", Http2Stream.#rstStream);

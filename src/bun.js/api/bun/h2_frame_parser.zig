@@ -687,7 +687,7 @@ var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
 
-const ENABLE_AUTO_CORK = false;
+const ENABLE_AUTO_CORK = true;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
@@ -3657,6 +3657,8 @@ pub const H2FrameParser = struct {
 
     pub fn onNativeRead(this: *H2FrameParser, data: []const u8) void {
         log("onNativeRead", .{});
+        this.ref();
+        defer this.unref();
         var bytes = data;
         while (bytes.len > 0) {
             const result = this.readBytes(bytes);
@@ -3669,6 +3671,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn onNativeClose(this: *H2FrameParser) void {
+        log("onNativeClose", .{});
         this.detachNativeSocket();
     }
 

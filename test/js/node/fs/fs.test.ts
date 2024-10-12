@@ -62,6 +62,17 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+function tmpdirTestMkdir(): string {
+  const now = Date.now().toString();
+  const tempdir = `${tmpdir()}/fs.test.ts/${now}/1234/hi`;
+  expect(existsSync(tempdir)).toBe(false);
+  const res = mkdirSync(tempdir, { recursive: true });
+  expect(res).toInclude(now);
+  expect(res).not.toInclude("1234");
+  expect(existsSync(tempdir)).toBe(true);
+  return tempdir;
+}
+
 it("fs.writeFile(1, data) should work when its inherited", async () => {
   expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"]).toRun();
 });
@@ -315,9 +326,7 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
 
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js");
@@ -333,9 +342,7 @@ describe("copyFileSync", () => {
   });
 
   it("should work for files > 128 KB ", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
     var buffer = new Int32Array(128 * 1024);
     for (let i = 0; i < buffer.length; i++) {
       buffer[i] = i % 256;
@@ -362,9 +369,7 @@ describe("copyFileSync", () => {
   });
 
   it("FICLONE option does not error ever", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.FICLONE/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
@@ -373,9 +378,7 @@ describe("copyFileSync", () => {
   });
 
   it("COPYFILE_EXCL works", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.COPYFILE_EXCL/1234/hi`;
-    expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+    const tempdir = tmpdirTestMkdir();
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
@@ -387,9 +390,7 @@ describe("copyFileSync", () => {
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
-        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/large`;
-        expect(existsSync(tempdir)).toBe(false);
-        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        const tempdir = tmpdirTestMkdir();
         var buffer = new Int32Array(128 * 1024);
         for (let i = 0; i < buffer.length; i++) {
           buffer[i] = i % 256;
@@ -421,9 +422,7 @@ describe("copyFileSync", () => {
       });
 
       it("on small files", () => {
-        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/1234/small`;
-        expect(existsSync(tempdir)).toBe(false);
-        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+        const tempdir = tmpdirTestMkdir();
         var buffer = new Int32Array(1 * 1024);
         for (let i = 0; i < buffer.length; i++) {
           buffer[i] = i % 256;

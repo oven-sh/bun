@@ -37,6 +37,10 @@ pub const SyntaxString = union(enum) {
 
     const This = @This();
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         try dest.writeChar('"');
         switch (this.*) {
@@ -291,6 +295,10 @@ pub const SyntaxComponent = struct {
             .space => dest.writeChar('+'),
         };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A [syntax component component name](https://drafts.css-houdini.org/css-properties-values-api/#supported-names).
@@ -411,6 +419,10 @@ pub const SyntaxComponentKind = union(enum) {
         // https://drafts.csswg.org/css-syntax-3/#ident-code-point
         return isIdentStart(c) or c >= '0' and c <= '9' or c == '-';
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const ParsedComponent = union(enum) {
@@ -450,6 +462,10 @@ pub const ParsedComponent = union(enum) {
         components: ArrayList(ParsedComponent),
         /// A multiplier describing how the components repeat.
         multiplier: Multiplier,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A raw token stream.
     token_list: css.css_properties.custom.TokenList,
@@ -490,6 +506,10 @@ pub const ParsedComponent = union(enum) {
             },
             .token_list => |*t| try t.toCss(W, dest, false),
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

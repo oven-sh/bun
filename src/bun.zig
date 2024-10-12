@@ -3939,6 +3939,37 @@ pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T)
     return index;
 }
 
+pub fn getThreadCount() u16 {
+    const max_threads = 1024;
+    const min_threads = 2;
+    const ThreadCount = struct {
+        pub var cached_thread_count: u16 = 0;
+        var cached_thread_count_once = std.once(getThreadCountOnce);
+        fn getThreadCountFromUser() ?u16 {
+            inline for (.{ "UV_THREADPOOL_SIZE", "GOMAXPROCS" }) |envname| {
+                if (getenvZ(envname)) |env| {
+                    if (std.fmt.parseInt(u16, env, 10) catch null) |parsed| {
+                        if (parsed >= min_threads) {
+                            if (bun.logger.Log.default_log_level.atLeast(.debug)) {
+                                Output.note("Using {d} threads from {s}={d}", .{ parsed, envname, parsed });
+                                Output.flush();
+                            }
+                            return @min(parsed, max_threads);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+        fn getThreadCountOnce() void {
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+        }
+    };
+    ThreadCount.cached_thread_count_once.call();
+    return ThreadCount.cached_thread_count;
+}
+
 /// Copied from zig std. Modified to accept arguments.
 pub fn once(comptime f: anytype) Once(f) {
     return Once(f){};

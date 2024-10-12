@@ -1168,6 +1168,131 @@ describe("publish", async () => {
     expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
   });
 
+  for (const info of [
+    { user: "bin1", bin: "bin1.js" },
+    { user: "bin2", bin: { bin1: "bin1.js", bin2: "bin2.js" } },
+    { user: "bin3", directories: { bin: "bins" } },
+  ]) {
+    test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
+      const publishDir = tmpdirSync();
+      const bunfig = await authBunfig("binaries-" + info.user);
+      console.log({ packageDir, publishDir });
+
+      await Promise.all([
+        rm(join(import.meta.dir, "packages", "publish-pkg-bins"), { recursive: true, force: true }),
+        write(
+          join(publishDir, "package.json"),
+          JSON.stringify({
+            name: "publish-pkg-bins",
+            version: "1.1.1",
+            ...info,
+          }),
+        ),
+        write(join(publishDir, "bunfig.toml"), bunfig),
+        write(join(publishDir, "bin1.js"), `#!/usr/bin/env bun\nconsole.log("bin1!")`),
+        write(join(publishDir, "bin2.js"), `#!/usr/bin/env bun\nconsole.log("bin2!")`),
+        write(join(publishDir, "bins", "bin3.js"), `#!/usr/bin/env bun\nconsole.log("bin3!")`),
+        write(join(publishDir, "bins", "moredir", "bin4.js"), `#!/usr/bin/env bun\nconsole.log("bin4!")`),
+
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "publish-pkg-bins": "1.1.1",
+            },
+          }),
+        ),
+      ]);
+
+      const { out, err, exitCode } = await publish(env, publishDir);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(out).toContain("+ publish-pkg-bins@1.1.1");
+      expect(exitCode).toBe(0);
+
+      await runBunInstall(env, packageDir);
+
+      const results = await Promise.all([
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin1.bunx" : "bin1")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin2.bunx" : "bin2")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin3.js.bunx" : "bin3.js")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "bin4.js.bunx" : "bin4.js")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
+        exists(join(packageDir, "node_modules", ".bin", isWindows ? "publish-pkg-bins.bunx" : "publish-pkg-bins")),
+      ]);
+
+      switch (info.user) {
+        case "bin1": {
+          expect(results).toEqual([false, false, false, false, false, true]);
+          break;
+        }
+        case "bin2": {
+          expect(results).toEqual([true, true, false, false, false, false]);
+          break;
+        }
+        case "bin3": {
+          expect(results).toEqual([false, false, true, true, !isWindows, false]);
+          break;
+        }
+      }
+    });
+  }
+
+  test("dependencies are installed", async () => {
+    const publishDir = tmpdirSync();
+    const bunfig = await authBunfig("manydeps");
+    await Promise.all([
+      rm(join(import.meta.dir, "packages", "publish-pkg-deps"), { recursive: true, force: true }),
+      write(
+        join(publishDir, "package.json"),
+        JSON.stringify(
+          {
+            name: "publish-pkg-deps",
+            version: "1.1.1",
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+            peerDependencies: {
+              "a-dep": "1.0.1",
+            },
+            optionalDependencies: {
+              "basic-1": "1.0.0",
+            },
+          },
+          null,
+          2,
+        ),
+      ),
+      write(join(publishDir, "bunfig.toml"), bunfig),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "publish-pkg-deps": "1.1.1",
+          },
+        }),
+      ),
+    ]);
+
+    let { out, err, exitCode } = await publish(env, publishDir);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(out).toContain("+ publish-pkg-deps@1.1.1");
+    expect(exitCode).toBe(0);
+
+    await runBunInstall(env, packageDir);
+
+    const results = await Promise.all([
+      exists(join(packageDir, "node_modules", "no-deps", "package.json")),
+      exists(join(packageDir, "node_modules", "a-dep", "package.json")),
+      exists(join(packageDir, "node_modules", "basic-1", "package.json")),
+    ]);
+
+    expect(results).toEqual([true, true, true]);
+  });
+
   test("can publish workspace package", async () => {
     const bunfig = await authBunfig("workspace");
     const pkgJson = {

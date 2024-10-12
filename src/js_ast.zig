@@ -3436,6 +3436,56 @@ pub const Expr = struct {
         return if (asProperty(expr, name)) |query| query.expr else null;
     }
 
+    /// Don't use this if you care about performance.
+    ///
+    /// Sets the value of a property, creating it if it doesn't exist.
+    /// `expr` must be an object.
+    pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr) OOM!void {
+        bun.assertWithLocation(expr.isObject(), @src());
+        for (0..expr.data.e_object.properties.len) |i| {
+            const prop = &expr.data.e_object.properties.ptr[i];
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data.e_string.eql(string, name)) {
+                prop.value = value;
+                return;
+            }
+        }
+
+        var new_props = expr.data.e_object.properties.listManaged(allocator);
+        try new_props.append(.{
+            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .value = value,
+        });
+
+        expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
+    }
+
+    /// Don't use this if you care about performance.
+    ///
+    /// Sets the value of a property to a string, creating it if it doesn't exist.
+    /// `expr` must be an object.
+    pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value: string) OOM!void {
+        bun.assertWithLocation(expr.isObject(), @src());
+        for (0..expr.data.e_object.properties.len) |i| {
+            const prop = &expr.data.e_object.properties.ptr[i];
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data.e_string.eql(string, name)) {
+                prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
+                return;
+            }
+        }
+
+        var new_props = expr.data.e_object.properties.listManaged(allocator);
+        try new_props.append(.{
+            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
+        });
+
+        expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
+    }
+
     pub fn getObject(expr: *const Expr, name: string) ?Expr {
         if (expr.asProperty(name)) |query| {
             if (query.expr.isObject()) {

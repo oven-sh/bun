@@ -443,6 +443,7 @@ pub const ServerConfig = struct {
         .tcp = .{},
     },
     idleTimeout: u8 = 10, //TODO: should we match websocket default idleTimeout of 120?
+    has_idleTimeout: bool = false,
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
     base_uri: string = "",
@@ -1290,6 +1291,7 @@ pub const ServerConfig = struct {
 
                         return args;
                     }
+                    args.has_idleTimeout = true;
 
                     const idleTimeout: u64 = @intCast(@max(value.toInt64(), 0));
                     if (idleTimeout > 255) {
@@ -6847,6 +6849,27 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
         }
 
+        var did_send_idletimeout_warning_once = false;
+        fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
+            if (debug_mode and !did_send_idletimeout_warning_once) {
+                if (!bun.CLI.Command.get().debug.silent) {
+                    did_send_idletimeout_warning_once = true;
+                    Output.prettyErrorln("<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.", .{});
+                    Output.flush();
+                }
+            }
+        }
+
+        fn shouldAddTimeoutHandlerForWarning(server: *ThisServer) bool {
+            if (comptime debug_mode) {
+                if (!did_send_idletimeout_warning_once and !bun.CLI.Command.get().debug.silent) {
+                    return !server.config.has_idleTimeout;
+                }
+            }
+
+            return false;
+        }
+
         pub fn onRequest(
             this: *ThisServer,
             req: *uws.Request,
@@ -6864,6 +6887,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             req.setYield(false);
             resp.timeout(this.config.idleTimeout);
+
+            // Since we do timeouts by default, we should tell the user when
+            // this happens - but limit it to only warn once.
+            if (shouldAddTimeoutHandlerForWarning(this)) {
+                // We need to pass it a pointer, any pointer should do.
+                resp.onTimeout(*anyopaque, onTimeoutForIdleWarn, &did_send_idletimeout_warning_once);
+            }
 
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);

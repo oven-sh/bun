@@ -10,8 +10,12 @@ const conv = std.builtin.CallingConvention.Unspecified;
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
+    pub const braces = toJSCallback(Bun.braces);
     pub const build = toJSCallback(Bun.JSBundler.buildFn);
+    pub const color = bun.css.CssColor.jsFunctionColor;
     pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
+    pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
+    pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
     pub const gc = toJSCallback(Bun.runGC);
@@ -22,7 +26,6 @@ pub const BunObject = struct {
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
     pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
     pub const listen = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "listen", false));
-    pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
     pub const openInEditor = toJSCallback(Bun.openInEditor);
@@ -31,24 +34,22 @@ pub const BunObject = struct {
     pub const resolveSync = toJSCallback(Bun.resolveSync);
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
+    pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const shrink = toJSCallback(Bun.shrink);
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false));
+    pub const stringWidth = toJSCallback(Bun.stringWidth);
+    pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
     pub const which = toJSCallback(Bun.which);
     pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
-    pub const stringWidth = toJSCallback(Bun.stringWidth);
-    pub const braces = toJSCallback(Bun.braces);
-    pub const shellEscape = toJSCallback(Bun.shellEscape);
-    pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
-    pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
-    pub const color = bun.css.CssColor.jsFunctionColor;
     // --- Callbacks ---
 
     // --- Getters ---
     pub const CryptoHasher = toJSGetter(Crypto.CryptoHasher.getter);
     pub const FFI = toJSGetter(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSGetter(Bun.getFileSystemRouter);
+    pub const Glob = toJSGetter(Bun.getGlobConstructor);
     pub const MD4 = toJSGetter(Crypto.MD4.getter);
     pub const MD5 = toJSGetter(Crypto.MD5.getter);
     pub const SHA1 = toJSGetter(Crypto.SHA1.getter);
@@ -58,21 +59,20 @@ pub const BunObject = struct {
     pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
     pub const TOML = toJSGetter(Bun.getTOMLObject);
-    pub const Glob = toJSGetter(Bun.getGlobConstructor);
     pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
     pub const argv = toJSGetter(Bun.getArgv);
     pub const cwd = toJSGetter(Bun.getCWD);
+    pub const embeddedFiles = toJSGetter(Bun.getEmbeddedFiles);
     pub const enableANSIColors = toJSGetter(Bun.enableANSIColors);
     pub const hash = toJSGetter(Bun.getHashObject);
     pub const inspect = toJSGetter(Bun.getInspect);
     pub const main = toJSGetter(Bun.getMain);
     pub const origin = toJSGetter(Bun.getOrigin);
+    pub const semver = toJSGetter(Bun.getSemver);
     pub const stderr = toJSGetter(Bun.getStderr);
     pub const stdin = toJSGetter(Bun.getStdin);
     pub const stdout = toJSGetter(Bun.getStdout);
     pub const unsafe = toJSGetter(Bun.getUnsafe);
-    pub const semver = toJSGetter(Bun.getSemver);
-    pub const embeddedFiles = toJSGetter(Bun.getEmbeddedFiles);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -483,6 +483,81 @@ pub fn which(
     return JSC.JSValue.jsNull();
 }
 
+pub fn inspectTable(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(JSC.conv) JSC.JSValue {
+    var args_buf = callframe.argumentsUndef(5);
+    var all_arguments = args_buf.mut();
+    if (all_arguments[0].isUndefined() or all_arguments[0].isNull())
+        return bun.String.empty.toJS(globalThis);
+
+    for (all_arguments) |arg| {
+        arg.protect();
+    }
+    defer {
+        for (all_arguments) |arg| {
+            arg.unprotect();
+        }
+    }
+
+    var arguments = all_arguments[0..];
+
+    if (!arguments[1].isArray()) {
+        arguments[2] = arguments[1];
+        arguments[1] = .undefined;
+    }
+
+    var formatOptions = ConsoleObject.FormatOptions{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .max_depth = 5,
+        .quote_strings = true,
+        .ordered_properties = false,
+        .single_line = true,
+    };
+    if (arguments[2].isObject()) {
+        formatOptions.fromJS(globalThis, arguments[2..]) catch return .zero;
+    }
+    const value = arguments[0];
+
+    // very stable memory address
+    var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
+    defer array.deinit();
+    var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
+    var buffered_writer = &buffered_writer_;
+
+    const writer = buffered_writer.writer();
+    const Writer = @TypeOf(writer);
+    const properties = if (arguments[1].jsType().isArray()) arguments[1] else JSValue.undefined;
+    var table_printer = ConsoleObject.TablePrinter.init(
+        globalThis,
+        .Log,
+        value,
+        properties,
+    );
+    table_printer.value_formatter.depth = formatOptions.max_depth;
+    table_printer.value_formatter.ordered_properties = formatOptions.ordered_properties;
+    table_printer.value_formatter.single_line = formatOptions.single_line;
+
+    switch (formatOptions.enable_colors) {
+        inline else => |colors| table_printer.printTable(Writer, writer, colors) catch {
+            if (!globalThis.hasException())
+                globalThis.throwOutOfMemory();
+            return .zero;
+        },
+    }
+
+    buffered_writer.flush() catch return {
+        globalThis.throwOutOfMemory();
+        return .zero;
+    };
+
+    var out = bun.String.createUTF8(array.slice());
+    return out.transferToJS(globalThis);
+}
+
 pub fn inspect(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
@@ -508,62 +583,10 @@ pub fn inspect(
         .quote_strings = true,
         .ordered_properties = false,
     };
-    const value = arguments[0];
-
     if (arguments.len > 1) {
-        const arg1 = arguments[1];
-
-        if (arg1.isObject()) {
-            if (arg1.getTruthy(globalThis, "depth")) |opt| {
-                if (opt.isInt32()) {
-                    const arg = opt.toInt32();
-                    if (arg < 0) {
-                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return .zero;
-                    }
-                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
-                } else if (opt.isNumber()) {
-                    const v = opt.coerce(f64, globalThis);
-                    if (std.math.isInf(v)) {
-                        formatOptions.max_depth = std.math.maxInt(u16);
-                    } else {
-                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return .zero;
-                    }
-                }
-            }
-            if (arg1.getOptional(globalThis, "colors", bool) catch return .zero) |opt| {
-                formatOptions.enable_colors = opt;
-            }
-            if (arg1.getOptional(globalThis, "sorted", bool) catch return .zero) |opt| {
-                formatOptions.ordered_properties = opt;
-            }
-        } else {
-            // formatOptions.show_hidden = arg1.toBoolean();
-            if (arguments.len > 2) {
-                var depthArg = arguments[1];
-                if (depthArg.isInt32()) {
-                    const arg = depthArg.toInt32();
-                    if (arg < 0) {
-                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return .zero;
-                    }
-                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
-                } else if (depthArg.isNumber()) {
-                    const v = depthArg.coerce(f64, globalThis);
-                    if (std.math.isInf(v)) {
-                        formatOptions.max_depth = std.math.maxInt(u16);
-                    } else {
-                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return .zero;
-                    }
-                }
-                if (arguments.len > 3) {
-                    formatOptions.enable_colors = arguments[2].toBoolean();
-                }
-            }
-        }
+        formatOptions.fromJS(globalThis, arguments[1..]) catch return .zero;
     }
+    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
@@ -600,6 +623,7 @@ pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSVal
     const fun = JSC.createCallback(globalObject, ZigString.static("inspect"), 2, inspect);
     var str = ZigString.init("nodejs.util.inspect.custom");
     fun.put(globalObject, ZigString.static("custom"), JSC.JSValue.symbolFor(globalObject, &str));
+    fun.put(globalObject, ZigString.static("table"), JSC.createCallback(globalObject, ZigString.static("table"), 3, inspectTable));
     return fun;
 }
 

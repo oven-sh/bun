@@ -154,15 +154,7 @@ pub const ThreadPool = struct {
         if (existing_thread_pool) |pool| {
             this.pool = pool;
         } else {
-            var cpu_count = @as(u32, @truncate(@max(std.Thread.getCpuCount() catch 2, 2)));
-
-            if (v2.bundler.env.get("GOMAXPROCS")) |max_procs| {
-                if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                    cpu_count = cpu_count_;
-                } else |_| {}
-            }
-
-            cpu_count = @max(@min(cpu_count, @as(u32, @truncate(128 - 1))), 2);
+            const cpu_count = bun.getThreadCount();
             this.pool = try v2.graph.allocator.create(ThreadPoolLib);
             this.pool.* = ThreadPoolLib.init(.{
                 .max_threads = cpu_count,

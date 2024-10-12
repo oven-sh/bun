@@ -33,7 +33,7 @@ V1.1.30-canary.37+117e1b388
 
 Hot-module-reloading patch. The entire payload is UTF-8 Encoded JavaScript Payload.
 
-### `R`
+### `R` - Route reload request
 
 Server-side code has reloaded. Client should either refetch the route or perform a hard reload.
 
@@ -43,12 +43,14 @@ Server-side code has reloaded. Client should either refetch the route or perform
   - `u16`: Length of route name.
   - `[n]u8`: Route name in UTF-8 encoded text.
 
-### `e`
+### `e` - Error status update
 
-- `u32`: Number of errors
-- For each error:
-  - `u8` representing `ErrorKind`
-  - Depending on kind, metadata is encoded differently
+- `u32`: Number of errors removed
+- For each removed error:
+  - `u32` Error owner
+- Remainder of payload is repeating each error object:
+  - `u32` Error owner
+  - Error Payload
 
 ### `v`
 

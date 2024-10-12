@@ -3858,19 +3858,26 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
+        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
 
         pub fn lock(impl: *@This()) void {
-            bun.assert(impl.owning_thread == null);
+            if (impl.owning_thread) |thread| {
+                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
+                crash_handler.dumpStackTrace(impl.locked_at.trace());
+                @panic("Safety lock violated");
+            }
             impl.owning_thread = std.Thread.getCurrentId();
+            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
         }
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.owning_thread = null;
+            impl.* = .{};
         }
 
         pub fn assertLocked(impl: *const @This()) void {
-            assert(std.Thread.getCurrentId() == impl.owning_thread);
+            assert(impl.owning_thread != null); // not locked
+            assert(impl.owning_thread == std.Thread.getCurrentId());
         }
     }
 else
@@ -3914,6 +3921,14 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
         pub inline fn toOptional(oi: @This()) Optional {
             return @enumFromInt(oi.get());
+        }
+
+        pub fn sortFnAsc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
         }
 
         pub const Optional = enum(backing_int) {

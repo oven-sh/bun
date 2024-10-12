@@ -66,11 +66,24 @@ watch_current: u1 = 0,
 
 // Bundling
 generation: usize = 0,
+/// All access into IncrementalGraph is guarded by this. This is only
+/// a debug assertion since there is no actual contention.
+graph_safety_lock: bun.DebugThreadLock,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
+/// All bundling failures are stored until a file is saved and rebuilt.
+/// They are stored in the wire format the HMR runtime expects so that
+/// serialization only happens once.
+bundling_failures: std.ArrayHashMapUnmanaged(
+    SerializedFailure,
+    void,
+    SerializedFailure.ArrayHashContextViaOwner,
+    false,
+) = .{},
+/// Quickly retrieve a route's index from the entry point file.
 route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Route.Index),
+/// State populated during bundling. Often cleared
 incremental_result: IncrementalResult,
-graph_safety_lock: bun.DebugThreadLock,
 framework: bake.Framework,
 // Each logical graph gets it's own bundler configuration
 server_bundler: Bundler,
@@ -103,12 +116,6 @@ pub const Route = struct {
     client_bundle: ?[]const u8 = null,
     /// Contain the list of serialized failures. Hashmap allows for
     /// efficient lookup and removal of failing files.
-    bundler_failure_logs: std.ArrayHashMapUnmanaged(
-        SerializedFailure,
-        void,
-        SerializedFailure.ArrayHashContextViaOwner,
-        false,
-    ) = .{},
     /// When state == .evaluation_failure, this is popualted with that error.
     evaluate_failure: ?SerializedFailure = null,
 
@@ -127,8 +134,11 @@ pub const Route = struct {
         /// route entry point and still have an unqueued route if another route
         /// imports this one.
         unqueued,
-        /// A bundling failure happened.
-        bundler_failure,
+        /// This route was flagged for bundling failures. There are edge cases
+        /// where a route can be disconnected from it's failures, so the route
+        /// imports has to be traced to discover if possible failures still
+        /// exist.
+        possible_bundling_failures,
         /// Loading the module at runtime had a failure.
         evaluation_failure,
         /// Calling the request function may error, but that error will not be
@@ -436,20 +446,24 @@ fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
 
         switch (route.server_state) {
             .unqueued => bun.assertWithLocation(false, @src()),
-            .bundler_failure => {
-                resp.corked(sendSerializedFailures, .{
-                    dev,
-                    resp,
-                    route.bundler_failure_logs.keys(),
-                    .bundler,
-                });
-                return;
+            .possible_bundling_failures => {
+                if (dev.bundling_failures.count() > 0) {
+                    resp.corked(sendSerializedFailures, .{
+                        dev,
+                        resp,
+                        dev.bundling_failures.keys(),
+                        .bundler,
+                    });
+                    return;
+                } else {
+                    route.server_state = .loaded;
+                }
             },
             .evaluation_failure => {
                 resp.corked(sendSerializedFailures, .{
                     dev,
                     resp,
-                    (&(route.evaluate_failure orelse @panic("missing error")))[0..1],
+                    &.{route.evaluate_failure orelse @panic("missing error")},
                     .evaluation,
                 });
                 return;
@@ -484,7 +498,7 @@ fn onIncrementalVisualizerCorked(resp: *Response) void {
 fn bundleRouteFirstTime(dev: *DevServer, route: *Route) void {
     if (Environment.allow_assert) switch (route.server_state) {
         .unqueued => {},
-        .bundler_failure => unreachable, // should watch affected files and bundle on save
+        .possible_bundling_failures => unreachable, // should watch affected files and bundle on save
         .evaluation_failure => unreachable, // bundling again wont fix this issue
         .loaded => unreachable, // should not be bundling since it already passed
     };
@@ -498,7 +512,7 @@ fn bundleRouteFirstTime(dev: *DevServer, route: *Route) void {
         route.server_state = .loaded;
     } else |err| switch (err) {
         error.OutOfMemory => bun.outOfMemory(),
-        error.BuildFailed => assert(route.server_state == .bundler_failure),
+        error.BuildFailed => assert(route.server_state == .possible_bundling_failures),
         error.ServerLoadFailed => route.server_state = .evaluation_failure,
     }
 }
@@ -512,14 +526,19 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
 
     switch (route.server_state) {
         .unqueued => bun.assertWithLocation(false, @src()),
-        .bundler_failure => {
-            resp.corked(sendSerializedFailures, .{
-                dev,
-                resp,
-                route.bundler_failure_logs.keys(),
-                .bundler,
-            });
-            return;
+        .possible_bundling_failures => {
+            // TODO: perform a graph trace to find just the errors that are needed
+            if (dev.bundling_failures.count() > 0) {
+                resp.corked(sendSerializedFailures, .{
+                    dev,
+                    resp,
+                    dev.bundling_failures.keys(),
+                    .bundler,
+                });
+                return;
+            } else {
+                route.server_state = .loaded;
+            }
         },
         .evaluation_failure => {
             resp.corked(sendSerializedFailures, .{
@@ -821,55 +840,58 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
 }
 
 fn indexFailures(dev: *DevServer) !void {
-    inline for (.{
-        .{ .add, dev.incremental_result.failures_added.items },
-        .{ .del, dev.incremental_result.failures_removed.items },
-    }) |tuple| {
-        const kind: enum { add, del }, const list = tuple;
-        for (list) |fail| {
-            dev.incremental_result.routes_affected.clearRetainingCapacity();
+    if (dev.incremental_result.failures_added.items.len > 0) {
+        var total_len: usize = @sizeOf(MessageId) + @sizeOf(u32);
 
-            var sfa_state = std.heap.stackFallback(65536, dev.allocator);
-            const sfa = sfa_state.get();
-            dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
-            defer dev.server_graph.affected_by_trace.deinit(sfa);
+        for (dev.incremental_result.failures_added.items) |fail| {
+            total_len += fail.data.len;
+        }
 
-            dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count());
-            defer dev.client_graph.affected_by_trace.deinit(sfa);
+        total_len += dev.incremental_result.failures_removed.items.len * @sizeOf(u32);
 
-            switch (fail.getOwner()) {
+        var sfa_state = std.heap.stackFallback(65536, dev.allocator);
+        const sfa = sfa_state.get();
+        dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
+        defer dev.server_graph.affected_by_trace.deinit(sfa);
+
+        dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count());
+        defer dev.client_graph.affected_by_trace.deinit(sfa);
+
+        var payload = try std.ArrayList(u8).initCapacity(sfa, total_len);
+        defer payload.deinit();
+
+        payload.appendAssumeCapacity(MessageId.route_update.char());
+        const w = payload.writer();
+        try w.writeInt(u32, @intCast(dev.incremental_result.failures_removed.items.len), .little);
+
+        for (dev.incremental_result.failures_removed.items) |removed| {
+            try w.writeInt(u32, @bitCast(removed.getOwner().encode()), .little);
+            removed.deinit();
+        }
+
+        for (dev.incremental_result.failures_added.items) |added| {
+            try w.writeAll(added.data);
+
+            switch (added.getOwner()) {
                 .none, .route => unreachable,
-                inline .server, .client => |index, tag| {
-                    const g = switch (tag) {
-                        .server => &dev.server_graph,
-                        .client => &dev.client_graph,
-                        else => @compileError(unreachable),
-                    };
-                    try g.traceDependencies(index, .no_stop);
-                },
-            }
-
-            for (dev.incremental_result.routes_affected.items) |route_index| {
-                const route = &dev.routes[route_index.get()];
-                switch (kind) {
-                    .add => {
-                        try route.bundler_failure_logs.put(dev.allocator, fail, {});
-                        route.server_state = .bundler_failure;
-                    },
-                    .del => {
-                        _ = route.bundler_failure_logs.swapRemove(fail);
-                        if (route.bundler_failure_logs.count() == 0) {
-                            route.server_state = .loaded;
-                        }
-                    },
-                }
-            }
-
-            if (kind == .del) {
-                fail.deinit();
+                .server => |index| try dev.server_graph.traceDependencies(index, .no_stop),
+                .client => |index| try dev.client_graph.traceDependencies(index, .no_stop),
             }
         }
+
+        for (dev.incremental_result.routes_affected.items) |route_index| {
+            const route = &dev.routes[route_index.get()];
+            route.server_state = .possible_bundling_failures;
+        }
+
+        _ = dev.app.publish("*", payload.items, .binary, false);
+    } else if (dev.incremental_result.failures_removed.items.len > 0) {
+        for (dev.incremental_result.failures_removed.items) |removed| {
+            removed.deinit();
+        }
     }
+
+    dev.incremental_result.failures_removed.clearRetainingCapacity();
 }
 
 /// Used to generate the entry point. Unlike incremental patches, this always
@@ -932,7 +954,6 @@ pub const HotUpdateContext = struct {
     scbs: bun.JSAst.ServerComponentBoundary.List.Slice,
     /// Which files have a server-component boundary.
     server_to_client_bitset: DynamicBitSetUnmanaged,
-
     /// Used to reduce calls to the IncrementalGraph hash table.
     ///
     /// Caller initializes a slice with `sources.len * 2` items
@@ -977,8 +998,14 @@ pub fn finalizeBundle(
     var sfa = std.heap.stackFallback(4096, bv2.graph.allocator);
     const stack_alloc = sfa.get();
     var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, input_file_sources.len);
-    for (scbs.list.items(.ssr_source_index)) |ssr_index| {
+    for (
+        scbs.list.items(.source_index),
+        scbs.list.items(.ssr_source_index),
+        scbs.list.items(.reference_source_index),
+    ) |source_index, ssr_index, ref_index| {
+        scb_bitset.set(source_index);
         scb_bitset.set(ssr_index);
+        scb_bitset.set(ref_index);
     }
 
     const resolved_index_cache = try bv2.graph.allocator.alloc(u32, input_file_sources.len * 2);
@@ -1027,7 +1054,7 @@ pub fn finalizeBundle(
         );
     }
 
-    // Finally, index all failed files now that the incremental graph has been updated.
+    // Index all failed files now that the incremental graph has been updated.
     try dev.indexFailures();
 }
 
@@ -1040,7 +1067,7 @@ pub fn handleParseTaskFailure(
     return switch (graph) {
         .server => dev.server_graph.insertFailure(abs_path, log, false),
         .ssr => dev.server_graph.insertFailure(abs_path, log, true),
-        .client => @panic("TODO: client component error"),
+        .client => dev.client_graph.insertFailure(abs_path, log, false),
     };
 }
 
@@ -1134,8 +1161,6 @@ fn sendSerializedFailures(
         ),
     });
 
-    assert(failures.len > 0);
-
     var sfb = std.heap.stackFallback(65536, dev.allocator);
     var arena_state = std.heap.ArenaAllocator.init(sfb.get());
     defer arena_state.deinit();
@@ -1217,11 +1242,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// so garbage collection can run less often.
         edges_free_list: ArrayListUnmanaged(EdgeIndex),
 
-        /// All bundling failures are stored until a file is saved and rebuilt.
-        /// They are stored in the wire format the HMR runtime expects so that
-        /// a hard refresh does not require re-serialization.
-        failures: AutoArrayHashMapUnmanaged(FileIndex, SerializedFailure),
-
         /// Used during an incremental update to determine what "HMR roots"
         /// are affected. Set for all `bundled_files` that have been visited
         /// by the dependency tracing logic.
@@ -1248,8 +1268,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
             .first_import = .{},
             .edges = .{},
             .edges_free_list = .{},
-
-            .failures = .{},
 
             .affected_by_trace = .{},
 
@@ -1364,7 +1382,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// takeChunk is called. Then it can be freed.
         pub fn receiveChunk(
             g: *@This(),
-            ctx: *const HotUpdateContext,
+            ctx: *HotUpdateContext,
             index: bun.JSAst.Index,
             chunk: bun.bundle_v2.CompileResult,
             is_ssr_graph: bool,
@@ -1428,11 +1446,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         bun.default_allocator.free(gop.value_ptr.code());
 
                         if (gop.value_ptr.flags.failed) {
-                            const kv = g.failures.fetchSwapRemove(file_index) orelse
+                            const kv = dev.bundling_failures.fetchSwapRemoveAdapted(
+                                SerializedFailure.Owner{ .client = file_index },
+                                SerializedFailure.ArrayHashAdapter{},
+                            ) orelse
                                 Output.panic("Missing failure in IncrementalGraph", .{});
                             try dev.incremental_result.failures_removed.append(
                                 dev.allocator,
-                                kv.value,
+                                kv.key,
                             );
                         }
                     }
@@ -1473,7 +1494,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             const client_graph = &g.owner().client_graph;
                             const client_index = client_graph.getFileIndex(gop.key_ptr.*) orelse
                                 Output.panic("Client graph's SCB was already deleted", .{});
-                            try client_graph.disconnectAndDeleteFile(client_index);
+                            try dev.incremental_result.delete_client_files_later.append(g.owner().allocator, client_index);
                             gop.value_ptr.is_client_component_boundary = false;
 
                             try dev.incremental_result.client_components_removed.append(dev.allocator, file_index);
@@ -1481,11 +1502,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                         if (gop.value_ptr.failed) {
                             gop.value_ptr.failed = false;
-                            const kv = g.failures.fetchSwapRemove(file_index) orelse
+                            const kv = dev.bundling_failures.fetchSwapRemoveAdapted(
+                                SerializedFailure.Owner{ .server = file_index },
+                                SerializedFailure.ArrayHashAdapter{},
+                            ) orelse
                                 Output.panic("Missing failure in IncrementalGraph", .{});
                             try dev.incremental_result.failures_removed.append(
                                 dev.allocator,
-                                kv.value,
+                                kv.key,
                             );
                         }
                     }
@@ -1563,7 +1587,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     g.disconnectEdgeFromDependencyList(val.edge_index);
 
                     // With no references to this edge, it can be freed
-                    try g.freeEdge(val.edge_index);
+                    g.freeEdge(val.edge_index);
                 }
             }
 
@@ -1892,15 +1916,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .server => .{ .server = file_index },
                 .client => .{ .client = file_index },
             };
-            std.debug.print("Failure inserted {}\n", .{fail_owner});
             const failure = try SerializedFailure.initFromLog(fail_owner, log.msgs.items);
-
-            const fail_gop = try g.failures.getOrPut(dev.allocator, file_index);
+            const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
             try dev.incremental_result.failures_added.append(dev.allocator, failure);
             if (fail_gop.found_existing) {
                 try dev.incremental_result.failures_removed.append(dev.allocator, failure);
             }
-            fail_gop.value_ptr.* = failure;
         }
 
         pub fn ensureStaleBitCapacity(g: *@This(), val: bool) !void {
@@ -1927,13 +1948,19 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     continue;
                 };
                 g.stale_files.set(index);
+                const data = &values[index];
                 switch (side) {
-                    .client => try out_paths.append(BakeEntryPoint.init(path, .client)),
+                    .client => {
+                        // When re-bundling SCBs, only bundle the server. Otherwise
+                        // the bundler gets confused and bundles both sides without
+                        // knowledge of the boundary between them.
+                        if (!data.flags.is_component_root)
+                            try out_paths.append(BakeEntryPoint.init(path, .client));
+                    },
                     .server => {
-                        const data = &values[index];
                         if (data.is_rsc)
                             try out_paths.append(BakeEntryPoint.init(path, .server));
-                        if (data.is_ssr)
+                        if (data.is_ssr and !data.is_client_component_boundary)
                             try out_paths.append(BakeEntryPoint.init(path, .ssr));
                     },
                 }
@@ -2041,7 +2068,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             return chunk.items;
         }
 
-        fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) !void {
+        fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) void {
             const last = FileIndex.init(@intCast(g.bundled_files.count() - 1));
 
             bun.assert(g.bundled_files.count() > 1); // never remove all files
@@ -2057,7 +2084,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     assert(dep.dependency == file_index);
 
                     g.disconnectEdgeFromDependencyList(edge_index);
-                    try g.freeEdge(edge_index);
+                    g.freeEdge(edge_index);
                 }
             }
 
@@ -2110,7 +2137,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         /// Does nothing besides release the `Edge` for reallocation by `newEdge`
         /// Caller must detach the dependency from the linked list it is in.
-        fn freeEdge(g: *@This(), edge_index: EdgeIndex) !void {
+        fn freeEdge(g: *@This(), edge_index: EdgeIndex) void {
             if (Environment.isDebug) {
                 g.edges.items[edge_index.get()] = undefined;
             }
@@ -2118,7 +2145,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (edge_index.get() == (g.edges.items.len - 1)) {
                 g.edges.items.len -= 1;
             } else {
-                try g.edges_free_list.append(g.owner().allocator, edge_index);
+                g.edges_free_list.append(g.owner().allocator, edge_index) catch {
+                    // Leak an edge object; Ok since it may get cleaned up by
+                    // the next incremental graph garbage-collection cycle.
+                };
             }
         }
 
@@ -2159,6 +2189,9 @@ const IncrementalResult = struct {
     /// Populated from within the bundler via `handleParseTaskFailure`
     failures_added: ArrayListUnmanaged(SerializedFailure),
 
+    /// Removing files clobbers indices, so removing anything is deferred.
+    delete_client_files_later: ArrayListUnmanaged(IncrementalGraph(.client).FileIndex),
+
     const empty: IncrementalResult = .{
         .routes_affected = .{},
         .failures_removed = .{},
@@ -2166,13 +2199,12 @@ const IncrementalResult = struct {
         .client_components_added = .{},
         .client_components_removed = .{},
         .client_components_affected = .{},
+        .delete_client_files_later = .{},
     };
 
     fn reset(result: *IncrementalResult) void {
         result.routes_affected.clearRetainingCapacity();
-        for (result.failures_removed.items) |*item|
-            item.deinit();
-        result.failures_removed.clearRetainingCapacity();
+        assert(result.failures_removed.items.len == 0);
         result.failures_added.clearRetainingCapacity();
         result.client_components_added.clearRetainingCapacity();
         result.client_components_removed.clearRetainingCapacity();
@@ -2496,6 +2528,16 @@ pub const SerializedFailure = struct {
         }
     };
 
+    const ArrayHashAdapter = struct {
+        pub fn hash(_: ArrayHashAdapter, own: Owner) u32 {
+            return std.hash.uint32(@bitCast(own.encode()));
+        }
+
+        pub fn eql(_: ArrayHashAdapter, a: Owner, b: SerializedFailure, _: usize) bool {
+            return @as(u32, @bitCast(a.encode())) == @as(u32, @bitCast(b.getOwner().encode()));
+        }
+    };
+
     const ErrorKind = enum(u8) {
         // A log message. The `logger.Kind` is encoded here.
         bundler_log_err = 0,
@@ -2738,31 +2780,44 @@ pub fn onWebSocketUpgrade(
     );
 }
 
+pub const MessageId = enum(u8) {
+    visualizer = 'v',
+    version = 'V',
+    hot_update = '(',
+    route_update = 'R',
+    errors = 'E',
+
+    pub fn char(id: MessageId) u8 {
+        return @intFromEnum(id);
+    }
+};
+
 const DevWebSocket = struct {
     dev: *DevServer,
     emit_visualizer_events: bool,
 
     pub fn onOpen(dw: *DevWebSocket, ws: AnyWebSocket) void {
-        _ = dw; // autofix
+        _ = dw;
         // TODO: append hash of the framework config
         _ = ws.send("V" ++ bun.Global.package_json_version_with_revision, .binary, false, true);
         _ = ws.subscribe("*");
     }
 
     pub fn onMessage(dw: *DevWebSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
+        _ = opcode;
+
         if (msg.len == 1 and msg[0] == 'v' and !dw.emit_visualizer_events) {
             dw.emit_visualizer_events = true;
             dw.dev.emit_visualizer_events += 1;
             _ = ws.subscribe("v");
             dw.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
         }
-        _ = opcode; // autofix
     }
 
     pub fn onClose(dw: *DevWebSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
-        _ = ws; // autofix
-        _ = exit_code; // autofix
-        _ = message; // autofix
+        _ = ws;
+        _ = exit_code;
+        _ = message;
 
         if (dw.emit_visualizer_events) {
             dw.dev.emit_visualizer_events -= 1;
@@ -2873,10 +2928,21 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     }
 
     dev.incremental_result.reset();
+    defer {
+        std.sort.pdq(
+            IncrementalGraph(.client).FileIndex,
+            dev.incremental_result.delete_client_files_later.items,
+            {},
+            IncrementalGraph(.client).FileIndex.sortFnDesc,
+        );
+        for (dev.incremental_result.delete_client_files_later.items) |client_index| {
+            dev.client_graph.disconnectAndDeleteFile(client_index);
+        }
+        dev.incremental_result.delete_client_files_later.clearRetainingCapacity();
+    }
 
     dev.bundle(files.items) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
-        // fail.printToConsole(&dev.routes[0]);
         return;
     };
 

@@ -384,10 +384,6 @@ pub const BundleV2 = struct {
         return &this.linker.loop;
     }
 
-    pub fn hasErrors(this: *BundleV2) bool {
-        return this.bundler.log.hasErrors();
-    }
-
     /// Most of the time, accessing .bundler directly is OK. This is only
     /// needed when it is important to distinct between client and server
     ///
@@ -1273,13 +1269,13 @@ pub const BundleV2 = struct {
         var this = try BundleV2.init(bundler, kit_options, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
 
-        if (this.hasErrors()) {
+        if (this.log.hasErrors()) {
             return error.BuildFailed;
         }
 
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
 
-        if (this.hasErrors()) {
+        if (this.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1288,7 +1284,7 @@ pub const BundleV2 = struct {
         minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
 
-        if (this.hasErrors()) {
+        if (this.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -4718,10 +4714,6 @@ pub const LinkerContext = struct {
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
 
-    pub fn hasErrors(this: *LinkerContext) bool {
-        return this.log.hasErrors();
-    }
-
     pub const LinkerOptions = struct {
         output_format: options.Format = .esm,
         ignore_dce_annotations: bool = false,
@@ -4977,7 +4969,7 @@ pub const LinkerContext = struct {
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
-        if (this.hasErrors()) {
+        if (this.log.hasErrors()) {
             return error.BuildFailed;
         }
 

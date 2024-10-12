@@ -1925,15 +1925,10 @@ pub const H2FrameParser = struct {
 
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
-            const last_stream_id: u32 = @intCast(UInt31WithReserved.fromBytes(payload[0..4]).uint31);
             const error_code = UInt31WithReserved.fromBytes(payload[4..8]).toUInt32();
             const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject);
             this.readBuffer.reset();
-            if (error_code != @intFromEnum(ErrorCode.NO_ERROR)) {
-                this.dispatchWith2Extra(.onGoAway, JSC.JSValue.jsNumber(error_code), JSC.JSValue.jsNumber(last_stream_id), chunk);
-            } else {
-                this.dispatchWithExtra(.onGoAway, JSC.JSValue.jsNumber(last_stream_id), chunk);
-            }
+            this.dispatchWith2Extra(.onGoAway, JSC.JSValue.jsNumber(error_code), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
             return content.end;
         }
         return data.len;

@@ -1948,7 +1948,7 @@ class Http2Stream extends Duplex {
         } else {
           for (let i = 0; i < data.length; i++) {
             const { chunk, encoding } = data[i];
-            if (typeof chunk === "string" && encoding !== "utf-8" && encoding !== "utf8" && encoding !== "buffer") {
+            if (typeof chunk === "string") {
               data[i] = Buffer.from(chunk, encoding);
             } else {
               data[i] = chunk;

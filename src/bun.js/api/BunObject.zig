@@ -554,7 +554,7 @@ pub fn inspectTable(
         return .zero;
     };
 
-    var out = bun.String.createUTF8(array.toOwnedSliceLeaky());
+    var out = bun.String.createUTF8(array.slice());
     return out.transferToJS(globalThis);
 }
 

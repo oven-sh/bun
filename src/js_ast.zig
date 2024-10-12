@@ -3486,6 +3486,15 @@ pub const Expr = struct {
         expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
     }
 
+    pub fn getObject(expr: *const Expr, name: string) ?Expr {
+        if (expr.asProperty(name)) |query| {
+            if (query.expr.isObject()) {
+                return query.expr;
+            }
+        }
+        return null;
+    }
+
     pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
         if (asProperty(expr, name)) |q| {
             if (q.expr.asString(allocator)) |str| {

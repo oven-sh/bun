@@ -1261,13 +1261,13 @@ pub const BundleV2 = struct {
         var this = try BundleV2.init(bundler, kit_options, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
 
-        if (this.log.hasErrors()) {
+        if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
         this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
 
-        if (this.log.hasErrors()) {
+        if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
         }
 
@@ -1276,7 +1276,7 @@ pub const BundleV2 = struct {
         minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
 
-        if (this.log.hasErrors()) {
+        if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
         }
 

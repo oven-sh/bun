@@ -145,7 +145,8 @@ if (failed.length > 0) {
     console.error(`Errors while bundling Bake ${kind.map(x=>map[x]).join(' and ')}:`);
     console.error(err);
   }
-  process.exit(1);
+  if(!live)
+    process.exit(1);
 } else {
   console.log("-> bake.client.js, bake.server.js, bake.error.js");
 
@@ -162,7 +163,7 @@ if (live) {
     if(event.filename.endsWith('.zig')) continue;
     if(event.filename.startsWith('.')) continue;
     try {
-    await run();
+      await run();
     }catch(e) {
       console.log(e);
     }

@@ -168,22 +168,6 @@ pub fn init(options: Options) !*DevServer {
     else
         null;
 
-    // In debug builds, run the code generator in watch mode.
-    if (Environment.isDebug and !Environment.codegen_embed) {
-        var proc = std.process.Child.init(&.{
-            "bun",
-            "run",
-            Environment.base_path ++ "/src/codegen/bake-codegen.ts",
-            "--codegen_root=" ++ Environment.codegen_path,
-            "--debug",
-            "--live",
-        }, bun.default_allocator);
-        proc.spawn() catch |err| {
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-            Output.debugWarn("Failed to run codegen in watch mode: {}", .{err});
-        };
-    }
-
     const app = App.create(.{});
 
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
@@ -762,21 +746,14 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         });
     }
 
-    if (dev.incremental_result.failures_added.items.len > 0) {
-        try dev.indexFailures();
-        return error.BuildFailed;
-    }
+    try dev.indexFailures();
 
     const is_first_server_chunk = !dev.server_fetch_function_callback.has();
 
-    const server_bundle = try dev.server_graph.takeBundle(if (is_first_server_chunk) .initial_response else .hmr_chunk);
-    defer dev.allocator.free(server_bundle);
+    if (dev.server_graph.current_chunk_len > 0) {
+        const server_bundle = try dev.server_graph.takeBundle(if (is_first_server_chunk) .initial_response else .hmr_chunk);
+        defer dev.allocator.free(server_bundle);
 
-    if (dev.log.hasAny()) {
-        dev.log.printForLogLevel(Output.errorWriter()) catch {};
-    }
-
-    if (server_bundle.len > 0) {
         if (is_first_server_chunk) {
             const server_code = c.BakeLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
                 dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
@@ -845,9 +822,17 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
             _ = errors; // TODO:
         }
     }
+
+    if (dev.incremental_result.failures_added.items.len > 0) {
+        dev.bundles_since_last_error = 0;
+        return error.BuildFailed;
+    }
 }
 
 fn indexFailures(dev: *DevServer) !void {
+    var sfa_state = std.heap.stackFallback(65536, dev.allocator);
+    const sfa = sfa_state.get();
+
     if (dev.incremental_result.failures_added.items.len > 0) {
         var total_len: usize = @sizeOf(MessageId) + @sizeOf(u32);
 
@@ -857,8 +842,6 @@ fn indexFailures(dev: *DevServer) !void {
 
         total_len += dev.incremental_result.failures_removed.items.len * @sizeOf(u32);
 
-        var sfa_state = std.heap.stackFallback(65536, dev.allocator);
-        const sfa = sfa_state.get();
         dev.server_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
         defer dev.server_graph.affected_by_trace.deinit(sfa);
 
@@ -867,9 +850,9 @@ fn indexFailures(dev: *DevServer) !void {
 
         var payload = try std.ArrayList(u8).initCapacity(sfa, total_len);
         defer payload.deinit();
-
-        payload.appendAssumeCapacity(MessageId.route_update.char());
+        payload.appendAssumeCapacity(MessageId.errors.char());
         const w = payload.writer();
+
         try w.writeInt(u32, @intCast(dev.incremental_result.failures_removed.items.len), .little);
 
         for (dev.incremental_result.failures_removed.items) |removed| {
@@ -892,10 +875,27 @@ fn indexFailures(dev: *DevServer) !void {
             route.server_state = .possible_bundling_failures;
         }
 
-        _ = dev.app.publish("*", payload.items, .binary, false);
+        _ = dev.app.publish(DevWebSocket.global_channel, payload.items, .binary, false);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
-        for (dev.incremental_result.failures_removed.items) |removed| {
-            removed.deinit();
+        if (dev.bundling_failures.count() == 0) {
+            _ = dev.app.publish(DevWebSocket.global_channel, &.{MessageId.errors_cleared.char()}, .binary, false);
+            for (dev.incremental_result.failures_removed.items) |removed| {
+                removed.deinit();
+            }
+        } else {
+            var payload = try std.ArrayList(u8).initCapacity(sfa, @sizeOf(MessageId) + @sizeOf(u32) + dev.incremental_result.failures_removed.items.len * @sizeOf(u32));
+            defer payload.deinit();
+            payload.appendAssumeCapacity(MessageId.errors.char());
+            const w = payload.writer();
+
+            try w.writeInt(u32, @intCast(dev.incremental_result.failures_removed.items.len), .little);
+
+            for (dev.incremental_result.failures_removed.items) |removed| {
+                try w.writeInt(u32, @bitCast(removed.getOwner().encode()), .little);
+                removed.deinit();
+            }
+
+            _ = dev.app.publish(DevWebSocket.global_channel, payload.items, .binary, false);
         }
     }
 
@@ -1194,7 +1194,7 @@ fn sendSerializedFailures(
     const post = "</script></body></html>";
 
     if (Environment.codegen_embed) {
-        _ = resp.end(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post);
+        _ = resp.end(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post, false);
     } else {
         _ = resp.write(pre);
         _ = resp.write(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
@@ -1948,7 +1948,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
             try dev.incremental_result.failures_added.append(dev.allocator, failure);
             if (fail_gop.found_existing) {
-                try dev.incremental_result.failures_removed.append(dev.allocator, failure);
+                try dev.incremental_result.failures_removed.append(dev.allocator, fail_gop.key_ptr.*);
+                fail_gop.key_ptr.* = failure;
             }
         }
 
@@ -2782,7 +2783,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
         }
     }
 
-    _ = dev.app.publish("v", payload.items, .binary, false);
+    _ = dev.app.publish(DevWebSocket.visualizer_channel, payload.items, .binary, false);
 }
 
 pub fn onWebSocketUpgrade(
@@ -2809,11 +2810,20 @@ pub fn onWebSocketUpgrade(
 }
 
 pub const MessageId = enum(u8) {
-    visualizer = 'v',
+    /// Version packet
     version = 'V',
+    /// When visualization mode is enabled, this packet contains
+    /// the entire serialized IncrementalGraph state.
+    visualizer = 'v',
+    /// Sent on a successful bundle, containing client code.
     hot_update = '(',
+    /// Sent on a successful bundle, containing a list of
+    /// routes that are updated.
     route_update = 'R',
+    /// Sent when the list of errors changes.
     errors = 'E',
+    /// Sent when all errors are cleared. Semi-redundant
+    errors_cleared = 'c',
 
     pub fn char(id: MessageId) u8 {
         return @intFromEnum(id);
@@ -2824,20 +2834,23 @@ const DevWebSocket = struct {
     dev: *DevServer,
     emit_visualizer_events: bool,
 
+    pub const global_channel = "*";
+    pub const visualizer_channel = "v";
+
     pub fn onOpen(dw: *DevWebSocket, ws: AnyWebSocket) void {
         _ = dw;
         // TODO: append hash of the framework config
-        _ = ws.send("V" ++ bun.Global.package_json_version_with_revision, .binary, false, true);
-        _ = ws.subscribe("*");
+        _ = ws.send(.{MessageId.version.char()} ++ bun.Global.package_json_version_with_revision, .binary, false, true);
+        _ = ws.subscribe(global_channel);
     }
 
     pub fn onMessage(dw: *DevWebSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
         _ = opcode;
 
-        if (msg.len == 1 and msg[0] == 'v' and !dw.emit_visualizer_events) {
+        if (msg.len == 1 and msg[0] == MessageId.visualizer.char() and !dw.emit_visualizer_events) {
             dw.emit_visualizer_events = true;
             dw.dev.emit_visualizer_events += 1;
-            _ = ws.subscribe("v");
+            _ = ws.subscribe(visualizer_channel);
             dw.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
         }
     }
@@ -2924,6 +2937,9 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     const changed_file_attributes = reload_task.files.values();
     _ = changed_file_attributes;
 
+    var timer = std.time.Timer.start() catch
+        @panic("timers unsupported");
+
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const temp_alloc = sfb.get();
 
@@ -2981,7 +2997,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         const client = try dev.client_graph.takeBundle(.hmr_chunk);
         defer dev.allocator.free(client);
         assert(client[0] == '(');
-        _ = dev.app.publish("*", client, .binary, true);
+        _ = dev.app.publish(DevWebSocket.global_channel, client, .binary, true);
     }
 
     // This list of routes affected excludes client code. This means changing
@@ -3002,7 +3018,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
             try w.writeAll(pattern);
         }
 
-        _ = dev.app.publish("*", payload.items, .binary, true);
+        _ = dev.app.publish(DevWebSocket.global_channel, payload.items, .binary, true);
     }
 
     // When client component roots get updated, the `client_components_affected`
@@ -3045,15 +3061,13 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
             Output.prettyError("<cyan>[x{d}]<r> ", .{dev.bundles_since_last_error});
         }
 
-        Output.prettyError("<green>Reloaded<r> {s}", .{bun.path.relative(dev.cwd, changed_file_paths[0])});
+        Output.prettyError("<green>Reloaded in {d}ms<r><d>:<r> {s}", .{ @divFloor(timer.read(), std.time.ns_per_ms), bun.path.relative(dev.cwd, changed_file_paths[0]) });
         if (changed_file_paths.len > 1) {
             Output.prettyError(" <d>+ {d} more<r>", .{files.items.len - 1});
         }
         Output.prettyError("\n", .{});
         Output.flush();
-    } else {
-        dev.bundles_since_last_error = 0;
-    }
+    } else {}
 }
 
 pub const HotReloadTask = struct {

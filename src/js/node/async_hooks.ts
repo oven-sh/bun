@@ -315,19 +315,17 @@ function createWarning(message, isCreateHook?: boolean) {
     ];
     const e = new Error().stack!;
     if (known_supported_modules.some(m => e.includes(m))) return;
-
     if (isCreateHook && arg1) {
       // this block is to specifically filter out react-server, which is often
       // times bundled into a framework or application. Their use defines three
       // handlers which are all TODO stubs. for more info see this comment:
       // https://github.com/oven-sh/bun/issues/13866#issuecomment-2397896065
-      if ( typeof arg1 === 'object') {
+      if (typeof arg1 === 'object') {
         const { init, promiseResolve, destroy } = arg1;
         if (init && promiseResolve && destroy) {
           if (isEmptyFunction(init) && isEmptyFunction(destroy))
             return;
         }
-
       }
     }
 
@@ -351,7 +349,7 @@ const createHookNotImpl = createWarning(
 
 function createHook(callbacks) {
   return {
-    enable: createHookNotImpl,
+    enable: () => createHookNotImpl(callbacks),
     disable: createHookNotImpl,
   };
 }

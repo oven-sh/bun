@@ -1,7 +1,7 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
 import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
-import { showErrorOverlay } from "./client/overlay";
+import { clearErrorOverlay, showErrorOverlay } from "./client/overlay";
 import { Bake } from "bun";
 import { int } from "./macros" with { type: "macro" };
 import { td } from "./text-decoder";
@@ -87,6 +87,15 @@ try {
             }
           }
 
+          break;
+        }
+        case int("E"): {
+          showErrorOverlay('ooga boga there are errors!');
+          break;
+        }
+        case int("c"): {
+          clearErrorOverlay()
+          // No action needed
           break;
         }
         default: {

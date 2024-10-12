@@ -1307,6 +1307,10 @@ pub var is_bunx_exe = false;
 pub const Command = struct {
     var script_name_buf: bun.PathBuffer = undefined;
 
+    pub fn get() Context {
+        return global_cli_ctx;
+    }
+
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
         dump_limits: bool = false,

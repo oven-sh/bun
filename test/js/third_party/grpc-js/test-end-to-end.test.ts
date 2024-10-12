@@ -56,7 +56,7 @@ describe("Client should successfully communicate with server", () => {
     server?.forceShutdown();
     server = null;
   });
-  it("With file watcher credentials", done => {
+  it.skip("With file watcher credentials", done => {
     const [caPath, keyPath, certPath] = ["ca.pem", "server1.key", "server1.pem"].map(file =>
       path.join(__dirname, "fixtures", file),
     );

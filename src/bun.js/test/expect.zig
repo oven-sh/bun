@@ -2757,7 +2757,7 @@ pub const Expect = struct {
             };
             defer pretty_value.deinit();
 
-            if (strings.eqlLong(pretty_value.toOwnedSliceLeaky(), saved_value, true)) {
+            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             }
@@ -2766,7 +2766,7 @@ pub const Expect = struct {
             const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
-                .received_string = pretty_value.toOwnedSliceLeaky(),
+                .received_string = pretty_value.slice(),
                 .expected_string = saved_value,
                 .globalThis = globalThis,
             };
@@ -5443,7 +5443,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             return .zero;
         };
         if (printed) {
-            return bun.String.init(mutable_string.toOwnedSliceLeaky()).toJS();
+            return bun.String.init(mutable_string.slice()).toJS();
         }
         return ExpectMatcherUtils.printValue(globalThis, this, null);
     }

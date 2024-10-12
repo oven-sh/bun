@@ -5797,7 +5797,7 @@ const FileWriterInternal = struct {
         ctx: *FileWriterInternal,
     ) anyerror!void {
         defer buffer.reset();
-        const result_ = buffer.toOwnedSliceLeaky();
+        const result_ = buffer.slice();
         var result = result_;
 
         while (result.len > 0) {
@@ -5947,10 +5947,10 @@ pub const BufferWriter = struct {
         }
 
         if (ctx.append_null_byte) {
-            ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.sentinel = ctx.buffer.sliceWithSentinel();
+            ctx.written = ctx.buffer.slice();
         } else {
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.written = ctx.buffer.slice();
         }
     }
 

@@ -2042,11 +2042,6 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        // Symbol following is needed for things like the JSX runtime to work
-        this.linker.graph.symbols.followAll();
-
-        this.graph.heap.helpCatchMemoryIssues();
-
         try this.linker.generateChunksInParallel(&chunks, true);
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -10770,7 +10765,7 @@ pub const LinkerContext = struct {
                 }, Logger.Loc.Empty) },
             }) catch unreachable; // is within bounds
 
-            if (flags.wrap == .cjs and ast.flags.uses_exports_ref) {
+            if (ast.flags.uses_exports_ref) {
                 clousure_args.appendAssumeCapacity(
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{

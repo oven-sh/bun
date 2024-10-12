@@ -6036,6 +6036,19 @@ fn NewParser_(
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
+
+                // ensure every e_import_identifier holds the namespace
+                if (p.options.features.hot_module_reloading) {
+                    const symbol = &p.symbols.items[ref.inner_index];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = namespace_ref,
+                            .alias = alias_name,
+                            .import_record_index = import_record_i,
+                        };
+                    }
+                }
+
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(allocator, ref, js_ast.NamedImport{
                     .alias = alias_name,

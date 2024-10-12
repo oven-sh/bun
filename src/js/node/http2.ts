@@ -900,6 +900,7 @@ class Http2ServerResponse extends Stream {
   writeContinue() {
     const stream = this[kStream];
     if (stream.headersSent || this[kState].closed) return false;
+    console.error("writeContinue");
     stream.additionalHeaders({
       [HTTP2_HEADER_STATUS]: HTTP_STATUS_CONTINUE,
     });
@@ -2383,10 +2384,6 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
 
-      if (headers[":status"] === HTTP_STATUS_CONTINUE) {
-        stream.emit("continue");
-        return;
-      }
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.StreamResponded) !== 0) {
         try {
@@ -2802,6 +2799,10 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
+      if (headers[":status"] === HTTP_STATUS_CONTINUE) {
+        stream.emit("continue");
+        return;
+      }
       if ((status & StreamState.StreamResponded) !== 0) {
         try {
           stream.emit((status & StreamState.EndedCalled) !== 0 ? "trailers" : "headers", headers, flags, rawheaders);

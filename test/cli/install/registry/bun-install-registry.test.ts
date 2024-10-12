@@ -1173,7 +1173,7 @@ describe("publish", async () => {
     { user: "bin2", bin: { bin1: "bin1.js", bin2: "bin2.js" } },
     { user: "bin3", directories: { bin: "bins" } },
   ]) {
-    test.only(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
+    test(`can publish and install binaries with ${JSON.stringify(info)}`, async () => {
       const publishDir = tmpdirSync();
       const bunfig = await authBunfig("binaries-" + info.user);
       console.log({ packageDir, publishDir });

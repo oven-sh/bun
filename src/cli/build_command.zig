@@ -241,6 +241,7 @@ pub const BuildCommand = struct {
                 else
                     null,
                 null,
+                this_bundler.options.define.drop_debugger,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);

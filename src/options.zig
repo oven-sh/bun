@@ -1255,10 +1255,15 @@ pub fn definesFromTransformOptions(
 
     const resolved_defines = try defines.DefineData.fromInput(user_defines, drop, log, allocator);
 
+    const drop_debugger = for (drop) |item| {
+        if (strings.eqlComptime(item, "debugger")) break true;
+    } else false;
+
     return try defines.Define.init(
         allocator,
         resolved_defines,
         environment_defines,
+        drop_debugger,
     );
 }
 

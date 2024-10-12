@@ -184,6 +184,7 @@ const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),
     dots: bun.StringHashMap([]DotDefine),
+    drop_debugger: bool,
     allocator: std.mem.Allocator,
 
     pub const Data = DefineData;
@@ -250,11 +251,12 @@ pub const Define = struct {
         }
     }
 
-    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) bun.OOM!*@This() {
-        var define = try allocator.create(Define);
+    pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray, drop_debugger: bool) bun.OOM!*@This() {
+        const define = try allocator.create(Define);
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = bun.StringHashMap([]DotDefine).init(allocator);
+        define.drop_debugger = drop_debugger;
         try define.dots.ensureTotalCapacity(124);
 
         const value_define = DefineData{

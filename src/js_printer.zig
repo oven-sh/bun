@@ -5954,7 +5954,7 @@ pub const BufferWriter = struct {
         }
 
         if (ctx.append_null_byte) {
-            ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
+            ctx.sentinel = ctx.buffer.sliceWithSentinel();
             ctx.written = ctx.buffer.slice();
         } else {
             ctx.written = ctx.buffer.slice();

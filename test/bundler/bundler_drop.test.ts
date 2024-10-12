@@ -1,7 +1,8 @@
+import { describe } from 'bun:test';
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
-  itBundled("js/drop", {
+  itBundled("drop/FunctionCall", {
     files: {
       "/a.js": `console.log("hello");`,
     },
@@ -9,7 +10,34 @@ describe("bundler", () => {
     drop: ["console"],
     backend: "api",
   });
-  itBundled("js/drop-reassign-keeps-output", {
+  itBundled("drop/DebuggerStmt", {
+    files: {
+      "/a.js": `if(true){debugger;debugger;};debugger;function y(){ debugger; }y()`,
+    },
+    drop: ["debugger"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("debugger");
+    },
+  });
+  itBundled("drop/NoDisableDebugger", {
+    files: {
+      "/a.js": `if(true){debugger;debugger;};debugger;function y(){ debugger; }y();`,
+    },
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toIncludeRepeated("debugger", 4);
+    },
+  });
+  itBundled("drop/RemovesSideEffects", {
+    files: {
+      "/a.js": `console.log(alert());`,
+    },
+    run: { stdout: "" },
+    drop: ["console"],
+    backend: "api",
+  });
+  itBundled("drop/ReassignKeepsOutput", {
     files: {
       "/a.js": `var call = console.log; call("hello");`,
     },
@@ -17,7 +45,7 @@ describe("bundler", () => {
     drop: ["console"],
     backend: "api",
   });
-  itBundled("js/drop-assign-keeps-output", {
+  itBundled("drop/AssignKeepsOutput", {
     files: {
       "/a.js": `var call = console.log("a"); globalThis.console.log(call);`,
     },
@@ -25,43 +53,43 @@ describe("bundler", () => {
     drop: ["console"],
     backend: "api",
   });
-  itBundled("js/drop-unary-expression", {
+  itBundled("drop/UnaryExpression", {
     files: {
-      "/a.js": `Bun.inspect.table(); console.log("hello");`,
+      "/a.js": `Bun.inspect(); console.log("hello");`,
     },
     run: { stdout: "" },
     drop: ["console"],
     backend: "api",
   });
-  itBundled("js/drop-0-args", {
+  itBundled("drop/0Args", {
     files: {
       "/a.js": `console.log();`,
     },
     run: { stdout: "" },
     drop: ["console"],
   });
-  itBundled("js/drop-becomes-undefined", {
+  itBundled("drop/BecomesUndefined", {
     files: {
       "/a.js": `console.log(Bun.inspect.table());`,
     },
     run: { stdout: "undefined" },
     drop: ["Bun.inspect.table"],
   });
-  itBundled("js/drop-becomes-undefined-nested-1", {
+  itBundled("drop/BecomesUndefinedNested1", {
     files: {
       "/a.js": `console.log(Bun.inspect.table());`,
     },
     run: { stdout: "undefined" },
     drop: ["Bun.inspect"],
   });
-  itBundled("js/drop-becomes-undefined-nested-2", {
+  itBundled("drop/BecomesUndefinedNested2", {
     files: {
       "/a.js": `console.log(Bun.inspect.table());`,
     },
     run: { stdout: "undefined" },
     drop: ["Bun"],
   });
-  itBundled("js/drop-assign-target", {
+  itBundled("drop/AssignTarget", {
     files: {
       "/a.js": `console.log(
       (
@@ -71,7 +99,7 @@ describe("bundler", () => {
     run: { stdout: "123" },
     drop: ["Bun"],
   });
-  itBundled("js/drop-delete-assign-target", {
+  itBundled("drop/DeleteAssignTarget", {
     files: {
       "/a.js": `console.log((delete Bun.inspect()));`,
     },

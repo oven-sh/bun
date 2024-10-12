@@ -18979,7 +18979,13 @@ fn NewParser_(
 
             switch (stmt.data) {
                 // These don't contain anything to traverse
-                .s_debugger, .s_empty, .s_comment => {
+                .s_debugger => {
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+                    if (p.define.drop_debugger) {
+                        return;
+                    }
+                },
+                .s_empty, .s_comment => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                 },
                 .s_type_script => {

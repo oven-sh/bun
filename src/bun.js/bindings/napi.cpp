@@ -1,3 +1,4 @@
+#include "headers.h"
 #include "node_api.h"
 #include "root.h"
 
@@ -562,16 +563,10 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         if (setterProperty) {
             setter = NAPIFunction::create(vm, globalObject, 1, makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string()), setterProperty, dataPtr);
-        } else {
-            JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
-                globalObject->vm(), globalObject, 1, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    return JSC::JSValue::encode(JSC::jsBoolean(true));
-                });
-            setter = setterFunction;
         }
 
         auto getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
-        to->putDirectAccessor(globalObject, propertyName, getterSetter, JSC::PropertyAttribute::Accessor | 0);
+        to->putDirectAccessor(globalObject, propertyName, getterSetter, PropertyAttribute::Accessor | getPropertyAttributes(property));
     } else {
         JSC::JSValue value = toJS(property.value);
 
@@ -2275,6 +2270,91 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
         }
     } else {
         *result = 0;
+    }
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value value, int64_t* result, bool* lossless)
+{
+    NAPI_PREMABLE
+
+    static_assert(std::is_same_v<JSC::JSBigInt::Digit, uint64_t>);
+#if USE(BIGINT32)
+#error napi_get_value_bigint_int64 assumes BIGINT32 is disabled
+#endif
+
+    if (UNLIKELY(!env || !result)) {
+        return napi_invalid_arg;
+    }
+
+    JSValue jsValue = toJS(value);
+    if (UNLIKELY(!jsValue || !jsValue.isHeapBigInt())) {
+        return napi_bigint_expected;
+    }
+
+    JSC::JSBigInt* bigint = jsValue.asHeapBigInt();
+
+    if (bigint->isZero()) {
+        *result = 0;
+        if (lossless) *lossless = true;
+    } else {
+        uint64_t digit = bigint->digit(0);
+        uint64_t signed_digit = digit;
+        if (bigint->sign()) {
+            // negate, while keeping it unsigned because i don't trust signed overflow
+            signed_digit = ~signed_digit + 1;
+        }
+        memcpy(result, &signed_digit, sizeof digit);
+
+        if (lossless) {
+            if (bigint->length() > 1) {
+                *lossless = false;
+            } else if (bigint->sign()) {
+                // negative
+                // lossless if numeric value is >= -2^63,
+                // for which digit will be <= 2^63
+                *lossless = (digit <= (1ull << 63));
+            } else {
+                // positive
+                // lossless if numeric value is <= 2^63 - 1
+                *lossless = (digit <= static_cast<uint64_t>(INT64_MAX));
+            }
+        }
+    }
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value value, uint64_t* result, bool* lossless)
+{
+    NAPI_PREMABLE
+
+    static_assert(std::is_same_v<JSC::JSBigInt::Digit, uint64_t>);
+#if USE(BIGINT32)
+#error napi_get_value_bigint_uint64 assumes BIGINT32 is disabled
+#endif
+
+    if (UNLIKELY(!env || !result)) {
+        return napi_invalid_arg;
+    }
+
+    JSValue jsValue = toJS(value);
+    if (UNLIKELY(!jsValue || !jsValue.isHeapBigInt())) {
+        return napi_bigint_expected;
+    }
+
+    JSC::JSBigInt* bigint = jsValue.asHeapBigInt();
+
+    if (bigint->isZero()) {
+        *result = 0;
+        if (lossless) *lossless = true;
+    } else {
+        *result = bigint->digit(0);
+        if (lossless) {
+            // lossless if and only if only one digit and positive
+            *lossless = (bigint->length() == 1 && bigint->sign() == false);
+        }
     }
 
     return napi_ok;

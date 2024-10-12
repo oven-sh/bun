@@ -4865,21 +4865,11 @@ pub const NodeFS = struct {
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSliceZ = if (!Environment.isWindows)
-            args.path.osPath(&buf)
-        else brk: {
-            // TODO(@paperdave): clean this up a lot.
-            var joined_buf: bun.PathBuffer = undefined;
-            if (std.fs.path.isAbsolute(args.path.slice())) {
-                const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
-                    return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, utf8);
-            } else {
-                var cwd_buf: bun.PathBuffer = undefined;
-                const cwd = std.posix.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
-            }
-        };
+        const path: bun.OSPathSliceZ = if (Environment.isWindows)
+            strings.toNTPath(&buf, args.path.slice())
+        else
+            args.path.osPath(&buf);
+
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),

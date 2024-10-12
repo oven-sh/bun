@@ -1039,27 +1039,27 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .hex => constructFromU8(input, len, .hex),
-            .ascii => constructFromU8(input, len, .ascii),
-            .base64url => constructFromU8(input, len, .base64url),
-            .utf16le => constructFromU8(input, len, .utf16le),
-            .ucs2 => constructFromU8(input, len, .utf16le),
-            .utf8 => constructFromU8(input, len, .utf8),
-            .base64 => constructFromU8(input, len, .base64),
+            .hex => constructFromU8(input, len, bun.default_allocator, .hex),
+            .ascii => constructFromU8(input, len, bun.default_allocator, .ascii),
+            .base64url => constructFromU8(input, len, bun.default_allocator, .base64url),
+            .utf16le => constructFromU8(input, len, bun.default_allocator, .utf16le),
+            .ucs2 => constructFromU8(input, len, bun.default_allocator, .utf16le),
+            .utf8 => constructFromU8(input, len, bun.default_allocator, .utf8),
+            .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .base64 => constructFromU16(input, len, .base64),
-            .hex => constructFromU16(input, len, .hex),
-            .base64url => constructFromU16(input, len, .base64url),
-            .utf16le => constructFromU16(input, len, .utf16le),
-            .ucs2 => constructFromU16(input, len, .utf16le),
-            .utf8 => constructFromU16(input, len, .utf8),
-            .ascii => constructFromU16(input, len, .ascii),
-            .latin1 => constructFromU16(input, len, .latin1),
+            .base64 => constructFromU16(input, len, bun.default_allocator, .base64),
+            .hex => constructFromU16(input, len, bun.default_allocator, .hex),
+            .base64url => constructFromU16(input, len, bun.default_allocator, .base64url),
+            .utf16le => constructFromU16(input, len, bun.default_allocator, .utf16le),
+            .ucs2 => constructFromU16(input, len, bun.default_allocator, .utf16le),
+            .utf8 => constructFromU16(input, len, bun.default_allocator, .utf8),
+            .ascii => constructFromU16(input, len, bun.default_allocator, .ascii),
+            .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
@@ -1440,18 +1440,16 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn constructFrom(comptime T: type, input: []const T, comptime encoding: JSC.Node.Encoding) []u8 {
+    pub fn constructFrom(comptime T: type, input: []const T, allocator: std.mem.Allocator, comptime encoding: JSC.Node.Encoding) []u8 {
         return switch (comptime T) {
-            u16 => constructFromU16(input.ptr, input.len, encoding),
-            u8 => constructFromU8(input.ptr, input.len, encoding),
+            u16 => constructFromU16(input.ptr, input.len, allocator, encoding),
+            u8 => constructFromU8(input.ptr, input.len, allocator, encoding),
             else => @compileError("Unsupported type for constructFrom: " ++ @typeName(T)),
         };
     }
 
-    pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
+    pub fn constructFromU8(input: [*]const u8, len: usize, allocator: std.mem.Allocator, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
-
-        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .buffer => {
@@ -1500,10 +1498,8 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
+    pub fn constructFromU16(input: [*]const u16, len: usize, allocator: std.mem.Allocator, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
-
-        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .utf8 => {
@@ -1532,7 +1528,7 @@ pub const Encoder = struct {
                 // shouldn't really happen though
                 const transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
                 defer allocator.free(transcoded);
-                return constructFromU8(transcoded.ptr, transcoded.len, encoding);
+                return constructFromU8(transcoded.ptr, transcoded.len, allocator, encoding);
             },
         }
     }

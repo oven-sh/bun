@@ -154,15 +154,7 @@ pub const ThreadPool = struct {
         if (existing_thread_pool) |pool| {
             this.pool = pool;
         } else {
-            var cpu_count = @as(u32, @truncate(@max(std.Thread.getCpuCount() catch 2, 2)));
-
-            if (v2.bundler.env.get("GOMAXPROCS")) |max_procs| {
-                if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                    cpu_count = cpu_count_;
-                } else |_| {}
-            }
-
-            cpu_count = @max(@min(cpu_count, @as(u32, @truncate(128 - 1))), 2);
+            const cpu_count = bun.getThreadCount();
             this.pool = try v2.graph.allocator.create(ThreadPoolLib);
             this.pool.* = ThreadPoolLib.init(.{
                 .max_threads = cpu_count,
@@ -1439,7 +1431,7 @@ pub const BundleV2 = struct {
                     .entry_points = config.entry_points.keys(),
                     .target = config.target.toAPI(),
                     .absolute_working_dir = if (config.dir.list.items.len > 0)
-                        config.dir.toOwnedSliceLeaky()
+                        config.dir.slice()
                     else
                         null,
                     .inject = &.{},
@@ -1449,6 +1441,7 @@ pub const BundleV2 = struct {
                     .env_files = &.{},
                     .conditions = config.conditions.map.keys(),
                     .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
+                    .drop = config.drop.map.keys(),
                 },
                 completion.env,
             );
@@ -1466,8 +1459,8 @@ pub const BundleV2 = struct {
             bundler.options.output_format = config.format;
             bundler.options.bytecode = config.bytecode;
 
-            bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
-            bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
+            bundler.options.output_dir = config.outdir.slice();
+            bundler.options.root_dir = config.rootdir.slice();
             bundler.options.minify_syntax = config.minify.syntax;
             bundler.options.minify_whitespace = config.minify.whitespace;
             bundler.options.minify_identifiers = config.minify.identifiers;
@@ -1478,8 +1471,8 @@ pub const BundleV2 = struct {
             bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             bundler.options.experimental_css = config.experimental_css;
-            bundler.options.banner = config.banner.toOwnedSlice();
-            bundler.options.footer = config.footer.toOwnedSlice();
+            bundler.options.banner = config.banner.slice();
+            bundler.options.footer = config.footer.slice();
 
             bundler.configureLinker();
             try bundler.configureDefines();
@@ -1545,7 +1538,7 @@ pub const BundleV2 = struct {
                                     bun.default_allocator.dupe(
                                         u8,
                                         bun.path.joinAbsString(
-                                            this.config.outdir.toOwnedSliceLeaky(),
+                                            this.config.outdir.slice(),
                                             &[_]string{output_file.dest_path},
                                             .auto,
                                         ),
@@ -1555,7 +1548,7 @@ pub const BundleV2 = struct {
                                         u8,
                                         bun.path.joinAbsString(
                                             Fs.FileSystem.instance.top_level_dir,
-                                            &[_]string{ this.config.dir.toOwnedSliceLeaky(), this.config.outdir.toOwnedSliceLeaky(), output_file.dest_path },
+                                            &[_]string{ this.config.dir.slice(), this.config.outdir.slice(), output_file.dest_path },
                                             .auto,
                                         ),
                                     ) catch unreachable
@@ -8950,7 +8943,7 @@ pub const LinkerContext = struct {
                     const input = c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index].path;
                     var buf = MutableString.initEmpty(worker.allocator);
                     js_printer.quoteForJSONBuffer(input.pretty, &buf, true) catch bun.outOfMemory();
-                    const str = buf.toOwnedSliceLeaky(); // worker.allocator is an arena
+                    const str = buf.slice(); // worker.allocator is an arena
                     j.pushStatic(str);
                     line_offset.advance(str);
                 }

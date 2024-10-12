@@ -1635,6 +1635,8 @@ pub const Api = struct {
         /// define
         define: ?StringMap = null,
 
+        drop: []const []const u8 = &.{},
+
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,
 

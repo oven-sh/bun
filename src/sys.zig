@@ -1642,11 +1642,11 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         .mac => {
             const rc = system.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
-            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
-
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
+            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
@@ -2478,6 +2478,16 @@ pub fn exists(path: []const u8) bool {
     }
 
     @compileError("TODO: existsOSPath");
+}
+
+pub fn existsZ(path: [:0]const u8) bool {
+    if (comptime Environment.isPosix) {
+        return system.access(path, 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        return getFileAttributes(path) != null;
+    }
 }
 
 pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {

@@ -1603,3 +1603,30 @@ pub const OutOfRangeOptions = struct {
 pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
     return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
 }
+
+/// esbuild has an 8 character truncation of a base32 encoded bytes. this
+/// is not exactly that, but it will appear as such. the character list
+/// chosen omits similar characters in the unlikely case someone is
+/// trying to memorize a hash.
+///
+/// this hash is used primarily for the hashes in bundler chunk file names. the
+/// output is all lowercase to avoid issues with case-insensitive filesystems.
+pub fn truncatedHash32(int: u64) std.fmt.Formatter(truncatedHash32Impl) {
+    return .{ .data = int };
+}
+
+fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    comptime bun.assert(fmt_str.len == 0);
+    const in_bytes = std.mem.asBytes(&int);
+    const chars = "0123456789abcdefghjkmnpqrstvwxyz";
+    try writer.writeAll(&.{
+        chars[in_bytes[0] & 31],
+        chars[in_bytes[1] & 31],
+        chars[in_bytes[2] & 31],
+        chars[in_bytes[3] & 31],
+        chars[in_bytes[4] & 31],
+        chars[in_bytes[5] & 31],
+        chars[in_bytes[6] & 31],
+        chars[in_bytes[7] & 31],
+    });
+}

@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
 const logger = bun.logger;
 const Log = logger.Log;
+const debug = bun.Output.scoped(.css, true);
 
 pub const css = @import("../css_parser.zig");
 const CSSString = css.CSSString;

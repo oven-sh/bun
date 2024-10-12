@@ -3436,6 +3436,15 @@ pub const Expr = struct {
         return if (asProperty(expr, name)) |query| query.expr else null;
     }
 
+    pub fn getObject(expr: *const Expr, name: string) ?Expr {
+        if (expr.asProperty(name)) |query| {
+            if (query.expr.isObject()) {
+                return query.expr;
+            }
+        }
+        return null;
+    }
+
     pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
         if (asProperty(expr, name)) |q| {
             if (q.expr.asString(allocator)) |str| {
@@ -8711,6 +8720,14 @@ pub const ServerComponentBoundary = struct {
                 ) orelse return null;
                 bun.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
                 return l.list.items(.reference_source_index)[i];
+            }
+
+            pub fn bitSet(scbs: Slice, alloc: std.mem.Allocator, input_file_count: usize) !bun.bit_set.DynamicBitSetUnmanaged {
+                var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(alloc, input_file_count);
+                for (scbs.list.items(.source_index)) |source_index| {
+                    scb_bitset.set(source_index);
+                }
+                return scb_bitset;
             }
         };
 

@@ -326,6 +326,25 @@ pub const ThreadPool = struct {
 
 const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 
+/// Bake needs to specify more information per entry point.
+pub const BakeEntryPoint = struct {
+    path: []const u8,
+    graph: bake.Renderer,
+    route_index: bake.DevServer.Route.Index.Optional = .none,
+
+    pub fn init(path: []const u8, graph: bake.Renderer) BakeEntryPoint {
+        return .{ .path = path, .graph = graph };
+    }
+
+    pub fn route(path: []const u8, index: bake.DevServer.Route.Index) BakeEntryPoint {
+        return .{
+            .path = path,
+            .graph = .server,
+            .route_index = index.toOptional(),
+        };
+    }
+};
+
 pub const BundleV2 = struct {
     bundler: *Bundler,
     /// When Server Component is enabled, this is used for the client bundles
@@ -486,14 +505,10 @@ pub const BundleV2 = struct {
         // We need to mark the generated files as reachable, or else many files will appear missing.
         var sfa = std.heap.stackFallback(4096, this.graph.allocator);
         const stack_alloc = sfa.get();
-        var scb_bitset = if (this.graph.server_component_boundaries.list.len > 0) brk: {
-            var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
-            const scbs = this.graph.server_component_boundaries.list.slice();
-            for (scbs.items(.source_index)) |source_index| {
-                scb_bitset.set(source_index);
-            }
-            break :brk scb_bitset;
-        } else null;
+        var scb_bitset = if (this.graph.server_component_boundaries.list.len > 0)
+            try this.graph.server_component_boundaries.slice().bitSet(stack_alloc, this.graph.input_files.len)
+        else
+            null;
         defer if (scb_bitset) |*b| b.deinit(stack_alloc);
 
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
@@ -860,6 +875,9 @@ pub const BundleV2 = struct {
         this.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
         this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
+        this.linker.options.banner = bundler.options.banner;
+        this.linker.options.footer = bundler.options.footer;
+
         this.linker.options.experimental_css = bundler.options.experimental_css;
 
         this.linker.options.source_maps = bundler.options.source_map;
@@ -888,7 +906,11 @@ pub const BundleV2 = struct {
         return this;
     }
 
-    pub fn enqueueEntryPoints(this: *BundleV2, user_entry_points: []const []const u8, client_entry_points: []const []const u8, ssr_entry_points: []const []const u8) !ThreadPoolLib.Batch {
+    pub fn enqueueEntryPoints(
+        this: *BundleV2,
+        user_entry_points: []const []const u8,
+        bake_entry_points: []const BakeEntryPoint,
+    ) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
 
         {
@@ -932,18 +954,19 @@ pub const BundleV2 = struct {
                 } else {}
             }
 
-            for (client_entry_points) |entry_point| {
-                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved, true, .browser)) |source_index| {
+            for (bake_entry_points) |entry_point| {
+                const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch continue;
+                if (try this.enqueueItem(null, &batch, resolved, true, switch (entry_point.graph) {
+                    .client => .browser,
+                    .server => this.bundler.options.target,
+                    .ssr => .kit_server_components_ssr,
+                })) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
-            }
 
-            for (ssr_entry_points) |entry_point| {
-                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved, true, .kit_server_components_ssr)) |source_index| {
-                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                } else {}
+                if (entry_point.route_index.unwrap()) |route_index| {
+                    _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
+                }
             }
         }
 
@@ -1236,7 +1259,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}, &.{}));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1455,6 +1478,8 @@ pub const BundleV2 = struct {
             bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             bundler.options.experimental_css = config.experimental_css;
+            bundler.options.banner = config.banner.toOwnedSlice();
+            bundler.options.footer = config.footer.toOwnedSlice();
 
             bundler.configureLinker();
             try bundler.configureDefines();
@@ -1835,8 +1860,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-        client_entry_points: []const []const u8,
-        ssr_entry_points: []const []const u8,
+        bake_entry_points: []const BakeEntryPoint,
     ) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
@@ -1849,7 +1873,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, client_entry_points, ssr_entry_points));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, bake_entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2270,13 +2294,13 @@ pub const BundleV2 = struct {
             }
 
             if (this.bundler.options.dev_server) |dev_server| {
-                // TODO(paperdave/kit): this relative can be done without a clone in most cases
                 if (!dev_server.isFileStale(path.text, renderer)) {
                     import_record.source_index = Index.invalid;
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                     import_record.path.text = rel;
                     import_record.path.pretty = rel;
                     import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
             }
@@ -2761,7 +2785,7 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             completion.result = .{
                 .value = .{
-                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}, &.{}),
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points, &.{}),
                 },
             };
 
@@ -3893,6 +3917,7 @@ pub const JSMeta = struct {
 };
 
 pub const Graph = struct {
+    // TODO: move to LinkerGraph. it is not used by the scan and parse stage
     generate_bytecode_cache: bool = false,
 
     // TODO: consider removing references to this in favor of bundler.options.code_splitting
@@ -4606,6 +4631,8 @@ pub const LinkerContext = struct {
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
+        banner: []const u8 = "",
+        footer: []const u8 = "",
         experimental_css: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
@@ -5577,13 +5604,13 @@ pub const LinkerContext = struct {
                 // TODO: composes?
 
                 if (comptime bun.Environment.isDebug) {
-                    std.debug.print(
-                        "Lookin' at file: {d}={s}\n",
+                    debug(
+                        "Lookin' at file: {d}={s}",
                         .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
                     );
                     for (visitor.visited.slice()) |idx| {
-                        std.debug.print(
-                            "  Visit: {d}\n",
+                        debug(
+                            "Visit: {d}",
                             .{idx.get()},
                         );
                     }
@@ -5709,9 +5736,9 @@ pub const LinkerContext = struct {
         // Finally, merge adjacent "@layer" rules with identical conditions together.
 
         if (bun.Environment.isDebug) {
-            std.debug.print("CSS order:\n", .{});
+            debug("CSS order:\n", .{});
             for (order.slice(), 0..) |entry, i| {
-                std.debug.print("  {d}: {}\n", .{ i, entry });
+                debug("  {d}: {}\n", .{ i, entry });
             }
         }
 
@@ -8761,7 +8788,16 @@ pub const LinkerContext = struct {
             }
         }
 
-        // TODO: banner
+        if (c.options.banner.len > 0) {
+            if (newline_before_comment) {
+                j.pushStatic("\n");
+                line_offset.advance("\n");
+            }
+            j.pushStatic(ctx.c.options.banner);
+            line_offset.advance(ctx.c.options.banner);
+            j.pushStatic("\n");
+            line_offset.advance("\n");
+        }
 
         // Add the top-level directive if present (but omit "use strict" in ES
         // modules because all ES modules are automatically in strict mode)
@@ -8974,7 +9010,16 @@ pub const LinkerContext = struct {
         j.ensureNewlineAtEnd();
         // TODO: maybeAppendLegalComments
 
-        // TODO: footer
+        if (c.options.footer.len > 0) {
+            if (newline_before_comment) {
+                j.pushStatic("\n");
+                line_offset.advance("\n");
+            }
+            j.pushStatic(ctx.c.options.footer);
+            line_offset.advance(ctx.c.options.footer);
+            j.pushStatic("\n");
+            line_offset.advance("\n");
+        }
 
         chunk.intermediate_output = c.breakOutputIntoPieces(
             worker.allocator,
@@ -11512,46 +11557,8 @@ pub const LinkerContext = struct {
             // When this isnt the initial bundle, concatenation as usual would produce a
             // broken module. It is DevServer's job to create and send HMR patches.
             if (c.dev_server) |dev_server| {
-                const input_file_sources = c.parse_graph.input_files.items(.source);
-                const import_records = c.parse_graph.ast.items(.import_records);
-                const targets = c.parse_graph.ast.items(.target);
-
-                const resolved_index_cache = try c.allocator.alloc(u32, input_file_sources.len * 2);
-                const server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator, input_file_sources.len);
-
-                var ctx: bun.bake.DevServer.ReceiveContext = .{
-                    .import_records = import_records,
-                    .sources = input_file_sources,
-                    .resolved_index_cache = resolved_index_cache,
-                    .server_seen_bit_set = server_seen_bit_set,
-                };
-
                 bun.assert(chunks.len == 1);
-                const chunk = chunks[0];
-
-                // Pass 1, update the graph with all rebundle files
-                for (
-                    chunk.content.javascript.parts_in_chunk_in_order,
-                    chunk.compile_results_for_chunk,
-                ) |part_range, compile_result| {
-                    try dev_server.receiveChunk(
-                        &ctx,
-                        part_range.source_index,
-                        targets[part_range.source_index.get()].bakeRenderer(),
-                        compile_result,
-                    );
-                }
-
-                // Pass 2, resolve all imports
-                for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-                    try dev_server.processChunkDependencies(
-                        &ctx,
-                        part_range.source_index,
-                        targets[part_range.source_index.get()].bakeRenderer(),
-                        c.allocator,
-                    );
-                }
-
+                try dev_server.finalizeBundle(c, &chunks[0]);
                 return std.ArrayList(options.OutputFile).init(bun.default_allocator);
             }
 

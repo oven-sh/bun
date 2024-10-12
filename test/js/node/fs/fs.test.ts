@@ -1090,6 +1090,11 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with invalid fd but zero length",()=>{
+    expect(readSync(2147483640, Buffer.alloc(0))).toBe(0);
+    expect(readSync(2147483640, Buffer.alloc(10), 0, 0, 0)).toBe(0);
+  })
 });
 
 it("writevSync", () => {
@@ -3167,7 +3172,7 @@ it("new Stats", () => {
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
+  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("Bad file descriptor");
   expect(() => readlinkSync(path)).toThrow("No such file or directory");
   expect(() => realpathSync(path)).toThrow("No such file or directory");
   expect(() => readFileSync(path)).toThrow("No such file or directory");

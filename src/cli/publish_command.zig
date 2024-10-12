@@ -586,10 +586,19 @@ pub const PublishCommand = struct {
                 if (!prompt_for_otp) {
                     // general error
                     const otp_response = false;
-                    return handleResponseErrors(directory_publish, ctx, &req, &res, &response_buf, otp_response);
+                    try Npm.responseError(
+                        ctx.allocator,
+                        &req,
+                        &res,
+                        .{ ctx.package_name, ctx.package_version },
+                        &response_buf,
+                        otp_response,
+                    );
                 }
 
-                if (res.headers.get("npm-notice")) |notice| {
+                // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
+                // ignore if x-local-cache exists
+                if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                     Output.printError("\n", .{});
                     Output.note("{s}", .{notice});
                     Output.flush();
@@ -635,10 +644,19 @@ pub const PublishCommand = struct {
                 switch (otp_res.status_code) {
                     400...std.math.maxInt(@TypeOf(otp_res.status_code)) => {
                         const otp_response = true;
-                        return handleResponseErrors(directory_publish, ctx, &otp_req, &otp_res, &response_buf, otp_response);
+                        try Npm.responseError(
+                            ctx.allocator,
+                            &otp_req,
+                            &otp_res,
+                            .{ ctx.package_name, ctx.package_version },
+                            &response_buf,
+                            otp_response,
+                        );
                     },
                     else => {
-                        if (otp_res.headers.get("npm-notice")) |notice| {
+                        // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
+                        // ignore if x-local-cache exists
+                        if (otp_res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                             Output.printError("\n", .{});
                             Output.note("{s}", .{notice});
                             Output.flush();
@@ -648,60 +666,6 @@ pub const PublishCommand = struct {
             },
             else => {},
         }
-    }
-
-    fn handleResponseErrors(
-        comptime directory_publish: bool,
-        ctx: *const Context(directory_publish),
-        req: *const http.AsyncHTTP,
-        res: *const bun.picohttp.Response,
-        response_body: *MutableString,
-        comptime otp_response: bool,
-    ) OOM!void {
-        const message = message: {
-            const source = logger.Source.initPathString("???", response_body.list.items);
-            const json = JSON.parseUTF8(&source, ctx.manager.log, ctx.allocator) catch |err| {
-                switch (err) {
-                    error.OutOfMemory => |oom| return oom,
-                    else => break :message null,
-                }
-            };
-
-            // I don't think we should make this check, I cannot find code in npm
-            // that does this
-            // if (comptime otp_response) {
-            //     if (json.get("success")) |success_expr| {
-            //         if (success_expr.asBool()) |successful| {
-            //             if (successful) {
-            //                 // possible to hit this with otp responses
-            //                 return;
-            //             }
-            //         }
-            //     }
-            // }
-
-            const @"error", _ = try json.getString(ctx.allocator, "error") orelse break :message null;
-            break :message @"error";
-        };
-
-        Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n", .{
-            res.status_code,
-            if (res.status.len > 0) " " else "",
-            res.status,
-            bun.fmt.redactedNpmUrl(req.url.href),
-        });
-
-        if (message) |msg| {
-            if (comptime otp_response) {
-                if (res.status_code == 401 and strings.containsComptime(msg, "You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.")) {
-                    Output.prettyErrorln("\n - Received invalid OTP", .{});
-                    Global.crash();
-                }
-            }
-            Output.prettyErrorln("\n - {s}", .{msg});
-        }
-
-        Global.crash();
     }
 
     const GetOTPError = OOM || error{};
@@ -858,7 +822,9 @@ pub const PublishCommand = struct {
                             Global.crash();
                         };
 
-                        if (res.headers.get("npm-notice")) |notice| {
+                        // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
+                        // ignore if x-local-cache exists
+                        if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
                             Output.printError("\n", .{});
                             Output.note("{s}", .{notice});
                             Output.flush();
@@ -868,7 +834,14 @@ pub const PublishCommand = struct {
                     },
                     else => {
                         const otp_response = false;
-                        try handleResponseErrors(directory_publish, ctx, &req, &res, response_buf, otp_response);
+                        try Npm.responseError(
+                            ctx.allocator,
+                            &req,
+                            &res,
+                            .{ ctx.package_name, ctx.package_version },
+                            response_buf,
+                            otp_response,
+                        );
                     },
                 }
             }

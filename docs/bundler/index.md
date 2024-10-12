@@ -1090,9 +1090,49 @@ $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
 
 {% /codetabs %}
 
+### `banner`
+
+A banner to be added to the final bundle, this can be a directive like "use client" for react or a comment block such as a license for the code.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  banner: '"use client";'
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --banner "\"use client\";"
+```
+
+{% /codetabs %}
+
+### `footer`
+
+A footer to be added to the final bundle, this can be something like a comment block for a license or just a fun easter egg.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  footer: '// built with love in SF'
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --footer="// built with love in SF"
+```
+
+{% /codetabs %}
+
 ### `experimentalCss`
 
-Whether to enable *experimental* support for bundling CSS files. Defaults to `false`.
+Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`.
 
 This supports bundling CSS files imported from JS, as well as CSS entrypoints.
 

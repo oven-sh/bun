@@ -33,9 +33,11 @@ export class HotModule<E = any> {
   _import_meta: ImportMeta | undefined = undefined;
   _cached_failure: any = undefined;
   // modules that import THIS module
-  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map;
+  _deps: Map<HotModule, ExportsCallbackFunction | undefined> = new Map();
 
-  constructor(id: Id) { this.id = id; }
+  constructor(id: Id) {
+    this.id = id;
+  }
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
     const mod = loadModule(id, LoadModuleType.UserDynamic);
@@ -77,7 +79,7 @@ function initImportMeta(m: HotModule): ImportMeta {
   throw new Error("TODO: import meta object");
 }
 
-/** 
+/**
  * Load a module by ID. Use `type` to specify if the module is supposed to be
  * present, or is something a user is able to dynamically specify.
  */

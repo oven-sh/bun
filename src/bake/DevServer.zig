@@ -66,6 +66,7 @@ watch_current: u1 = 0,
 
 // Bundling
 generation: usize = 0,
+bundles_since_last_error: usize = 0,
 /// All access into IncrementalGraph is guarded by this. This is only
 /// a debug assertion since there is no actual contention.
 graph_safety_lock: bun.DebugThreadLock,
@@ -595,9 +596,12 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
             },
         },
     ) catch |err| {
-        const fail = try SerializedFailure.initFromJs(.none, global.takeException(err));
-        defer fail.deinit();
-        dev.sendSerializedFailures(resp, &.{fail}, .runtime);
+        const exception = global.takeException(err);
+        dev.vm.printErrorLikeObjectToConsole(exception);
+        // const fail = try SerializedFailure.initFromJs(.none, exception);
+        // defer fail.deinit();
+        // dev.sendSerializedFailures(resp, &.{fail}, .runtime);
+        dev.sendStubErrorMessage(route, resp, exception);
         return;
     };
 
@@ -606,11 +610,12 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
         switch (promise.unwrap(dev.vm.jsc, .mark_handled)) {
             .pending => unreachable, // was waited for
             .fulfilled => |r| result = r,
-            .rejected => |e| {
-                dev.vm.printErrorLikeObjectToConsole(e);
-                const fail = try SerializedFailure.initFromJs(.none, e);
-                defer fail.deinit();
-                dev.sendSerializedFailures(resp, &.{fail}, .runtime);
+            .rejected => |exception| {
+                dev.vm.printErrorLikeObjectToConsole(exception);
+                dev.sendStubErrorMessage(route, resp, exception);
+                // const fail = try SerializedFailure.initFromJs(.none, e);
+                // defer fail.deinit();
+                // dev.sendSerializedFailures(resp, &.{fail}, .runtime);
                 return;
             },
         }
@@ -735,7 +740,9 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
 
         bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
 
-        bun.todoPanic(@src(), "um", .{});
+        Output.warn("BundleV2.runFromBakeDevServer returned error.{s}", .{@errorName(err)});
+
+        return;
     };
 
     bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
@@ -774,7 +781,8 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
             const server_code = c.BakeLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
                 dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
                 {
-                    bun.todoPanic(@src(), "what if the first server load fails", .{});
+                    // TODO: document the technical reasons this should not be allowed to fail
+                    bun.todoPanic(@src(), "First Server Load Fails. This should become a bundler bug.", .{});
                 }
                 _ = &err; // autofix
                 // fail.* = Failure.fromJSServerLoad(dev.server_global.js().takeException(err), dev.server_global.js());
@@ -787,7 +795,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
                 .rejected => |err| {
                     dev.vm.printErrorLikeObjectToConsole(err);
                     {
-                        bun.todoPanic(@src(), "what if the first server load rejects", .{});
+                        bun.todoPanic(@src(), "First Server Load Fails. This should become a bundler bug.", .{});
                     }
                     _ = &err; // autofix
                     // fail.* = Failure.fromJSServerLoad(err, dev.server_global.js());
@@ -1062,8 +1070,15 @@ pub fn handleParseTaskFailure(
     dev: *DevServer,
     graph: bake.Graph,
     abs_path: []const u8,
-    log: *const Log,
+    log: *Log,
 ) bun.OOM!void {
+    // Print each error only once
+    Output.prettyErrorln("<red><b>Errors while bundling '{s}':<r>", .{
+        bun.path.relative(dev.cwd, abs_path),
+    });
+    Output.flush();
+    log.printForLogLevel(Output.errorWriter()) catch {};
+
     return switch (graph) {
         .server => dev.server_graph.insertFailure(abs_path, log, false),
         .ssr => dev.server_graph.insertFailure(abs_path, log, true),
@@ -1191,6 +1206,19 @@ fn sendBuiltInNotFound(resp: *Response) void {
     const message = "404 Not Found";
     resp.writeStatus("404 Not Found");
     resp.end(message, true);
+}
+
+fn sendStubErrorMessage(dev: *DevServer, route: *Route, resp: *Response, err: JSValue) void {
+    var sfb = std.heap.stackFallback(65536, dev.allocator);
+    var a = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch bun.outOfMemory();
+
+    a.writer().print("Server route handler for '{s}' threw while loading\n\n", .{
+        route.pattern,
+    }) catch bun.outOfMemory();
+    route.dev.vm.printErrorLikeObjectSimple(err, a.writer(), false);
+
+    resp.writeStatus("500 Internal Server Error");
+    resp.end(a.items, true); // TODO: "You should never call res.end(huge buffer)"
 }
 
 /// The paradigm of Bake's incremental state is to store a separate list of files
@@ -3001,6 +3029,30 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
             }
             dev.routes[route.get()].client_bundle = null;
         }
+    }
+
+    // TODO: improve this visual feedback
+    if (dev.bundling_failures.count() == 0) {
+        const clear_terminal = true;
+        if (clear_terminal) {
+            Output.flush();
+            Output.disableBuffering();
+            Output.resetTerminalAll();
+        }
+
+        dev.bundles_since_last_error += 1;
+        if (dev.bundles_since_last_error > 1) {
+            Output.prettyError("<cyan>[x{d}]<r> ", .{dev.bundles_since_last_error});
+        }
+
+        Output.prettyError("<green>Reloaded<r> {s}", .{bun.path.relative(dev.cwd, changed_file_paths[0])});
+        if (changed_file_paths.len > 1) {
+            Output.prettyError(" <d>+ {d} more<r>", .{files.items.len - 1});
+        }
+        Output.prettyError("\n", .{});
+        Output.flush();
+    } else {
+        dev.bundles_since_last_error = 0;
     }
 }
 

@@ -732,6 +732,8 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
             assertIsValidWindowsPath(bun.OSPathChar, file_path);
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
+            std.debug.print("created directory: \"{}\" {}\n", .{ bun.fmt.fmtOSPath(file_path, .{}), rc });
+
             if (Maybe(void).errnoSys(
                 rc,
                 .mkdir,

@@ -460,9 +460,14 @@ describe("copyFileSync", () => {
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {
-    const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}.mkdirSync/1234/hi`;
+    const now = Date.now().toString();
+    const base = join("fs.test.js", now, ".mkdirSync", "1234", "hi");
+    const tempdir = `${tmpdir()}/${base}`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
+
+    const res = mkdirSync(tempdir, { recursive: true });
+    expect(res).toInclude(now);
+    expect(res).not.toInclude(".mkdirSync");
     expect(existsSync(tempdir)).toBe(true);
   });
 

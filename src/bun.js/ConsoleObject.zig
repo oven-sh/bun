@@ -720,7 +720,7 @@ pub const FormatOptions = struct {
                         return error.JSError;
                     }
                 }
-                if (arguments.len > 1) {
+                if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
                     formatOptions.enable_colors = arguments[1].coerce(bool, globalThis);
                     if (globalThis.hasException()) {
                         return error.JSError;

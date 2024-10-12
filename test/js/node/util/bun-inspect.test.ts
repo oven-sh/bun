@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {
@@ -9,6 +10,27 @@ describe("Bun.inspect", () => {
         },
       }),
     ).toBe("[custom formatter threw an exception]");
+  });
+
+  it("supports colors: false", () => {
+    const output = Bun.inspect({ a: 1 }, { colors: false });
+    expect(stripAnsi(output)).toBe(output);
+  });
+
+  it("supports colors: true", () => {
+    const output = Bun.inspect({ a: 1 }, { colors: true });
+    expect(stripAnsi(output)).not.toBe(output);
+    expect(stripAnsi(output)).toBe(Bun.inspect({ a: 1 }, { colors: false }));
+  });
+
+  it("supports colors: false, via 2nd arg", () => {
+    const output = Bun.inspect({ a: 1 }, null, null);
+    expect(stripAnsi(output)).toBe(output);
+  });
+
+  it("supports colors: true, via 2nd arg", () => {
+    const output = Bun.inspect({ a: 1 }, true, 2);
+    expect(stripAnsi(output)).not.toBe(output);
   });
 
   it("supports compact", () => {

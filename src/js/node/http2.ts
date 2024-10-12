@@ -982,15 +982,13 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        const error = new Error(
-          "ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
-        );
+        const error = new Error("HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
         error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
         throw error;
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {
-          const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+          const error = new Error("The socket has been disconnected from the Http2Session");
           error.code = "ERR_HTTP2_SOCKET_UNBOUND";
           throw error;
         }
@@ -1002,7 +1000,7 @@ const proxySocketHandler = {
   getPrototypeOf(session) {
     const socket = session[bunHTTP2Socket];
     if (!socket) {
-      const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+      const error = new Error("The socket has been disconnected from the Http2Session");
       error.code = "ERR_HTTP2_SOCKET_UNBOUND";
       throw error;
     }
@@ -1025,15 +1023,13 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        const error = new Error(
-          "ERR_HTTP2_NO_SOCKET_MANIPULATION: HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
-        );
+        const error = new Error("HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
         error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
         throw error;
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {
-          const error = new Error("ERR_HTTP2_SOCKET_UNBOUND: The socket has been disconnected from the Http2Session");
+          const error = new Error("The socket has been disconnected from the Http2Session");
           error.code = "ERR_HTTP2_SOCKET_UNBOUND";
           throw error;
         }
@@ -1692,6 +1688,7 @@ class Http2Stream extends Duplex {
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
+  [kAborted]: boolean = false;
   constructor(streamId, session, headers) {
     super();
     this.#id = streamId;
@@ -1861,9 +1858,25 @@ class Http2Stream extends Duplex {
   }
   _destroy(err, callback) {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
+      const { ending } = this._writableState;
+
+      if (!ending) {
+        // If the writable side of the Http2Stream is still open, emit the
+        // 'aborted' event and set the aborted flag.
+        if (!this.aborted) {
+          this[kAborted] = true;
+          this.emit("aborted");
+        }
+
+        // Close the writable side.
+        this._writableState.destroyed = false;
+        this.end();
+      }
+
       const session = this[bunHTTP2Session];
       assertSession(session);
       this.rstCode = 0;
+
       if (this.writableFinished) {
         markStreamClosed(this);
 
@@ -2310,7 +2323,7 @@ class ServerHttp2Session extends Http2Session {
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
     },
-    aborted(self: ServerHttp2Session, stream: ServerHttp2Session, error: any, old_state: number) {
+    aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
 
       stream.rstCode = constants.NGHTTP2_CANCEL;
@@ -2424,7 +2437,12 @@ class ServerHttp2Session extends Http2Session {
       if ((status & StreamState.WantTrailer) !== 0) return;
 
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
-      stream.emit("wantTrailers");
+
+      if (stream.listenerCount("wantTrailers") === 0) {
+        stream.sendTrailers({});
+      } else {
+        stream.emit("wantTrailers");
+      }
     },
     goaway(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -2832,7 +2850,11 @@ class ClientHttp2Session extends Http2Session {
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
-      stream.emit("wantTrailers");
+      if (stream.listenerCount("wantTrailers") === 0) {
+        stream.sendTrailers({});
+      } else {
+        stream.emit("wantTrailers");
+      }
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

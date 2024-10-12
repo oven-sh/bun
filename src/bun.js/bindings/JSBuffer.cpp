@@ -1058,6 +1058,16 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(normalizeCompareVal(result, sourceLength, targetLength))));
 }
 
+static double toInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, double defaultVal)
+{
+    auto n = value.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (std::isnan(n)) return defaultVal;
+    if (n < JSC::minSafeInteger()) return defaultVal;
+    if (n > JSC::maxSafeInteger()) return defaultVal;
+    return std::trunc(n);
+}
+
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L825
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L205
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
@@ -1082,7 +1092,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     size_t targetStart = 0;
     if (targetStartValue.isUndefined()) {
     } else {
-        double targetStartD = targetStartValue.isAnyInt() ? targetStartValue.asNumber() : targetStartValue.toIntegerWithTruncation(lexicalGlobalObject);
+        double targetStartD = targetStartValue.isAnyInt() ? targetStartValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, targetStartValue, 0);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (targetStartD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetLength, targetStartValue);
         targetStart = static_cast<size_t>(targetStartD);
@@ -1091,7 +1101,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     size_t sourceStart = 0;
     if (sourceStartValue.isUndefined()) {
     } else {
-        double sourceStartD = sourceStartValue.isAnyInt() ? sourceStartValue.asNumber() : sourceStartValue.toIntegerWithTruncation(lexicalGlobalObject);
+        double sourceStartD = sourceStartValue.isAnyInt() ? sourceStartValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, sourceStartValue, 0);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (sourceStartD < 0 || sourceStartD > sourceLength) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceLength, sourceStartValue);
         sourceStart = static_cast<size_t>(sourceStartD);
@@ -1100,7 +1110,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     size_t sourceEnd = sourceLength;
     if (sourceEndValue.isUndefined()) {
     } else {
-        double sourceEndD = sourceEndValue.isAnyInt() ? sourceEndValue.asNumber() : sourceEndValue.toIntegerWithTruncation(lexicalGlobalObject);
+        double sourceEndD = sourceEndValue.isAnyInt() ? sourceEndValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, sourceEndValue, 0);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (sourceEndD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceLength, sourceEndValue);
         sourceEnd = static_cast<size_t>(sourceEndD);

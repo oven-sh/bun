@@ -950,18 +950,18 @@ pub const Bundler = struct {
                     };
                     const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
                     _ = source; //
-                    var v = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
+                    var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| v,
                         .err => |e| {
                             bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} parsing", .{e}) catch unreachable;
                             return null;
                         },
                     };
-                    if (v.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                    if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
                         bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                         return null;
                     }
-                    const result = v.toCss(alloc, bun.css.PrinterOptions{
+                    const result = sheet.toCss(alloc, bun.css.PrinterOptions{
                         .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
                     }, null) catch |e| {
                         bun.handleErrorReturnTrace(e, @errorReturnTrace());

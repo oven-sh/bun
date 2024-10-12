@@ -406,7 +406,7 @@ pub fn DimensionPercentage(comptime D: type) type {
             _ = this; // autofix
             _ = other; // autofix
             @panic(css.todo_stuff.depth);
-        } // 128kb
+        }
 
         pub fn trySign(this: *const This) ?f32 {
             return switch (this.*) {

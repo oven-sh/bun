@@ -207,8 +207,8 @@ fn downlevelDir(allocator: Allocator, dir: parser.Direction, targets: css.target
 
 fn langListToSelectors(allocator: Allocator, langs: []const []const u8) []Selector {
     var selectors = allocator.alloc(Selector, langs.len) catch bun.outOfMemory();
-    for (langs, 0..) |lang, i| {
-        selectors[i] = Selector.fromComponent(allocator, Component{
+    for (langs, selectors[0..]) |lang, *sel| {
+        sel.* = Selector.fromComponent(allocator, Component{
             .non_ts_pseudo_class = PseudoClass{
                 .lang = .{ .languages = langs: {
                     var list = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();

@@ -6190,7 +6190,7 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
 /// - Pointers to simple types
 /// - Optional simple types
 /// - Structs, Arrays, and Unions
-pub inline fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
+pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
     const tyinfo = @typeInfo(T);
     if (comptime bun.meta.isSimpleEqlType(T)) {
         return this.* == other.*;
@@ -6208,8 +6208,8 @@ pub inline fn implementEql(comptime T: type, this: *const T, other: *const T) bo
         return false;
     }
     return switch (tyinfo) {
-        .Optional => unreachable,
-        .Pointer => unreachable,
+        .Optional => @compileError("Handled above, this means Zack wrote a bug."),
+        .Pointer => @compileError("Handled above, this means Zack wrote a bug."),
         .Array => {
             const Child = std.meta.Child(T);
             if (comptime bun.meta.isSimpleEqlType(Child)) {

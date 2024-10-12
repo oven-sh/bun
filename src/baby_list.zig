@@ -31,8 +31,8 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn eql(lhs: *const ListType, rhs: *const ListType) bool {
             if (lhs.len != rhs.len) return false;
-            for (lhs.sliceConst(), 0..) |*item, i| {
-                if (!bun.css.generic.eql(Type, item, &rhs.ptr[i])) return false;
+            for (lhs.sliceConst(), rhs.sliceConst()) |*a, *b| {
+                if (!bun.css.generic.eql(Type, a, b)) return false;
             }
             return true;
         }

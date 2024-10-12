@@ -868,6 +868,7 @@ pub const BundleV2 = struct {
         this.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
         this.linker.options.banner = bundler.options.banner;
+        this.linker.options.footer = bundler.options.footer;
 
         this.linker.options.experimental_css = bundler.options.experimental_css;
 
@@ -1470,6 +1471,7 @@ pub const BundleV2 = struct {
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             bundler.options.experimental_css = config.experimental_css;
             bundler.options.banner = config.banner.toOwnedSlice();
+            bundler.options.footer = config.footer.toOwnedSlice();
 
             bundler.configureLinker();
             try bundler.configureDefines();
@@ -4594,6 +4596,7 @@ pub const LinkerContext = struct {
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
         banner: []const u8 = "",
+        footer: []const u8 = "",
         experimental_css: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
@@ -8969,7 +8972,16 @@ pub const LinkerContext = struct {
         j.ensureNewlineAtEnd();
         // TODO: maybeAppendLegalComments
 
-        // TODO: footer
+        if (c.options.footer.len > 0) {
+            if (newline_before_comment) {
+                j.pushStatic("\n");
+                line_offset.advance("\n");
+            }
+            j.pushStatic(ctx.c.options.footer);
+            line_offset.advance(ctx.c.options.footer);
+            j.pushStatic("\n");
+            line_offset.advance("\n");
+        }
 
         chunk.intermediate_output = c.breakOutputIntoPieces(
             worker.allocator,

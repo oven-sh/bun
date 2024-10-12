@@ -718,7 +718,7 @@ pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
-pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
         var value: ReturnType = undefined;
         var ran = false;
@@ -3296,25 +3296,35 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src, src_eager },
-    comptime sub_path: []const u8,
-) []const u8 {
-    comptime assert(Environment.isDebug);
-    comptime assert(!Environment.embed_code);
-
-    const abs_path = comptime path: {
+pub inline fn resolveSourcePath(
+    comptime root: enum { codegen, src },
+    comptime sub_path: string,
+) string {
+    return comptime path: {
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
                 .codegen => Environment.codegen_path,
-                .src, .src_eager => Environment.base_path ++ "/src",
+                .src => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
             @compileError(unreachable))[0..].*;
         break :path &resolved;
+    };
+}
+
+pub fn runtimeEmbedFile(
+    comptime root: enum { codegen, src, src_eager },
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.codegen_embed);
+
+    const abs_path = switch (root) {
+        .codegen => resolveSourcePath(.codegen, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
     const static = struct {
@@ -3328,7 +3338,7 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
                 , .{ abs_path, e });
             };
         }
@@ -3958,4 +3968,44 @@ pub fn getThreadCount() u16 {
     };
     ThreadCount.cached_thread_count_once.call();
     return ThreadCount.cached_thread_count;
+}
+
+/// Copied from zig std. Modified to accept arguments.
+pub fn once(comptime f: anytype) Once(f) {
+    return Once(f){};
+}
+
+/// Copied from zig std. Modified to accept arguments.
+///
+/// An object that executes the function `f` just once.
+/// It is undefined behavior if `f` re-enters the same Once instance.
+pub fn Once(comptime f: anytype) type {
+    return struct {
+        done: bool = false,
+        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+
+        /// Call the function `f`.
+        /// If `call` is invoked multiple times `f` will be executed only the
+        /// first time.
+        /// The invocations are thread-safe.
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            if (@atomicLoad(bool, &self.done, .acquire))
+                return;
+
+            return self.callSlow(args);
+        }
+
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            @setCold(true);
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // The first thread to acquire the mutex gets to run the initializer
+            if (!self.done) {
+                @call(.auto, f, args);
+                @atomicStore(bool, &self.done, true, .release);
+            }
+        }
+    };
 }

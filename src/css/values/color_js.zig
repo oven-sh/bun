@@ -146,9 +146,9 @@ pub const Ansi256 = struct {
 };
 
 pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-    const args = callFrame.arguments(2).slice();
-    if (args.len < 1 or args[0].isUndefined()) {
-        globalThis.throwNotEnoughArguments("Bun.color", 2, args.len);
+    const args = callFrame.argumentsUndef(2).all();
+    if (args[0].isUndefined()) {
+        globalThis.throwInvalidArgumentType("color", "input", "string, number, or object");
         return JSC.JSValue.jsUndefined();
     }
 
@@ -230,17 +230,17 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
                 },
             }
         } else if (args[0].isObject()) {
-            const r = colorIntFromJS(globalThis, args[0].getOwn(globalThis, "r") orelse .zero, "r") orelse return .zero;
+            const r = colorIntFromJS(globalThis, args[0].get(globalThis, "r") orelse .zero, "r") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
-            const g = colorIntFromJS(globalThis, args[0].getOwn(globalThis, "g") orelse .zero, "g") orelse return .zero;
+            const g = colorIntFromJS(globalThis, args[0].get(globalThis, "g") orelse .zero, "g") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;
             }
-            const b = colorIntFromJS(globalThis, args[0].getOwn(globalThis, "b") orelse .zero, "b") orelse return .zero;
+            const b = colorIntFromJS(globalThis, args[0].get(globalThis, "b") orelse .zero, "b") orelse return .zero;
 
             if (globalThis.hasException()) {
                 return .zero;

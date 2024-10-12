@@ -734,6 +734,20 @@ pub const BundleV2 = struct {
             ) catch bun.outOfMemory();
             entry.value_ptr.* = idx;
             out_source_index = Index.init(idx);
+
+            // For non-javascript files, make all of these files share indices.
+            // For example, it is silly to bundle index.css depended on by client+server twice.
+            // It makes sense to separate these for JS because the target affects DCE
+            if (this.bundler.options.server_components and !loader.isJavaScriptLike()) {
+                const a, const b = switch (target) {
+                    else => .{ &this.graph.client_path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
+                    .browser => .{ &this.graph.path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
+                    .kit_server_components_ssr => .{ &this.graph.path_to_source_index_map, &this.graph.client_path_to_source_index_map },
+                };
+                a.put(this.graph.allocator, entry.key_ptr.*, entry.value_ptr.*) catch bun.outOfMemory();
+                if (this.framework.?.server_components.?.separate_ssr_graph)
+                    b.put(this.graph.allocator, entry.key_ptr.*, entry.value_ptr.*) catch bun.outOfMemory();
+            }
         } else {
             out_source_index = Index.init(entry.value_ptr.*);
         }

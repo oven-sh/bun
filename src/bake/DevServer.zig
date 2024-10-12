@@ -3119,23 +3119,6 @@ pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
     }
 }
 
-/// TODO: deprecated
-pub fn bustDirCache(dev: *DevServer, path: []const u8) bool {
-    debug.log("bustDirCache {s}\n", .{path});
-    const server = dev.server_bundler.resolver.bustDirCache(path);
-    const client = dev.client_bundler.resolver.bustDirCache(path);
-    const ssr = dev.ssr_bundler.resolver.bustDirCache(path);
-    return server or client or ssr;
-}
-
-/// TODO: deprecated
-pub fn getLoaders(dev: *DevServer) *bun.options.Loader.HashTable {
-    // The watcher needs to know what loader to use for a file,
-    // therefore, we must ensure that server and client options
-    // use the same loader set.
-    return &dev.server_bundler.options.loaders;
-}
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mutex = std.Thread.Mutex;

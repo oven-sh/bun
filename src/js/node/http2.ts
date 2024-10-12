@@ -900,7 +900,6 @@ class Http2ServerResponse extends Stream {
   writeContinue() {
     const stream = this[kStream];
     if (stream.headersSent || this[kState].closed) return false;
-    console.error("writeContinue");
     stream.additionalHeaders({
       [HTTP2_HEADER_STATUS]: HTTP_STATUS_CONTINUE,
     });
@@ -2799,20 +2798,25 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
-      if (headers[":status"] === HTTP_STATUS_CONTINUE) {
+      const header_status = headers[":status"];
+      if (header_status === HTTP_STATUS_CONTINUE) {
         stream.emit("continue");
-        return;
       }
+
       if ((status & StreamState.StreamResponded) !== 0) {
         try {
-          stream.emit((status & StreamState.EndedCalled) !== 0 ? "trailers" : "headers", headers, flags, rawheaders);
+          stream.emit("trailers", headers, flags, rawheaders);
         } catch {
           process.nextTick(emitStreamErrorNT, self, stream, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
         }
       } else {
-        stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
-        self.emit("stream", stream, headers, flags, rawheaders);
-        stream.emit("response", headers, flags, rawheaders);
+        if (header_status >= 100 && header_status < 200) {
+          self.emit("headers", stream, headers, flags, rawheaders);
+        } else {
+          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+          self.emit("stream", stream, headers, flags, rawheaders);
+          stream.emit("response", headers, flags, rawheaders);
+        }
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {

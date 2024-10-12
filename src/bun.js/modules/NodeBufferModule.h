@@ -186,29 +186,20 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
     JSObject::defineOwnProperty(defaultObject, lexicalGlobalObject, Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s), descriptor, true);
   }
 
-  put(JSC::Identifier::fromString(vm, "kMaxLength"_s),
-      JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
+  put(JSC::Identifier::fromString(vm, "kMaxLength"_s), JSC::jsNumber(Bun::Buffer::kMaxLength));
+  put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s), JSC::jsNumber(Bun::Buffer::kStringMaxLength));
 
-  put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(WTF::String::MaxLength));
-
-  JSC::JSObject *constants = JSC::constructEmptyObject(
-      lexicalGlobalObject, globalObject->objectPrototype(), 2);
-  constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s),
-                       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
-  constants->putDirect(vm,
-                       JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(WTF::String::MaxLength));
+  JSC::JSObject *constants = JSC::constructEmptyObject(lexicalGlobalObject, globalObject->objectPrototype(), 2);
+  constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s), JSC::jsNumber(Bun::Buffer::MAX_LENGTH));
+  constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s), JSC::jsNumber(Bun::Buffer::MAX_STRING_LENGTH));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 
   JSC::Identifier atobI = JSC::Identifier::fromString(vm, "atob"_s);
-  JSC::JSValue atobV =
-      lexicalGlobalObject->get(globalObject, PropertyName(atobI));
+  JSC::JSValue atobV = lexicalGlobalObject->get(globalObject, PropertyName(atobI));
 
   JSC::Identifier btoaI = JSC::Identifier::fromString(vm, "btoa"_s);
-  JSC::JSValue btoaV =
-      lexicalGlobalObject->get(globalObject, PropertyName(btoaI));
+  JSC::JSValue btoaV = lexicalGlobalObject->get(globalObject, PropertyName(btoaI));
 
   put(atobI, atobV);
   put(btoaI, btoaV);

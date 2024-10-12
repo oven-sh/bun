@@ -189,6 +189,7 @@ test("Buffer copy operations", () => {
   expect(c).toEqual(b.slice(0, c.length));
 
   c.fill("C");
+  expect(c.toString()).toBe("C".repeat(c.length));
   expect(() => {
     b.copy(c, {
       [Symbol.toPrimitive]() {

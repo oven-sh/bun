@@ -2316,7 +2316,7 @@ void JSBufferConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, J
     Base::finishCreation(vm, 3, "Buffer"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     prototype->putDirect(vm, vm.propertyNames->speciesSymbol, this, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirect(vm, Identifier::fromString(vm, "poolSize"_s), jsNumber(8192));
+    putDirectWithoutTransition(vm, Identifier::fromString(vm, "poolSize"_s), jsNumber(8192));
 }
 
 JSC::Structure* createBufferStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

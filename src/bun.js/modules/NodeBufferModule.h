@@ -137,16 +137,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
   return {};
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_INSPECT_MAX_BYTES_getter, (JSGlobalObject * lexicalGlobalObject, CallFrame *callFrame)) {
+JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
   auto globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
   return JSValue::encode(jsNumber(globalObject->INSPECT_MAX_BYTES));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_INSPECT_MAX_BYTES_setter, (JSGlobalObject * lexicalGlobalObject, CallFrame *callFrame)) {
+JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
   auto globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
-  auto val = callFrame->argument(0);
+  auto val = JSValue::decode(value);
   Bun::V::validateNumber(scope, globalObject, val, jsString(vm, String("INSPECT_MAX_BYTES"_s)), jsNumber(0), jsUndefined());
   RETURN_IF_EXCEPTION(scope, {});
   globalObject->INSPECT_MAX_BYTES = val.asNumber();
@@ -177,13 +179,13 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
       globalObject->JSDOMFileConstructor());
 
   {
-    PropertyDescriptor descriptor;
-    descriptor.setConfigurable(true);
-    descriptor.setEnumerable(true);
-    descriptor.setWritable(false);
-    descriptor.setGetter(JSFunction::create(vm, lexicalGlobalObject, 0, String("get"_s), jsFunction_INSPECT_MAX_BYTES_getter, {}, {}, {}, {}));
-    descriptor.setSetter(JSFunction::create(vm, lexicalGlobalObject, 0, String("set"_s), jsFunction_INSPECT_MAX_BYTES_setter, {}, {}, {}, {}));
-    JSObject::defineOwnProperty(defaultObject, lexicalGlobalObject, Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s), descriptor, true);
+    auto name = Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s);
+    auto value = JSC::CustomGetterSetter::create(vm, jsGetter_INSPECT_MAX_BYTES, jsSetter_INSPECT_MAX_BYTES);
+    auto attributes = PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor;
+    defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
+    exportNames.append(name);
+    exportValues.append(value);
+    __NATIVE_MODULE_ASSERT_INCR;
   }
 
   put(JSC::Identifier::fromString(vm, "kMaxLength"_s), JSC::jsNumber(Bun::Buffer::kMaxLength));

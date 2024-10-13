@@ -73,6 +73,8 @@ function addCatch(emitter, promise, type, args) {
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
+  $debug("emit", JSON.stringify(type));
+
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
@@ -89,6 +91,8 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
 }
 
 const emitWithoutRejectionCapture = function emit(type, ...args) {
+  $debug("emit", JSON.stringify(type));
+
   if (type === "error") {
     return emitError(this, args);
   }

@@ -14,6 +14,7 @@ pub fn BabyList(comptime Type: type) type {
 
         pub const Elem = Type;
 
+<<<<<<< HEAD
         pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
             return switch (input.parseCommaSeparated(Type, bun.css.generic.parseFor(Type))) {
                 .result => |v| return .{ .result = ListType{
@@ -35,6 +36,12 @@ pub fn BabyList(comptime Type: type) type {
                 if (!bun.css.generic.eql(Type, a, b)) return false;
             }
             return true;
+=======
+        pub fn moveBytesToBeginning(this: *@This(), offset: usize, len: usize) void {
+            bun.C.memmove(this.ptr, this.ptr[offset..], len);
+            bun.debugAssert(this.len >= len);
+            this.len = @truncate(len);
+>>>>>>> 9afff9994 (wip)
         }
 
         pub fn set(this: *@This(), slice_: []Type) void {

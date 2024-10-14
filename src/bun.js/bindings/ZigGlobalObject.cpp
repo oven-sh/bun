@@ -583,8 +583,10 @@ WTF::String Bun::formatStackTrace(
                 }
             }
 
-            // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-            if (globalObject == lexicalGlobalObject && globalObject) {
+            bool isDefinitelyNotRunninginNodeVMGlobalObject = (globalObject == lexicalGlobalObject && globalObject);
+
+            bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
+            if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
                 // https://github.com/oven-sh/bun/issues/3595
                 if (!sourceURLForFrame.isEmpty()) {
                     remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);

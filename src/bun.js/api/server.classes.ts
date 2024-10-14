@@ -120,6 +120,14 @@ export default [
         fn: "abort",
         length: 0,
       },
+      pause: {
+        fn: "doPause",
+        length: 0,
+      },
+      resume: {
+        fn: "doResume",
+        length: 0,
+      },
       bufferedAmount: {
         getter: "getBufferedAmount",
       },

@@ -5862,6 +5862,7 @@ pub const NodeHTTPResponse = struct {
         this.clearJSValues();
         this.clearOnDataCallback();
         const server = this.server;
+        this.js_ref.unref(JSC.VirtualMachine.get());
         this.deref();
         server.onRequestComplete();
     }
@@ -6080,8 +6081,7 @@ pub const NodeHTTPResponse = struct {
         timeout = 2,
     };
 
-    fn handleAbortOrTimeout(this: *NodeHTTPResponse, resp: uws.AnyResponse, comptime event: AbortEvent) void {
-        _ = resp; // autofix
+    fn handleAbortOrTimeout(this: *NodeHTTPResponse, comptime event: AbortEvent) void {
         if (this.finished) {
             return;
         }
@@ -6116,13 +6116,37 @@ pub const NodeHTTPResponse = struct {
     }
 
     pub fn onAbort(this: *NodeHTTPResponse, response: uws.AnyResponse) void {
+        _ = response; // autofix
         log("onAbort", .{});
-        this.handleAbortOrTimeout(response, .abort);
+        this.handleAbortOrTimeout(.abort);
     }
 
     pub fn onTimeout(this: *NodeHTTPResponse, response: uws.AnyResponse) void {
+        _ = response; // autofix
         log("onTimeout", .{});
-        this.handleAbortOrTimeout(response, .timeout);
+        this.handleAbortOrTimeout(.timeout);
+    }
+
+    pub fn doPause(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        _ = globalObject; // autofix
+        _ = callframe; // autofix
+        if (this.finished or this.aborted) {
+            return .undefined;
+        }
+
+        this.response.pause();
+        return .undefined;
+    }
+
+    pub fn doResume(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+        _ = globalObject; // autofix
+        _ = callframe; // autofix
+        if (this.finished or this.aborted) {
+            return .undefined;
+        }
+
+        this.response.@"resume"();
+        return .undefined;
     }
 
     fn onRequestComplete(this: *NodeHTTPResponse) void {

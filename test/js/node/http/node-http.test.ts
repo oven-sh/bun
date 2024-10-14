@@ -267,10 +267,20 @@ describe("node:http", () => {
           }
           if (reqUrl.pathname.includes("timeout")) {
             if (timer) clearTimeout(timer);
+            req.on("timeout", () => {
+              console.log("req timeout");
+            });
+            res.on("timeout", () => {
+              console.log("res timeout");
+            });
             timer = setTimeout(() => {
+              if (res.closed) {
+                return;
+              }
+
               res.end("Hello World");
               timer = null;
-            }, 3000);
+            }, 3000).unref();
             return;
           }
           if (reqUrl.pathname === "/pathTest") {
@@ -1357,417 +1367,6 @@ it("should not accept untrusted certificates", async () => {
   server.close();
 });
 
-it("IncomingMessage with a RequestLike object", () => {
-  const rawHeadersMap = {
-    "x-test": "test",
-    "Real-Header": "test",
-    "content-type": "text/plain",
-    "User-Agent": "Bun",
-  };
-
-  // To excercise the case where inline capacity cannot be used
-  for (let i = 0; i < 64; i++) {
-    rawHeadersMap[`header-${i}`] = `value-${i}`;
-  }
-
-  const headers = new Headers(rawHeadersMap);
-  headers.append("set-cookie", "foo=bar");
-  headers.append("set-cookie", "bar=baz");
-
-  const request = new Request("https://example.com/hello/hi", {
-    headers,
-  });
-
-  const incomingMessageFromRequest = new IncomingMessage(request);
-  const incomingMessageFromRequestLike1 = new IncomingMessage({
-    url: "/hello/hi",
-    headers: headers,
-    method: request.method,
-  });
-  const incomingMessageFromRequestLike2 = new IncomingMessage({
-    url: "/hello/hi",
-    headers: headers.toJSON(),
-    method: request.method,
-  });
-  for (let incomingMessageFromRequestLike of [
-    incomingMessageFromRequestLike1,
-    incomingMessageFromRequestLike2,
-    incomingMessageFromRequest,
-  ]) {
-    expect(incomingMessageFromRequestLike.headers).toEqual(incomingMessageFromRequest.headers);
-    expect(incomingMessageFromRequestLike.method).toEqual(incomingMessageFromRequest.method);
-    expect(incomingMessageFromRequestLike.url).toEqual(incomingMessageFromRequest.url);
-    expect(incomingMessageFromRequestLike.headers).toEqual({
-      "x-test": "test",
-      "real-header": "test",
-      "content-type": "text/plain",
-      "user-agent": "Bun",
-      "set-cookie": ["foo=bar", "bar=baz"],
-      "header-0": "value-0",
-      "header-1": "value-1",
-      "header-10": "value-10",
-      "header-11": "value-11",
-      "header-12": "value-12",
-      "header-13": "value-13",
-      "header-14": "value-14",
-      "header-15": "value-15",
-      "header-16": "value-16",
-      "header-17": "value-17",
-      "header-18": "value-18",
-      "header-19": "value-19",
-      "header-2": "value-2",
-      "header-20": "value-20",
-      "header-21": "value-21",
-      "header-22": "value-22",
-      "header-23": "value-23",
-      "header-24": "value-24",
-      "header-25": "value-25",
-      "header-26": "value-26",
-      "header-27": "value-27",
-      "header-28": "value-28",
-      "header-29": "value-29",
-      "header-3": "value-3",
-      "header-30": "value-30",
-      "header-31": "value-31",
-      "header-32": "value-32",
-      "header-33": "value-33",
-      "header-34": "value-34",
-      "header-35": "value-35",
-      "header-36": "value-36",
-      "header-37": "value-37",
-      "header-38": "value-38",
-      "header-39": "value-39",
-      "header-4": "value-4",
-      "header-40": "value-40",
-      "header-41": "value-41",
-      "header-42": "value-42",
-      "header-43": "value-43",
-      "header-44": "value-44",
-      "header-45": "value-45",
-      "header-46": "value-46",
-      "header-47": "value-47",
-      "header-48": "value-48",
-      "header-49": "value-49",
-      "header-5": "value-5",
-      "header-50": "value-50",
-      "header-51": "value-51",
-      "header-52": "value-52",
-      "header-53": "value-53",
-      "header-54": "value-54",
-      "header-55": "value-55",
-      "header-56": "value-56",
-      "header-57": "value-57",
-      "header-58": "value-58",
-      "header-59": "value-59",
-      "header-6": "value-6",
-      "header-60": "value-60",
-      "header-61": "value-61",
-      "header-62": "value-62",
-      "header-63": "value-63",
-      "header-7": "value-7",
-      "header-8": "value-8",
-      "header-9": "value-9",
-    });
-  }
-
-  // this one preserves the original case
-  expect(incomingMessageFromRequestLike1.rawHeaders).toEqual([
-    "content-type",
-    "text/plain",
-    "user-agent",
-    "Bun",
-    "set-cookie",
-    "foo=bar",
-    "set-cookie",
-    "bar=baz",
-    "x-test",
-    "test",
-    "Real-Header",
-    "test",
-    "header-0",
-    "value-0",
-    "header-1",
-    "value-1",
-    "header-2",
-    "value-2",
-    "header-3",
-    "value-3",
-    "header-4",
-    "value-4",
-    "header-5",
-    "value-5",
-    "header-6",
-    "value-6",
-    "header-7",
-    "value-7",
-    "header-8",
-    "value-8",
-    "header-9",
-    "value-9",
-    "header-10",
-    "value-10",
-    "header-11",
-    "value-11",
-    "header-12",
-    "value-12",
-    "header-13",
-    "value-13",
-    "header-14",
-    "value-14",
-    "header-15",
-    "value-15",
-    "header-16",
-    "value-16",
-    "header-17",
-    "value-17",
-    "header-18",
-    "value-18",
-    "header-19",
-    "value-19",
-    "header-20",
-    "value-20",
-    "header-21",
-    "value-21",
-    "header-22",
-    "value-22",
-    "header-23",
-    "value-23",
-    "header-24",
-    "value-24",
-    "header-25",
-    "value-25",
-    "header-26",
-    "value-26",
-    "header-27",
-    "value-27",
-    "header-28",
-    "value-28",
-    "header-29",
-    "value-29",
-    "header-30",
-    "value-30",
-    "header-31",
-    "value-31",
-    "header-32",
-    "value-32",
-    "header-33",
-    "value-33",
-    "header-34",
-    "value-34",
-    "header-35",
-    "value-35",
-    "header-36",
-    "value-36",
-    "header-37",
-    "value-37",
-    "header-38",
-    "value-38",
-    "header-39",
-    "value-39",
-    "header-40",
-    "value-40",
-    "header-41",
-    "value-41",
-    "header-42",
-    "value-42",
-    "header-43",
-    "value-43",
-    "header-44",
-    "value-44",
-    "header-45",
-    "value-45",
-    "header-46",
-    "value-46",
-    "header-47",
-    "value-47",
-    "header-48",
-    "value-48",
-    "header-49",
-    "value-49",
-    "header-50",
-    "value-50",
-    "header-51",
-    "value-51",
-    "header-52",
-    "value-52",
-    "header-53",
-    "value-53",
-    "header-54",
-    "value-54",
-    "header-55",
-    "value-55",
-    "header-56",
-    "value-56",
-    "header-57",
-    "value-57",
-    "header-58",
-    "value-58",
-    "header-59",
-    "value-59",
-    "header-60",
-    "value-60",
-    "header-61",
-    "value-61",
-    "header-62",
-    "value-62",
-    "header-63",
-    "value-63",
-  ]);
-
-  // this one does not preserve the original case
-  expect(incomingMessageFromRequestLike2.rawHeaders).toEqual([
-    "content-type",
-    "text/plain",
-    "user-agent",
-    "Bun",
-    "set-cookie",
-    "foo=bar",
-    "set-cookie",
-    "bar=baz",
-    "x-test",
-    "test",
-    "real-header",
-    "test",
-    "header-0",
-    "value-0",
-    "header-1",
-    "value-1",
-    "header-2",
-    "value-2",
-    "header-3",
-    "value-3",
-    "header-4",
-    "value-4",
-    "header-5",
-    "value-5",
-    "header-6",
-    "value-6",
-    "header-7",
-    "value-7",
-    "header-8",
-    "value-8",
-    "header-9",
-    "value-9",
-    "header-10",
-    "value-10",
-    "header-11",
-    "value-11",
-    "header-12",
-    "value-12",
-    "header-13",
-    "value-13",
-    "header-14",
-    "value-14",
-    "header-15",
-    "value-15",
-    "header-16",
-    "value-16",
-    "header-17",
-    "value-17",
-    "header-18",
-    "value-18",
-    "header-19",
-    "value-19",
-    "header-20",
-    "value-20",
-    "header-21",
-    "value-21",
-    "header-22",
-    "value-22",
-    "header-23",
-    "value-23",
-    "header-24",
-    "value-24",
-    "header-25",
-    "value-25",
-    "header-26",
-    "value-26",
-    "header-27",
-    "value-27",
-    "header-28",
-    "value-28",
-    "header-29",
-    "value-29",
-    "header-30",
-    "value-30",
-    "header-31",
-    "value-31",
-    "header-32",
-    "value-32",
-    "header-33",
-    "value-33",
-    "header-34",
-    "value-34",
-    "header-35",
-    "value-35",
-    "header-36",
-    "value-36",
-    "header-37",
-    "value-37",
-    "header-38",
-    "value-38",
-    "header-39",
-    "value-39",
-    "header-40",
-    "value-40",
-    "header-41",
-    "value-41",
-    "header-42",
-    "value-42",
-    "header-43",
-    "value-43",
-    "header-44",
-    "value-44",
-    "header-45",
-    "value-45",
-    "header-46",
-    "value-46",
-    "header-47",
-    "value-47",
-    "header-48",
-    "value-48",
-    "header-49",
-    "value-49",
-    "header-50",
-    "value-50",
-    "header-51",
-    "value-51",
-    "header-52",
-    "value-52",
-    "header-53",
-    "value-53",
-    "header-54",
-    "value-54",
-    "header-55",
-    "value-55",
-    "header-56",
-    "value-56",
-    "header-57",
-    "value-57",
-    "header-58",
-    "value-58",
-    "header-59",
-    "value-59",
-    "header-60",
-    "value-60",
-    "header-61",
-    "value-61",
-    "header-62",
-    "value-62",
-    "header-63",
-    "value-63",
-  ]);
-});
-
-it("#6892", () => {
-  const totallyValid = ["*", "/", "/foo", "/foo/bar"];
-  for (const url of totallyValid) {
-    const req = new IncomingMessage({ url });
-    expect(req.url).toBe(url);
-    expect(req.method).toBeNull();
-  }
-});
-
 it("#4415.1 ServerResponse es6", () => {
   class Response extends ServerResponse {
     constructor(req) {
@@ -1806,10 +1405,43 @@ it("#4415.3 Server es5", done => {
   });
 });
 
-it("#4415.4 IncomingMessage es5", () => {
+it("#4415.4 IncomingMessage es5", done => {
+  // This matches Node.js:
   const im = Object.create(IncomingMessage.prototype);
   IncomingMessage.call(im, { url: "/foo" });
-  expect(im.url).toBe("/foo");
+  expect(im.url).toBe("");
+
+  let didCall = false;
+  function Subclass(...args) {
+    IncomingMessage.apply(this, args);
+    didCall = true;
+  }
+  Object.setPrototypeOf(Subclass.prototype, IncomingMessage.prototype);
+  Object.setPrototypeOf(Subclass, IncomingMessage);
+
+  const server = new Server(
+    {
+      IncomingMessage: Subclass,
+    },
+    (req, res) => {
+      if (req instanceof Subclass && didCall) {
+        expect(req.url).toBe("/foo");
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("hello");
+      } else {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("bye");
+      }
+    },
+  );
+  server.listen(0, () => {
+    fetch(`http://localhost:${server.address().port}/foo`, {
+      method: "GET",
+    }).then(response => {
+      expect(response.status).toBe(200);
+      server.close(done);
+    });
+  });
 });
 
 it("#9242.1 Server has constructor", () => {
@@ -2339,6 +1971,7 @@ it("should emit close, and complete should be true only after close #13373", asy
 
 it("should emit close when connection is aborted", async () => {
   const server = http.createServer().listen(0);
+  server.unref();
   try {
     await once(server, "listening");
     const controller = new AbortController();
@@ -2347,11 +1980,13 @@ it("should emit close when connection is aborted", async () => {
       .catch(() => {});
 
     const [req, res] = await once(server, "request");
-    expect(req.complete).toBe(false);
-    const closeEvent = once(req, "close");
+    const closeEvent = Promise.withResolvers();
+    req.once("close", () => {
+      closeEvent.resolve();
+    });
     controller.abort();
-    await closeEvent;
-    expect(req.complete).toBe(true);
+    await closeEvent.promise;
+    expect(req.aborted).toBe(true);
   } finally {
     server.close();
   }
@@ -2368,7 +2003,7 @@ it("should emit timeout event", async () => {
     const [req, res] = await once(server, "request");
     expect(req.complete).toBe(false);
     let callBackCalled = false;
-    req.setTimeout(1000, () => {
+    req.setTimeout(100, () => {
       callBackCalled = true;
     });
     await once(req, "timeout");
@@ -2383,7 +2018,7 @@ it("should emit timeout event when using server.setTimeout", async () => {
   try {
     await once(server, "listening");
     let callBackCalled = false;
-    server.setTimeout(1000, () => {
+    server.setTimeout(100, () => {
       callBackCalled = true;
       console.log("Called timeout");
     });

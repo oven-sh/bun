@@ -301,6 +301,14 @@ var FakeSocket = class Socket extends Duplex {
   _write(chunk, encoding, callback) {}
 };
 
+class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+    this.name = "ConnResetException";
+  }
+}
+
 const NodeHTTPServerSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
@@ -317,11 +325,21 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     handle.onclose = this.#onClose.bind(this);
     handle.duplex = this;
     this.encrypted = encrypted;
+    this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
 
-  #onClose(callback) {
+  #onClose() {
+    const handle = this[kHandle];
     this[kHandle] = null;
-    if ($isCallable(callback)) callback();
+    const message = this._httpMessage;
+    const req = message?.req;
+    if (req && !req.complete) {
+      req.destroy(new ConnResetException("aborted"));
+    }
+  }
+  #onCloseForDestroy(closeCallback) {
+    this.#onClose();
+    $isCallable(closeCallback) && closeCallback();
   }
 
   address() {
@@ -338,16 +356,31 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   _destroy(err, callback) {
     const handle = this[kHandle];
-    if (!handle) return; // sometimes 'this' is Socket not FakeSocket
+    if (!handle) {
+      $isCallable(callback) && callback(err);
+      return;
+    }
+    if (handle.closed) {
+      const onclose = handle.onclose;
+      handle.onclose = null;
+      if ($isCallable(onclose)) {
+        onclose.$call(handle);
+      }
+      $isCallable(callback) && callback(err);
+      return;
+    }
     this[kHandle] = undefined;
-    handle.onclose = this.#onClose.bind(this, callback);
+    handle.onclose = this.#onCloseForDestroy.bind(this, callback);
     handle.close();
   }
 
   _final(callback) {
     const handle = this[kHandle];
-    if (!handle) return; // sometimes 'this' is Socket not FakeSocket
-    handle.onclose = this.#onClose.bind(this, callback);
+    if (!handle) {
+      callback();
+      return;
+    }
+    handle.onclose = this.#onCloseForDestroy.bind(this, callback);
     handle.close();
   }
 
@@ -613,26 +646,25 @@ function onRequestEvent(event) {
         server.emit("timeout", req.socket);
         break;
       case NodeHTTPResponseAbortEvent.abort:
-        emitCloseNTAndComplete(http_res);
-        emitCloseNTAndComplete(this);
         http_res[finishedSymbol] = true;
+        this.destroy();
         break;
     }
   }
 }
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
-  const server: Server = this.server;
+  const server: Server = this?.server;
   const socket: NodeHTTPServerSocket = this;
-
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
-      socket.destroy();
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
       socket.emit("timeout");
-      server.emit("timeout", socket);
       break;
     }
   }
@@ -867,22 +899,20 @@ Server.prototype = {
           let resolveFunction;
           let didFinish = false;
 
-          http_req.once("error", errorCallback);
-          http_res.once("error", errorCallback);
-
-          // handle.onabort = onServerRequestEvent.bind(socketHandle);
-          http_res.once("close", () => {
-            didFinish = true;
-            resolveFunction && resolveFunction();
-          });
+          handle.onabort = onServerRequestEvent.bind(socket);
 
           if (isSocketNew) {
             server.emit("connection", socket);
           }
 
-          socket._httpMessage = http_res;
-          http_res.socket = socket;
           socket[kRequest] = http_req;
+
+          http_res.assignSocket(socket);
+          function onClose() {
+            didFinish = true;
+            resolveFunction && resolveFunction();
+          }
+          http_res.once("close", onClose);
 
           server.emit("request", http_req, http_res);
 
@@ -890,6 +920,7 @@ Server.prototype = {
 
           if (capturedError) {
             handle = undefined;
+            http_res.removeListener("close", onClose);
             if (socket._httpMessage === http_res) {
               socket._httpMessage = null;
             }
@@ -897,8 +928,8 @@ Server.prototype = {
           }
 
           if (handle.finished || didFinish) {
-            http_res.off("error", errorCallback);
             handle = undefined;
+            http_res.removeListener("close", onClose);
             if (socket._httpMessage === http_res) {
               socket._httpMessage = null;
             }
@@ -1070,7 +1101,6 @@ var isNextIncomingMessageHTTPS = false;
 function emitEOFIncomingMessageOuter(self) {
   self.push(null);
   self.complete = true;
-  process.nextTick(emitCloseNTAndComplete, self);
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
@@ -1108,8 +1138,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
 
     this[noBodySymbol] = false;
     Readable.$call(this);
-    var { [typeSymbol]: type = NodeHTTPIncomingRequestType.FetchRequest, [reqSymbol]: nodeReq } =
-      defaultIncomingOpts || {};
+    var { [typeSymbol]: type, [reqSymbol]: nodeReq } = defaultIncomingOpts || {};
 
     this[webRequestOrResponse] = req;
     this[typeSymbol] = type;
@@ -1117,10 +1146,14 @@ function IncomingMessage(req, defaultIncomingOpts) {
     this[statusMessageSymbol] = (req as Response)?.statusText || null;
     this[statusCodeSymbol] = (req as Response)?.status || 200;
 
-    if (!assignHeaders(this, req)) {
-      this[fakeSocketSymbol] = req;
-      const reqUrl = String(req?.url || "");
-      this.url = reqUrl;
+    if (type === NodeHTTPIncomingRequestType.FetchRequest || type === NodeHTTPIncomingRequestType.FetchResponse) {
+      if (!assignHeaders(this, req)) {
+        this[fakeSocketSymbol] = req;
+      }
+    } else {
+      // Node defaults url and method to null.
+      this.url = "";
+      this.method = null;
     }
 
     this[noBodySymbol] =
@@ -1156,6 +1189,10 @@ const IncomingMessagePrototype = {
       // If there is buffered data, it may trigger 'data' events.
       // Remove 'data' event listeners explicitly.
       this.removeAllListeners("data");
+      const handle = this[kHandle];
+      if (handle) {
+        handle.ondata = undefined;
+      }
       this.resume();
     }
   },
@@ -1176,7 +1213,6 @@ const IncomingMessagePrototype = {
       return;
     } else if ((internalRequest = this[kHandle])) {
       internalRequest.ondata = (chunk, isLast, aborted: NodeHTTPResponseAbortEvent) => {
-        $debug("ondata", chunk, isLast, aborted);
         if (aborted === NodeHTTPResponseAbortEvent.abort) {
           this.destroy();
           return;
@@ -1240,8 +1276,12 @@ const IncomingMessagePrototype = {
     var nodeHTTPResponse = this[kHandle];
     if (nodeHTTPResponse) {
       this[kHandle] = undefined;
-      nodeHTTPResponse.ondata = undefined;
+      nodeHTTPResponse.onabort = nodeHTTPResponse.ondata = undefined;
       nodeHTTPResponse.abort();
+      const socket = this.socket;
+      if (socket && !socket.destroyed && this.aborted) {
+        socket.destroy(err);
+      }
     } else {
       const stream = this[bodyStreamSymbol];
       this[bodyStreamSymbol] = undefined;
@@ -1257,8 +1297,8 @@ const IncomingMessagePrototype = {
       socket.destroy(err);
     }
 
-    if (cb && err) {
-      emitErrorNextTick(this, err, cb);
+    if ($isCallable(cb)) {
+      emitErrorNextTickIfErrorListenerNT(this, err, cb);
     }
   },
   get aborted() {
@@ -1564,6 +1604,16 @@ const OutgoingMessagePrototype = {
 OutgoingMessage.prototype = OutgoingMessagePrototype;
 $setPrototypeDirect.$call(OutgoingMessage, Stream);
 
+function onNodeHTTPServerSocketTimeout() {
+  const req = this[kRequest];
+  const reqTimeout = req && !req.complete && req.emit("timeout", this);
+  const res = this._httpMessage;
+  const resTimeout = res && res.emit("timeout", this);
+  const serverTimeout = this.server.emit("timeout", this);
+
+  if (!reqTimeout && !resTimeout && !serverTimeout) this.destroy();
+}
+
 function onTimeout() {
   this[timeoutTimerSymbol] = undefined;
   this[kAbortController]?.abort();
@@ -1590,10 +1640,9 @@ function emitContinueAndSocketNT(self) {
 }
 function emitCloseNT(self) {
   if (!self._closed) {
+    self.destroyed = true;
     self._closed = true;
-    if (!self.destroyed) {
-      self.destroy();
-    }
+
     self.emit("close");
   }
 }
@@ -1630,8 +1679,9 @@ function onServerResponseClose() {
   // Ergo, we need to deal with stale 'close' events and handle the case
   // where the ServerResponse object has already been deconstructed.
   // Fortunately, that requires only a single if check. :-)
-  if (this._httpMessage) {
-    emitCloseNT(this._httpMessage);
+  const httpMessage = this._httpMessage;
+  if (httpMessage) {
+    emitCloseNT(httpMessage);
   }
 }
 
@@ -1674,7 +1724,6 @@ function callWriteHeadIfObservable(self, headerState) {
     !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
   ) {
     self.writeHead(self.statusCode, self.statusMessage, self[headersSymbol]);
-    console.log("called rwriteHead");
   }
 }
 
@@ -1697,7 +1746,7 @@ const ServerResponsePrototype = {
   // But we don't want it for the fetch() response version.
   end(chunk, encoding, callback) {
     if (this.destroyed) {
-      emitErrorNextTick(this, $ERR_STREAM_DESTROYED("Stream is destroyed"), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_DESTROYED("Stream is destroyed"), callback);
       return this;
     }
 
@@ -1716,7 +1765,7 @@ const ServerResponsePrototype = {
     }
 
     if (isFinished && chunk) {
-      emitErrorNextTick(this, $ERR_STREAM_WRITE_AFTER_END("Stream is already finished"), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Stream is already finished"), callback);
       return this;
     }
 
@@ -1744,11 +1793,11 @@ const ServerResponsePrototype = {
       }
       this._header = " ";
       const req = this.req;
-      const reqClosed = req?._closed;
-      if (reqClosed === false && req) {
-        process.nextTick(emitCloseNTAndComplete, req);
+      const socket = req.socket;
+      if (!req._consuming && !req?._readableState?.resumeScheduled) {
+        req._dump();
       }
-
+      this.detachSocket(socket);
       this[finishedSymbol] = this.finished = true;
 
       this.emit("prefinish");
@@ -1766,30 +1815,15 @@ const ServerResponsePrototype = {
               self.emit("error", err);
             }
 
-            process.nextTick(function (self) {
-              if (!self[closedSymbol]) {
-                self[closedSymbol] = true;
-                if (!self.destroyed) {
-                  self.destroy();
-                }
-                self.emit("close");
-              }
-            }, self);
+            process.nextTick(emitCloseNT, self);
           },
           callback,
           this,
         );
       } else {
         this.emit("finish");
-        process.nextTick(function (self) {
-          if (!self[closedSymbol]) {
-            self[closedSymbol] = true;
-            if (!self.destroyed) {
-              self.destroy();
-            }
-            self.emit("close");
-          }
-        }, this);
+
+        process.nextTick(emitCloseNT, this);
       }
     }
 
@@ -1818,7 +1852,7 @@ const ServerResponsePrototype = {
     }
 
     if (this.finished) {
-      emitErrorNextTick(this, $ERR_STREAM_WRITE_AFTER_END("Stream is already finished"), callback);
+      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Stream is already finished"), callback);
       return false;
     }
 
@@ -1860,6 +1894,15 @@ const ServerResponsePrototype = {
 
   _finish() {
     OutgoingMessage.prototype._finish.$call(this);
+  },
+
+  detachSocket(socket) {
+    if (socket._httpMessage === this) {
+      socket.removeListener("close", onServerResponseClose);
+      socket._httpMessage = null;
+    }
+
+    this.socket = null;
   },
 
   _implicitHeader() {
@@ -1919,7 +1962,7 @@ const ServerResponsePrototype = {
       throw ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
-    socket.once("close", () => onServerResponseClose.$call(socket));
+    socket.once("close", onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);
   },
@@ -2219,7 +2262,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
 
     if (chunk) {
       if (this[finishedSymbol]) {
-        emitErrorNextTick(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
+        emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
         return this;
       }
 
@@ -3043,14 +3086,22 @@ function onError(self, error, cb) {
   if ($isCallable(cb)) {
     cb(error);
   }
-
-  if (typeof self.emit === "function" && !self._closed) {
-    self.emit("error", error);
-  }
 }
 
-function emitErrorNextTick(self, err, cb) {
-  process.nextTick(onError, self, err, cb);
+function emitErrorNextTickIfErrorListenerNT(self, err, cb) {
+  process.nextTick(emitErrorNextTickIfErrorListener, self, err, cb);
+}
+
+function emitErrorNextTickIfErrorListener(self, err, cb) {
+  if ($isCallable(cb)) {
+    // This is to keep backward compatible behavior.
+    // An error is emitted only if there are listeners attached to the event.
+    if (self.listenerCount("error") == 0) {
+      cb();
+    } else {
+      cb(err);
+    }
+  }
 }
 
 function emitAbortNextTick(self) {

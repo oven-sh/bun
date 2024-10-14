@@ -3951,6 +3951,12 @@ comptime {
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
 }
 
+pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } {
+    bun.assert(mid <= slice.len);
+
+    return .{ slice[0..mid], slice[mid..] };
+}
+
 /// Reverse of the slice index operator.
 /// Given `&slice[index] == item`, returns the `index` needed.
 /// The item must be in the slice.

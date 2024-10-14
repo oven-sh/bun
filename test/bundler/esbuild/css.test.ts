@@ -21,12 +21,46 @@ describe('bundler', () => {
       api.expectFile('/out.js').toEqualIgnoringWhitespace(`
 /* entry.css */
 body {
-        background: white;
+        background: #fff;
         color: #000;
 }`)
     },
   });
 
+  itBundled("css/CSSEntryPointEmpty", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `\n`,
+    },
+    outfile: '/out.js',
+    onAfterBundle(api) {
+      api.expectFile('/out.js').toEqualIgnoringWhitespace(`
+/* entry.css */`)
+    },
+  });
+
+  itBundled("css/CSSNesting", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `
+body {
+	h1 {
+		color: white;
+	}
+}`,
+    },
+    outfile: '/out.js',
+    onAfterBundle(api) {
+      api.expectFile('/out.js').toEqualIgnoringWhitespace(`
+/* entry.css */
+body {
+	&h1 {
+		color: #fff;
+	}
+}
+`)
+    },
+  });
 
   itBundled("css/CSSAtImportMissing", {
     experimentalCss: true,

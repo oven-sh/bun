@@ -11,8 +11,18 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { access, mkdir, readlink, rm, writeFile, cp, stat } from "fs/promises";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  tempDirWithFiles,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+  runBunInstall,
+  isWindows,
+} from "harness";
 import { join, sep } from "path";
 import {
   dummyAfterAll,
@@ -8183,6 +8193,31 @@ describe("Registry URLs", () => {
 
     expect(await exited).toBe(0);
   });
+});
+
+it("should ensure read permissions of all extracted files", async () => {
+  await Promise.all([
+    cp(join(import.meta.dir, "pkg-only-owner-2.2.2.tgz"), join(package_dir, "pkg-only-owner-2.2.2.tgz")),
+    writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "pkg-only-owner": "file:pkg-only-owner-2.2.2.tgz",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, package_dir);
+
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o666).toBe(
+    isWindows ? 0o666 : 0o644,
+  );
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o666).toBe(
+    isWindows ? 0o666 : 0o644,
+  );
 });
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {

@@ -3185,6 +3185,19 @@ pub const ParseTask = struct {
 
     threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
 
+    fn getEmptyCSSAST(
+        log: *Logger.Log,
+        bundler: *Bundler,
+        opts: js_parser.Parser.Options,
+        allocator: std.mem.Allocator,
+        source: Logger.Source,
+    ) !JSAst {
+        const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+        var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
+        ast.css = bun.create(allocator, bun.css.BundlerStyleSheet, bun.css.BundlerStyleSheet.empty(allocator));
+        return ast;
+    }
+
     fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
         const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
         return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
@@ -3241,7 +3254,7 @@ pub const ParseTask = struct {
                     .data = source.contents,
                 }, Logger.Loc{ .start = 0 });
                 var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-                ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, "text/plain");
+                ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, "text/plain", null);
                 return ast;
             },
 
@@ -3309,6 +3322,7 @@ pub const ParseTask = struct {
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .napi => {
+                // (dap-eval-cb "source.contents.ptr")
                 if (bundler.options.target == .browser) {
                     log.addError(
                         null,
@@ -3345,7 +3359,7 @@ pub const ParseTask = struct {
                     const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
-                    const css_ast =
+                    var css_ast =
                         switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
                         allocator,
                         source_code,
@@ -3354,10 +3368,17 @@ pub const ParseTask = struct {
                     )) {
                         .result => |v| v,
                         .err => |e| {
-                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{}", .{e.kind}) catch unreachable;
+                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
                             return error.SyntaxError;
                         },
                     };
+                    if (css_ast.minify(allocator, bun.css.MinifyOptions{
+                        .targets = .{},
+                        .unused_symbols = .{},
+                    }).asErr()) |e| {
+                        log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
+                        return error.MinifyError;
+                    }
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
                     var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
                     ast.css = css_ast_heap;
@@ -3373,7 +3394,8 @@ pub const ParseTask = struct {
         }, Logger.Loc{ .start = 0 });
         unique_key_for_additional_file.* = unique_key;
         var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
-        ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, null);
+        ast.url_for_css = unique_key;
+        ast.addUrlForCss(allocator, bundler.options.experimental_css, &source, null, unique_key);
         return ast;
     }
 
@@ -3556,7 +3578,13 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, bundler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| try getEmptyAST(
+            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
+                log,
+                bundler,
+                opts,
+                allocator,
+                source,
+            ) else try getEmptyAST(
                 log,
                 bundler,
                 opts,
@@ -6173,7 +6201,9 @@ pub const LinkerContext = struct {
                         if (record.source_index.isValid()) {
                             // Other file is not CSS
                             if (css_asts[record.source_index.get()] == null) {
-                                record.path.text = urls_for_css[record.source_index.get()];
+                                if (urls_for_css[record.source_index.get()]) |url| {
+                                    record.path.text = url;
+                                }
                             }
                         }
                         // else if (record.copy_source_index.isValid()) {}
@@ -8535,7 +8565,7 @@ pub const LinkerContext = struct {
             if (item.layer) |l| {
                 if (l.v) |layer| {
                     if (ast.rules.v.items.len == 0) {
-                        if (layer.v.items.len == 0) {
+                        if (layer.v.isEmpty()) {
                             // Omit an empty "@layer {}" entirely
                             continue;
                         } else {

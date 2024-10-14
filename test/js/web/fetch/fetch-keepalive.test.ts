@@ -20,7 +20,6 @@ test("keepalive", async () => {
       keepalive: true,
     });
     const headers = await res.json();
-    console.log(headers);
     expect(headers.connection).toBe("keep-alive");
   }
 

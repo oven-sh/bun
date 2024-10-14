@@ -560,32 +560,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionFork, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::Strong<JSC::JSObject> strongCallback(vm, callFrame->argument(0).getObject());
-
-    globalObject->scriptExecutionContext()->postTask([strongCallback = WTFMove(strongCallback)](auto& context) {
-        auto pid = fork();
-        if (pid > 0) {
-            waitpid(pid, nullptr, 0);
-        }
-        printf("post-fork%d\n", pid);
-        auto* function = strongCallback.get();
-        auto* globalObject = context.globalObject();
-        JSC::MarkedArgumentBuffer arguments;
-        arguments.append(jsNumber(pid));
-        WTF::NakedPtr<JSC::Exception> exception;
-        JSC::call(globalObject, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
-        if (UNLIKELY(exception)) {
-        }
-    });
-
-    return JSValue::encode(jsUndefined());
-}
-
 /* Source for BunObject.lut.h
 @begin bunObjectTable
     $                                              constructBunShell                                                   ReadOnly|DontDelete|PropertyCallback
@@ -615,7 +589,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFork, (JSC::JSGlobalObject * lexicalGlobalObjec
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
-    fork                                           functionFork                                                        DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback

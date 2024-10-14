@@ -19,9 +19,9 @@ export const enum LoadModuleType {
 
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
- * non-standard properties that are used for implementing hot-module
- * reloading. It is unacceptable to depend on these properties, and
- * it will not be considered a breaking change.
+ * non-standard properties that are used for implementing hot-module reloading.
+ * It is unacceptable for users to depend on these properties, and it will not
+ * be considered a breaking change when these internals are altered.
  */
 export class HotModule<E = any> {
   id: Id;

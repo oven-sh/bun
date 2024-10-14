@@ -1520,7 +1520,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             .action = .view_trace,
             .reason = .{ .zig_error = error.DumpStackTrace },
             .trace = &trace,
-        }});
+        }}) catch {};
         return;
     }
 

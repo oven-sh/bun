@@ -2727,6 +2727,18 @@ fn NewLexer_(
 
             if (lexer.token != token) {
                 try lexer.expected(token);
+                return Error.SyntaxError;
+            }
+
+            try lexer.nextInsideJSXElement();
+        }
+
+        pub fn expectInsideJSXElementWithName(lexer: *LexerType, token: T, name: string) !void {
+            lexer.assertNotJSON();
+
+            if (lexer.token != token) {
+                try lexer.expectedString(name);
+                return Error.SyntaxError;
             }
 
             try lexer.nextInsideJSXElement();

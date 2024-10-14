@@ -548,7 +548,7 @@ const JSXTag = struct {
         // The tag is an identifier
         var name = p.lexer.identifier;
         var tag_range = p.lexer.range();
-        try p.lexer.expectInsideJSXElement(.t_identifier);
+        try p.lexer.expectInsideJSXElementWithName(.t_identifier, "JSX element name");
 
         // Certain identifiers are strings
         // <div
@@ -15793,10 +15793,19 @@ fn NewParser_(
                         const end_tag = try JSXTag.parse(P, p);
 
                         if (!strings.eql(end_tag.name, tag.name)) {
-                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag \\</{s}\\> to match opening tag \\<{s}\\>", .{
-                                end_tag.name,
-                                tag.name,
-                            });
+                            try p.log.addRangeErrorFmtWithNote(
+                                p.source,
+                                end_tag.range,
+                                p.allocator,
+                                "Expected closing tag \\</{s}\\> to match opening tag \\<{s}\\>",
+                                .{
+                                    end_tag.name,
+                                    tag.name,
+                                },
+                                "Starting tag here",
+                                .{},
+                                tag.range,
+                            );
                             return error.SyntaxError;
                         }
 

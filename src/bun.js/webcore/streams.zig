@@ -1762,12 +1762,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    .ERR_MISSING_ARGS,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
+                globalThis.ERR_STREAM_NULL_VALUES(
+                    "Expected a string, ArrayBufferView, or ArrayBuffer. Received undefined",
                     .{},
-                    globalThis,
-                ));
+                ).throw();
                 return .undefined;
             }
 
@@ -1776,12 +1774,12 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             defer arg.ensureStillAlive();
 
             if (arg.isEmptyOrUndefinedOrNull()) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    .ERR_STREAM_NULL_VALUES,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    .{},
-                    globalThis,
-                ));
+                const name_to_display = arg.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
+                defer name_to_display.deinit();
+                globalThis.ERR_STREAM_NULL_VALUES(
+                    "Expected a string, ArrayBufferView, or ArrayBuffer. Received \"{s}\"",
+                    .{name_to_display.slice()},
+                ).throw();
                 return .undefined;
             }
 
@@ -1795,12 +1793,12 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             if (!arg.isString()) {
-                globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    .ERR_INVALID_ARG_TYPE,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
-                    .{},
-                    globalThis,
-                ));
+                globalThis.ERR_INVALID_ARG_TYPE(
+                    "Expected a string, ArrayBufferView, or ArrayBuffer. Received \"{}\"",
+                    .{
+                        arg.jsTypeString(globalThis).getZigString(globalThis),
+                    },
+                ).throw();
                 return .undefined;
             }
 

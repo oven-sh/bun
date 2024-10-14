@@ -55,8 +55,8 @@ DEFINE_NATIVE_MODULE(NodeProcess) {
   if (scope.exception())
     return;
 
-  exportNames.append(vm.propertyNames->defaultKeyword);
-  exportValues.append(process);
+  bool hasDefaultKeyword = false;
+  const Identifier &defaultKeyword = vm.propertyNames->defaultKeyword;
 
   for (auto &entry : properties) {
     exportNames.append(entry);
@@ -68,6 +68,15 @@ DEFINE_NATIVE_MODULE(NodeProcess) {
     }
 
     exportValues.append(result);
+
+    if (entry == defaultKeyword) {
+      hasDefaultKeyword = true;
+    }
+  }
+
+  if (!hasDefaultKeyword) {
+    exportNames.append(defaultKeyword);
+    exportValues.append(process);
   }
 }
 

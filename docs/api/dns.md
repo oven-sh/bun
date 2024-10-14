@@ -14,7 +14,7 @@ In Bun v1.1.9, we added support for DNS caching. This cache makes repeated conne
 
 At the time of writing, we cache up to 255 entries for a maximum of 30 seconds (each). If any connections to a host fail, we remove the entry from the cache. When multiple connections are made to the same host simultaneously, DNS lookups are deduplicated to avoid making multiple requests for the same host.
 
-This cache is automatically used by;
+This cache is automatically used by:
 
 - `bun install`
 - `fetch()`
@@ -99,7 +99,7 @@ console.log(stats);
 
 ### Configuring DNS cache TTL
 
-Bun defaults to 30 seconds for the TTL of DNS cache entries. To change this, you can set the envionrment variable `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS`. For example, to set the TTL to 5 seconds:
+Bun defaults to 30 seconds for the TTL of DNS cache entries. To change this, you can set the environment variable `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS`. For example, to set the TTL to 5 seconds:
 
 ```sh
 BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts

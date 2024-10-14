@@ -578,3 +578,87 @@ test("Error.prepareStackTrace returns a CallSite object", () => {
   expect(error.stack[0]).not.toBeString();
   expect(error.stack[0][Symbol.toStringTag]).toBe("CallSite");
 });
+
+test("Error.captureStackTrace updates the stack property each call, even if Error.prepareStackTrace is set", () => {
+  const prevPrepareStackTrace = Error.prepareStackTrace;
+  var didCallPrepareStackTrace = false;
+
+  let error = new Error();
+  const firstStack = error.stack;
+  Error.prepareStackTrace = function (err, stack) {
+    didCallPrepareStackTrace = true;
+    return stack;
+  };
+  function outer() {
+    inner();
+  }
+  function inner() {
+    Error.captureStackTrace(error);
+  }
+  outer();
+  const secondStack = error.stack;
+  expect(firstStack).not.toBe(secondStack);
+  expect(firstStack).toBeString();
+  expect(firstStack).not.toContain("outer");
+  expect(firstStack).not.toContain("inner");
+  expect(didCallPrepareStackTrace).toBe(true);
+  expect(secondStack.find(a => a.getFunctionName() === "outer")).toBeTruthy();
+  expect(secondStack.find(a => a.getFunctionName() === "inner")).toBeTruthy();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("Error.captureStackTrace updates the stack property each call", () => {
+  let error = new Error();
+  const firstStack = error.stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    Error.captureStackTrace(error);
+  }
+  outer();
+  const secondStack = error.stack;
+  expect(firstStack).not.toBe(secondStack);
+  expect(firstStack.length).toBeLessThan(secondStack.length);
+  expect(firstStack).not.toContain("outer");
+  expect(firstStack).not.toContain("inner");
+  expect(secondStack).toContain("outer");
+  expect(secondStack).toContain("inner");
+});
+
+test("calling .stack later uses the stored StackTrace", function hey() {
+  let error = new Error();
+  let stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    stack = error.stack;
+  }
+  outer();
+
+  expect(stack).not.toContain("outer");
+  expect(stack).not.toContain("inner");
+  expect(stack).toContain("hey");
+});
+
+test("calling .stack on a non-materialized Error updates the stack properly", function hey() {
+  let error = new Error();
+  let stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    stack = error.stack;
+  }
+  function wrapped() {
+    Error.captureStackTrace(error);
+  }
+  wrapped();
+  outer();
+
+  expect(stack).not.toContain("outer");
+  expect(stack).not.toContain("inner");
+  expect(stack).toContain("hey");
+  expect(stack).toContain("wrapped");
+});

@@ -584,6 +584,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 

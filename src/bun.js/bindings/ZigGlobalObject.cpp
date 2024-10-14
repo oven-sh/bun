@@ -276,11 +276,6 @@ extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
-// Error.captureStackTrace may cause computeErrorInfo to be called twice
-// Rather than figure out the plumbing in JSC, we just skip the next call
-// TODO: thread_local for workers
-static bool skipNextComputeErrorInfo = false;
-
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -315,23 +310,6 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
             sb.append("\n"_s);
         }
     }
-
-    bool originalSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
-    skipNextComputeErrorInfo = true;
-    RETURN_IF_EXCEPTION(scope, {});
-    if (auto* errorInstance = JSC::jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        if (errorInstance->hasMaterializedErrorInfo()) {
-            errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
-        }
-    } else {
-        if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
-            skipNextComputeErrorInfo = true;
-            errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
-        }
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-
-    skipNextComputeErrorInfo = originalSkipNextComputeErrorInfo;
 
     return jsString(vm, sb.toString());
 }
@@ -720,9 +698,6 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
 static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
 {
-    if (skipNextComputeErrorInfo) {
-        return String();
-    }
 
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
@@ -772,10 +747,6 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
 
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
-    if (skipNextComputeErrorInfo) {
-        return jsUndefined();
-    }
-
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
@@ -2674,6 +2645,44 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     return JSC::JSValue::encode(result);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* errorObject = jsDynamicCast<ErrorInstance*>(JSValue::decode(thisValue));
+
+    // This shouldn't be possible.
+    if (!errorObject) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    OrdinalNumber line;
+    OrdinalNumber column;
+    String sourceURL;
+    auto stackTrace = errorObject->stackTrace();
+    if (stackTrace == nullptr) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject);
+    stackTrace->clear();
+    errorObject->setStackFrames(vm, {});
+    RETURN_IF_EXCEPTION(scope, {});
+    errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
+{
+    auto& vm = globalObject->vm();
+    JSValue decodedValue = JSValue::decode(thisValue);
+    if (auto* object = decodedValue.getObject()) {
+        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), 0);
+    }
+
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
@@ -2698,6 +2707,17 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
         instance->setStackFrames(vm, WTFMove(stackTrace));
+        if (instance->hasMaterializedErrorInfo()) {
+            const auto& propertyName = vm.propertyNames->stack;
+            VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+            DeletePropertySlot slot;
+            JSObject::deleteProperty(instance, globalObject, propertyName, slot);
+            if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
+                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
+            } else {
+                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+            }
+        }
     } else {
         OrdinalNumber line;
         OrdinalNumber column;
@@ -2719,6 +2739,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
+
+    m_lazyStackCustomGetterSetter.initLater(
+        [](const Initializer<CustomGetterSetter>& init) {
+            init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
+        });
 
     m_JSDOMFileConstructor.initLater(
         [](const Initializer<JSObject>& init) {
@@ -3665,6 +3690,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
+    thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);

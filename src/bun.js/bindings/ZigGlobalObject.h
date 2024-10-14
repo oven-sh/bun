@@ -373,6 +373,7 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    bool isInsideErrorPrepareStackTraceCallback = false;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

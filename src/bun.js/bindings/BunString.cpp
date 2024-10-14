@@ -222,7 +222,7 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
 }
 
-extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
+extern "C" BunString BunString__fromUTF16Uninitialized(size_t length)
 {
     ASSERT(length > 0);
     UChar* ptr;
@@ -233,7 +233,7 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
+extern "C" BunString BunString__fromLatin1Uninitialized(size_t length)
 {
     ASSERT(length > 0);
     LChar* ptr;

@@ -361,7 +361,9 @@ pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length
         return .ok;
     }
 
-    var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
+    var string, const bytes = bun.String.createUninitialized(.latin1, slice.len) catch {
+        return .generic_failure;
+    };
     defer string.deref();
 
     @memcpy(bytes, slice);
@@ -422,7 +424,9 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
         result.set(env, bun.String.empty.toJS(env));
     }
 
-    var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
+    var string, const chars = bun.String.createUninitialized(.utf16, slice.len) catch {
+        return .generic_failure;
+    };
     defer string.deref();
 
     @memcpy(chars, slice);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
   it("reports error instead of [native code]", () => {
@@ -9,6 +10,37 @@ describe("Bun.inspect", () => {
         },
       }),
     ).toBe("[custom formatter threw an exception]");
+  });
+
+  it("supports colors: false", () => {
+    const output = Bun.inspect({ a: 1 }, { colors: false });
+    expect(stripAnsi(output)).toBe(output);
+  });
+
+  it("supports colors: true", () => {
+    const output = Bun.inspect({ a: 1 }, { colors: true });
+    expect(stripAnsi(output)).not.toBe(output);
+    expect(stripAnsi(output)).toBe(Bun.inspect({ a: 1 }, { colors: false }));
+  });
+
+  it("supports colors: false, via 2nd arg", () => {
+    const output = Bun.inspect({ a: 1 }, null, null);
+    expect(stripAnsi(output)).toBe(output);
+  });
+
+  it("supports colors: true, via 2nd arg", () => {
+    const output = Bun.inspect({ a: 1 }, true, 2);
+    expect(stripAnsi(output)).not.toBe(output);
+  });
+
+  it("supports compact", () => {
+    expect(Bun.inspect({ a: 1, b: 2 }, { compact: true })).toBe("{ a: 1, b: 2 }");
+    expect(Bun.inspect({ a: 1, b: 2 }, { compact: false })).toBe("{\n  a: 1,\n  b: 2,\n}");
+
+    expect(Bun.inspect({ a: { 0: 1, 1: 2 }, b: 3 }, { compact: true })).toBe('{ a: { "0": 1, "1": 2 }, b: 3 }');
+    expect(Bun.inspect({ a: { 0: 1, 1: 2 }, b: 3 }, { compact: false })).toBe(
+      '{\n  a: {\n    "0": 1,\n    "1": 2,\n  },\n  b: 3,\n}',
+    );
   });
 
   it("depth < 0 throws", () => {

@@ -183,7 +183,14 @@ pub const TextSizeAdjust = union(enum) {
 };
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
-pub const Direction = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const Direction = enum {
+    /// This value sets inline base direction (bidi directionality) to line-left-to-line-right.
+    ltr,
+    /// This value sets inline base direction (bidi directionality) to line-right-to-line-left.
+    rtl,
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [unicode-bidi](https://drafts.csswg.org/css-writing-modes-3/#unicode-bidi) property.
 pub const UnicodeBidi = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));

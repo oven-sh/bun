@@ -449,7 +449,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 
     auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
     globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
-    globalObject->m_inspectorDebuggable = makeUnique<BunJSGlobalObjectDebuggable>(*globalObject);
+    globalObject->m_inspectorDebuggable = JSGlobalObjectDebuggable::create(*globalObject);
 
     globalObject->setInspectable(true);
 

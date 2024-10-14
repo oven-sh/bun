@@ -567,7 +567,7 @@ fn parseParenBlock(
 /// A [media feature](https://drafts.csswg.org/mediaqueries/#typedef-media-feature)
 pub const MediaFeature = QueryFeature(MediaFeatureId);
 
-const MediaFeatureId = enum {
+pub const MediaFeatureId = enum {
     /// The [width](https://w3c.github.io/csswg-drafts/mediaqueries-5/#width) media feature.
     width,
     /// The [height](https://w3c.github.io/csswg-drafts/mediaqueries-5/#height) media feature.

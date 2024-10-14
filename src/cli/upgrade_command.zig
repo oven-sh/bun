@@ -133,7 +133,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init(&.{});
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -440,7 +440,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init(&.{});
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
@@ -559,7 +559,7 @@ pub const UpgradeCommand = struct {
                 else => return error.HTTPError,
             }
 
-            const bytes = zip_file_buffer.toOwnedSliceLeaky();
+            const bytes = zip_file_buffer.slice();
 
             progress.end();
             refresher.refresh();

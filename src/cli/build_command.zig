@@ -99,6 +99,7 @@ pub const BuildCommand = struct {
 
         this_bundler.options.banner = ctx.bundler_options.banner;
         this_bundler.options.footer = ctx.bundler_options.footer;
+        this_bundler.options.drop = ctx.args.drop;
 
         this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
 
@@ -236,10 +237,11 @@ pub const BuildCommand = struct {
                         allocator,
                         user_defines.keys,
                         user_defines.values,
-                    ), log, allocator)
+                    ), ctx.args.drop, log, allocator)
                 else
                     null,
                 null,
+                this_bundler.options.define.drop_debugger,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);

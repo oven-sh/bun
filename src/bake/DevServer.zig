@@ -746,8 +746,6 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         });
     }
 
-    try dev.indexFailures();
-
     const is_first_server_chunk = !dev.server_fetch_function_callback.has();
 
     if (dev.server_graph.current_chunk_len > 0) {
@@ -1146,11 +1144,20 @@ fn sendJavaScriptSource(code: []const u8, resp: *Response) void {
     resp.end(code, true); // TODO: You should never call res.end(huge buffer)
 }
 
+const ErrorPageKind = enum {
+    /// Modules failed to bundle
+    bundler,
+    /// Modules failed to evaluate
+    evaluation,
+    /// Request handler threw
+    runtime,
+};
+
 fn sendSerializedFailures(
     dev: *DevServer,
     resp: *Response,
     failures: []const SerializedFailure,
-    kind: enum { runtime, bundler, evaluation },
+    kind: ErrorPageKind,
 ) void {
     resp.writeStatus("500 Internal Server Error");
     resp.writeHeader("Content-Type", MimeType.html.value);
@@ -2973,6 +2980,8 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
 
     dev.incremental_result.reset();
     defer {
+        // Remove files last to start, to avoid issues where removing a file
+        // invalidates the last file index.
         std.sort.pdq(
             IncrementalGraph(.client).FileIndex,
             dev.incremental_result.delete_client_files_later.items,

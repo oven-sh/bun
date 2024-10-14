@@ -1621,7 +1621,7 @@ pub const StoredTrace = struct {
     }
 
     pub fn capture(begin: ?usize) StoredTrace {
-        var stored: StoredTrace = undefined;
+        var stored: StoredTrace = StoredTrace.empty;
         var frame = stored.trace();
         std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
         stored.index = frame.index;

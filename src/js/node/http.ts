@@ -1277,7 +1277,9 @@ const IncomingMessagePrototype = {
     if (nodeHTTPResponse) {
       this[kHandle] = undefined;
       nodeHTTPResponse.onabort = nodeHTTPResponse.ondata = undefined;
-      nodeHTTPResponse.abort();
+      if (!nodeHTTPResponse.finished) {
+        nodeHTTPResponse.abort();
+      }
       const socket = this.socket;
       if (socket && !socket.destroyed && this.aborted) {
         socket.destroy(err);

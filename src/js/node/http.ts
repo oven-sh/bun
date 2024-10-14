@@ -2228,6 +2228,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
   }
 
   #write(chunk, encoding, callback) {
+    const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
     const canSkipReEncodingData =
       // UTF-8 string:
       (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
@@ -2251,17 +2252,17 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
     // Signal fake backpressure if the body size is > 1024 * 1024
     // So that code which loops forever until backpressure is signaled
     // will eventually exit.
+
     for (let chunk of this.#bodyChunks) {
       bodySize += chunk.length;
-      if (bodySize > 1024 * 1024) {
+      if (bodySize > MAX_FAKE_BACKPRESSURE_SIZE) {
         break;
       }
     }
-
     this.#bodyChunks.push(chunk);
 
     if (callback) callback();
-    return bodySize < 128 * 1024;
+    return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
   }
 
   end(chunk, encoding, callback) {

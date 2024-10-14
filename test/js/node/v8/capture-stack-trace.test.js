@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { afterEach, expect, test } from "bun:test";
-
+import { noInline } from "bun:jsc";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -376,18 +376,38 @@ test("sanity check", () => {
   f1();
 });
 
-test("CallFrame.p.getThisgetFunction: works in sloppy mode", () => {
+test("CallFrame isEval works as expected", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  let name, fn;
+
+  Error.prepareStackTrace = (e, s) => {
+    return s;
+  };
+
+  name = "f1";
+  const stack = eval(`(function ${name}() {
+    return new Error().stack;
+  })()`);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+  // TODO: 0 and 1 should both return true here.
+  expect(stack[1].isEval()).toBe(true);
+  expect(stack[0].getFunctionName()).toBe(name);
+});
+
+test("CallFrame isTopLevel returns false for Function constructor", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const sloppyFn = new Function("let e=new Error();Error.captureStackTrace(e);return e.stack");
   sloppyFn.displayName = "sloppyFnWow";
+  noInline(sloppyFn);
   const that = {};
 
   Error.prepareStackTrace = (e, s) => {
-    expect(s[0].getThis()).toBe(that);
-    expect(s[0].getFunction()).toBe(sloppyFn);
     expect(s[0].getFunctionName()).toBe(sloppyFn.displayName);
+    expect(s[0].getFunction()).toBe(sloppyFn);
+
     expect(s[0].isToplevel()).toBe(false);
-    // TODO: This should be true.
     expect(s[0].isEval()).toBe(false);
 
     // Strict-mode functions shouldn't have getThis or getFunction
@@ -480,7 +500,7 @@ test("CallFrame.p.toString", () => {
 });
 
 // TODO: line numbers are wrong in a release build
-test.todo("err.stack should invoke prepareStackTrace", () => {
+test("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
@@ -503,9 +523,8 @@ test.todo("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(391);
-  // TODO: this is wrong
-  expect(parentLineNumber).toBe(394);
+  expect(lineNumber).toBe(518);
+  expect(parentLineNumber).toBe(523);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {

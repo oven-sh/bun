@@ -586,6 +586,7 @@ test("Error.captureStackTrace updates the stack property each call, even if Erro
   let error = new Error();
   const firstStack = error.stack;
   Error.prepareStackTrace = function (err, stack) {
+    expect(err.stack).not.toBe(firstStack);
     didCallPrepareStackTrace = true;
     return stack;
   };

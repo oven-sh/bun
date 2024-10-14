@@ -718,7 +718,7 @@ pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
-pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
         var value: ReturnType = undefined;
         var ran = false;
@@ -3929,6 +3929,12 @@ comptime {
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
 }
 
+pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } {
+    bun.assert(mid <= slice.len);
+
+    return .{ slice[0..mid], slice[mid..] };
+}
+
 /// Reverse of the slice index operator.
 /// Given `&slice[index] == item`, returns the `index` needed.
 /// The item must be in the slice.
@@ -3937,4 +3943,75 @@ pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T)
     const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
     const index = @divExact(offset, @sizeOf(T));
     return index;
+}
+
+pub fn getThreadCount() u16 {
+    const max_threads = 1024;
+    const min_threads = 2;
+    const ThreadCount = struct {
+        pub var cached_thread_count: u16 = 0;
+        var cached_thread_count_once = std.once(getThreadCountOnce);
+        fn getThreadCountFromUser() ?u16 {
+            inline for (.{ "UV_THREADPOOL_SIZE", "GOMAXPROCS" }) |envname| {
+                if (getenvZ(envname)) |env| {
+                    if (std.fmt.parseInt(u16, env, 10) catch null) |parsed| {
+                        if (parsed >= min_threads) {
+                            if (bun.logger.Log.default_log_level.atLeast(.debug)) {
+                                Output.note("Using {d} threads from {s}={d}", .{ parsed, envname, parsed });
+                                Output.flush();
+                            }
+                            return @min(parsed, max_threads);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+        fn getThreadCountOnce() void {
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+        }
+    };
+    ThreadCount.cached_thread_count_once.call();
+    return ThreadCount.cached_thread_count;
+}
+
+/// Copied from zig std. Modified to accept arguments.
+pub fn once(comptime f: anytype) Once(f) {
+    return Once(f){};
+}
+
+/// Copied from zig std. Modified to accept arguments.
+///
+/// An object that executes the function `f` just once.
+/// It is undefined behavior if `f` re-enters the same Once instance.
+pub fn Once(comptime f: anytype) type {
+    return struct {
+        done: bool = false,
+        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+
+        /// Call the function `f`.
+        /// If `call` is invoked multiple times `f` will be executed only the
+        /// first time.
+        /// The invocations are thread-safe.
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            if (@atomicLoad(bool, &self.done, .acquire))
+                return;
+
+            return self.callSlow(args);
+        }
+
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            @setCold(true);
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // The first thread to acquire the mutex gets to run the initializer
+            if (!self.done) {
+                @call(.auto, f, args);
+                @atomicStore(bool, &self.done, true, .release);
+            }
+        }
+    };
 }

@@ -6387,6 +6387,13 @@ pub fn withoutPrefixComptime(input: []const u8, comptime prefix: []const u8) []c
     return input;
 }
 
+pub fn withoutPrefixComptimeZ(input: [:0]const u8, comptime prefix: []const u8) [:0]const u8 {
+    if (hasPrefixComptime(input, prefix)) {
+        return input[prefix.len..];
+    }
+    return input;
+}
+
 pub fn withoutPrefixIfPossibleComptime(input: string, comptime prefix: string) ?string {
     if (hasPrefixComptime(input, prefix)) {
         return input[prefix.len..];

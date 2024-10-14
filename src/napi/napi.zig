@@ -296,29 +296,17 @@ pub export fn napi_create_array(env: napi_env, result_: ?*napi_value) napi_statu
     result.set(env, JSValue.createEmptyArray(env, 0));
     return .ok;
 }
-const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
-    var args: [128]JSC.JSValue = undefined;
-    for (args, 0..) |_, i| {
-        args[i] = JSValue.jsUndefined();
-    }
-    break :brk args;
-};
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result_: ?*napi_value) napi_status {
     log("napi_create_array_with_length", .{});
     const result = result_ orelse {
         return invalidArg();
     };
 
-    const len = @as(u32, @intCast(length));
+    // JSC createEmptyArray takes u32
+    // Node and V8 convert out-of-bounds array sizes to 0
+    const len = std.math.cast(u32, length) orelse 0;
 
     const array = JSC.JSValue.createEmptyArray(env, len);
-    array.ensureStillAlive();
-
-    var i: u32 = 0;
-    while (i < len) : (i += 1) {
-        array.putIndex(env, i, JSValue.jsUndefined());
-    }
-
     array.ensureStillAlive();
     result.set(env, array);
     return .ok;
@@ -448,42 +436,9 @@ pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
 pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status;
-pub export fn napi_get_value_int32(_: napi_env, value_: napi_value, result_: ?*i32) napi_status {
-    log("napi_get_value_int32", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(i32);
-    return .ok;
-}
-pub export fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status {
-    log("napi_get_value_uint32", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(u32);
-    return .ok;
-}
-pub export fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status {
-    log("napi_get_value_int64", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(i64);
-    return .ok;
-}
+pub extern fn napi_get_value_int32(_: napi_env, value_: napi_value, result: ?*i32) napi_status;
+pub extern fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status;
+pub extern fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status;
 pub export fn napi_get_value_bool(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_get_value_bool", .{});
     const result = result_ orelse {
@@ -822,7 +777,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
 // We don't want to fail to load the library because of that
 // so we instead return an error and warn the user
 fn notImplementedYet(comptime name: []const u8) void {
-    bun.once(
+    bun.onceUnsafe(
         struct {
             pub fn warn() void {
                 if (JSC.VirtualMachine.get().log.level.atLeast(.warn)) {

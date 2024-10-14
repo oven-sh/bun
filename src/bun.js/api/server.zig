@@ -443,6 +443,7 @@ pub const ServerConfig = struct {
         .tcp = .{},
     },
     idleTimeout: u8 = 10, //TODO: should we match websocket default idleTimeout of 120?
+    has_idleTimeout: bool = false,
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
     base_uri: string = "",
@@ -586,41 +587,39 @@ pub const ServerConfig = struct {
 
         const log = Output.scoped(.SSLConfig, false);
 
-        pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+        pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
             var ctx_opts: uws.us_bun_socket_context_options_t = .{};
 
-            if (this_) |ssl_config| {
-                if (ssl_config.key_file_name != null)
-                    ctx_opts.key_file_name = ssl_config.key_file_name;
-                if (ssl_config.cert_file_name != null)
-                    ctx_opts.cert_file_name = ssl_config.cert_file_name;
-                if (ssl_config.ca_file_name != null)
-                    ctx_opts.ca_file_name = ssl_config.ca_file_name;
-                if (ssl_config.dh_params_file_name != null)
-                    ctx_opts.dh_params_file_name = ssl_config.dh_params_file_name;
-                if (ssl_config.passphrase != null)
-                    ctx_opts.passphrase = ssl_config.passphrase;
-                ctx_opts.ssl_prefer_low_memory_usage = @intFromBool(ssl_config.low_memory_mode);
+            if (this.key_file_name != null)
+                ctx_opts.key_file_name = this.key_file_name;
+            if (this.cert_file_name != null)
+                ctx_opts.cert_file_name = this.cert_file_name;
+            if (this.ca_file_name != null)
+                ctx_opts.ca_file_name = this.ca_file_name;
+            if (this.dh_params_file_name != null)
+                ctx_opts.dh_params_file_name = this.dh_params_file_name;
+            if (this.passphrase != null)
+                ctx_opts.passphrase = this.passphrase;
+            ctx_opts.ssl_prefer_low_memory_usage = @intFromBool(this.low_memory_mode);
 
-                if (ssl_config.key) |key| {
-                    ctx_opts.key = key.ptr;
-                    ctx_opts.key_count = ssl_config.key_count;
-                }
-                if (ssl_config.cert) |cert| {
-                    ctx_opts.cert = cert.ptr;
-                    ctx_opts.cert_count = ssl_config.cert_count;
-                }
-                if (ssl_config.ca) |ca| {
-                    ctx_opts.ca = ca.ptr;
-                    ctx_opts.ca_count = ssl_config.ca_count;
-                }
-
-                if (ssl_config.ssl_ciphers != null) {
-                    ctx_opts.ssl_ciphers = ssl_config.ssl_ciphers;
-                }
-                ctx_opts.request_cert = ssl_config.request_cert;
-                ctx_opts.reject_unauthorized = ssl_config.reject_unauthorized;
+            if (this.key) |key| {
+                ctx_opts.key = key.ptr;
+                ctx_opts.key_count = this.key_count;
             }
+            if (this.cert) |cert| {
+                ctx_opts.cert = cert.ptr;
+                ctx_opts.cert_count = this.cert_count;
+            }
+            if (this.ca) |ca| {
+                ctx_opts.ca = ca.ptr;
+                ctx_opts.ca_count = this.ca_count;
+            }
+
+            if (this.ssl_ciphers != null) {
+                ctx_opts.ssl_ciphers = this.ssl_ciphers;
+            }
+            ctx_opts.request_cert = this.request_cert;
+            ctx_opts.reject_unauthorized = this.reject_unauthorized;
 
             return ctx_opts;
         }
@@ -1295,6 +1294,7 @@ pub const ServerConfig = struct {
 
                         return args;
                     }
+                    args.has_idleTimeout = true;
 
                     const idleTimeout: u64 = @intCast(@max(value.toInt64(), 0));
                     if (idleTimeout > 255) {
@@ -7799,6 +7799,27 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         else
             NodeHTTPServer__onRequest_http;
 
+        var did_send_idletimeout_warning_once = false;
+        fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
+            if (debug_mode and !did_send_idletimeout_warning_once) {
+                if (!bun.CLI.Command.get().debug.silent) {
+                    did_send_idletimeout_warning_once = true;
+                    Output.prettyErrorln("<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.", .{});
+                    Output.flush();
+                }
+            }
+        }
+
+        fn shouldAddTimeoutHandlerForWarning(server: *ThisServer) bool {
+            if (comptime debug_mode) {
+                if (!did_send_idletimeout_warning_once and !bun.CLI.Command.get().debug.silent) {
+                    return !server.config.has_idleTimeout;
+                }
+            }
+
+            return false;
+        }
+
         pub fn onRequest(
             this: *ThisServer,
             req: *uws.Request,
@@ -7816,6 +7837,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             req.setYield(false);
             resp.timeout(this.config.idleTimeout);
+
+            // Since we do timeouts by default, we should tell the user when
+            // this happens - but limit it to only warn once.
+            if (shouldAddTimeoutHandlerForWarning(this)) {
+                // We need to pass it a pointer, any pointer should do.
+                resp.onTimeout(*anyopaque, onTimeoutForIdleWarn, &did_send_idletimeout_warning_once);
+            }
 
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);

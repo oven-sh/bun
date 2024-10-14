@@ -457,7 +457,6 @@ _bun_run_completion() {
     script)
         curcontext="${curcontext%:*:*}:bun-grouped"
         _bun_run_param_script_completion
-
         ;;
     jsx-runtime)
         _alternative 'args:cmd3:((classic automatic))'
@@ -670,10 +669,25 @@ _bun() {
     case $state in
     cmd)
         local -a scripts_list
-        IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
-        scripts="scripts:scripts:(($scripts_list))"
-        IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
+        IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes z))
 
+        local -a formatted_scripts
+
+        for script in "${scripts_list[@]}"; do
+            if [[ "$script" =~ '^([^[:space:]]+)[[:space:]]+(.*)' ]]; then
+                key="${match[1]}"
+                value="${match[2]}"
+
+                value="${value#"${value%%[![:space:]]*}"}"
+                value="${value%"${value##*[![:space:]]}"}"
+
+                formatted_scripts+=("${key//:/\\:}:${value}")
+            fi
+        done
+
+        scripts="scripts:scripts:(($formatted_scripts))"
+        IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
+        
         main_commands=(
             'run\:"Run JavaScript with Bun, a package.json script, or a bin" '
             'test\:"Run unit tests with Bun" '
@@ -694,7 +708,8 @@ _bun() {
             'help\:"Show all supported flags and commands" '
         )
         main_commands=($main_commands)
-        _alternative "$scripts" "args:command:(($main_commands))" "files:files:(($files_list))"
+        _describe -t package-scripts "package scripts" formatted_scripts
+        _alternative "args:command:(($main_commands))" "files:files:(($files_list))"
 
         ;;
     args)
@@ -865,16 +880,29 @@ _bun_list_bunfig_toml() {
     # _alternative "files:file:_files -g '*.toml'"
     _files
 }
-
 _bun_run_param_script_completion() {
     local -a scripts_list
-    IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
+    IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes z))
 
-    _alternative "scripts:scripts:(($scripts_list))"
-    _alternative "bin:bin:(($bins))"
-    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
+    local -a formatted_scripts
+
+    for script in "${scripts_list[@]}"; do
+        if [[ "$script" =~ '^([^[:space:]]+)[[:space:]]+(.*)' ]]; then
+            key="${match[1]}"
+            value="${match[2]}"
+
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+
+            formatted_scripts+=("${key//:/\\:}:${value}")
+        fi
+    done
+
+
+    _describe -t package-scripts "package scripts" formatted_scripts
+    _alternative "files:file:_files -g '*.(js|ts)'"
 }
+
 
 _bun_link_param_package_completion() {
     # Read packages from ~/.bun/install/global/node_modules

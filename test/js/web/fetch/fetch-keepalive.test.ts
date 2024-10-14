@@ -12,7 +12,6 @@ test("keepalive", async () => {
       keepalive: false,
     });
     const headers = await res.json();
-    console.log(headers);
     expect(headers.connection).toBeUndefined();
   }
 

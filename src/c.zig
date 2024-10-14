@@ -114,7 +114,10 @@ pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: b
                 return;
             }
 
-            if (err.getErrno() == .XDEV) {
+            // https://github.com/oven-sh/bun/issues/13513
+            const is_windows_reporting_enoent_instead_of_xdev = Environment.isWindows and err.getErrno() == .ENOENT;
+
+            if (err.getErrno() == .XDEV or is_windows_reporting_enoent_instead_of_xdev) {
                 try moveFileZSlow(from_dir, filename, to_dir, destination);
             } else {
                 return bun.errnoToZigErr(err.errno);
@@ -135,7 +138,10 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
                 return;
             }
 
-            if (err.getErrno() == .XDEV) {
+            // https://github.com/oven-sh/bun/issues/13513
+            const is_windows_reporting_enoent_instead_of_xdev = Environment.isWindows and err.getErrno() == .ENOENT;
+
+            if (err.getErrno() == .XDEV or is_windows_reporting_enoent_instead_of_xdev) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = bun.sys.unlinkat(from_dir, filename);
             }

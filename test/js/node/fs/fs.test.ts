@@ -124,6 +124,12 @@ describe("FileHandle", () => {
     expect(await fd.read(buf, 0, 10, 0)).toEqual({ bytesRead: 10, buffer: buf });
   });
 
+  if("FileHandle#read handles 0 length reads", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const buf = Buffer.alloc(1);
+    expect(await fd.read(buf, 0, 0)).toEqual({ bytesRead: 0, buffer: buf });
+  });
+
   it("FileHandle#readv returns object", async () => {
     await using fd = await fs.promises.open(__filename);
     const buffers = [Buffer.alloc(10), Buffer.alloc(10)];

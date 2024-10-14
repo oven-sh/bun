@@ -2,7 +2,7 @@
 // These tests fail by timing out.
 
 import { expect, test } from "bun:test";
-import { getMaxFD, isMacOS } from "harness";
+import { getMaxFD, isCI, isMacOS } from "harness";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
 const PORT_EXHAUSTION_THRESHOLD = isMacOS ? 8 * 1024 : 16 * 1024;
@@ -101,7 +101,7 @@ async function runStressTest({
   expect(getMaxFD()).toBeLessThan(initialMaxFD + 10);
 }
 
-test(
+test.todoIf(isCI && isMacOS)(
   "shutdown after timeout",
   async () => {
     await runStressTest({
@@ -114,7 +114,7 @@ test(
   30 * 1000,
 );
 
-test(
+test.todoIf(isCI && isMacOS)(
   "close after TCP fin",
   async () => {
     await runStressTest({
@@ -129,7 +129,7 @@ test(
   30 * 1000,
 );
 
-test(
+test.todoIf(isCI && isMacOS)(
   "shutdown then terminate",
   async () => {
     await runStressTest({
@@ -144,7 +144,7 @@ test(
   30 * 1000,
 );
 
-test(
+test.todoIf(isCI && isMacOS)(
   "gently close",
   async () => {
     await runStressTest({

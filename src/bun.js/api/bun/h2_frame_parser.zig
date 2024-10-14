@@ -565,30 +565,19 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     strong_ctx: JSC.Strong = .{},
 
-    needs_drain: bool = false,
-
-    pub fn drainMicrotasks(this: *Handlers) void {
-        if (this.needs_drain) {
-            this.vm.eventLoop().drainMicrotasks();
-        }
-    }
-
     pub fn callEventHandler(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
             return false;
         }
 
-        _ = callback.call(this.globalObject, thisValue, data) catch |err|
-            this.globalObject.reportActiveExceptionAsUnhandled(err);
-        this.needs_drain = true;
+        this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
         return true;
     }
 
     pub fn callWriteCallback(this: *Handlers, callback: JSC.JSValue, data: []const JSValue) bool {
         if (!callback.isCallable(this.globalObject.vm())) return false;
-        // this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
-        this.globalObject.queueMicrotask(callback, data);
+        this.vm.eventLoop().runCallback(callback, this.globalObject, .undefined, data);
         return true;
     }
 
@@ -598,12 +587,7 @@ const Handlers = struct {
             return JSC.JSValue.zero;
         }
 
-        const result = callback.call(this.globalObject, thisValue, data) catch |err| {
-            this.globalObject.reportActiveExceptionAsUnhandled(err);
-            return .undefined;
-        };
-        this.needs_drain = true;
-        return result;
+        return this.vm.eventLoop().runCallbackWithResult(callback, this.globalObject, thisValue, data);
     }
 
     pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Handlers {
@@ -702,7 +686,7 @@ var CORK_BUFFER: [16386]u8 = undefined;
 var CORK_OFFSET: u16 = 0;
 var CORKED_H2: ?*H2FrameParser = null;
 
-const ENABLE_AUTO_CORK = false;
+const ENABLE_AUTO_CORK = true;
 const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
 
 var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
@@ -1238,7 +1222,6 @@ pub const H2FrameParser = struct {
 
     pub fn abortStream(this: *H2FrameParser, stream: *Stream, abortReason: JSC.JSValue) void {
         log("HTTP_FRAME_RST_STREAM id: {} code: CANCEL", .{stream.id});
-        defer this.handlers.drainMicrotasks();
 
         abortReason.ensureStillAlive();
         var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
@@ -1579,7 +1562,6 @@ pub const H2FrameParser = struct {
     pub fn flush(this: *H2FrameParser) usize {
         this.ref();
         defer this.unref();
-        defer this.handlers.drainMicrotasks();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -2480,7 +2462,6 @@ pub const H2FrameParser = struct {
         }
 
         const options = args_list.ptr[0];
-        defer this.handlers.drainMicrotasks();
 
         if (this.loadSettingsFromJSValue(globalObject, options)) {
             this.setSettings(this.localSettings);
@@ -2525,7 +2506,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("invalid errorCode", .{});
             return .zero;
         }
-        defer this.handlers.drainMicrotasks();
 
         var lastStreamID = this.lastStreamID;
         if (args_list.len >= 2) {
@@ -2573,7 +2553,6 @@ pub const H2FrameParser = struct {
         }
 
         if (args_list.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
-            defer this.handlers.drainMicrotasks();
             const slice = array_buffer.slice();
             this.sendPing(false, slice);
             return .undefined;
@@ -2713,7 +2692,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid priority", .{});
             return .zero;
         }
-        defer this.handlers.drainMicrotasks();
 
         var weight = stream.weight;
         var exclusive = stream.exclusive;
@@ -2813,7 +2791,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid ErrorCode", .{});
             return .zero;
         }
-        defer this.handlers.drainMicrotasks();
 
         const error_code = error_arg.toU32();
         if (error_code > 13) {
@@ -2964,7 +2941,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("Invalid stream id", .{});
             return .zero;
         };
-        defer this.handlers.drainMicrotasks();
 
         stream.waitForTrailers = false;
         this.sendData(stream, "", true, JSC.JSValue.jsUndefined());
@@ -3020,7 +2996,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected sensitiveHeaders to be an object", .{});
             return .zero;
         }
-        defer this.handlers.drainMicrotasks();
 
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
@@ -3191,7 +3166,6 @@ pub const H2FrameParser = struct {
             return .zero;
         };
         defer buffer.deinit();
-        defer this.handlers.drainMicrotasks();
 
         this.sendData(stream, buffer.slice(), close, callback_arg);
 
@@ -3224,7 +3198,6 @@ pub const H2FrameParser = struct {
 
     pub fn getNextStream(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
-        defer this.handlers.drainMicrotasks();
 
         const id = this.getNextStreamID();
         _ = this.handleReceivedStreamID(id) orelse {
@@ -3305,7 +3278,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected error argument", .{});
             return .undefined;
         }
-        defer this.handlers.drainMicrotasks();
 
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
@@ -3351,7 +3323,6 @@ pub const H2FrameParser = struct {
             globalObject.throw("Expected sensitiveHeaders to be an object", .{});
             return .zero;
         }
-        defer this.handlers.drainMicrotasks();
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
         var encoded_size: usize = 0;
@@ -3678,7 +3649,6 @@ pub const H2FrameParser = struct {
         }
         const buffer = args_list.ptr[0];
         buffer.ensureStillAlive();
-        defer this.handlers.drainMicrotasks();
         if (buffer.asArrayBuffer(globalObject)) |array_buffer| {
             var bytes = array_buffer.byteSlice();
             // read all the bytes
@@ -3696,7 +3666,6 @@ pub const H2FrameParser = struct {
         log("onNativeRead", .{});
         this.ref();
         defer this.unref();
-        defer this.handlers.drainMicrotasks();
         var bytes = data;
         while (bytes.len > 0) {
             const result = this.readBytes(bytes);

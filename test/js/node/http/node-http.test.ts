@@ -63,7 +63,7 @@ describe("node:http", () => {
     it("is not marked encrypted (#5867)", async () => {
       try {
         var server = createServer((req, res) => {
-          expect(req.connection.encrypted).toBe(undefined);
+          expect(req.connection.encrypted).toBe(false);
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end("Hello World");
         });
@@ -771,62 +771,73 @@ describe("node:http", () => {
       });
     });
 
-    it("request via http proxy, issue#4295", done => {
-      const proxyServer = createServer(function (req, res) {
-        let option = url.parse(req.url);
-        option.host = req.headers.host;
-        option.headers = req.headers;
+    it("request via http proxy, issue#4295", async () => {
+      const http = require("http");
+      const defer = Promise.withResolvers();
+      let wentThroughProxy = false;
 
-        const proxyRequest = request(option, function (proxyResponse) {
-          res.writeHead(proxyResponse.statusCode, proxyResponse.headers);
-          proxyResponse.on("data", function (chunk) {
-            res.write(chunk, "binary");
+      const proxyServer = http.createServer((req, res) => {
+        fetch("http://example.com/" + req.url, {
+          headers: {
+            "X-Bun": "true",
+          },
+        })
+          .then(response => {
+            response.body.pipeTo(
+              new WritableStream({
+                write(chunk) {
+                  res.write(chunk);
+                },
+                close() {
+                  res.end();
+                  wentThroughProxy = true;
+                },
+              }),
+            );
+          })
+          .catch(error => {
+            defer.reject(error);
           });
-          proxyResponse.on("end", function () {
-            res.end();
-          });
-        });
-        req.on("data", function (chunk) {
-          proxyRequest.write(chunk, "binary");
-        });
-        req.on("end", function () {
-          proxyRequest.end();
-        });
       });
 
-      proxyServer.listen({ port: 0 }, async (_err, hostname, port) => {
+      proxyServer.listen({ port: 0 }, () => {
         const options = {
           protocol: "http:",
-          hostname: hostname,
-          port: port,
-          path: "http://example.com",
+          hostname: "127.0.0.1",
+          port: proxyServer.address().port,
+          path: "http://example.com/something",
           headers: {
             Host: "example.com",
-            "accept-encoding": "identity",
           },
         };
 
-        const req = request(options, res => {
+        const req = http.request(options, res => {
           let data = "";
+
           res.on("data", chunk => {
             data += chunk;
           });
+
+          res.on("error", error => {
+            defer.reject(error);
+          });
+
           res.on("end", () => {
-            try {
-              expect(res.statusCode).toBe(200);
-              expect(data.length).toBeGreaterThan(0);
-              expect(data).toContain("This domain is for use in illustrative examples in documents");
-              done();
-            } catch (err) {
-              done(err);
-            }
+            defer.resolve(data);
           });
         });
-        req.on("error", err => {
-          done(err);
+
+        req.on("error", error => {
+          defer.reject(error);
         });
+
         req.end();
       });
+
+      const result = await defer.promise;
+      proxyServer.close();
+      expect(result.toLowerCase()).toStartWith(`<!doctype html>\n<html>\n<h`);
+      expect(wentThroughProxy).toBe(true);
     });
 
     it("should correctly stream a multi-chunk response #5320", async done => {
@@ -2374,14 +2385,17 @@ it("should emit timeout event when using server.setTimeout", async () => {
     let callBackCalled = false;
     server.setTimeout(1000, () => {
       callBackCalled = true;
+      console.log("Called timeout");
     });
-    fetch(`http://localhost:${server.address().port}`)
+
+    fetch(`http://localhost:${server.address().port}`, { verbose: true })
       .then(res => res.text())
-      .catch(() => {});
+      .catch(err => {
+        console.log(err);
+      });
 
     const [req, res] = await once(server, "request");
     expect(req.complete).toBe(false);
-
     await once(server, "timeout");
     expect(callBackCalled).toBe(true);
   } finally {

@@ -76,4 +76,5 @@ pub const Classes = struct {
     pub const TextEncoderStreamEncoder = JSC.WebCore.TextEncoderStreamEncoder;
     pub const NativeZlib = JSC.API.NativeZlib;
     pub const NativeBrotli = JSC.API.NativeBrotli;
+    pub const Navigator = JSC.API.Navigator;
 };

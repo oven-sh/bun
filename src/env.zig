@@ -79,7 +79,7 @@ pub const OperatingSystem = enum {
     });
 
     /// user-facing name with capitalization
-    pub fn displayString(self: OperatingSystem) []const u8 {
+    pub inline fn displayString(self: OperatingSystem) []const u8 {
         return switch (self) {
             .mac => "macOS",
             .linux => "Linux",
@@ -89,7 +89,7 @@ pub const OperatingSystem = enum {
     }
 
     /// same format as `process.platform`
-    pub fn nameString(self: OperatingSystem) []const u8 {
+    pub inline fn nameString(self: OperatingSystem) []const u8 {
         return switch (self) {
             .mac => "darwin",
             .linux => "linux",
@@ -98,7 +98,7 @@ pub const OperatingSystem = enum {
         };
     }
 
-    pub fn stdOSTag(self: OperatingSystem) std.Target.Os.Tag {
+    pub inline fn stdOSTag(self: OperatingSystem) std.Target.Os.Tag {
         return switch (self) {
             .mac => .macos,
             .linux => .linux,
@@ -108,7 +108,7 @@ pub const OperatingSystem = enum {
     }
 
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npmName(self: OperatingSystem) []const u8 {
+    pub inline fn npmName(self: OperatingSystem) []const u8 {
         return switch (self) {
             .mac => "darwin",
             .linux => "linux",
@@ -135,7 +135,7 @@ pub const Architecture = enum {
     wasm,
 
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npmName(this: Architecture) []const u8 {
+    pub inline fn npmName(this: Architecture) []const u8 {
         return switch (this) {
             .x64 => "x64",
             .arm64 => "aarch64",

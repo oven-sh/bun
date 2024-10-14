@@ -1,23 +1,23 @@
 //#FILE: test-http2-destroy-after-write.js
 //#SHA1: 193688397df0b891b9286ff825ca873935d30e04
 //-----------------
-'use strict';
+"use strict";
 
-const http2 = require('http2');
+const http2 = require("http2");
 
 let server;
 let port;
 
-beforeAll((done) => {
+beforeAll(done => {
   server = http2.createServer();
 
-  server.on('session', (session) => {
-    session.on('stream', (stream) => {
-      stream.on('end', function() {
+  server.on("session", session => {
+    session.on("stream", stream => {
+      stream.on("end", function () {
         this.respond({
-          ':status': 200
+          ":status": 200,
         });
-        this.write('foo');
+        this.write("foo");
         this.destroy();
       });
       stream.resume();
@@ -30,19 +30,19 @@ beforeAll((done) => {
   });
 });
 
-afterAll((done) => {
-  server.close(done);
+afterAll(() => {
+  server.close();
 });
 
-test('http2 destroy after write', (done) => {
+test("http2 destroy after write", done => {
   const client = http2.connect(`http://localhost:${port}`);
-  const stream = client.request({ ':method': 'POST' });
+  const stream = client.request({ ":method": "POST" });
 
-  stream.on('response', (headers) => {
-    expect(headers[':status']).toBe(200);
+  stream.on("response", headers => {
+    expect(headers[":status"]).toBe(200);
   });
 
-  stream.on('close', () => {
+  stream.on("close", () => {
     client.close();
     done();
   });

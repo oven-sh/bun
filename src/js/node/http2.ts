@@ -2241,10 +2241,14 @@ function emitConnectNT(self, socket) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
-    let error_instance = error;
+    let error_instance: Error | number | undefined = undefined;
     if (typeof error === "number") {
       stream.rstCode = error;
-      error_instance = streamErrorFromCode(error);
+      if (error != 0) {
+        error_instance = streamErrorFromCode(error);
+      }
+    } else {
+      error_instance = error;
     }
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
@@ -2697,9 +2701,9 @@ class ServerHttp2Session extends Http2Session {
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
-    } else {
-      this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
     }
+    this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+
     this[bunHTTP2Socket] = null;
 
     if (error) {
@@ -3155,9 +3159,8 @@ class ClientHttp2Session extends Http2Session {
     if (socket) {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
-    } else {
-      this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
     }
+    this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
 
     if (error) {

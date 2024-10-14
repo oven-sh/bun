@@ -1,3 +1,5 @@
+import { heapStats } from "bun:jsc";
+
 // This file is meant to be able to run in node and bun
 const http2 = require("http2");
 const { TLS_OPTIONS, nodeEchoServer } = require("./http2-helpers.cjs");
@@ -20,7 +22,8 @@ const sleep = dur => new Promise(resolve => setTimeout(resolve, dur));
 // X iterations should be enough to detect a leak
 const ITERATIONS = 20;
 // lets send a bigish payload
-const PAYLOAD = Buffer.from("BUN".repeat((1024 * 128) / 3));
+// const PAYLOAD = Buffer.from("BUN".repeat((1024 * 128) / 3));
+const PAYLOAD = Buffer.alloc(1024 * 128, "b");
 const MULTIPLEX = 50;
 
 async function main() {
@@ -84,23 +87,33 @@ async function main() {
 
   try {
     const startStats = getHeapStats();
-
     // warm up
     await runRequests(ITERATIONS);
+
+    console.error(heapStats());
     await sleep(10);
     gc(true);
-    await sleep(10);
-
     // take a baseline
     const baseline = process.memoryUsage.rss();
     console.error("Initial memory usage", (baseline / 1024 / 1024) | 0, "MB");
 
     // run requests
     await runRequests(ITERATIONS);
-    await sleep(10);
     gc(true);
-    await sleep(10);
-    gc(true);
+
+    for (let i = 0; i < 100; i++) {
+      const stats = getHeapStats();
+      console.error(
+        "rss",
+        baseline / 1024 / 1024,
+        process.memoryUsage.rss() / 1024 / 1024,
+        stats.H2FrameParser,
+        stats.TLSSocket,
+        stats.TCPSocket,
+      );
+      await sleep(50);
+      gc(true);
+    }
 
     // take an end snapshot
     const end = process.memoryUsage.rss();

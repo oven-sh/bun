@@ -2233,19 +2233,35 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
       (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
       // Buffer
       ($isTypedArrayView(chunk) && (!encoding || encoding === "buffer" || encoding === "utf-8"));
-
+    let bodySize = 0;
     if (!canSkipReEncodingData) {
       chunk = Buffer.from(chunk, encoding);
+      bodySize = chunk.length;
+    } else {
+      bodySize = chunk.length;
     }
 
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
+
       if (callback) callback();
       return true;
     }
+
+    // Signal fake backpressure if the body size is > 1024 * 1024
+    // So that code which loops forever until backpressure is signaled
+    // will eventually exit.
+    for (let chunk of this.#bodyChunks) {
+      bodySize += chunk.length;
+      if (bodySize > 1024 * 1024) {
+        break;
+      }
+    }
+
     this.#bodyChunks.push(chunk);
+
     if (callback) callback();
-    return true;
+    return bodySize < 128 * 1024;
   }
 
   end(chunk, encoding, callback) {

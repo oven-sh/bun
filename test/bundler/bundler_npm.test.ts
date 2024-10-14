@@ -57,8 +57,8 @@ describe("bundler", () => {
           "../entry.tsx",
         ],
         mappings: [
-          ["react.development.js:524:'getContextName'", "1:5428:YJ"],
-          ["react.development.js:2495:'actScopeDepth'", "1:26053:GZ++"],
+          ["react.development.js:524:'getContextName'", "1:5428:Y1"],
+          ["react.development.js:2495:'actScopeDepth'", "1:26053:GJ++"],
           ["react.development.js:696:''Component'", '1:7490:\'Component "%s"'],
           ["entry.tsx:6:'\"Content-Type\"'", '1:221655:"Content-Type"'],
           ["entry.tsx:11:'<html>'", "1:221911:void"],

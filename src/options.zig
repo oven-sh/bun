@@ -441,7 +441,7 @@ pub const Target = enum {
         };
     }
 
-    pub fn bakeRenderer(target: Target) bun.bake.Renderer {
+    pub fn bakeGraph(target: Target) bun.bake.Graph {
         return switch (target) {
             .browser => .client,
             .kit_server_components_ssr => .ssr,

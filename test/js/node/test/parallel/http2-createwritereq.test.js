@@ -46,8 +46,8 @@ describe("http2 createWriteReq", () => {
     });
   });
 
-  afterAll(done => {
-    server.close(done);
+  afterAll(() => {
+    server.close();
   });
 
   Object.keys(encodings).forEach(writeEncoding => {

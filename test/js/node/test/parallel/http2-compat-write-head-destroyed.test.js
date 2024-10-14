@@ -1,14 +1,14 @@
 //#FILE: test-http2-compat-write-head-destroyed.js
 //#SHA1: 29f693f49912d4621c1a19ab7412b1b318d55d8e
 //-----------------
-'use strict';
+"use strict";
 
-const http2 = require('http2');
+const http2 = require("http2");
 
 let server;
 let port;
 
-beforeAll((done) => {
+beforeAll(done => {
   if (!process.versions.openssl) {
     done();
     return;
@@ -19,8 +19,8 @@ beforeAll((done) => {
     req.stream.destroy();
 
     res.writeHead(200);
-    res.write('hello ');
-    res.end('world');
+    res.write("hello ");
+    res.end("world");
   });
 
   server.listen(0, () => {
@@ -29,28 +29,26 @@ beforeAll((done) => {
   });
 });
 
-afterAll((done) => {
+afterAll(() => {
   if (server) {
-    server.close(done);
-  } else {
-    done();
+    server.close();
   }
 });
 
-test('writeHead, write and end do not crash in compatibility mode', (done) => {
+test("writeHead, write and end do not crash in compatibility mode", done => {
   if (!process.versions.openssl) {
-    return test.skip('missing crypto');
+    return test.skip("missing crypto");
   }
 
   const client = http2.connect(`http://localhost:${port}`);
 
   const req = client.request();
-  
-  req.on('response', () => {
-    done.fail('Should not receive response');
+
+  req.on("response", () => {
+    done.fail("Should not receive response");
   });
 
-  req.on('close', () => {
+  req.on("close", () => {
     client.close();
     done();
   });

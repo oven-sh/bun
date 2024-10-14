@@ -21,6 +21,14 @@ pub const CustomMediaRule = struct {
 
     const This = @This();
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return This{
+            .name = this.name,
+            .query = this.query.deepClone(allocator),
+            .loc = this.loc,
+        };
+    }
+
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);

@@ -30,6 +30,10 @@ pub const DeclarationBlock = struct {
 
     const This = @This();
 
+    pub fn isEmpty(this: *const This) bool {
+        return this.declarations.items.len == 0 and this.important_declarations.items.len == 0;
+    }
+
     pub fn parse(input: *css.Parser, options: *const css.ParserOptions) Result(DeclarationBlock) {
         var important_declarations = DeclarationList{};
         var declarations = DeclarationList{};
@@ -112,6 +116,72 @@ pub const DeclarationBlock = struct {
         dest.dedent();
         try dest.newline();
         return dest.writeChar('}');
+    }
+
+    pub fn minify(
+        this: *This,
+        handler: *DeclarationHandler,
+        important_handler: *DeclarationHandler,
+        context: *css.PropertyHandlerContext,
+    ) void {
+        const handle = struct {
+            inline fn handle(
+                self: *This,
+                ctx: *css.PropertyHandlerContext,
+                hndlr: *DeclarationHandler,
+                comptime decl_field: []const u8,
+                comptime important: bool,
+            ) void {
+                for (@field(self, decl_field).items) |*prop| {
+                    ctx.is_important = important;
+
+                    const handled = hndlr.handleProperty(prop, ctx);
+
+                    if (!handled) {
+                        hndlr.decls.append(ctx.allocator, prop.*) catch bun.outOfMemory();
+                        // replacing with a property which does not require allocation
+                        // to "delete"
+                        prop.* = css.Property{ .all = .@"revert-layer" };
+                    }
+                }
+            }
+        }.handle;
+
+        handle(this, context, important_handler, "important_declarations", true);
+        handle(this, context, handler, "declarations", false);
+
+        handler.finalize(context);
+        important_handler.finalize(context);
+        var old_import = this.important_declarations;
+        var old_declarations = this.declarations;
+        this.important_declarations = .{};
+        this.declarations = .{};
+        defer {
+            old_import.deinit(context.allocator);
+            old_declarations.deinit(context.allocator);
+        }
+        this.important_declarations = important_handler.decls;
+        this.declarations = handler.decls;
+        important_handler.decls = .{};
+        handler.decls = .{};
+    }
+
+    pub fn hashPropertyIds(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        for (this.declarations.items) |*decl| {
+            decl.propertyId().hash(hasher);
+        }
+
+        for (this.important_declarations.items) |*decl| {
+            decl.propertyId().hash(hasher);
+        }
+    }
+
+    pub fn eql(this: *const This, other: *const This) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -230,7 +300,35 @@ pub fn parse_declaration(
 }
 
 pub const DeclarationHandler = struct {
+    direction: ?css.css_properties.text.Direction,
+    decls: DeclarationList,
+
+    pub fn finalize(this: *DeclarationHandler, context: *css.PropertyHandlerContext) void {
+        if (this.direction) |direction| {
+            this.direction = null;
+            this.decls.append(context.allocator, css.Property{ .direction = direction }) catch bun.outOfMemory();
+        }
+        // if (this.unicode_bidi) |unicode_bidi| {
+        //     this.unicode_bidi = null;
+        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch bun.outOfMemory();
+        // }
+
+        // TODO:
+        // this.background.finalize(&this.decls, context);
+    }
+
+    pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
+        _ = this; // autofix
+        _ = property; // autofix
+        _ = context; // autofix
+        // TODO
+        return false;
+    }
+
     pub fn default() DeclarationHandler {
-        return .{};
+        return .{
+            .decls = .{},
+            .direction = null,
+        };
     }
 };

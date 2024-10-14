@@ -3129,7 +3129,7 @@ pub const JSGlobalObject = opaque {
                 return ZigString.static(fmt).toErrorInstance(this);
 
             // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.initUTF8(buf.slice());
 
             return str.toErrorInstance(this);
         } else {
@@ -3148,7 +3148,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
             return ZigString.static(fmt).toTypeErrorInstance(this);
@@ -3162,7 +3162,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
             return ZigString.static(fmt).toSyntaxErrorInstance(this);
@@ -3176,7 +3176,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {
             return ZigString.static(fmt).toRangeErrorInstance(this);
@@ -4619,7 +4619,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         var writer = buf.writer();
         try writer.print(fmt, args);
-        return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
+        return String.init(buf.slice()).toJS(globalThis);
     }
 
     /// Create a JSValue string from a zig format-print (fmt + args), with pretty format
@@ -4633,7 +4633,7 @@ pub const JSValue = enum(JSValueReprInt) {
         switch (Output.enable_ansi_colors) {
             inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
         }
-        return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
+        return String.init(buf.slice()).toJS(globalThis);
     }
 
     pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
@@ -6504,6 +6504,10 @@ pub const CallFrame = opaque {
             }
 
             pub inline fn all(self: *const @This()) []const JSValue {
+                return self.ptr[0..];
+            }
+
+            pub inline fn mut(self: *@This()) []JSValue {
                 return self.ptr[0..];
             }
         };

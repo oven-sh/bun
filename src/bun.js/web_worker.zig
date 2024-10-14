@@ -331,7 +331,7 @@ pub const WebWorker = struct {
             bun.outOfMemory();
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
+        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
         if (vm.worker) |worker_| {
             _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);

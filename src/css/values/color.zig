@@ -87,6 +87,8 @@ pub const CssColor = union(enum) {
             allocator.destroy(this.light);
             return ret;
         }
+
+        pub fn __generateHash() void {}
     },
     /// A system color keyword.
     system: SystemColor,
@@ -94,6 +96,10 @@ pub const CssColor = union(enum) {
     const This = @This();
 
     pub const jsFunctionColor = @import("./color_js.zig").jsFunctionColor;
+
+    pub fn default() @This() {
+        return .{ .rgba = RGBA.transparent() };
+    }
 
     pub fn eql(this: *const This, other: *const This) bool {
         if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
@@ -107,6 +113,10 @@ pub const CssColor = union(enum) {
             .light_dark => this.light_dark.light.eql(other.light_dark.light) and this.light_dark.dark.eql(other.light_dark.dark),
             .system => this.system == other.system,
         };
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 
     pub fn toCss(
@@ -1344,6 +1354,10 @@ pub const RGBA = struct {
             .alpha = rgb.alphaF32(),
         };
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 fn clamp_unit_f32(val: f32) u8 {
@@ -1403,6 +1417,10 @@ pub const LABColor = union(enum) {
             .lab = LCH.new(l, a, b, alpha),
         };
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// A color in a predefined color space, e.g. `display-p3`.
@@ -1423,6 +1441,10 @@ pub const PredefinedColor = union(enum) {
     xyz_d50: XYZd50,
     /// A color in the `xyz-d65` color space.
     xyz_d65: XYZd65,
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// A floating point representation of color types that
@@ -1435,6 +1457,10 @@ pub const FloatColor = union(enum) {
     hsl: HSL,
     /// An HWB color.
     hwb: HWB,
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 /// A CSS [system color](https://drafts.csswg.org/css-color/#css-system-colors) keyword.
@@ -2962,6 +2988,10 @@ pub fn DefineColorspace(comptime T: type) type {
                 .light_dark => null,
                 .system => null,
             };
+        }
+
+        pub fn hash(this: *const T, hasher: *std.hash.Wyhash) void {
+            return css.implementHash(T, this, hasher);
         }
     };
 }

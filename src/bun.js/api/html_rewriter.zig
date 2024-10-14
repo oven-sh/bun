@@ -710,7 +710,7 @@ pub const HTMLRewriter = struct {
 
     //     pub fn done(this: *StreamOutputSink) void {
     //         var prev_value = this.response.body.value;
-    //         var bytes = this.bytes.toOwnedSliceLeaky();
+    //         var bytes = this.bytes.slice();
     //         this.response.body.value = .{
     //             .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
     //         };

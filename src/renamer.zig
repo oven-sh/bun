@@ -751,9 +751,9 @@ pub const NumberRenamer = struct {
                     mutable_name.appendSlice(prefix) catch unreachable;
                     mutable_name.appendInt(tries) catch unreachable;
 
-                    switch (NameUse.find(this, mutable_name.toOwnedSliceLeaky())) {
+                    switch (NameUse.find(this, mutable_name.slice())) {
                         .unused => {
-                            name = mutable_name.toOwnedSliceLeaky();
+                            name = mutable_name.slice();
 
                             if (use == .same_scope) {
                                 const existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
@@ -775,7 +775,7 @@ pub const NumberRenamer = struct {
 
                                 tries += 1;
 
-                                switch (NameUse.find(this, mutable_name.toOwnedSliceLeaky())) {
+                                switch (NameUse.find(this, mutable_name.slice())) {
                                     .unused => {
                                         if (cur_use == .same_scope) {
                                             const existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
@@ -790,7 +790,7 @@ pub const NumberRenamer = struct {
                                             existing.value_ptr.* = tries;
                                         }
 
-                                        name = mutable_name.toOwnedSliceLeaky();
+                                        name = mutable_name.slice();
                                         break;
                                     },
                                     else => {},
@@ -847,7 +847,7 @@ pub const ExportRenamer = struct {
                 var writer = this.string_buffer.writer();
                 writer.print("{s}{d}", .{ input, tries }) catch unreachable;
                 tries += 1;
-                const attempt = this.string_buffer.toOwnedSliceLeaky();
+                const attempt = this.string_buffer.slice();
                 entry = this.used.getOrPut(attempt) catch unreachable;
                 if (!entry.found_existing) {
                     const to_use = this.string_buffer.allocator.dupe(u8, attempt) catch unreachable;

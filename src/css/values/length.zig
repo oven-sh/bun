@@ -21,11 +21,19 @@ pub const LengthOrNumber = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn default() LengthOrNumber {
+        return .{ .number = 0.0 };
+    }
+
     pub fn eql(this: *const @This(), other: *const @This()) bool {
         return switch (this.*) {
             .number => |*n| n.* == other.number,
             .length => |*l| l.eql(&other.length),
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -36,6 +44,17 @@ pub const LengthPercentageOrAuto = union(enum) {
     auto,
     /// A [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage).
     length: LengthPercentage,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub inline fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 const PX_PER_IN: f32 = 96.0;
@@ -198,6 +217,19 @@ pub const LengthValue = union(enum) {
         return css.serializer.serializeDimension(value, unit, W, dest);
     }
 
+    pub fn isZero(this: *const LengthValue) bool {
+        inline for (bun.meta.EnumFields(@This())) |field| {
+            if (@intFromEnum(this.*) == field.value) {
+                return @field(this, field.name) == 0.0;
+            }
+        }
+        unreachable;
+    }
+
+    pub fn zero() LengthValue {
+        return .{ .px = 0.0 };
+    }
+
     /// Attempts to convert the value to pixels.
     /// Returns `None` if the conversion is not possible.
     pub fn toPx(this: *const @This()) ?CSSNumber {
@@ -350,6 +382,27 @@ pub const LengthValue = union(enum) {
         const b = this.toPx();
         if (a != null and b != null) {
             return op_fn(ctx, a.?, b.?);
+        }
+        return null;
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn tryAdd(this: *const LengthValue, _: std.mem.Allocator, rhs: *const LengthValue) ?LengthValue {
+        if (@intFromEnum(this.*) == @intFromEnum(rhs.*)) {
+            inline for (bun.meta.EnumFields(LengthValue)) |field| {
+                if (field.value == @intFromEnum(this.*)) {
+                    return @unionInit(LengthValue, field.name, @field(this, field.name) + @field(rhs, field.name));
+                }
+            }
+            unreachable;
+        }
+        if (this.toPx()) |a| {
+            if (rhs.toPx()) |b| {
+                return .{ .px = a + b };
+            }
         }
         return null;
     }

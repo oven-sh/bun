@@ -3436,6 +3436,65 @@ pub const Expr = struct {
         return if (asProperty(expr, name)) |query| query.expr else null;
     }
 
+    /// Don't use this if you care about performance.
+    ///
+    /// Sets the value of a property, creating it if it doesn't exist.
+    /// `expr` must be an object.
+    pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr) OOM!void {
+        bun.assertWithLocation(expr.isObject(), @src());
+        for (0..expr.data.e_object.properties.len) |i| {
+            const prop = &expr.data.e_object.properties.ptr[i];
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data.e_string.eql(string, name)) {
+                prop.value = value;
+                return;
+            }
+        }
+
+        var new_props = expr.data.e_object.properties.listManaged(allocator);
+        try new_props.append(.{
+            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .value = value,
+        });
+
+        expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
+    }
+
+    /// Don't use this if you care about performance.
+    ///
+    /// Sets the value of a property to a string, creating it if it doesn't exist.
+    /// `expr` must be an object.
+    pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value: string) OOM!void {
+        bun.assertWithLocation(expr.isObject(), @src());
+        for (0..expr.data.e_object.properties.len) |i| {
+            const prop = &expr.data.e_object.properties.ptr[i];
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data.e_string.eql(string, name)) {
+                prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
+                return;
+            }
+        }
+
+        var new_props = expr.data.e_object.properties.listManaged(allocator);
+        try new_props.append(.{
+            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
+        });
+
+        expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
+    }
+
+    pub fn getObject(expr: *const Expr, name: string) ?Expr {
+        if (expr.asProperty(name)) |query| {
+            if (query.expr.isObject()) {
+                return query.expr;
+            }
+        }
+        return null;
+    }
+
     pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
         if (asProperty(expr, name)) |q| {
             if (q.expr.asString(allocator)) |str| {
@@ -6994,7 +7053,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     css: ?*bun.css.BundlerStyleSheet = null,
-    url_for_css: []const u8 = "",
+    url_for_css: ?[]const u8 = null,
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7156,11 +7215,25 @@ pub const BundledAst = struct {
     }
 
     /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
-    pub fn addUrlForCss(this: *BundledAst, allocator: std.mem.Allocator, css_enabled: bool, source: *const logger.Source, mime_type_: ?[]const u8) void {
+    pub fn addUrlForCss(
+        this: *BundledAst,
+        allocator: std.mem.Allocator,
+        css_enabled: bool,
+        source: *const logger.Source,
+        mime_type_: ?[]const u8,
+        unique_key: ?[]const u8,
+    ) void {
         if (css_enabled) {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
             const contents = source.contents;
+            // TODO: make this configurable
+            const COPY_THRESHOLD = 128 * 1024; // 128kb
+            const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
             this.url_for_css = url_for_css: {
+                // Copy it
+                if (should_copy) break :url_for_css unique_key.?;
+
+                // Encode as base64
                 const encode_len = bun.base64.encodeLen(contents);
                 if (encode_len == 0) return;
                 const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;

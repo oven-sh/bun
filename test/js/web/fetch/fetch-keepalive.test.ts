@@ -33,7 +33,6 @@ test("keepalive", async () => {
       },
     });
     const headers = await res.json();
-    console.log(headers);
     expect(headers.connection).toBe("HELLO!");
   }
 });

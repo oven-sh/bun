@@ -2426,15 +2426,17 @@ class ServerHttp2Session extends Http2Session {
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
-      if (stream.readable) {
-        stream.rstCode = 0;
-        // If the user hasn't tried to consume the stream (and this is a server
-        // session) then just dump the incoming data so that the stream can
-        // be destroyed.
-        if (stream.readableFlowing === null) {
-          stream.resume();
+      if (state == 6 || state == 7) {
+        if (stream.readable) {
+          stream.rstCode = 0;
+          // If the user hasn't tried to consume the stream (and this is a server
+          // session) then just dump the incoming data so that the stream can
+          // be destroyed.
+          if (stream.readableFlowing === null) {
+            stream.resume();
+          }
+          pushToStream(stream, null);
         }
-        pushToStream(stream, null);
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
@@ -2834,12 +2836,15 @@ class ClientHttp2Session extends Http2Session {
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
-      if (stream.readable) {
-        stream.rstCode = 0;
-        // Push a null so the stream can end whenever the client consumes
-        // it completely.
-        pushToStream(stream, null);
-        stream.read(0);
+
+      if (state == 6 || state == 7) {
+        if (stream.readable) {
+          stream.rstCode = 0;
+          // Push a null so the stream can end whenever the client consumes
+          // it completely.
+          pushToStream(stream, null);
+          stream.read(0);
+        }
       }
 
       // 7 = closed, in this case we already send everything and received everything

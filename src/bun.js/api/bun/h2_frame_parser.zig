@@ -2118,7 +2118,6 @@ pub const H2FrameParser = struct {
                     }
                 }
                 this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-
             }
             return content.end;
         }

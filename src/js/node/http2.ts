@@ -283,6 +283,12 @@ function onStreamTrailersReady() {
   this.sendTrailers(this[kResponse][kTrailers]);
 }
 
+function onStreamFinishResponse() {
+  const res = this[kResponse];
+  if (res === undefined) return;
+
+  res.emit("finish");
+}
 function onStreamCloseResponse() {
   const res = this[kResponse];
 
@@ -296,7 +302,6 @@ function onStreamCloseResponse() {
 
   this.removeListener("wantTrailers", onStreamTrailersReady);
   this[kResponse] = undefined;
-  res.emit("finish");
   res.emit("close");
 }
 function onStreamCloseRequest() {
@@ -513,6 +518,7 @@ class Http2ServerResponse extends Stream {
     this.req = stream[kRequest];
     stream.on("drain", onStreamDrain);
     stream.on("close", onStreamCloseResponse);
+    stream.on("finish", onStreamFinishResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
     stream.on("timeout", onStreamTimeout);
   }
@@ -1787,9 +1793,8 @@ class Http2Stream extends Duplex {
   }
 
   setTimeout(timeout, callback) {
-    // per stream timeout not implemented yet
     const session = this[bunHTTP2Session];
-    assertSession(session);
+    if (!session) return;
     session.setTimeout(timeout, callback);
   }
 
@@ -2713,7 +2718,7 @@ class ServerHttp2Session extends Http2Session {
       socket.end();
     }
     this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
-
+    this.#parser = null;
     this[bunHTTP2Socket] = null;
 
     if (error) {
@@ -3170,6 +3175,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
+    this.#parser = null;
 
     if (error) {
       this.emit("error", error);

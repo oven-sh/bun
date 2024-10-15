@@ -1337,6 +1337,8 @@ fn NewSocket(comptime ssl: bool) type {
         native_callback: NativeCallbacks = .none,
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
+        pub const DEBUG_REFCOUNT_NAME = "Socket";
+
         // We use this direct callbacks on HTTP2 when available
         pub const NativeCallbacks = union(enum) {
             h2: *H2FrameParser,
@@ -1406,7 +1408,7 @@ fn NewSocket(comptime ssl: bool) type {
             switch (native_callback) {
                 .h2 => |h2| {
                     h2.onNativeClose();
-                    h2.unref();
+                    h2.deref();
                 },
                 .none => {},
             }

@@ -681,19 +681,21 @@ const Handlers = struct {
     }
 };
 
-const MAX_BUFFER_SIZE = 32768;
-var CORK_BUFFER: [16386]u8 = undefined;
-var CORK_OFFSET: u16 = 0;
-var CORKED_H2: ?*H2FrameParser = null;
-
-const ENABLE_AUTO_CORK = true;
-const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
-
-var h2frameparser_allocator = H2FrameParserHiveAllocator.init(bun.default_allocator);
-
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
+    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub const DEBUG_REFCOUNT_NAME = "H2";
+    const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
+    const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
+
+    const MAX_BUFFER_SIZE = 32768;
+    threadlocal var CORK_BUFFER: [16386]u8 = undefined;
+    threadlocal var CORK_OFFSET: u16 = 0;
+    threadlocal var CORKED_H2: ?*H2FrameParser = null;
+
+    const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
+    pub threadlocal var pool: if (ENABLE_ALLOCATOR_POOL) ?*H2FrameParserHiveAllocator else u0 = if (ENABLE_ALLOCATOR_POOL) null else 0;
 
     strong_ctx: JSC.Strong = .{},
     globalThis: *JSC.JSGlobalObject,
@@ -816,7 +818,7 @@ pub const H2FrameParser = struct {
 
             pub fn deinit(this: *SignalRef) void {
                 this.signal.detach(this);
-                this.parser.unref();
+                this.parser.deref();
                 this.destroy();
             }
         };
@@ -1561,7 +1563,7 @@ pub const H2FrameParser = struct {
 
     pub fn flush(this: *H2FrameParser) usize {
         this.ref();
-        defer this.unref();
+        defer this.deref();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -1601,7 +1603,7 @@ pub const H2FrameParser = struct {
 
     pub fn _write(this: *H2FrameParser, bytes: []const u8) bool {
         this.ref();
-        defer this.unref();
+        defer this.deref();
         return switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericWrite(*TLSSocket, socket, bytes),
             .tcp_writeonly, .tcp => |socket| this._genericWrite(*TCPSocket, socket, bytes),
@@ -1659,7 +1661,7 @@ pub const H2FrameParser = struct {
     fn onAutoUncork(this: *H2FrameParser) void {
         this.autouncork_registered = false;
         this.flushCorked();
-        this.unref();
+        this.deref();
     }
 
     pub fn write(this: *H2FrameParser, bytes: []const u8) bool {
@@ -2856,7 +2858,7 @@ pub const H2FrameParser = struct {
                     }
                 }
             }
-            this.unref();
+            this.deref();
         }
         const can_close = close and !stream.waitForTrailers;
         if (payload.len == 0) {
@@ -3665,7 +3667,7 @@ pub const H2FrameParser = struct {
     pub fn onNativeRead(this: *H2FrameParser, data: []const u8) void {
         log("onNativeRead", .{});
         this.ref();
-        defer this.unref();
+        defer this.deref();
         var bytes = data;
         while (bytes.len > 0) {
             const result = this.readBytes(bytes);
@@ -3693,21 +3695,23 @@ pub const H2FrameParser = struct {
         const socket_js = args_list.ptr[0];
         if (JSTLSSocket.fromJS(socket_js)) |socket| {
             log("TLSSocket attached", .{});
-            socket.ref();
             if (socket.attachNativeCallback(.{ .h2 = this })) {
                 this.native_socket = .{ .tls = socket };
             } else {
+                socket.ref();
+
                 this.native_socket = .{ .tls_writeonly = socket };
             }
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure = false;
         } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
             log("TCPSocket attached", .{});
-            socket.ref();
 
             if (socket.attachNativeCallback(.{ .h2 = this })) {
                 this.native_socket = .{ .tcp = socket };
             } else {
+                socket.ref();
+
                 this.native_socket = .{ .tcp_writeonly = socket };
             }
             // if we started with non native and go to native we now control the backpressure internally
@@ -3721,8 +3725,10 @@ pub const H2FrameParser = struct {
         const native_socket = this.native_socket;
 
         switch (native_socket) {
-            inline .tcp_writeonly, .tls_writeonly, .tcp, .tls => |socket| {
+            inline .tcp, .tls => |socket| {
                 socket.detachNativeCallback();
+            },
+            inline .tcp_writeonly, .tls_writeonly => |socket| {
                 socket.deref();
             },
             .none => {},
@@ -3756,38 +3762,62 @@ pub const H2FrameParser = struct {
             return null;
         };
 
-        const allocator = bun.default_allocator;
-        var this = h2frameparser_allocator.tryGet() catch bun.outOfMemory();
+        var this = brk: {
+            if (ENABLE_ALLOCATOR_POOL) {
+                if (H2FrameParser.pool == null) {
+                    H2FrameParser.pool = bun.default_allocator.create(H2FrameParser.H2FrameParserHiveAllocator) catch bun.outOfMemory();
+                    H2FrameParser.pool.?.* = H2FrameParser.H2FrameParserHiveAllocator.init(bun.default_allocator);
+                }
+                const self = H2FrameParser.pool.?.tryGet() catch bun.outOfMemory();
 
-        this.* = H2FrameParser{
-            .handlers = handlers,
-            .globalThis = globalObject,
-            .allocator = allocator,
-            .readBuffer = .{
-                .allocator = bun.default_allocator,
-                .list = .{
-                    .items = &.{},
-                    .capacity = 0,
-                },
-            },
-            .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                self.* = H2FrameParser{
+                    .handlers = handlers,
+                    .globalThis = globalObject,
+                    .allocator = bun.default_allocator,
+                    .readBuffer = .{
+                        .allocator = bun.default_allocator,
+                        .list = .{
+                            .items = &.{},
+                            .capacity = 0,
+                        },
+                    },
+                    .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                };
+                break :brk self;
+            } else {
+                break :brk H2FrameParser.new(.{
+                    .handlers = handlers,
+                    .globalThis = globalObject,
+                    .allocator = bun.default_allocator,
+                    .readBuffer = .{
+                        .allocator = bun.default_allocator,
+                        .list = .{
+                            .items = &.{},
+                            .capacity = 0,
+                        },
+                    },
+                    .streams = bun.U32HashMap(Stream).init(bun.default_allocator),
+                });
+            }
         };
         // check if socket is provided, and if it is a valid native socket
         if (options.get(globalObject, "native")) |socket_js| {
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
                 log("TLSSocket attached", .{});
-                socket.ref();
                 if (socket.attachNativeCallback(.{ .h2 = this })) {
                     this.native_socket = .{ .tls = socket };
                 } else {
+                    socket.ref();
+
                     this.native_socket = .{ .tls_writeonly = socket };
                 }
             } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
                 log("TCPSocket attached", .{});
-                socket.ref();
                 if (socket.attachNativeCallback(.{ .h2 = this })) {
                     this.native_socket = .{ .tcp = socket };
                 } else {
+                    socket.ref();
+
                     this.native_socket = .{ .tcp_writeonly = socket };
                 }
             }
@@ -3851,7 +3881,13 @@ pub const H2FrameParser = struct {
     pub fn deinit(this: *H2FrameParser) void {
         log("deinit", .{});
 
-        defer h2frameparser_allocator.put(this);
+        defer {
+            if (ENABLE_ALLOCATOR_POOL) {
+                H2FrameParser.pool.?.put(this);
+            } else {
+                this.destroy();
+            }
+        }
         this.detachNativeSocket();
         this.strong_ctx.deinit();
         this.handlers.deinit();
@@ -3872,28 +3908,28 @@ pub const H2FrameParser = struct {
         }
         this.streams.deinit();
     }
-    pub fn ref(this: *H2FrameParser) void {
-        this.ref_count += 1;
-        log("ref {}", .{this.ref_count});
-    }
+    // pub fn ref(this: *H2FrameParser) void {
+    //     this.ref_count += 1;
+    //     log("ref {}", .{this.ref_count});
+    // }
 
-    pub fn unref(this: *H2FrameParser) void {
-        const ref_count = this.ref_count;
-        log("unref {}", .{ref_count});
+    // pub fn unref(this: *H2FrameParser) void {
+    //     const ref_count = this.ref_count;
+    //     log("unref {}", .{ref_count});
 
-        bun.assert(ref_count > 0);
-        this.ref_count -= 1;
+    //     bun.assert(ref_count > 0);
+    //     this.ref_count -= 1;
 
-        if (ref_count == 1) {
-            this.deinit();
-        }
-    }
+    //     if (ref_count == 1) {
+    //         this.deinit();
+    //     }
+    // }
 
     pub fn finalize(
         this: *H2FrameParser,
     ) void {
         log("finalize", .{});
-        this.unref();
+        this.deref();
     }
 };
 

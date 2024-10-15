@@ -2244,7 +2244,7 @@ describe("fs/promises", () => {
   });
 
   it("writeFile", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.writeFile.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.writeFile.txt`;
     await writeFile(path, "File written successfully");
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
@@ -2606,7 +2606,7 @@ it("fstat on a large file", () => {
   var dest: string = "",
     fd;
   try {
-    dest = `${tmpdir()}/fs.test.js/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
+    dest = `${tmpdir()}/fs.test.ts/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
     mkdirSync(dirname(dest), { recursive: true });
     const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
     fd = openSync(dest, "w");

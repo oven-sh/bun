@@ -2011,6 +2011,108 @@ class ClientHttp2Stream extends Http2Stream {
     super(streamId, session, headers);
   }
 }
+function dummy() {}
+function tryClose(fd) {
+  fs.close(fd, dummy);
+}
+
+function doSendFileFD(options, fd, headers, err, stat) {
+  const onError = options.onError;
+  if (err) {
+    tryClose(fd);
+
+    if (onError) onError(err);
+    else this.destroy(err);
+    return;
+  }
+
+  if (!stat.isFile()) {
+    const isDirectory = stat.isDirectory();
+    if (
+      options.offset !== undefined ||
+      options.offset > 0 ||
+      options.length !== undefined ||
+      options.length >= 0 ||
+      isDirectory
+    ) {
+      const err = isDirectory ? new ERR_HTTP2_SEND_FILE() : new ERR_HTTP2_SEND_FILE_NOSEEK();
+      tryClose(fd);
+      if (onError) onError(err);
+      else this.destroy(err);
+      return;
+    }
+
+    options.offset = -1;
+    options.length = -1;
+  }
+
+  if (this.destroyed || this.closed) {
+    tryClose(fd);
+    const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
+    error.code = "ERR_HTTP2_INVALID_STREAM";
+    this.destroy(error);
+    return;
+  }
+
+  const statOptions = {
+    offset: options.offset !== undefined ? options.offset : 0,
+    length: options.length !== undefined ? options.length : -1,
+  };
+
+  // options.statCheck is a user-provided function that can be used to
+  // verify stat values, override or set headers, or even cancel the
+  // response operation. If statCheck explicitly returns false, the
+  // response is canceled. The user code may also send a separate type
+  // of response so check again for the HEADERS_SENT flag
+  if (
+    (typeof options.statCheck === "function" && options.statCheck.$call(this, [stat, headers]) === false) ||
+    this.headersSent
+  ) {
+    tryClose(fd);
+    return;
+  }
+
+  if (stat.isFile()) {
+    statOptions.length =
+      statOptions.length < 0
+        ? stat.size - +statOptions.offset
+        : Math.min(stat.size - +statOptions.offset, statOptions.length);
+
+    headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
+  }
+  try {
+    this.respond(headers, options);
+    fs.createReadStream(null, {
+      fd: fd,
+      autoClose: true,
+      start: statOptions.offset,
+      end: statOptions.length,
+      emitClose: false,
+    }).pipe(this);
+  } catch (err) {
+    if (typeof onError === "function") {
+      onError(err);
+    } else {
+      this.destroy(err);
+    }
+  }
+}
+function afterOpen(options, headers, err, fd) {
+  const onError = options.onError;
+  if (err) {
+    tryClose(fd);
+    if (onError) onError(err);
+    else this.destroy(err);
+    return;
+  }
+  if (this.destroyed || this.closed) {
+    tryClose(fd);
+    return;
+  }
+
+  fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+}
+
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
@@ -2021,93 +2123,12 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    // TODO: optimize this
-    let { statCheck, offset, length, onError } = options || {};
     if (headers == undefined) {
       headers = {};
-    }
-
-    if (!$isObject(headers)) {
+    } else if (!$isObject(headers)) {
       throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
-    }
-
-    offset = offset || 0;
-    const end = length || 0 + offset;
-    let openned_fd = null;
-    try {
-      const fd = fs.openSync(path, "r");
-      openned_fd = fd;
-      const stat = fs.fstatSync(fd);
-      if (typeof statCheck === "function") {
-        if (stat.isFile()) {
-          headers[HTTP2_HEADER_CONTENT_LENGTH] =
-            length !== undefined || length < 0 ? stat.size : Math.min(length, stat.size);
-        } else {
-          const isDirectory = stat.isDirectory();
-          throw isDirectory ? new ERR_HTTP2_SEND_FILE() : new ERR_HTTP2_SEND_FILE_NOSEEK();
-        }
-        statCheck(stat, headers, {
-          offset: offset,
-          length: length !== undefined ? length : -1,
-        });
-      }
-
-      if (headers[":status"] === undefined) {
-        headers[":status"] = 200;
-      }
-      const statusCode = (headers[":status"] |= 0);
-
-      // Payload/DATA frames are not permitted in these cases
-      if (
-        statusCode === HTTP_STATUS_NO_CONTENT ||
-        statusCode === HTTP_STATUS_RESET_CONTENT ||
-        statusCode === HTTP_STATUS_NOT_MODIFIED ||
-        this.headRequest
-      ) {
-        const error = new Error(
-          `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
-        );
-        error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
-        throw error;
-      }
-      this.respond(headers, options);
-      fs.createReadStream(null, { fd: fd, autoClose: true, start: offset, end, emitClose: false }).pipe(this);
-    } catch (err) {
-      if (typeof onError === "function") {
-        onError(err);
-      } else {
-        this.destroy(err);
-      }
-    } finally {
-      try {
-        if (openned_fd) fs.close(openned_fd);
-      } catch {}
-    }
-  }
-  respondWithFD(fd, headers, options) {
-    // TODO: optimize this
-    let { statCheck, offset, length } = options || {};
-    if (headers == undefined) {
-      headers = {};
-    }
-
-    if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
-    }
-
-    offset = offset || 0;
-    const end = length || 0 + offset;
-    if (typeof statCheck === "function") {
-      const stat = fs.fstatSync(fd);
-      if (!stat.isFile()) {
-        const isDirectory = stat.isDirectory();
-        this.destroy(isDirectory ? new ERR_HTTP2_SEND_FILE() : new ERR_HTTP2_SEND_FILE_NOSEEK());
-        return;
-      }
-      statCheck(stat, headers, {
-        offset: offset,
-        length: length !== undefined ? length : -1,
-      });
+    } else {
+      headers = { ...headers };
     }
 
     if (headers[":status"] === undefined) {
@@ -2129,8 +2150,38 @@ class ServerHttp2Stream extends Http2Stream {
       throw error;
     }
 
-    this.respond(headers, options);
-    fs.createReadStream(null, { fd: fd, autoClose: false, start: offset, end, emitClose: false }).pipe(this);
+    fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
+  }
+  respondWithFD(fd, headers, options) {
+    // TODO: optimize this
+    let { statCheck, offset, length } = options || {};
+    if (headers == undefined) {
+      headers = {};
+    } else if (!$isObject(headers)) {
+      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    } else {
+      headers = { ...headers };
+    }
+
+    if (headers[":status"] === undefined) {
+      headers[":status"] = 200;
+    }
+    const statusCode = (headers[":status"] |= 0);
+
+    // Payload/DATA frames are not permitted in these cases
+    if (
+      statusCode === HTTP_STATUS_NO_CONTENT ||
+      statusCode === HTTP_STATUS_RESET_CONTENT ||
+      statusCode === HTTP_STATUS_NOT_MODIFIED ||
+      this.headRequest
+    ) {
+      const error = new Error(
+        `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
+      );
+      error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
+      throw error;
+    }
+    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed) {

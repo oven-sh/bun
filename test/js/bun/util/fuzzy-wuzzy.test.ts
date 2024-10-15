@@ -21,7 +21,7 @@ const ENABLE_LOGGING = false;
 
 import { describe, test } from "bun:test";
 import { isWindows } from "harness";
-import { EventEmitter } from "ws";
+import { EventEmitter } from "events";
 
 const Promise = globalThis.Promise;
 globalThis.Promise = function (...args) {

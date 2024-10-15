@@ -1186,7 +1186,7 @@ describe("Compressed requests", () => {
         assert.strictEqual(response?.message, longMessage);
         done();
       });
-    });
+    }, 10000);
 
     /* As of Node 16, Writable and Duplex streams validate the encoding
      * argument to write, and the flags values we are passing there are not

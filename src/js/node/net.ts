@@ -175,7 +175,6 @@ const Socket = (function (InternalSocket) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
-              self.emit("error", verifyError);
               self.destroy(verifyError);
               return;
             }

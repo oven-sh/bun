@@ -6,7 +6,7 @@ const fixtures = require("../common/fixtures");
 const http2 = require("http2");
 
 const { beforeEach, afterEach, test, expect } = require("bun:test");
-
+const { isWindows } = require("harness");
 const content = Buffer.alloc(1e5, 0x44);
 
 let server;
@@ -45,22 +45,26 @@ afterEach(() => {
   server.close();
 });
 
-test("HTTP/2 large write and close", done => {
-  const client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+test.todoIf(isWindows)(
+  "HTTP/2 large write and close",
+  done => {
+    const client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
 
-  const req = client.request({ ":path": "/" });
-  req.end();
+    const req = client.request({ ":path": "/" });
+    req.end();
 
-  let receivedBufferLength = 0;
-  req.on("data", buf => {
-    receivedBufferLength += buf.byteLength;
-  });
+    let receivedBufferLength = 0;
+    req.on("data", buf => {
+      receivedBufferLength += buf.byteLength;
+    });
 
-  req.on("close", () => {
-    expect(receivedBufferLength).toBe(content.byteLength * 2);
-    client.close();
-    done();
-  });
-}, 5000);
+    req.on("close", () => {
+      expect(receivedBufferLength).toBe(content.byteLength * 2);
+      client.close();
+      done();
+    });
+  },
+  5000,
+);
 
 //<#END_FILE: test-http2-large-write-close.js

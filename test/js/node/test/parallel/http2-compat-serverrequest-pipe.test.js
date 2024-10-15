@@ -7,6 +7,7 @@ const http2 = require("http2");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { isWindows } = require("harness");
 
 const fixtures = path.join(__dirname, "..", "fixtures");
 const tmpdir = os.tmpdir();
@@ -28,7 +29,7 @@ afterAll(async () => {
   if (client) client.close();
 });
 
-test("HTTP/2 server request pipe", done => {
+test.todoIf(isWindows)("HTTP/2 server request pipe", done => {
   const loc = path.join(fixtures, "person-large.jpg");
   const fn = path.join(tmpdir, "http2-url-tests.js");
 

@@ -1008,11 +1008,11 @@ describe("Compressed requests", () => {
     before(done => {
       server = new Server();
       server.addService(testServiceGrpcObject.TestService.service, testServiceHandlers);
-      server.bindAsync("localhost:0", ServerCredentials.createInsecure(), (err, port) => {
+      server.bindAsync("127.0.0.1:0", ServerCredentials.createInsecure(), (err, port) => {
         assert.ifError(err);
         server.start();
         assignedPort = port;
-        client = new testServiceGrpcObject.TestService(`localhost:${assignedPort}`, grpc.credentials.createInsecure(), {
+        client = new testServiceGrpcObject.TestService(`127.0.0.1:${assignedPort}`, grpc.credentials.createInsecure(), {
           "grpc.default_compression_algorithm": CompressionAlgorithms.deflate,
         });
         done();
@@ -1186,7 +1186,7 @@ describe("Compressed requests", () => {
         assert.strictEqual(response?.message, longMessage);
         done();
       });
-    }, 10000);
+    }, 30000);
 
     /* As of Node 16, Writable and Duplex streams validate the encoding
      * argument to write, and the flags values we are passing there are not

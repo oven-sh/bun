@@ -2499,13 +2499,14 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, sign_bit == 0 || sign_bit == 1, napi_invalid_arg);
     NAPI_RETURN_EARLY_IF_FALSE(env, word_count == 0 || words, napi_invalid_arg);
+    // JSBigInt::createWithLength's size argument is unsigned int
+    NAPI_RETURN_EARLY_IF_FALSE(env, word_count <= UINT_MAX, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-    auto* bigint = JSC::JSBigInt::tryCreateWithLength(vm, word_count);
-    if (UNLIKELY(!bigint)) {
-        return napi_set_last_error(env, napi_generic_failure);
-    }
+    // throws RangeError if size is larger than JSC's limit
+    auto* bigint = JSC::JSBigInt::createWithLength(globalObject, word_count);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    ASSERT(bigint);
 
     bigint->setSign(sign_bit);
 

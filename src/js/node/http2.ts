@@ -2502,7 +2502,8 @@ class ServerHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.destroy();
+    // this.destroy();
+    this.close();
   }
 
   #onError(error: Error) {
@@ -2949,7 +2950,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.destroy();
+    this.close();
   }
   #onError(error: Error) {
     this.destroy(error);

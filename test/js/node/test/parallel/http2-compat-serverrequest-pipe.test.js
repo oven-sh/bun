@@ -1,14 +1,14 @@
 //#FILE: test-http2-compat-serverrequest-pipe.js
 //#SHA1: c4254ac88df3334dccc8adb4b60856193a6e644e
 //-----------------
-'use strict';
+"use strict";
 
-const http2 = require('http2');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const http2 = require("http2");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
-const fixtures = path.join(__dirname, '..', 'fixtures');
+const fixtures = path.join(__dirname, "..", "fixtures");
 const tmpdir = os.tmpdir();
 
 let server;
@@ -17,26 +17,26 @@ let port;
 
 beforeAll(async () => {
   if (!process.versions.openssl) {
-    return test.skip('missing crypto');
+    return test.skip("missing crypto");
   }
-  
+
   await fs.promises.mkdir(tmpdir, { recursive: true });
 });
 
 afterAll(async () => {
-  if (server) await new Promise(resolve => server.close(resolve));
+  if (server) server.close();
   if (client) client.close();
 });
 
-test('HTTP/2 server request pipe', (done) => {
-  const loc = path.join(fixtures, 'person-large.jpg');
-  const fn = path.join(tmpdir, 'http2-url-tests.js');
+test("HTTP/2 server request pipe", done => {
+  const loc = path.join(fixtures, "person-large.jpg");
+  const fn = path.join(tmpdir, "http2-url-tests.js");
 
   server = http2.createServer();
 
-  server.on('request', (req, res) => {
+  server.on("request", (req, res) => {
     const dest = req.pipe(fs.createWriteStream(fn));
-    dest.on('finish', () => {
+    dest.on("finish", () => {
       expect(req.complete).toBe(true);
       expect(fs.readFileSync(loc).length).toBe(fs.readFileSync(fn).length);
       fs.unlinkSync(fn);
@@ -55,12 +55,12 @@ test('HTTP/2 server request pipe', (done) => {
       }
     }
 
-    const req = client.request({ ':method': 'POST' });
-    req.on('response', () => {});
+    const req = client.request({ ":method": "POST" });
+    req.on("response", () => {});
     req.resume();
-    req.on('end', maybeClose);
+    req.on("end", maybeClose);
     const str = fs.createReadStream(loc);
-    str.on('end', maybeClose);
+    str.on("end", maybeClose);
     str.pipe(req);
   });
 });

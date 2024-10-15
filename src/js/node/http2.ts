@@ -1659,10 +1659,10 @@ enum StreamState {
   WritableClosed = 1 << 5, // 100000 = 32
 }
 function markWritableDone(stream: Http2Stream) {
-  const final = stream[bunHTTP2StreamFinal];
-  if (typeof final === "function") {
+  const _final = stream[bunHTTP2StreamFinal];
+  if (typeof _final === "function") {
     stream[bunHTTP2StreamFinal] = null;
-    final();
+    _final();
     stream[bunHTTP2StreamStatus] |= StreamState.WritableClosed | StreamState.FinalCalled;
     return;
   }
@@ -2443,7 +2443,7 @@ class ServerHttp2Session extends Http2Session {
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
         }
-      } else if (state === 5) {
+      } else if (state === 6) {
         // 5 = local closed aka write is closed
         markWritableDone(stream);
       }

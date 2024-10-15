@@ -978,17 +978,14 @@ pub const H2FrameParser = struct {
                             if (this.waitForTrailers) {
                                 client.dispatch(.onWantTrailers, this.getIdentifier());
                             } else {
+                                const identifier = this.getIdentifier();
+                                identifier.ensureStillAlive();
                                 if (this.state == .HALF_CLOSED_REMOTE) {
                                     this.state = .CLOSED;
                                 } else {
                                     this.state = .HALF_CLOSED_LOCAL;
                                 }
-                                if (this.state == .CLOSED) {
-                                    const identifier = this.getIdentifier();
-                                    identifier.ensureStillAlive();
-                                    this.freeResources(client, false);
-                                    client.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(this.state)));
-                                }
+                                client.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(this.state)));
                             }
                         }
                     }
@@ -2852,9 +2849,7 @@ pub const H2FrameParser = struct {
                         } else {
                             stream.state = .HALF_CLOSED_LOCAL;
                         }
-                        if (stream.state == .CLOSED) {
-                            this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-                        }
+                        this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
                     }
                 }
             }
@@ -2947,17 +2942,15 @@ pub const H2FrameParser = struct {
         stream.waitForTrailers = false;
         this.sendData(stream, "", true, JSC.JSValue.jsUndefined());
 
+        const identifier = stream.getIdentifier();
+        identifier.ensureStillAlive();
         if (stream.state == .HALF_CLOSED_REMOTE) {
             stream.state = .CLOSED;
+            stream.freeResources(this, false);
         } else {
             stream.state = .HALF_CLOSED_LOCAL;
         }
-        if (stream.state == .CLOSED) {
-            const identifier = stream.getIdentifier();
-            identifier.ensureStillAlive();
-            stream.freeResources(this, false);
-            this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-        }
+        this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         return .undefined;
     }
 
@@ -3104,17 +3097,15 @@ pub const H2FrameParser = struct {
         const writer = this.toWriter();
         _ = frame.write(@TypeOf(writer), writer);
         _ = writer.write(buffer[0..encoded_size]) catch 0;
+        const identifier = stream.getIdentifier();
+        identifier.ensureStillAlive();
         if (stream.state == .HALF_CLOSED_REMOTE) {
             stream.state = .CLOSED;
+            stream.freeResources(this, false);
         } else {
             stream.state = .HALF_CLOSED_LOCAL;
         }
-        if (stream.state == .CLOSED) {
-            const identifier = stream.getIdentifier();
-            identifier.ensureStillAlive();
-            stream.freeResources(this, false);
-            this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
-        }
+        this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         return .undefined;
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -3908,22 +3899,6 @@ pub const H2FrameParser = struct {
         }
         this.streams.deinit();
     }
-    // pub fn ref(this: *H2FrameParser) void {
-    //     this.ref_count += 1;
-    //     log("ref {}", .{this.ref_count});
-    // }
-
-    // pub fn unref(this: *H2FrameParser) void {
-    //     const ref_count = this.ref_count;
-    //     log("unref {}", .{ref_count});
-
-    //     bun.assert(ref_count > 0);
-    //     this.ref_count -= 1;
-
-    //     if (ref_count == 1) {
-    //         this.deinit();
-    //     }
-    // }
 
     pub fn finalize(
         this: *H2FrameParser,

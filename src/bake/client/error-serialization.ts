@@ -1,16 +1,12 @@
 // This implements error deserialization from the WebSocket protocol
+import { BundlerMessageLevel } from "../enums";
 import { DataViewReader } from "./reader";
 
-export const enum BundlerMessageKind {
-  err = 0,
-  warn = 1,
-  note = 2,
-  debug = 3,
-  verbose = 4,
-}
+export type DeserializedFailure = BundlerMessage;
 
 export interface BundlerMessage {
-  kind: BundlerMessageKind;
+  kind: "bundler";
+  level: BundlerMessageLevel;
   message: string;
   location: BundlerMessageLocation | null;
   notes: BundlerNote[];
@@ -32,22 +28,17 @@ export interface BundlerNote {
   location: BundlerMessageLocation | null;
 }
 
-export function decodeSerializedErrorPayload(arrayBuffer: DataView, start: number) {
-  const r = new DataViewReader(arrayBuffer, start);
-  const owner = r.u32();
-  const messageCount = r.u32();
-  const messages = new Array(messageCount);
-  for (let i = 0; i < messageCount; i++) {
-    const kind = r.u8();
-    // TODO: JS errors
-    messages[i] = readLogMsg(r, kind);
+export function decodeSerializedError(reader: DataViewReader) {
+  const kind = reader.u8();
+  if (kind >= 0 && kind <= 4) {
+    return readLogMsg(reader, kind);
+  } else {
+    throw new Error("TODO: JS Errors");
   }
-  console.log({owner, messageCount, messages});
-  return messages;
 }
 
 /** First byte is already read in. */
-function readLogMsg(r: DataViewReader, kind: BundlerMessageKind) {
+function readLogMsg(r: DataViewReader, kind: BundlerMessageLevel) {
   const message = r.string32();
   const location = readBundlerMessageLocationOrNull(r);
   const noteCount = r.u32();

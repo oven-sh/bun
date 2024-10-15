@@ -37,7 +37,6 @@ test("Http2ServerResponse.flushHeaders", done => {
         code: "ERR_HTTP2_HEADERS_SENT",
       }),
     );
-
     response.on("finish", () => {
       process.nextTick(() => {
         response.flushHeaders(); // Idempotent

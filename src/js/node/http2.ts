@@ -283,12 +283,6 @@ function onStreamTrailersReady() {
   this.sendTrailers(this[kResponse][kTrailers]);
 }
 
-function onStreamFinishResponse() {
-  const res = this[kResponse];
-  if (res === undefined) return;
-
-  res.emit("finish");
-}
 function onStreamCloseResponse() {
   const res = this[kResponse];
 
@@ -302,6 +296,8 @@ function onStreamCloseResponse() {
 
   this.removeListener("wantTrailers", onStreamTrailersReady);
   this[kResponse] = undefined;
+  res.emit("finish");
+
   res.emit("close");
 }
 function onStreamCloseRequest() {
@@ -518,7 +514,6 @@ class Http2ServerResponse extends Stream {
     this.req = stream[kRequest];
     stream.on("drain", onStreamDrain);
     stream.on("close", onStreamCloseResponse);
-    stream.on("finish", onStreamFinishResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
     stream.on("timeout", onStreamTimeout);
   }

@@ -58,8 +58,14 @@ function validateLinkHeaderValue(hints) {
   );
 }
 hideFromStack(validateLinkHeaderValue);
+// TODO: do it in NodeValidator.cpp
+function validateObject(value, name) {
+  if (typeof value !== "object") throw ERR_INVALID_ARG_TYPE(name, "object", value);
+}
+hideFromStack(validateObject);
 
 export default {
+  validateObject: validateObject,
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
   /** `(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER)` */

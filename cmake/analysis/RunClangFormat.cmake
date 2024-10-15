@@ -1,6 +1,10 @@
 # https://clang.llvm.org/docs/ClangFormat.html
 
-set(CLANG_FORMAT_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES})
+file(GLOB BUN_H_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/*.h
+)
+
+set(CLANG_FORMAT_SOURCES ${BUN_C_SOURCES} ${BUN_CXX_SOURCES} ${BUN_H_SOURCES})
 
 register_command(
   TARGET

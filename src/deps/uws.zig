@@ -2372,6 +2372,10 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
+
     pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
@@ -4103,6 +4107,10 @@ pub const WindowsLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
+
     pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
     }
@@ -4418,3 +4426,4 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+extern fn uws_res_clear_corked_socket(loop: *Loop) void;

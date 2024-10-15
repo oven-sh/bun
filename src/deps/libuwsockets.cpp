@@ -119,6 +119,18 @@ extern "C"
     }
   }
 
+  extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
+    uWS::LoopData *loopData = uWS::Loop::data(loop);
+    void *corkedSocket = loopData->getCorkedSocket();
+    if (corkedSocket) {
+        if (loopData->isCorkedSSL()) {
+            ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
+        } else {
+            ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
+        }
+    }
+}
+
   void uws_app_delete(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
   {
     if (ssl)

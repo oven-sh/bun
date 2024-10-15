@@ -1912,6 +1912,7 @@ extern "C" napi_status napi_define_class(napi_env env,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, utf8name);
+    NAPI_CHECK_ARG(env, constructor);
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);

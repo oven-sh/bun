@@ -90,30 +90,15 @@ async function main() {
     // warm up
     await runRequests(ITERATIONS);
 
-    console.error(heapStats());
     await sleep(10);
     gc(true);
     // take a baseline
     const baseline = process.memoryUsage.rss();
-    console.error("Initial memory usage", (baseline / 1024 / 1024) | 0, "MB");
 
     // run requests
     await runRequests(ITERATIONS);
     gc(true);
-
-    for (let i = 0; i < 100; i++) {
-      const stats = getHeapStats();
-      console.error(
-        "rss",
-        baseline / 1024 / 1024,
-        process.memoryUsage.rss() / 1024 / 1024,
-        stats.H2FrameParser,
-        stats.TLSSocket,
-        stats.TCPSocket,
-      );
-      await sleep(50);
-      gc(true);
-    }
+    await sleep(10);
 
     // take an end snapshot
     const end = process.memoryUsage.rss();

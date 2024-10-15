@@ -2006,9 +2006,10 @@ class ClientHttp2Stream extends Http2Stream {
     super(streamId, session, headers);
   }
 }
-function dummy() {}
 function tryClose(fd) {
-  fs.close(fd, dummy);
+  try {
+    fs.close(fd);
+  } catch {}
 }
 
 function doSendFileFD(options, fd, headers, err, stat) {

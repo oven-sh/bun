@@ -26,6 +26,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
+#include "NodeValidator.h"
 
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -625,11 +626,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ZigString str = ZigString { nullptr, 0 };
-    if (callFrame->argumentCount() > 0) {
-        str = Zig::toZigString(callFrame->uncheckedArgument(0).toWTFString(globalObject));
-    }
+    auto value = callFrame->argument(0);
+    Bun::V::validateString(scope, globalObject, value, jsString(vm, String("directory"_s)));
+    RETURN_IF_EXCEPTION(scope, {});
 
+    ZigString str = Zig::toZigString(value.toWTFString(globalObject));
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 

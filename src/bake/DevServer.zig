@@ -271,6 +271,7 @@ pub fn init(options: Options) !*DevServer {
     }
 
     app.get(client_prefix ++ "/:route/:asset", *DevServer, dev, onAssetRequest);
+    app.get(internal_prefix ++ "/src/*", *DevServer, dev, onSrcRequest);
 
     app.ws(
         internal_prefix ++ "/hmr",
@@ -626,6 +627,36 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
     resp.writeStatus("200 OK");
     resp.writeHeader("Content-Type", MimeType.html.value);
     resp.end(utf8.slice(), true); // TODO: You should never call res.end(huge buffer)
+}
+
+pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *App.Response) void {
+    if (req.header("open-in-editor") == null) {
+        resp.writeStatus("501 Not Implemented");
+        resp.end("Viewing source without opening in editor is not implemented yet!", false);
+        return;
+    }
+
+    const ctx = &dev.vm.rareData().editor_context;
+    ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
+    const line: ?[]const u8 = req.header("editor-line");
+    const column: ?[]const u8 = req.header("editor-column");
+
+    if (ctx.editor) |editor| {
+        var url = req.url()[internal_prefix.len + "/src/".len ..];
+        if (bun.strings.indexOfChar(url, ':')) |colon| {
+            url = url[0..colon];
+        }
+        editor.open(ctx.path, url, line, column, dev.allocator) catch {
+            resp.writeStatus("202 No Content");
+            resp.end("", false);
+            return;
+        };
+        resp.writeStatus("202 No Content");
+        resp.end("", false);
+    } else {
+        resp.writeStatus("500 Internal Server Error");
+        resp.end("Please set your editor in bunfig.toml", false);
+    }
 }
 
 const BundleError = error{

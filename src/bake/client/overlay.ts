@@ -172,11 +172,24 @@ export function updateErrorOverlay() {
     // Create the element for the root if it does not yet exist.
     if (!dom) {
       let title;
+      let btn;
       const root = elem("div", { class: "message-group" }, [
-        elem("button", { class: "file-name" }, [
+        btn = elem("button", { class: "file-name" }, [
           title = textNode()
         ]),
       ]);
+      btn.addEventListener('click', () => {
+        const firstLocation = errors.get(owner)?.messages[0]?.location;
+        if (!firstLocation) return;
+        let fileName = title.textContent.replace(/^\//, '');
+        fetch('/_bun/src/' + fileName, {
+          headers: {
+            'Open-In-Editor': '1',
+            'Editor-Line': firstLocation.line.toString(),
+            'Editor-Column': firstLocation.column.toString(),
+          },
+        });
+      });
       dom = { root, title, messages: [] };
       // TODO: sorted insert?
       domErrorList.appendChild(root);

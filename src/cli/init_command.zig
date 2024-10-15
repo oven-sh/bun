@@ -238,7 +238,6 @@ pub const InitCommand = struct {
             break :brk false;
         };
 
-        // Already package.json exists
         if (!auto_yes) {
             if (!did_load_package_json) {
                 Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
@@ -309,8 +308,6 @@ pub const InitCommand = struct {
                     try fields.object.putString(alloc, "type", "module");
                 }
             }
-
-            // TODO: Add engines by default. If bun present then ignore node shebangs by default.
 
             const needs_bun_engine_field = brk: {
                 if (fields.object.get("engines")) |engines| {

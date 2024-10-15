@@ -296,7 +296,6 @@ function onStreamCloseResponse() {
 
   this.removeListener("wantTrailers", onStreamTrailersReady);
   this[kResponse] = undefined;
-
   res.emit("finish");
   res.emit("close");
 }
@@ -1878,12 +1877,25 @@ class Http2Stream extends Duplex {
 
       const session = this[bunHTTP2Session];
       assertSession(session);
-      this.rstCode = 0;
+
+      let rstCode = this.rstCode;
+      if (!rstCode) {
+        if (err != null) {
+          if (err.code === "ABORT_ERR") {
+            // Enables using AbortController to cancel requests with RST code 8.
+            rstCode = NGHTTP2_CANCEL;
+          } else {
+            rstCode = NGHTTP2_INTERNAL_ERROR;
+          }
+        } else {
+          rstCode = this.rstCode = 0;
+        }
+      }
 
       if (this.writableFinished) {
         markStreamClosed(this);
 
-        session[bunHTTP2Native]?.rstStream(this.#id, 0);
+        session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
         this[bunHTTP2Session] = null;
       } else {
         this.once("finish", Http2Stream.#rstStream);
@@ -2256,7 +2268,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     }
     markStreamClosed(stream);
     if (destroy) stream.destroy(error_instance, stream.rstCode);
-    else {
+    else if (error_instance) {
       stream.emit("error", error_instance);
     }
     if (destroy_self) self.destroy();
@@ -2485,12 +2497,10 @@ class ServerHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.#parser = null;
-    this.close();
+    this.destroy();
   }
 
   #onError(error: Error) {
-    this.#parser = null;
     this.destroy(error);
   }
 
@@ -2934,11 +2944,9 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.#parser = null;
-    this.close();
+    this.destroy();
   }
   #onError(error: Error) {
-    this.#parser = null;
     this.destroy(error);
   }
   #onTimeout() {

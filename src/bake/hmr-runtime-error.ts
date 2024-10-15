@@ -5,56 +5,56 @@
 //
 // This is embedded in `DevServer.sendSerializedFailures`. SSR is
 // left unused for simplicity; a flash of unstyled content is
-import { decodeSerializedErrorPayload } from "./client/error-serialization";
-import { int } from "./macros" with { type :"macro"};
+// stopped by the fact this script runs synchronously.
+import { decodeAndAppendError, onErrorMessage, updateErrorOverlay } from "./client/overlay";
+import { DataViewReader } from "./client/reader";
+import { routeMatch } from "./client/route";
+import { initWebSocket } from "./client/websocket";
+import { MessageId } from "./enums";
 
 /** Injected by DevServer */
 declare const error: Uint8Array;
 
-// stopped by the fact this script runs synchronously.
 {
-  const decoded = decodeSerializedErrorPayload(new DataView(error.buffer), 0);
-  console.log(decoded);
-
-  document.write(`<pre><code id='err'>${JSON.stringify(decoded, null, 2)}</code></pre>`);
+  const reader = new DataViewReader(new DataView(error.buffer), 0);
+  while (reader.hasMoreData()) {
+    decodeAndAppendError(reader);
+  }
+  updateErrorOverlay();
 }
 
-// TODO: write a shared helper for websocket that performs reconnection
-// and handling of the version packet
+let firstVersionPacket = true;
 
-function initHmrWebSocket() {
-  const ws = new WebSocket("/_bun/hmr");
-  ws.binaryType = "arraybuffer";
-  ws.onopen = ev => {
-    console.log("HMR socket open!");
-  };
-  ws.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
-    const { data } = ev;
-    if (typeof data === "string") return data;
-    const view = new DataView(data);
-    switch (view.getUint8(0)) {
-      case int("R"): {
-        location.reload();
-        break;
-      }
-      case int("e"): {
-        const decoded = decodeSerializedErrorPayload(view, 1); 
-        document.querySelector('#err')!.innerHTML = JSON.stringify(decoded, null, 2);
-        break;
-      }
-      case int("c"): {
+initWebSocket({
+  [MessageId.version](dv) {
+    if (firstVersionPacket) {
+      firstVersionPacket = false;
+    } else {
+      // On re-connection, the server may have restarted. The route that was
+      // requested could be in unqueued state. A reload is the only way to
+      // ensure this bundle is enqueued.
+      location.reload();
+    }
+  },
+
+  [MessageId.errors]: onErrorMessage,
+
+  [MessageId.route_update](view) {
+    const reader = new DataViewReader(view, 1);
+    let routeCount = reader.u32();
+
+    while (routeCount > 0) {
+      routeCount -= 1;
+      const routeId = reader.u32();
+      const routePattern = reader.stringWithLength(reader.u16());
+      if (routeMatch(routeId, routePattern)) {
         location.reload();
         break;
       }
     }
-  };
-  ws.onclose = ev => {
-    // TODO: visual feedback in overlay.ts
-    // TODO: reconnection
-  };
-  ws.onerror = ev => {
-    console.error(ev);
-  };
-}
+  },
 
-initHmrWebSocket();
+  [MessageId.errors_cleared]() {
+    location.reload();
+  },
+});

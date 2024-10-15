@@ -3962,7 +3962,7 @@ pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } 
 /// The item must be in the slice.
 pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
     bun.assert(isSliceInBufferT(T, item[0..1], slice));
-    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    const offset = @intFromPtr(item) - @intFromPtr(slice.ptr);
     const index = @divExact(offset, @sizeOf(T));
     return index;
 }

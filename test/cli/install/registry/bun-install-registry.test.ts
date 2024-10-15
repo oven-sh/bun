@@ -6930,7 +6930,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "what-bin"]);
-      const isWindows = process.platform === "win32";
       const what_bin_bins = !isWindows ? ["what-bin"] : ["what-bin.bunx", "what-bin.exe"];
       // prettier-ignore
       expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);

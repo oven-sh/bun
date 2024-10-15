@@ -1,4 +1,4 @@
-import { td } from "../text-decoder";
+import { td } from "../shared";
 
 export class DataViewReader {
   view: DataView;
@@ -35,5 +35,9 @@ export class DataViewReader {
 
   string32() {
     return this.stringWithLength(this.u32());
+  }
+
+  hasMoreData() {
+    return this.cursor < this.view.byteLength;
   }
 }

@@ -10645,13 +10645,6 @@ pub const LinkerContext = struct {
                 else => {
                     try stmts.inside_wrapper_suffix.append(stmt);
                 },
-                .s_local => |st| {
-                    // TODO: check if this local is immediately assigned
-                    // `require()` if so, we will instrument it with hot module
-                    // reloading. other cases of `require` won't receive updates.
-                    _ = st;
-                    try stmts.inside_wrapper_suffix.append(stmt);
-                },
                 .s_import => |st| {
                     // hmr-runtime.ts defines `module.importSync` to be
                     // a synchronous import. this is different from

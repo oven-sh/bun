@@ -2665,9 +2665,13 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         // Skip host and connection header
         // we manage those
         switch (hash) {
-            hashHeaderConst("Connection"),
             hashHeaderConst("Content-Length"),
             => continue,
+            hashHeaderConst("Connection") => {
+                if (!this.flags.disable_keepalive) {
+                    continue;
+                }
+            },
             hashHeaderConst("if-modified-since") => {
                 if (this.flags.force_last_modified and this.if_modified_since.len == 0) {
                     this.if_modified_since = this.headerStr(header_values[i]);
@@ -2709,8 +2713,10 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    request_headers_buf[header_count] = connection_header;
-    header_count += 1;
+    if (!this.flags.disable_keepalive) {
+        request_headers_buf[header_count] = connection_header;
+        header_count += 1;
+    }
 
     if (!override_user_agent) {
         request_headers_buf[header_count] = user_agent_header;

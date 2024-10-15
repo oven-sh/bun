@@ -2,12 +2,6 @@
 name: Build an app with Next.js and Bun
 ---
 
-{% callout %}
-The Next.js [App Router](https://nextjs.org/docs/app) currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the dev server.
-{% /callout %}
-
----
-
 Initialize a Next.js app with `create-next-app`. This automatically installs dependencies using `npm`.
 
 ```sh

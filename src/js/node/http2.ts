@@ -2444,7 +2444,7 @@ class ServerHttp2Session extends Http2Session {
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
         }
-      } else if (state === 6) {
+      } else if (state === 5) {
         // 5 = local closed aka write is closed
         markWritableDone(stream);
       }

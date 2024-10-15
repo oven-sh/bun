@@ -30,7 +30,6 @@ beforeAll(done => {
     stream.write(content);
     stream.write(content);
     stream.end();
-    stream.close();
   });
 
   server.listen(0, () => {

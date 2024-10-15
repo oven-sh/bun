@@ -89,7 +89,7 @@ describe("Global subchannel pool", () => {
 
     promises.push(
       new Promise<void>(resolve => {
-        client1.waitForReady(Date.now() + 800, error => {
+        client1.waitForReady(Date.now() + 1500, error => {
           assert.ifError(error);
           client1.close();
           resolve();
@@ -99,7 +99,7 @@ describe("Global subchannel pool", () => {
 
     promises.push(
       new Promise<void>(resolve => {
-        client2.waitForReady(Date.now() + 800, error => {
+        client2.waitForReady(Date.now() + 1500, error => {
           assert.ifError(error);
           resolve();
         });

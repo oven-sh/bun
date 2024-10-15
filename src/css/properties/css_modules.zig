@@ -46,7 +46,7 @@ pub const Composes = struct {
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         var first = true;
-        for (this.names.items) |name| {
+        for (this.names.slice()) |name| {
             if (first) {
                 first = false;
             } else {
@@ -60,6 +60,14 @@ pub const Composes = struct {
             try from.toCss(W, dest);
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// Defines where the class names referenced in the `composes` property are located.
@@ -72,6 +80,10 @@ pub const Specifier = union(enum) {
     file: []const u8,
     /// The referenced name comes from a source index (used during bundling).
     source_index: u32,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 
     pub fn parse(input: *css.Parser) css.Result(Specifier) {
         if (input.tryParse(css.Parser.expectString, .{}).asValue()) |file| {
@@ -87,5 +99,13 @@ pub const Specifier = union(enum) {
             .file => |file| css.serializer.serializeString(file, dest) catch return dest.addFmtError(),
             .source_index => {},
         };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };

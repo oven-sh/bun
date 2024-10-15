@@ -2,7 +2,11 @@
 import { BundlerMessageLevel } from "../enums";
 import { DataViewReader } from "./reader";
 
-export type DeserializedFailure = BundlerMessage;
+export interface DeserializedFailure {
+  // If not specified, it is a client-side error.
+  file: string | null;
+  messages: BundlerMessage[];
+};
 
 export interface BundlerMessage {
   kind: "bundler";
@@ -15,11 +19,10 @@ export interface BundlerMessage {
 export interface BundlerMessageLocation {
   /** One-based */
   line: number;
-  /** Zero-based byte offset */
+  /** One-based */
   column: number;
-
-  namespace: string;
-  file: string;
+  /** Byte length */
+  length: number;
   lineText: string;
 }
 
@@ -38,7 +41,7 @@ export function decodeSerializedError(reader: DataViewReader) {
 }
 
 /** First byte is already read in. */
-function readLogMsg(r: DataViewReader, kind: BundlerMessageLevel) {
+function readLogMsg(r: DataViewReader, level: BundlerMessageLevel) {
   const message = r.string32();
   const location = readBundlerMessageLocationOrNull(r);
   const noteCount = r.u32();
@@ -47,7 +50,8 @@ function readLogMsg(r: DataViewReader, kind: BundlerMessageLevel) {
     notes[i] = readLogData(r);
   }
   return {
-    kind,
+    kind: 'bundler',
+    level,
     message,
     location,
     notes,
@@ -66,15 +70,13 @@ function readBundlerMessageLocationOrNull(r: DataViewReader): BundlerMessageLoca
   if (line == 0) return null;
 
   const column = r.u32();
-  const namespace = r.string32();
-  const file = r.string32();
+  const length = r.u32();
   const lineText = r.string32();
 
   return {
     line,
     column,
-    namespace,
-    file,
+    length,
     lineText,
   };
 }

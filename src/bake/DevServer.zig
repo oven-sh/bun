@@ -1171,6 +1171,7 @@ fn sendSerializedFailures(
             \\<meta charset="UTF-8" />
             \\<meta name="viewport" content="width=device-width, initial-scale=1.0" />
             \\<title>Bun - {[page_title]s}</title>
+            \\<style>:root{{color-scheme:light dark}}body{{background:light-dark(white,black)}}</style>
             \\</head>
             \\<body>
             \\<noscript><p style="font:24px sans-serif;">Bun requires JavaScript enabled in the browser to receive hot reloading events.</p></noscript>
@@ -1951,7 +1952,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .server => .{ .server = file_index },
                 .client => .{ .client = file_index },
             };
-            const failure = try SerializedFailure.initFromLog(fail_owner, log.msgs.items);
+            const failure = try SerializedFailure.initFromLog(
+                fail_owner,
+                bun.path.relative(dev.cwd, abs_path),
+                log.msgs.items,
+            );
             const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
             try dev.incremental_result.failures_added.append(dev.allocator, failure);
             if (fail_gop.found_existing) {
@@ -2622,7 +2627,13 @@ pub const SerializedFailure = struct {
         return .{ .data = data };
     }
 
-    pub fn initFromLog(owner: Owner, messages: []const bun.logger.Msg) !SerializedFailure {
+    pub fn initFromLog(
+        owner: Owner,
+        owner_display_name: []const u8,
+        messages: []const bun.logger.Msg,
+    ) !SerializedFailure {
+        assert(messages.len > 0);
+
         // Avoid small re-allocations without requesting so much from the heap
         var sfb = std.heap.stackFallback(65536, bun.default_allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
@@ -2630,6 +2641,8 @@ pub const SerializedFailure = struct {
         const w = payload.writer();
 
         try w.writeInt(u32, @bitCast(owner.encode()), .little);
+
+        try writeString32(owner_display_name, w);
 
         try w.writeInt(u32, @intCast(messages.len), .little);
 
@@ -2670,12 +2683,14 @@ pub const SerializedFailure = struct {
 
             try w.writeInt(u32, @intCast(loc.line), .little);
             try w.writeInt(u32, @intCast(loc.column), .little);
+            try w.writeInt(u32, @intCast(loc.length), .little);
 
-            // TODO: improve the encoding of bundler errors so that the file it is
-            // referencing is not repeated per error.
-            try writeString32(loc.namespace, w);
-            try writeString32(loc.file, w);
+            // TODO: syntax highlighted line text + give more context lines
             try writeString32(loc.line_text orelse "", w);
+
+            // The file is not specified here. Since the bundler runs every file
+            // in isolation, it would be impossible to reference any other file
+            // in this Log. Thus, it is not serialized.
         } else {
             try w.writeInt(u32, 0, .little);
         }

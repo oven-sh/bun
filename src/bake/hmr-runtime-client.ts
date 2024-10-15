@@ -1,7 +1,7 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
 import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
-import { onErrorMessage } from "./client/overlay";
+import { onErrorClearedMessage, onErrorMessage } from "./client/overlay";
 import { Bake } from "bun";
 import { td } from "./shared";
 import { DataViewReader } from "./client/reader";
@@ -60,6 +60,7 @@ initWebSocket({
     replaceModules(modules);
   },
   [MessageId.errors]: onErrorMessage,
+  [MessageId.errors_cleared]: onErrorClearedMessage,
   [MessageId.route_update](view) {
     const reader = new DataViewReader(view, 1);
     let routeCount = reader.u32();

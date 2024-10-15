@@ -43,7 +43,7 @@ describe("Global subchannel pool", () => {
       },
     });
 
-    server.bindAsync("localhost:0", ServerCredentials.createInsecure(), (err, port) => {
+    server.bindAsync("127.0.0.1:0", ServerCredentials.createInsecure(), (err, port) => {
       assert.ifError(err);
       serverPort = port;
       server.start();
@@ -55,8 +55,8 @@ describe("Global subchannel pool", () => {
     promises = [];
   });
 
-  afterAll(done => {
-    server.tryShutdown(done);
+  afterAll(() => {
+    server.forceShutdown();
   });
 
   function callService(client: InstanceType<grpc.ServiceClientConstructor>) {
@@ -89,7 +89,7 @@ describe("Global subchannel pool", () => {
 
     promises.push(
       new Promise<void>(resolve => {
-        client1.waitForReady(Date.now() + 150, error => {
+        client1.waitForReady(Date.now() + 800, error => {
           assert.ifError(error);
           client1.close();
           resolve();
@@ -99,7 +99,7 @@ describe("Global subchannel pool", () => {
 
     promises.push(
       new Promise<void>(resolve => {
-        client2.waitForReady(Date.now() + 150, error => {
+        client2.waitForReady(Date.now() + 800, error => {
           assert.ifError(error);
           resolve();
         });

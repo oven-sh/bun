@@ -52,6 +52,7 @@ class GlobalInternals;
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunGlobalScope.h"
+#include <js_native_api_types.h>
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -586,6 +587,17 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
+
+    // Almost all NAPI functions should set error_code to the status they're returning right before
+    // they return it
+    napi_extended_error_info m_lastNapiErrorInfo = {
+        .error_message = "",
+        // Not currently used by Bun -- always nullptr
+        .engine_reserved = nullptr,
+        // Not currently used by Bun -- always zero
+        .engine_error_code = 0,
+        .error_code = napi_ok,
+    };
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

@@ -42,8 +42,8 @@ extern fn BakeInitProcessIdentifier() void;
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
 pub const Framework = struct {
-    entry_client: ?[]const u8 = null,
-    entry_server: ?[]const u8 = null,
+    entry_client: []const u8,
+    entry_server: []const u8,
 
     server_components: ?ServerComponents = null,
     react_fast_refresh: ?ReactFastRefresh = null,
@@ -59,7 +59,7 @@ pub const Framework = struct {
             .server_components = .{
                 .separate_ssr_graph = true,
                 .server_runtime_import = "react-server-dom-webpack/server",
-                .client_runtime_import = "react-server-dom-webpack/client",
+                // .client_runtime_import = "react-server-dom-webpack/client",
             },
             .react_fast_refresh = .{},
             .entry_client = "bun-framework-rsc/client.tsx",
@@ -88,7 +88,7 @@ pub const Framework = struct {
     const ServerComponents = struct {
         separate_ssr_graph: bool = false,
         server_runtime_import: []const u8,
-        client_runtime_import: []const u8,
+        // client_runtime_import: []const u8,
         server_register_client_reference: []const u8 = "registerClientReference",
         server_register_server_reference: []const u8 = "registerServerReference",
         client_register_server_reference: []const u8 = "registerServerReference",
@@ -106,16 +106,16 @@ pub const Framework = struct {
         var clone = f;
         var had_errors: bool = false;
 
-        if (clone.entry_client) |*path| f.resolveHelper(client, path, &had_errors);
-        if (clone.entry_server) |*path| f.resolveHelper(server, path, &had_errors);
+        f.resolveHelper(client, &clone.entry_client, &had_errors, "client entrypoint");
+        f.resolveHelper(server, &clone.entry_server, &had_errors, "server entrypoint");
 
         if (clone.react_fast_refresh) |*react_fast_refresh| {
-            f.resolveHelper(client, &react_fast_refresh.import_source, &had_errors);
+            f.resolveHelper(client, &react_fast_refresh.import_source, &had_errors, "react refresh runtime");
         }
 
         if (clone.server_components) |*sc| {
-            f.resolveHelper(server, &sc.server_runtime_import, &had_errors);
-            f.resolveHelper(client, &sc.client_runtime_import, &had_errors);
+            f.resolveHelper(server, &sc.server_runtime_import, &had_errors, "server components runtime");
+            // f.resolveHelper(client, &sc.client_runtime_import, &had_errors);
         }
 
         if (had_errors) return error.ModuleNotFound;
@@ -123,7 +123,7 @@ pub const Framework = struct {
         return clone;
     }
 
-    inline fn resolveHelper(f: *const Framework, r: *bun.resolver.Resolver, path: *[]const u8, had_errors: *bool) void {
+    inline fn resolveHelper(f: *const Framework, r: *bun.resolver.Resolver, path: *[]const u8, had_errors: *bool, desc: []const u8) void {
         if (f.built_in_modules.get(path.*)) |mod| {
             switch (mod) {
                 .import => |p| path.* = p,
@@ -133,9 +133,8 @@ pub const Framework = struct {
         }
 
         var result = r.resolve(r.fs.top_level_dir, path.*, .stmt) catch |err| {
-            bun.Output.err(err, "Failed to resolve '{s}' for framework", .{path.*});
+            bun.Output.err(err, "Failed to resolve '{s}' for framework ({s})", .{ path.*, desc });
             had_errors.* = true;
-
             return;
         };
         path.* = result.path().?.text; // TODO: what is the lifetime of this string
@@ -203,17 +202,17 @@ pub const Framework = struct {
                 bun.todoPanic(@src(), "custom react-fast-refresh import source", .{});
             },
             .server_components = sc: {
-                const rfr: JSValue = opts.get(global, "serverComponents") orelse {
+                const sc: JSValue = opts.get(global, "serverComponents") orelse {
                     if (global.hasException())
                         return error.JSError;
                     break :sc null;
                 };
-                if (rfr == .null or rfr == .undefined) break :sc null;
+                if (sc == .null or sc == .undefined) break :sc null;
 
                 break :sc .{
-                    .client_runtime_import = "",
+                    // .client_runtime_import = "",
                     .separate_ssr_graph = brk: {
-                        const prop: JSValue = opts.get(global, "separateSSRGraph") orelse {
+                        const prop: JSValue = sc.get(global, "separateSSRGraph") orelse {
                             if (!global.hasException())
                                 global.throwInvalidArguments("Missing 'framework.serverComponents.separateSSRGraph'", .{});
                             return error.JSError;
@@ -224,7 +223,7 @@ pub const Framework = struct {
                         return error.JSError;
                     },
                     .server_runtime_import = brk: {
-                        const prop: JSValue = opts.get(global, "serverRuntimeImportSource") orelse {
+                        const prop: JSValue = sc.get(global, "serverRuntimeImportSource") orelse {
                             if (!global.hasException())
                                 global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                             return error.JSError;
@@ -239,7 +238,7 @@ pub const Framework = struct {
                         break :brk str.toUTF8(bun.default_allocator).slice();
                     },
                     .server_register_client_reference = brk: {
-                        const prop: JSValue = opts.get(global, "serverRegisterClientReferenceExport") orelse {
+                        const prop: JSValue = sc.get(global, "serverRegisterClientReferenceExport") orelse {
                             if (!global.hasException())
                                 global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
                             return error.JSError;
@@ -326,14 +325,13 @@ pub fn getHmrRuntime(mode: Side) []const u8 {
             .server => @embedFile("bake-codegen/bake.server.js"),
         }
     else switch (mode) {
-        inline else => |m| bun.runtimeEmbedFile(.codegen, "bake." ++ @tagName(m) ++ ".js"),
+        inline else => |m| bun.runtimeEmbedFile(.codegen_eager, "bake." ++ @tagName(m) ++ ".js"),
     };
 }
 
 pub const Mode = enum { production, development };
 pub const Side = enum { client, server };
-/// TODO: Rename this to Graph
-pub const Renderer = enum(u2) {
+pub const Graph = enum(u2) {
     client,
     server,
     /// Only used when Framework has .server_components.separate_ssr_graph set

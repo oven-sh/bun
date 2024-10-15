@@ -127,7 +127,7 @@ pub const Run = struct {
 
     fn doPreconnect(preconnect: []const string) void {
         if (preconnect.len == 0) return;
-        bun.HTTPThread.init();
+        bun.HTTPThread.init(&.{});
 
         for (preconnect) |url_str| {
             const url = bun.URL.parse(url_str);

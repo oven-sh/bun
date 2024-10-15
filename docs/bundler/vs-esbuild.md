@@ -190,8 +190,7 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--drop`
-- n/a
-- Not supported
+- `--drop`
 
 ---
 

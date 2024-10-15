@@ -22,7 +22,15 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 
     pos.column_zero_based = pos.column_zero_based - amount;
     if (pos.column_zero_based < 0) {
-        auto source = code->source().provider()->source();
+        auto* provider = code->source().provider();
+        if (!provider) {
+            pos.line_zero_based = 0;
+            pos.column_zero_based = 0;
+            pos.byte_position = 0;
+            return;
+        }
+
+        auto source = provider->source();
         if (!source.is8Bit()) {
             // Debug-only assertion
             // Bun does not yet use 16-bit sources anywhere. The transpiler ensures everything
@@ -75,6 +83,8 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
     switch (inst->opcodeID()) {
     case op_construct:
     case op_construct_varargs:
+    case op_super_construct:
+    case op_super_construct_varargs:
         // The divot by default is pointing at the `(` or the end of the class name.
         // We want to point at the `new` keyword, which is conveniently at the
         // expression start.

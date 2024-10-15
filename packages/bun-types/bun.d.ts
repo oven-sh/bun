@@ -1612,6 +1612,11 @@ declare module "bun" {
      * Enable CSS support.
      */
     experimentalCss?: boolean;
+
+    /**
+     * Drop function calls to matching property accesses.
+     */
+    drop?: string[];
   }
 
   namespace Password {
@@ -1645,7 +1650,7 @@ declare module "bun" {
    * automatically run in a worker thread.
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -1748,7 +1753,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -1787,7 +1792,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -3018,6 +3023,7 @@ declare module "bun" {
     colors?: boolean;
     depth?: number;
     sorted?: boolean;
+    compact?: boolean;
   }
 
   /**
@@ -3033,6 +3039,14 @@ declare module "bun" {
      * That can be used to declare custom inspect functions.
      */
     const custom: typeof import("util").inspect.custom;
+
+    /**
+     * Pretty-print an object or array as a table
+     *
+     * Like {@link console.table}, except it returns a string
+     */
+    function table(tabularData: object | unknown[], properties?: string[], options?: { colors?: boolean }): string;
+    function table(tabularData: object | unknown[], options?: { colors?: boolean }): string;
   }
 
   interface MMapOptions {
@@ -4434,15 +4448,18 @@ declare module "bun" {
     hostname: string;
     port: number;
     tls?: TLSOptions;
+    exclusive?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
     tls?: boolean;
+    exclusive?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
     unix: string;
   }
 

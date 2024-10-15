@@ -46,7 +46,7 @@ pub const Gradient = union(enum) {
         const Closure = struct { location: css.SourceLocation, func: []const u8 };
         return input.parseNestedBlock(Gradient, Closure{ .location = location, .func = func }, struct {
             fn parse(
-                closure: struct { location: css.SourceLocation, func: []const u8 },
+                closure: Closure,
                 input_: *css.Parser,
             ) Result(Gradient) {
                 // css.todo_stuff.match_ignore_ascii_case
@@ -101,22 +101,22 @@ pub const Gradient = union(enum) {
                         .err => |e| return .{ .err = e },
                     } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-linear-gradient")) {
-                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                    return .{ .result = .{ .linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-linear-gradient")) {
-                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                    return .{ .result = .{ .repeating_linear = switch (LinearGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-radial-gradient")) {
-                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                    return .{ .result = .{ .radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     } } };
                 } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.func, "-moz-repeating-radial-gradient")) {
-                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .mox = true })) {
+                    return .{ .result = .{ .repeating_radial = switch (RadialGradient.parse(input_, css.VendorPrefix{ .moz = true })) {
                         .result => |vv| vv,
                         .err => |e| return .{ .err = e },
                     } } };
@@ -146,7 +146,7 @@ pub const Gradient = union(enum) {
                         .err => |e| return .{ .err = e },
                     } } };
                 } else {
-                    return closure.location.newUnexpectedTokenError(.{ .ident = closure.func });
+                    return .{ .err = closure.location.newUnexpectedTokenError(.{ .ident = closure.func }) };
                 }
             }
         }.parse);
@@ -186,6 +186,30 @@ pub const Gradient = union(enum) {
 
         return dest.writeChar(')');
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const Gradient, other: *const Gradient) bool {
+        return css.implementEql(Gradient, this, other);
+        // if (this.* == .linear and other.* == .linear) {
+        //     return this.linear.eql(&other.linear);
+        // } else if (this.* == .repeating_linear and other.* == .repeating_linear) {
+        //     return this.repeating_linear.eql(&other.repeating_linear);
+        // } else if (this.* == .radial and other.* == .radial) {
+        //     return this.radial.eql(&other.radial);
+        // } else if (this.* == .repeating_radial and other.* == .repeating_radial) {
+        //     return this.repeating_radial.eql(&other.repeating_radial);
+        // } else if (this.* == .conic and other.* == .conic) {
+        //     return this.conic.eql(&other.conic);
+        // } else if (this.* == .repeating_conic and other.* == .repeating_conic) {
+        //     return this.repeating_conic.eql(&other.repeating_conic);
+        // } else if (this.* == .@"webkit-gradient" and other.* == .@"webkit-gradient") {
+        //     return this.@"webkit-gradient".eql(&other.@"webkit-gradient");
+        // }
+        // ret
+    }
 };
 
 /// A CSS [`linear-gradient()`](https://www.w3.org/TR/css-images-3/#linear-gradients) or `repeating-linear-gradient()`.
@@ -197,11 +221,19 @@ pub const LinearGradient = struct {
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const LinearGradient, other: *const LinearGradient) bool {
+        return this.vendor_prefix.eql(other.vendor_prefix) and this.direction.eql(&other.direction) and css.generic.eqlList(GradientItem(LengthPercentage), &this.items, &other.items);
+    }
+
     pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(LinearGradient) {
-        const direction = if (input.tryParse(LineDirection.parse, .{vendor_prefix != VendorPrefix{ .none = true }}).asValue()) |dir| direction: {
+        const direction: LineDirection = if (input.tryParse(LineDirection.parse, .{vendor_prefix.neq(VendorPrefix{ .none = true })}).asValue()) |dir| direction: {
             if (input.expectComma().asErr()) |e| return .{ .err = e };
             break :direction dir;
-        } else .{ .vertical = .bottom };
+        } else LineDirection{ .vertical = .bottom };
         const items = switch (parseItems(LengthPercentage, input)) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
@@ -210,7 +242,7 @@ pub const LinearGradient = struct {
     }
 
     pub fn toCss(this: *const LinearGradient, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
-        const angle = switch (this.direction) {
+        const angle: f32 = switch (this.direction) {
             .vertical => |v| switch (v) {
                 .bottom => 180.0,
                 .top => 0.0,
@@ -222,14 +254,14 @@ pub const LinearGradient = struct {
         // We can omit `to bottom` or `180deg` because it is the default.
         if (angle == 180.0) {
             // todo_stuff.depth
-            try serializeItems(&this.items, W, dest);
+            try serializeItems(LengthPercentage, &this.items, W, dest);
         }
         // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
         // we can flip the gradient the other direction and omit the direction.
         else if (angle == 0.0 and dest.minify and brk: {
             for (this.items.items) |*item| {
                 if (item.* == .hint and item.hint != .percentage) break :brk false;
-                if (item.* == .color_stop and item.color_stop.position != null and item.color_stop.position != .percetage) break :brk false;
+                if (item.* == .color_stop and item.color_stop.position != null and item.color_stop.position.? != .percentage) break :brk false;
             }
             break :brk true;
         }) {
@@ -237,7 +269,7 @@ pub const LinearGradient = struct {
                 dest.allocator,
                 this.items.items.len,
             ) catch bun.outOfMemory();
-            defer flipped_items.deinit();
+            defer flipped_items.deinit(dest.allocator);
 
             var i: usize = this.items.items.len;
             while (i > 0) {
@@ -245,22 +277,22 @@ pub const LinearGradient = struct {
                 const item = &this.items.items[i];
                 switch (item.*) {
                     .hint => |*h| switch (h.*) {
-                        .percentage => |p| try flipped_items.append(.{ .hint = .{ .percentage = .{ .value = 1.0 - p.v } } }),
+                        .percentage => |p| flipped_items.append(dest.allocator, .{ .hint = .{ .percentage = .{ .v = 1.0 - p.v } } }) catch bun.outOfMemory(),
                         else => unreachable,
                     },
-                    .color_stop => |*cs| try flipped_items.append(.{
+                    .color_stop => |*cs| flipped_items.append(dest.allocator, .{
                         .color_stop = .{
                             .color = cs.color,
-                            .position = if (cs.position) |*p| switch (p) {
-                                .percentage => |perc| .{ .percentage = .{ .value = 1.0 - perc.value } },
+                            .position = if (cs.position) |*p| switch (p.*) {
+                                .percentage => |perc| .{ .percentage = .{ .v = 1.0 - perc.v } },
                                 else => unreachable,
                             } else null,
                         },
-                    }),
+                    }) catch bun.outOfMemory(),
                 }
             }
 
-            try serializeItems(&flipped_items, W, dest);
+            serializeItems(LengthPercentage, &flipped_items, W, dest) catch return dest.addFmtError();
         } else {
             if ((this.direction != .vertical or this.direction.vertical != .bottom) and
                 (this.direction != .angle or this.direction.angle.deg != 180.0))
@@ -269,7 +301,7 @@ pub const LinearGradient = struct {
                 try dest.delim(',', false);
             }
 
-            try serializeItems(&this.items, W, dest);
+            serializeItems(LengthPercentage, &this.items, W, dest) catch return dest.addFmtError();
         }
     }
 };
@@ -284,6 +316,10 @@ pub const RadialGradient = struct {
     position: Position,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(RadialGradient) {
         // todo_stuff.depth
@@ -337,7 +373,14 @@ pub const RadialGradient = struct {
             try dest.delim(',', false);
         }
 
-        try serializeItems(&this.items, W, dest);
+        try serializeItems(LengthPercentage, &this.items, W, dest);
+    }
+
+    pub fn eql(this: *const RadialGradient, other: *const RadialGradient) bool {
+        return this.vendor_prefix.eql(other.vendor_prefix) and
+            this.shape.eql(&other.shape) and
+            this.position.eql(&other.position) and
+            css.generic.eqlList(GradientItem(LengthPercentage), &this.items, &other.items);
     }
 };
 
@@ -349,6 +392,10 @@ pub const ConicGradient = struct {
     position: Position,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(AnglePercentage)),
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn parse(input: *css.Parser) Result(ConicGradient) {
         const angle = input.tryParse(struct {
@@ -367,7 +414,7 @@ pub const ConicGradient = struct {
             }
         }.parse, .{}).unwrapOr(Position.center());
 
-        if (angle != .{ .deg = 0.0 } or !std.meta.eql(position, Position.center())) {
+        if (!angle.eql(&Angle{ .deg = 0.0 }) or !std.meta.eql(position, Position.center())) {
             if (input.expectComma().asErr()) |e| return .{ .err = e };
         }
 
@@ -402,6 +449,12 @@ pub const ConicGradient = struct {
 
         return try serializeItems(AnglePercentage, &this.items, W, dest);
     }
+
+    pub fn eql(this: *const ConicGradient, other: *const ConicGradient) bool {
+        return this.angle.eql(&other.angle) and
+            this.position.eql(&other.position) and
+            css.generic.eqlList(GradientItem(AnglePercentage), &this.items, &other.items);
+    }
 };
 
 /// A legacy `-webkit-gradient()`.
@@ -414,6 +467,10 @@ pub const WebKitGradient = union(enum) {
         to: WebKitGradientPoint,
         /// The color stops in the gradient.
         stops: ArrayList(WebKitColorStop),
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A radial `-webkit-gradient()`.
     radial: struct {
@@ -427,7 +484,28 @@ pub const WebKitGradient = union(enum) {
         r1: CSSNumber,
         /// The color stops in the gradient.
         stops: ArrayList(WebKitColorStop),
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const WebKitGradient, other: *const WebKitGradient) bool {
+        return switch (this.*) {
+            .linear => |*a| switch (other.*) {
+                .linear => a.from.eql(&other.linear.from) and a.to.eql(&other.linear.to) and css.generic.eqlList(WebKitColorStop, &a.stops, &other.linear.stops),
+                else => false,
+            },
+            .radial => |*a| switch (other.*) {
+                .radial => a.from.eql(&other.radial.from) and a.to.eql(&other.radial.to) and a.r0 == other.radial.r0 and a.r1 == other.radial.r1 and css.generic.eqlList(WebKitColorStop, &a.stops, &other.radial.stops),
+                else => false,
+            },
+        };
+    }
 
     pub fn parse(input: *css.Parser) Result(WebKitGradient) {
         const location = input.currentSourceLocation();
@@ -517,11 +595,11 @@ pub const WebKitGradient = union(enum) {
                 try dest.delim(',', false);
                 try radial.from.toCss(W, dest);
                 try dest.delim(',', false);
-                try radial.r0.toCss(W, dest);
+                try CSSNumberFns.toCss(&radial.r0, W, dest);
                 try dest.delim(',', false);
                 try radial.to.toCss(W, dest);
                 try dest.delim(',', false);
-                try radial.r1.toCss(W, dest);
+                try CSSNumberFns.toCss(&radial.r1, W, dest);
                 for (radial.stops.items) |*stop| {
                     try dest.delim(',', false);
                     try stop.toCss(W, dest);
@@ -547,9 +625,38 @@ pub const LineDirection = union(enum) {
         horizontal: HorizontalPositionKeyword,
         /// A vertical position keyword, e.g. `top` or `bottom`.
         vertical: VerticalPositionKeyword,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
 
-    pub fn parse(input: *css.Parser, is_prefixed: bool) Result(Position) {
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const LineDirection, other: *const LineDirection) bool {
+        return switch (this.*) {
+            .angle => |*a| switch (other.*) {
+                .angle => a.eql(&other.angle),
+                else => false,
+            },
+            .horizontal => |*v| switch (other.*) {
+                .horizontal => v.* == other.horizontal,
+                else => false,
+            },
+            .vertical => |*v| switch (other.*) {
+                .vertical => v.* == other.vertical,
+                else => false,
+            },
+            .corner => |*c| switch (other.*) {
+                .corner => c.horizontal == other.corner.horizontal and c.vertical == other.corner.vertical,
+                else => false,
+            },
+        };
+    }
+
+    pub fn parse(input: *css.Parser, is_prefixed: bool) Result(LineDirection) {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
         if (input.tryParse(Angle.parseWithUnitlessZero, .{}).asValue()) |angle| {
@@ -588,7 +695,7 @@ pub const LineDirection = union(enum) {
             .angle => |*angle| try angle.toCss(W, dest),
             .horizontal => |*k| {
                 if (dest.minify) {
-                    try dest.writeStr(switch (k) {
+                    try dest.writeStr(switch (k.*) {
                         .left => "270deg",
                         .right => "90deg",
                     });
@@ -601,7 +708,7 @@ pub const LineDirection = union(enum) {
             },
             .vertical => |*k| {
                 if (dest.minify) {
-                    try dest.writeStr(switch (k) {
+                    try dest.writeStr(switch (k.*) {
                         .top => "0deg",
                         .bottom => "180deg",
                     });
@@ -641,6 +748,23 @@ pub fn GradientItem(comptime D: type) type {
                 .hint => |*h| try css.generic.toCss(D, h, W, dest),
             };
         }
+
+        pub fn eql(this: *const GradientItem(D), other: *const GradientItem(D)) bool {
+            return switch (this.*) {
+                .color_stop => |*a| switch (other.*) {
+                    .color_stop => a.eql(&other.color_stop),
+                    else => false,
+                },
+                .hint => |*a| switch (other.*) {
+                    .hint => css.generic.eql(D, a, &other.hint),
+                    else => false,
+                },
+            };
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     };
 }
 
@@ -653,8 +777,28 @@ pub const EndingShape = union(enum) {
     /// A circle.
     circle: Circle,
 
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
     pub fn default() EndingShape {
         return .{ .ellipse = .{ .extent = .@"farthest-corner" } };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const EndingShape, other: *const EndingShape) bool {
+        return switch (this.*) {
+            .ellipse => |*a| switch (other.*) {
+                .ellipse => a.eql(&other.ellipse),
+                else => false,
+            },
+            .circle => |*a| switch (other.*) {
+                .circle => a.eql(&other.circle),
+                else => false,
+            },
+        };
     }
 };
 
@@ -681,6 +825,14 @@ pub const WebKitGradientPoint = struct {
         try this.x.toCss(W, dest);
         try dest.writeChar(' ');
         return try this.y.toCss(W, dest);
+    }
+
+    pub fn eql(this: *const WebKitGradientPoint, other: *const WebKitGradientPoint) bool {
+        return this.x.eql(&other.x) and this.y.eql(&other.y);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -722,7 +874,7 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
                     }
                 },
                 .number => |*lp| {
-                    if (lp == .percentage and lp.percentage.value == 0.0) {
+                    if (lp.* == .percentage and lp.percentage.v == 0.0) {
                         try dest.writeChar('0');
                     } else {
                         try lp.toCss(W, dest);
@@ -737,6 +889,23 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
                     }
                 },
             }
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return switch (this.*) {
+                .center => switch (other.*) {
+                    .center => true,
+                    else => false,
+                },
+                .number => |*a| switch (other.*) {
+                    .number => a.eql(&other.number),
+                    else => false,
+                },
+                .side => |*a| switch (other.*) {
+                    .side => |*b| a.eql(&b.*),
+                    else => false,
+                },
+            };
         }
     };
 }
@@ -776,7 +945,7 @@ pub const WebKitColorStop = struct {
                     } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "to")) position: {
                         break :position 1.0;
                     } else {
-                        return closure.loc.newUnexpectedTokenError(.{ .ident = closure.function });
+                        return .{ .err = closure.loc.newUnexpectedTokenError(.{ .ident = closure.function }) };
                     };
                     const color = switch (CssColor.parse(i)) {
                         .result => |vv| vv,
@@ -802,6 +971,14 @@ pub const WebKitColorStop = struct {
             try this.color.toCss(W, dest);
         }
         try dest.writeChar(')');
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const WebKitColorStop, other: *const WebKitColorStop) bool {
+        return css.implementEql(WebKitColorStop, this, other);
     }
 };
 
@@ -838,6 +1015,14 @@ pub fn ColorStop(comptime D: type) type {
             }
             return;
         }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return this.color.eql(&other.color) and css.generic.eql(?D, &this.position, &other.position);
+        }
     };
 }
 
@@ -851,6 +1036,10 @@ pub const Ellipse = union(enum) {
         x: LengthPercentage,
         /// The y-radius of the ellipse.
         y: LengthPercentage,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
     /// A shape extent keyword.
     extent: ShapeExtent,
@@ -907,6 +1096,14 @@ pub const Ellipse = union(enum) {
             .extent => |*e| try e.toCss(W, dest),
         };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const Ellipse, other: *const Ellipse) bool {
+        return this.size.x.eql(&other.size.x) and this.size.y.eql(&other.size.y) and this.extent.eql(&other.extent);
+    }
 };
 
 pub const ShapeExtent = enum {
@@ -919,12 +1116,20 @@ pub const ShapeExtent = enum {
     /// The farthest corner of the box from the gradient's center.
     @"farthest-corner",
 
+    pub fn eql(this: *const ShapeExtent, other: *const ShapeExtent) bool {
+        return this.* == other.*;
+    }
+
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
     }
 
     pub fn parse(input: *css.Parser) Result(@This()) {
         return css.enum_property_util.parse(@This(), input);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
@@ -983,6 +1188,14 @@ pub const Circle = union(enum) {
             },
         };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const Circle, other: *const Circle) bool {
+        return this.radius.eql(&other.radius) and this.extent.eql(&other.extent);
+    }
 };
 
 pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(GradientItem(D))) {
@@ -993,13 +1206,14 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
         const Closure = struct { items: *ArrayList(GradientItem(D)), seen_stop: *bool };
         if (input.parseUntilBefore(
             css.Delimiters{ .comma = true },
+            void,
             Closure{ .items = &items, .seen_stop = &seen_stop },
             struct {
                 fn parse(closure: Closure, i: *css.Parser) Result(void) {
                     if (closure.seen_stop.*) {
                         if (i.tryParse(comptime css.generic.parseFor(D), .{}).asValue()) |hint| {
                             closure.seen_stop.* = false;
-                            closure.items.append(.{ .hint = hint }) catch bun.outOfMemory();
+                            closure.items.append(i.allocator(), .{ .hint = hint }) catch bun.outOfMemory();
                             return Result(void).success;
                         }
                     }
@@ -1009,15 +1223,15 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
                         .err => |e| return .{ .err = e },
                     };
 
-                    if (i.tryParse(comptime css.generic.parseFor(D), .{})) |position| {
+                    if (i.tryParse(comptime css.generic.parseFor(D), .{}).asValue()) |position| {
                         const color = stop.color.deepClone(i.allocator());
-                        closure.items.append(.{ .color_stop = stop }) catch bun.outOfMemory();
-                        closure.items.append(.{ .color_stop = .{
+                        closure.items.append(i.allocator(), .{ .color_stop = stop }) catch bun.outOfMemory();
+                        closure.items.append(i.allocator(), .{ .color_stop = .{
                             .color = color,
                             .position = position,
                         } }) catch bun.outOfMemory();
                     } else {
-                        closure.items.append(.{ .color_stop = stop }) catch bun.outOfMemory();
+                        closure.items.append(i.allocator(), .{ .color_stop = stop }) catch bun.outOfMemory();
                     }
 
                     closure.seen_stop.* = true;
@@ -1027,7 +1241,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
         ).asErr()) |e| return .{ .err = e };
 
         if (input.next().asValue()) |tok| {
-            if (tok == .comma) continue;
+            if (tok.* == .comma) continue;
             bun.unreachablePanic("expected a comma after parsing a gradient", .{});
         } else {
             break;
@@ -1047,7 +1261,7 @@ pub fn serializeItems(
     var last: ?*const GradientItem(D) = null;
     for (items.items) |*item| {
         // Skip useless hints
-        if (item.* == .hint and item.hint == .percentage and item.hint.percentage.value == 0.5) {
+        if (item.* == .hint and item.hint == .percentage and item.hint.percentage.v == 0.5) {
             continue;
         }
 

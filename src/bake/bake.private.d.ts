@@ -40,7 +40,11 @@ declare const side: "client" | "server";
  */
 declare var server_exports: {
   handleRequest: (req: Request, meta: HandleRequestMeta, id: Id) => any;
-  registerUpdate: (modules: any) => void;
+  registerUpdate: (
+    modules: any,
+    componentManifestAdd: null | string[],
+    componentManifestDelete: null | string[],
+  ) => void;
 };
 
 interface HandleRequestMeta {

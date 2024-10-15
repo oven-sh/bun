@@ -207,7 +207,7 @@ pub fn Printer(comptime Writer: type) type {
         pub fn printImportRecord(this: *This, import_record_idx: u32) PrintErr!void {
             if (this.import_records) |import_records| {
                 const import_record = import_records.at(import_record_idx);
-                const a, const b = bun.bundle_v2.cheapPrefixNormalizer(this.public_path, import_record.path.pretty);
+                const a, const b = bun.bundle_v2.cheapPrefixNormalizer(this.public_path, import_record.path.text);
                 try this.writeStr(a);
                 try this.writeStr(b);
                 return;
@@ -221,6 +221,10 @@ pub fn Printer(comptime Writer: type) type {
             unreachable;
         }
 
+        pub inline fn getImportRecordUrl(this: *This, import_record_idx: u32) PrintErr![]const u8 {
+            return (try this.importRecord(import_record_idx)).path.text;
+        }
+
         pub fn context(this: *const Printer(Writer)) ?*const css.StyleContext {
             return this.ctx;
         }
@@ -231,6 +235,18 @@ pub fn Printer(comptime Writer: type) type {
         /// contain any newline characters
         pub fn writeAll(this: *This, str: []const u8) !void {
             return this.writeStr(str) catch std.mem.Allocator.Error.OutOfMemory;
+        }
+
+        pub fn writeComment(this: *This, comment: []const u8) PrintErr!void {
+            _ = this.dest.writeAll(comment) catch {
+                return this.addFmtError();
+            };
+            const new_lines = std.mem.count(u8, comment, "\n");
+            this.line += @intCast(new_lines);
+            this.col = 0;
+            const last_line_start = comment.len - (std.mem.lastIndexOfScalar(u8, comment, '\n') orelse comment.len);
+            this.col += @intCast(last_line_start);
+            return;
         }
 
         /// Writes a raw string to the underlying destination.

@@ -24,7 +24,7 @@ pub fn MediaRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) Maybe(bool, css.MinifyError) {
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
             _ = this; // autofix
             _ = context; // autofix
             _ = parent_is_unused; // autofix
@@ -49,6 +49,10 @@ pub fn MediaRule(comptime R: type) type {
             dest.dedent();
             try dest.newline();
             return dest.writeChar('}');
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return css.implementDeepClone(@This(), this, allocator);
         }
     };
 }

@@ -65,6 +65,10 @@ pub const ImportRule = struct {
     layer: ?struct {
         /// PERF: null pointer optimizaiton, nullable
         v: ?LayerName,
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
     },
 
     /// An optional `supports()` condition.
@@ -166,5 +170,9 @@ pub const ImportRule = struct {
             try this.media.toCss(W, dest);
         }
         try dest.writeStr(";");
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

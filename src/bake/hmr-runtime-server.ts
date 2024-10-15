@@ -2,7 +2,7 @@
 // On the server, communication is facilitated using the default
 // export, which is assigned via `server_exports`.
 import type { Bake } from "bun";
-import { loadModule, LoadModuleType, replaceModules } from "./hmr-module";
+import { loadModule, LoadModuleType, replaceModules, clientManifest, serverManifest, getModule } from "./hmr-module";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -32,5 +32,37 @@ server_exports = {
     // TODO: support streaming
     return await response.text();
   },
-  registerUpdate: replaceModules,
+  registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
+    replaceModules(modules);
+
+    if (componentManifestAdd) {
+      for (const uid of componentManifestAdd) {
+        try {
+          const mod = loadModule(uid, LoadModuleType.AssertPresent);
+          const { exports, __esModule } = mod;
+          const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+
+          for (const exportName of Object.keys(exp)) {
+            serverManifest[uid] = {
+              id: uid,
+              name: exportName,
+              chunks: [],
+            };
+          }
+        } catch (err) {
+          console.log(err);
+        }
+      }
+    }
+
+    if (componentManifestDelete) {
+      for (const fileName of componentManifestDelete) {
+        const client = clientManifest[fileName];
+        for (const exportName in client) {
+          delete serverManifest[`${fileName}#${exportName}`];
+        }
+        delete clientManifest[fileName];
+      }
+    }
+  },
 };

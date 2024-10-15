@@ -3315,15 +3315,22 @@ pub inline fn resolveSourcePath(
     };
 }
 
+const RuntimeEmbedRoot = enum {
+    codegen,
+    src,
+    src_eager,
+    codegen_eager,
+};
+
 pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src, src_eager },
+    comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
 ) []const u8 {
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.codegen_embed);
 
     const abs_path = switch (root) {
-        .codegen => resolveSourcePath(.codegen, sub_path),
+        .codegen, .codegen_eager => resolveSourcePath(.codegen, sub_path),
         .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
@@ -3344,7 +3351,7 @@ pub fn runtimeEmbedFile(
         }
     };
 
-    if (root == .src_eager and static.once.done) {
+    if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
         default_allocator.free(static.storage);
     }
@@ -3851,19 +3858,26 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
+        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
 
         pub fn lock(impl: *@This()) void {
-            bun.assert(impl.owning_thread == null);
+            if (impl.owning_thread) |thread| {
+                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
+                crash_handler.dumpStackTrace(impl.locked_at.trace());
+                @panic("Safety lock violated");
+            }
             impl.owning_thread = std.Thread.getCurrentId();
+            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
         }
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.owning_thread = null;
+            impl.* = .{};
         }
 
         pub fn assertLocked(impl: *const @This()) void {
-            assert(std.Thread.getCurrentId() == impl.owning_thread);
+            assert(impl.owning_thread != null); // not locked
+            assert(impl.owning_thread == std.Thread.getCurrentId());
         }
     }
 else
@@ -3894,30 +3908,38 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         /// Prefer this over @enumFromInt to assert the int is in range
-        pub fn init(int: backing_int) callconv(callconv_inline) Index {
+        pub inline fn init(int: backing_int) Index {
             bun.assert(int != null_value); // would be confused for null
             return @enumFromInt(int);
         }
 
         /// Prefer this over @intFromEnum because of type confusion with `.Optional`
-        pub fn get(i: @This()) callconv(callconv_inline) backing_int {
+        pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);
         }
 
-        pub fn toOptional(oi: @This()) callconv(callconv_inline) Optional {
+        pub inline fn toOptional(oi: @This()) Optional {
             return @enumFromInt(oi.get());
+        }
+
+        pub fn sortFnAsc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
         }
 
         pub const Optional = enum(backing_int) {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub fn init(maybe: ?Index) callconv(callconv_inline) ?Index {
+            pub inline fn init(maybe: ?Index) ?Index {
                 return if (maybe) |i| i.toOptional() else .none;
             }
 
-            pub fn unwrap(oi: Optional) callconv(callconv_inline) ?Index {
+            pub inline fn unwrap(oi: Optional) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
         };
@@ -3929,12 +3951,18 @@ comptime {
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
 }
 
+pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } {
+    bun.assert(mid <= slice.len);
+
+    return .{ slice[0..mid], slice[mid..] };
+}
+
 /// Reverse of the slice index operator.
 /// Given `&slice[index] == item`, returns the `index` needed.
 /// The item must be in the slice.
 pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
-    bun.assert(isSliceInBufferT(T, slice, item[0..1]));
-    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    bun.assert(isSliceInBufferT(T, item[0..1], slice));
+    const offset = @intFromPtr(item) - @intFromPtr(slice.ptr);
     const index = @divExact(offset, @sizeOf(T));
     return index;
 }

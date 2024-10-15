@@ -40,7 +40,10 @@ pub const Overflow = struct {
     y: OverflowKeyword,
 
     pub fn parse(input: *css.Parser) css.Result(Overflow) {
-        const x = try OverflowKeyword.parse(input);
+        const x = switch (OverflowKeyword.parse(input)) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
         const y = switch (input.tryParse(OverflowKeyword.parse, .{})) {
             .result => |v| v,
             else => x,
@@ -54,6 +57,14 @@ pub const Overflow = struct {
             try dest.writeChar(' ');
             try this.y.toCss(W, dest);
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub inline fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

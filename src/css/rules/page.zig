@@ -84,6 +84,10 @@ pub const PageSelector = struct {
             try pseudo.toCss(W, dest);
         }
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const PageMarginRule = struct {
@@ -103,6 +107,10 @@ pub const PageMarginRule = struct {
         try dest.writeChar('@');
         try this.margin_box.toCss(W, dest);
         try this.declarations.toCssBlock(W, dest);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 
@@ -214,6 +222,10 @@ pub const PageRule = struct {
         try dest.newline();
         try dest.writeChar('}');
     }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A page pseudo class within an `@page` selector.
@@ -241,6 +253,10 @@ pub const PagePseudoClass = enum {
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };
 

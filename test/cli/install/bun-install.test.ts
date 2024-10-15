@@ -21,6 +21,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
   runBunInstall,
+  isWindows,
 } from "harness";
 import { join, sep } from "path";
 import {

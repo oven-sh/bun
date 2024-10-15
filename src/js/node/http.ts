@@ -1260,8 +1260,10 @@ const IncomingMessagePrototype = {
   _finish() {
     this.emit("prefinish");
   },
-  _destroy(err, cb) {
-    if (!this.readableEnded || !this.complete) {
+  _destroy: function IncomingMessage_destroy(err, cb) {
+    const shouldEmitAborted = !this.readableEnded || !this.complete;
+
+    if (shouldEmitAborted) {
       this[abortedSymbol] = true;
       // IncomingMessage emits 'aborted'.
       // Client emits 'abort'.
@@ -1281,7 +1283,7 @@ const IncomingMessagePrototype = {
         nodeHTTPResponse.abort();
       }
       const socket = this.socket;
-      if (socket && !socket.destroyed && this.aborted) {
+      if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }
     } else {
@@ -1292,11 +1294,11 @@ const IncomingMessagePrototype = {
       if (streamState === $streamReadable || streamState === $streamWaiting || streamState === $streamWritable) {
         stream?.cancel?.().catch(nop);
       }
-    }
 
-    const socket = this[fakeSocketSymbol];
-    if (socket) {
-      socket.destroy(err);
+      const socket = this[fakeSocketSymbol];
+      if (socket && !socket.destroyed && shouldEmitAborted) {
+        socket.destroy(err);
+      }
     }
 
     if ($isCallable(cb)) {

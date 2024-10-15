@@ -1175,12 +1175,7 @@ describe("Compressed requests", () => {
     });
 
     it("Should handle large messages", done => {
-      let longMessage = "";
-      for (let i = 0; i < 400000; i++) {
-        const letter = "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)];
-        longMessage = longMessage + letter.repeat(10);
-      }
-
+      let longMessage = Buffer.alloc(4000000, "a").toString("utf8");
       client.unary({ message: longMessage }, (err, response) => {
         assert.ifError(err);
         assert.strictEqual(response?.message, longMessage);

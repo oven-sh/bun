@@ -2085,7 +2085,7 @@ describe("fs.ReadStream", () => {
 
 describe("createWriteStream", () => {
   it("simple write stream finishes", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStream.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStream.txt`;
     const stream = createWriteStream(path);
     stream.write("Test file written successfully");
     stream.end();
@@ -2103,7 +2103,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path);
     try {
       stream.write(null);
@@ -2114,7 +2114,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       objectMode: true,
@@ -2128,7 +2128,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path);
     try {
       stream.write(false);
@@ -2139,7 +2139,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       objectMode: true,
@@ -2153,7 +2153,7 @@ describe("createWriteStream", () => {
   });
 
   it("writing in append mode should not truncate the file", async () => {
-    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamAppend.txt`;
+    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.createWriteStreamAppend.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
       flags: "a",

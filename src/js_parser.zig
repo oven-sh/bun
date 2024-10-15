@@ -15797,12 +15797,9 @@ fn NewParser_(
                                 p.source,
                                 end_tag.range,
                                 p.allocator,
-                                "Expected closing tag \\</{s}\\> to match opening tag \\<{s}\\>",
-                                .{
-                                    end_tag.name,
-                                    tag.name,
-                                },
-                                "Starting tag here:",
+                                "Expected closing JSX tag to match opening tag \"\\<{s}\\>\"",
+                                .{tag.name},
+                                "Opening tag here:",
                                 .{},
                                 tag.range,
                             );

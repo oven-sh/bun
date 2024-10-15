@@ -1,12 +1,14 @@
 // This file implements the UI for error modals. Since using a framework like
-// React could collide with the user's code, this entire modal is written from
-// scratch using the standard DOM APIs. This keeps things fast and simple.
-// Additionally, all CSS is scoped in `overlay.css`, and all elements exist
-// under a shadow root.
+// React could collide with the user's code (consider React DevTools), this
+// entire modal is written from scratch using the standard DOM APIs. All CSS is
+// scoped in `overlay.css`, and all elements exist under a shadow root. These
+// constraints make the overlay simple to understand and work on.
 //
 // This file has two consumers:
 // - The bundler error page which embeds a list of bundler errors to render.
 // - The client runtime, for when reloading errors happen.
+// Both use a WebSocket to coordinate followup updates, when new errors are
+// added or previous ones are solved.
 import { BundlerMessageLevel } from "../enums";
 import { css } from "../macros" with { type: "macro" };
 import { BundlerMessage, BundlerMessageLocation, BundlerNote, decodeSerializedError, type DeserializedFailure } from "./error-serialization";

@@ -1650,7 +1650,7 @@ declare module "bun" {
    * automatically run in a worker thread.
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -1753,7 +1753,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -1792,7 +1792,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -4448,15 +4448,18 @@ declare module "bun" {
     hostname: string;
     port: number;
     tls?: TLSOptions;
+    exclusive?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
     tls?: boolean;
+    exclusive?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
     unix: string;
   }
 

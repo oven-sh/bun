@@ -8,58 +8,6 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
-
-const { ERR_INVALID_ARG_TYPE, ERR_INVALID_HTTP_TOKEN, ERR_INVALID_ARG_VALUE } = require("internal/errors");
-class ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED extends TypeError {
-  constructor() {
-    super("Cannot set HTTP/2 pseudo-headers");
-    this.code = "ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED";
-  }
-}
-
-class ERR_HTTP2_INVALID_HEADER_VALUE extends TypeError {
-  constructor(message, token) {
-    super(`Invalid value "${message}" for header "${token}"`);
-    this.code = "ERR_HTTP2_INVALID_HEADER_VALUE";
-  }
-}
-class ERR_HTTP2_SEND_FILE extends Error {
-  constructor() {
-    super("Directories cannot be sent");
-    this.code = "ERR_HTTP2_SEND_FILE";
-  }
-}
-class ERR_HTTP2_SEND_FILE_NOSEEK extends Error {
-  constructor() {
-    super("Offset or length can only be specified for regular files");
-    this.code = "ERR_HTTP2_SEND_FILE_NOSEEK";
-  }
-}
-
-class ERR_HTTP2_HEADERS_SENT extends Error {
-  constructor() {
-    super("Response has already been initiated");
-    this.code = "ERR_HTTP2_HEADERS_SENT";
-  }
-}
-class ERR_HTTP2_INFO_STATUS_NOT_ALLOWED extends RangeError {
-  constructor() {
-    super("Informational status codes cannot be used");
-    this.code = "ERR_HTTP2_INFO_STATUS_NOT_ALLOWED";
-  }
-}
-class ERR_HTTP2_STATUS_INVALID extends RangeError {
-  constructor(status) {
-    super(`Invalid status code: ${status}`);
-    this.code = "ERR_HTTP2_STATUS_INVALID";
-  }
-}
-class ERR_HTTP2_INVALID_PSEUDOHEADER extends TypeError {
-  constructor(key) {
-    super(`"${key}" is an invalid pseudoheader or is used incorrectly`);
-    this.code = "ERR_HTTP2_INVALID_PSEUDOHEADER";
-  }
-}
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
@@ -126,82 +74,15 @@ const kSetHeader = Symbol("setHeader");
 const kAppendHeader = Symbol("appendHeader");
 const kAborted = Symbol("aborted");
 const kRequest = Symbol("request");
+const {
+  validateInteger,
+  validateString,
+  validateObject,
+  validateFunction,
+  checkIsHttpToken,
+  validateLinkHeaderValue,
+} = require("internal/validators");
 
-function validateString(value, name) {
-  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
-}
-hideFromStack(validateString);
-
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-hideFromStack(validateFunction);
-
-function validateObject(value, name) {
-  if (typeof value !== "object") throw ERR_INVALID_ARG_TYPE(name, "object", value);
-}
-hideFromStack(validateObject);
-
-/*
-  The rules for the Link header field are described here:
-  https://www.rfc-editor.org/rfc/rfc8288.html#section-3
-
-  This regex validates any string surrounded by angle brackets
-  (not necessarily a valid URI reference) followed by zero or more
-  link-params separated by semicolons.
-*/
-const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
-function validateLinkHeaderFormat(value, name) {
-  if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
-    throw ERR_INVALID_ARG_VALUE(
-      name,
-      value,
-      'must be an array or string of format "</styles.css>; rel=preload; as=style"',
-    );
-  }
-}
-function validateLinkHeaderValue(hints) {
-  if (typeof hints === "string") {
-    validateLinkHeaderFormat(hints, "hints");
-    return hints;
-  } else if (ArrayIsArray(hints)) {
-    const hintsLength = hints.length;
-    let result = "";
-
-    if (hintsLength === 0) {
-      return result;
-    }
-
-    for (let i = 0; i < hintsLength; i++) {
-      const link = hints[i];
-      validateLinkHeaderFormat(link, "hints");
-      result += link;
-
-      if (i !== hintsLength - 1) {
-        result += ", ";
-      }
-    }
-
-    return result;
-  }
-
-  throw ERR_INVALID_ARG_VALUE(
-    "hints",
-    hints,
-    'must be an array or string of format "</styles.css>; rel=preload; as=style"',
-  );
-}
-hideFromStack(validateLinkHeaderValue);
-
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-/**
- * Verifies that the given val is a valid HTTP token
- * per the rules defined in RFC 7230
- * See https://tools.ietf.org/html/rfc7230#section-3.2.6
- */
-function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
-}
 let utcCache;
 
 function utcDate() {
@@ -361,13 +242,13 @@ function connectionHeaderMessageWarn() {
 
 function assertValidHeader(name, value) {
   if (name === "" || typeof name !== "string" || StringPrototypeIncludes(name, " ")) {
-    throw new ERR_INVALID_HTTP_TOKEN("Header name", name);
+    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
   if (isPseudoHeader(name)) {
-    throw new ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED();
+    throw $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED("Cannot set HTTP/2 pseudo-headers");
   }
   if (value === undefined || value === null) {
-    throw new ERR_HTTP2_INVALID_HEADER_VALUE(value, name);
+    throw $ERR_HTTP2_INVALID_HEADER_VALUE(`Invalid value "${value}" for header "${name}"`);
   }
   if (!isConnectionHeaderAllowed(name, value)) {
     connectionHeaderMessageWarn();
@@ -469,7 +350,8 @@ class Http2ServerRequest extends Readable {
 
   set method(method) {
     validateString(method, "method");
-    if (StringPrototypeTrim(method) === "") throw new ERR_INVALID_ARG_VALUE("method", method);
+    if (StringPrototypeTrim(method) === "")
+      throw $ERR_INVALID_ARG_VALUE(`The arguments method is invalid. Received ${method}`);
 
     this[kHeaders][HTTP2_HEADER_METHOD] = method;
   }
@@ -585,8 +467,9 @@ class Http2ServerResponse extends Stream {
 
   set statusCode(code) {
     code |= 0;
-    if (code >= 100 && code < 200) throw new ERR_HTTP2_INFO_STATUS_NOT_ALLOWED();
-    if (code < 100 || code > 599) throw new ERR_HTTP2_STATUS_INVALID(code);
+    if (code >= 100 && code < 200)
+      throw $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED("Informational status codes cannot be used");
+    if (code < 100 || code > 599) throw $ERR_HTTP2_STATUS_INVALID(`Invalid status code: ${code}`);
     this[kState].statusCode = code;
   }
 
@@ -629,7 +512,7 @@ class Http2ServerResponse extends Stream {
 
   removeHeader(name) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
     name = StringPrototypeToLowerCase(StringPrototypeTrim(name));
 
@@ -644,7 +527,7 @@ class Http2ServerResponse extends Stream {
 
   setHeader(name, value) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
     this[kSetHeader](name, value);
   }
@@ -658,14 +541,15 @@ class Http2ServerResponse extends Stream {
     }
 
     if (name[0] === ":") assertValidPseudoHeader(name);
-    else if (!checkIsHttpToken(name)) this.destroy(new ERR_INVALID_HTTP_TOKEN("Header name", name));
+    else if (!checkIsHttpToken(name))
+      this.destroy($ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`));
 
     this[kHeaders][name] = value;
   }
 
   appendHeader(name, value) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
     this[kAppendHeader](name, value);
   }
@@ -679,7 +563,8 @@ class Http2ServerResponse extends Stream {
     }
 
     if (name[0] === ":") assertValidPseudoHeader(name);
-    else if (!checkIsHttpToken(name)) this.destroy(new ERR_INVALID_HTTP_TOKEN("Header name", name));
+    else if (!checkIsHttpToken(name))
+      this.destroy($ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`));
 
     // Handle various possible cases the same as OutgoingMessage.appendHeader:
     const headers = this[kHeaders];
@@ -720,7 +605,7 @@ class Http2ServerResponse extends Stream {
     const state = this[kState];
 
     if (state.closed || this.stream.destroyed) return this;
-    if (this[kStream].headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
     if (typeof statusMessage === "string") statusMessageWarn();
 
@@ -758,7 +643,7 @@ class Http2ServerResponse extends Stream {
         }
       } else {
         if (headers.length % 2 !== 0) {
-          throw new ERR_INVALID_ARG_VALUE("headers", headers);
+          throw $ERR_INVALID_ARG_VALUE(`The arguments headers is invalid.`);
         }
 
         for (i = 0; i < headers.length; i += 2) {
@@ -798,11 +683,9 @@ class Http2ServerResponse extends Stream {
 
     let err;
     if (state.ending) {
-      err = new Error(`ERR_STREAM_WRITE_AFTER_END: The stream has ended`);
-      err.code = "ERR_STREAM_WRITE_AFTER_END";
+      err = $ERR_STREAM_WRITE_AFTER_END(`The stream has ended`);
     } else if (state.closed) {
-      err = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-      err.code = "ERR_HTTP2_INVALID_STREAM";
+      err = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     } else if (state.destroyed) {
       return false;
     }
@@ -870,8 +753,7 @@ class Http2ServerResponse extends Stream {
   createPushResponse(headers, callback) {
     validateFunction(callback, "callback");
     if (this[kState].closed) {
-      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-      error.code = "ERR_HTTP2_INVALID_STREAM";
+      const error = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
       process.nextTick(callback, error);
       return;
     }
@@ -982,15 +864,13 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        const error = new Error("HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
-        error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
-        throw error;
+        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION(
+          "HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
+        );
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {
-          const error = new Error("The socket has been disconnected from the Http2Session");
-          error.code = "ERR_HTTP2_SOCKET_UNBOUND";
-          throw error;
+          throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
         }
         const value = socket[prop];
         return typeof value === "function" ? FunctionPrototypeBind(value, socket) : value;
@@ -1000,9 +880,7 @@ const proxySocketHandler = {
   getPrototypeOf(session) {
     const socket = session[bunHTTP2Socket];
     if (!socket) {
-      const error = new Error("The socket has been disconnected from the Http2Session");
-      error.code = "ERR_HTTP2_SOCKET_UNBOUND";
-      throw error;
+      throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
     }
     return ReflectGetPrototypeOf(socket);
   },
@@ -1023,15 +901,13 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        const error = new Error("HTTP/2 sockets should not be directly manipulated (e.g. read and written)");
-        error.code = "ERR_HTTP2_NO_SOCKET_MANIPULATION";
-        throw error;
+        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION(
+          "HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
+        );
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {
-          const error = new Error("The socket has been disconnected from the Http2Session");
-          error.code = "ERR_HTTP2_SOCKET_UNBOUND";
-          throw error;
+          throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
         }
         socket[prop] = value;
         return true;
@@ -1598,7 +1474,7 @@ const kSingleValueHeaders = new SafeSet([
 
 function assertValidPseudoHeader(key) {
   if (!kValidPseudoHeaders.has(key)) {
-    throw new ERR_HTTP2_INVALID_PSEUDOHEADER(key);
+    throw $ERR_HTTP2_INVALID_PSEUDOHEADER(`"${key}" is an invalid pseudoheader or is used incorrectly`);
   }
 }
 hideFromStack(assertValidPseudoHeader);
@@ -1618,25 +1494,17 @@ type Settings = {
 class Http2Session extends EventEmitter {}
 
 function streamErrorFromCode(code: number) {
-  const error = new Error(`Stream closed with error code ${nameForErrorCode[code] || code}`);
-  error.code = "ERR_HTTP2_STREAM_ERROR";
-  error.errno = code;
-  return error;
+  return $ERR_HTTP2_STREAM_ERROR(`Stream closed with error code ${nameForErrorCode[code] || code}`);
 }
 hideFromStack(streamErrorFromCode);
 function sessionErrorFromCode(code: number) {
-  const error = new Error(`Session closed with error code ${nameForErrorCode[code] || code}`);
-  error.code = "ERR_HTTP2_SESSION_ERROR";
-  error.errno = code;
-  return error;
+  return $ERR_HTTP2_SESSION_ERROR(`Session closed with error code ${nameForErrorCode[code] || code}`);
 }
 hideFromStack(sessionErrorFromCode);
 
 function assertSession(session) {
   if (!session) {
-    const error = new Error(`ERR_HTTP2_INVALID_SESSION: The session has been destroyed`);
-    error.code = "ERR_HTTP2_INVALID_SESSION";
-    throw error;
+    throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
   }
 }
 hideFromStack(assertSession);
@@ -1744,39 +1612,32 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
 
     if (this.destroyed || this.closed) {
-      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-      error.code = "ERR_HTTP2_INVALID_STREAM";
-      throw error;
+      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     }
 
     if (this.#sentTrailers) {
-      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
-      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
-      throw error;
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
     }
     assertSession(session);
 
     if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
-      const error = new Error(
-        `ERR_HTTP2_TRAILERS_NOT_READY: Trailing headers cannot be sent until after the wantTrailers event is emitted`,
+      throw $ERR_HTTP2_TRAILERS_NOT_READY(
+        "Trailing headers cannot be sent until after the wantTrailers event is emitted",
       );
-      error.code = "ERR_HTTP2_TRAILERS_NOT_READY";
-      throw error;
     }
 
     if (headers == undefined) {
       headers = {};
+    } else if (!$isObject(headers)) {
+      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+    } else {
+      headers = { ...headers };
     }
-
-    if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
-    }
-
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isJSArray(sensitives)) {
-        throw new new ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]")();
+        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid");
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -1842,10 +1703,7 @@ class Http2Stream extends Duplex {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
-
-      if (code < 0 || code > 13) {
-        throw new RangeError("Invalid error code");
-      }
+      validateInteger(code, "code", 0, 13);
       this.rstCode = code;
       markStreamClosed(this);
 
@@ -2031,7 +1889,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
       options.length >= 0 ||
       isDirectory
     ) {
-      const err = isDirectory ? new ERR_HTTP2_SEND_FILE() : new ERR_HTTP2_SEND_FILE_NOSEEK();
+      const err = isDirectory
+        ? $ERR_HTTP2_SEND_FILE("Directories cannot be sent")
+        : $ERR_HTTP2_SEND_FILE_NOSEEK("Offset or length can only be specified for regular files");
       tryClose(fd);
       if (onError) onError(err);
       else this.destroy(err);
@@ -2044,8 +1904,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     tryClose(fd);
-    const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-    error.code = "ERR_HTTP2_INVALID_STREAM";
+    const error = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     this.destroy(error);
     return;
   }
@@ -2122,7 +1981,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
     } else {
       headers = { ...headers };
     }
@@ -2139,11 +1998,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
-      const error = new Error(
-        `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
-      );
-      error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
-      throw error;
+      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
     }
 
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
@@ -2154,7 +2009,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
     } else {
       headers = { ...headers };
     }
@@ -2171,41 +2026,33 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
-      const error = new Error(
-        `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
-      );
-      error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
-      throw error;
+      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
     }
     fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed) {
-      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-      error.code = "ERR_HTTP2_INVALID_STREAM";
-      throw error;
+      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     }
 
     if (this.sentTrailers) {
-      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
-      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
-      throw error;
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
     }
-    if (this.headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
 
     if (headers == undefined) {
       headers = {};
-    }
-
-    if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+    } else if (!$isObject(headers)) {
+      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+    } else {
+      headers = { ...headers };
     }
 
     const sensitives = headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw new ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]");
+        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -2223,11 +2070,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
-      const error = new Error(
-        `ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with ${statusCode} status must not have a payload`,
-      );
-      error.code = "ERR_HTTP2_PAYLOAD_FORBIDDEN";
-      throw error;
+      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
@@ -2241,21 +2084,17 @@ class ServerHttp2Stream extends Http2Stream {
   }
   respond(headers: any, options?: any) {
     if (this.destroyed || this.closed) {
-      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-      error.code = "ERR_HTTP2_INVALID_STREAM";
-      throw error;
+      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     }
-    if (this.headersSent) throw new ERR_HTTP2_HEADERS_SENT();
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
     if (this.sentTrailers) {
-      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
-      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
-      throw error;
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
     }
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
     } else {
       headers = { ...headers };
     }
@@ -2264,7 +2103,7 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw new ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]");
+        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -2698,9 +2537,7 @@ class ServerHttp2Session extends Http2Session {
       payload = payload || Buffer.alloc(8);
     }
     if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      const error = new TypeError("ERR_INVALID_ARG_TYPE: payload must be a Buffer or TypedArray");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw $ERR_INVALID_ARG_TYPE("payload must be a Buffer or TypedArray");
     }
     const parser = this.#parser;
     if (!parser) return false;
@@ -2708,8 +2545,7 @@ class ServerHttp2Session extends Http2Session {
 
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
-        const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
-        error.code = "ERR_HTTP2_PING_LENGTH";
+        const error = $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
         callback(error, 0, payload);
         return;
       }
@@ -2719,9 +2555,7 @@ class ServerHttp2Session extends Http2Session {
         this.#pingCallbacks = [[callback, Date.now()]];
       }
     } else if (payload.byteLength !== 8) {
-      const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
-      error.code = "ERR_HTTP2_PING_LENGTH";
-      throw error;
+      throw $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
     }
 
     parser.ping(payload);
@@ -2981,8 +2815,7 @@ class ClientHttp2Session extends Http2Session {
       // client must check alpnProtocol
       if (socket.alpnProtocol !== "h2") {
         socket.end();
-        const error = new Error("ERR_HTTP2_ERROR: h2 is not supported");
-        error.code = "ERR_HTTP2_ERROR";
+        const error = $ERR_HTTP2_ERROR("h2 is not supported");
         this.emit("error", error);
       }
       this.#alpnProtocol = "h2";
@@ -3077,9 +2910,7 @@ class ClientHttp2Session extends Http2Session {
       payload = payload || Buffer.alloc(8);
     }
     if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      const error = new TypeError("ERR_INVALID_ARG_TYPE: payload must be a Buffer or TypedArray");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw $ERR_INVALID_ARG_TYPE("payload must be a Buffer or TypedArray");
     }
     const parser = this.#parser;
     if (!parser) return false;
@@ -3087,8 +2918,7 @@ class ClientHttp2Session extends Http2Session {
 
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
-        const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
-        error.code = "ERR_HTTP2_PING_LENGTH";
+        const error = $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
         callback(error, 0, payload);
         return;
       }
@@ -3098,9 +2928,7 @@ class ClientHttp2Session extends Http2Session {
         this.#pingCallbacks = [[callback, Date.now()]];
       }
     } else if (payload.byteLength !== 8) {
-      const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
-      error.code = "ERR_HTTP2_PING_LENGTH";
-      throw error;
+      throw $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
     }
 
     parser.ping(payload);
@@ -3143,7 +2971,7 @@ class ClientHttp2Session extends Http2Session {
       url = new URL(url);
     }
     if (!(url instanceof URL)) {
-      throw new Error("ERR_HTTP2: Invalid URL");
+      throw $ERR_INVALID_ARG_TYPE("Invalid URL");
     }
     if (typeof options === "function") {
       listener = options;
@@ -3239,21 +3067,17 @@ class ClientHttp2Session extends Http2Session {
 
   request(headers: any, options?: any) {
     if (this.destroyed || this.closed) {
-      const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
-      error.code = "ERR_HTTP2_INVALID_STREAM";
-      throw error;
+      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     }
 
     if (this.sentTrailers) {
-      const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
-      error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
-      throw error;
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
     }
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
     } else {
       headers = { ...headers };
     }
@@ -3262,7 +3086,7 @@ class ClientHttp2Session extends Http2Session {
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
-        throw new ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]");
+        throw $ERR_INVALID_ARG_VALUE("The arguments headers[http2.neverIndex] is invalid.");
       }
       for (let i = 0; i < sensitives.length; i++) {
         sensitiveNames[sensitives[i]] = true;
@@ -3311,10 +3135,7 @@ class ClientHttp2Session extends Http2Session {
     const req = new ClientHttp2Stream(stream_id, this, headers);
     req.authority = authority;
     if (stream_id < 0) {
-      const error = new Error(
-        "ERR_HTTP2_OUT_OF_STREAMS: No stream ID is available because maximum stream ID has been reached",
-      );
-      error.code = "ERR_HTTP2_OUT_OF_STREAMS";
+      const error = $ERR_HTTP2_OUT_OF_STREAMS("No stream ID is available because maximum stream ID has been reached");
       this.emit("error", error);
       return null;
     }
@@ -3412,7 +3233,7 @@ class Http2Server extends net.Server {
     } else if (options == null || typeof options == "object") {
       options = { ...options };
     } else {
-      throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
+      throw $ERR_INVALID_ARG_TYPE("options must be an object");
     }
     super(options, connectionListener);
     this.setMaxListeners(0);
@@ -3451,7 +3272,7 @@ class Http2SecureServer extends tls.Server {
     } else if (options == null || typeof options == "object") {
       options = { ...options, ALPNProtocols: ["h2"] };
     } else {
-      throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
+      throw $ERR_INVALID_ARG_TYPE("options must be an object");
     }
     super(options, connectionListener);
     this.setMaxListeners(0);

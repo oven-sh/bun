@@ -191,8 +191,7 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
-    void formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStack = JSC::jsUndefined());
+    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -376,6 +375,7 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    bool isInsideErrorPrepareStackTraceCallback = false;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -586,6 +586,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
 
     LazyProperty<JSGlobalObject, Structure> m_JSNodeHTTPServerSocketStructure;
 

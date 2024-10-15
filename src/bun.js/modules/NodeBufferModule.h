@@ -5,6 +5,7 @@
 #include "../bindings/JSBuffer.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/PageCount.h"
+#include "NodeValidator.h"
 #include "_NativeModule.h"
 #include "wtf/SIMDUTF.h"
 #include <limits>
@@ -96,9 +97,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
                  JSC::jsDynamicCast<JSC::JSArrayBuffer *>(buffer)) {
     auto *impl = arrayBuffer->impl();
     if (UNLIKELY(impl->isDetached())) {
-      throwTypeError(lexicalGlobalObject, throwScope,
-                     "ArrayBuffer is detached"_s);
-      return {};
+      return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
+                                     "Cannot validate on a detached buffer"_s);
     }
 
     if (!impl) {
@@ -137,6 +137,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
   return {};
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+  auto globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
+  return JSValue::encode(jsNumber(globalObject->INSPECT_MAX_BYTES));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
+  auto globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
+  auto &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  auto val = JSValue::decode(value);
+  Bun::V::validateNumber(scope, globalObject, val, jsString(vm, String("INSPECT_MAX_BYTES"_s)), jsNumber(0), jsUndefined());
+  RETURN_IF_EXCEPTION(scope, {});
+  globalObject->INSPECT_MAX_BYTES = val.asNumber();
+  return JSValue::encode(jsUndefined());
+}
+
 DEFINE_NATIVE_MODULE(NodeBuffer) {
   INIT_NATIVE_MODULE(12);
 
@@ -160,32 +178,30 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
   put(JSC::Identifier::fromString(vm, "File"_s),
       globalObject->JSDOMFileConstructor());
 
-  put(JSC::Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s),
-      JSC::jsNumber(50));
+  {
+    auto name = Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s);
+    auto value = JSC::CustomGetterSetter::create(vm, jsGetter_INSPECT_MAX_BYTES, jsSetter_INSPECT_MAX_BYTES);
+    auto attributes = PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor;
+    defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
+    exportNames.append(name);
+    exportValues.append(value);
+    __NATIVE_MODULE_ASSERT_INCR;
+  }
 
-  put(JSC::Identifier::fromString(vm, "kMaxLength"_s),
-      JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
+  put(JSC::Identifier::fromString(vm, "kMaxLength"_s), JSC::jsNumber(Bun::Buffer::kMaxLength));
+  put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s), JSC::jsNumber(Bun::Buffer::kStringMaxLength));
 
-  put(JSC::Identifier::fromString(vm, "kStringMaxLength"_s),
-      JSC::jsNumber(WTF::String::MaxLength));
-
-  JSC::JSObject *constants = JSC::constructEmptyObject(
-      lexicalGlobalObject, globalObject->objectPrototype(), 2);
-  constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s),
-                       JSC::jsNumber(MAX_ARRAY_BUFFER_SIZE));
-  constants->putDirect(vm,
-                       JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s),
-                       JSC::jsNumber(WTF::String::MaxLength));
+  JSC::JSObject *constants = JSC::constructEmptyObject(lexicalGlobalObject, globalObject->objectPrototype(), 2);
+  constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_LENGTH"_s), JSC::jsNumber(Bun::Buffer::MAX_LENGTH));
+  constants->putDirect(vm, JSC::Identifier::fromString(vm, "MAX_STRING_LENGTH"_s), JSC::jsNumber(Bun::Buffer::MAX_STRING_LENGTH));
 
   put(JSC::Identifier::fromString(vm, "constants"_s), constants);
 
   JSC::Identifier atobI = JSC::Identifier::fromString(vm, "atob"_s);
-  JSC::JSValue atobV =
-      lexicalGlobalObject->get(globalObject, PropertyName(atobI));
+  JSC::JSValue atobV = lexicalGlobalObject->get(globalObject, PropertyName(atobI));
 
   JSC::Identifier btoaI = JSC::Identifier::fromString(vm, "btoa"_s);
-  JSC::JSValue btoaV =
-      lexicalGlobalObject->get(globalObject, PropertyName(btoaI));
+  JSC::JSValue btoaV = lexicalGlobalObject->get(globalObject, PropertyName(btoaI));
 
   put(atobI, atobV);
   put(btoaI, btoaV);

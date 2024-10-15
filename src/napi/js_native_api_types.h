@@ -93,12 +93,10 @@ typedef enum {
   napi_would_deadlock // unused
 } napi_status;
 // Note: when adding a new enum value to `napi_status`, please also update
-//   * `const int last_status` in the definition of `napi_get_last_error_info()'
-//     in file js_native_api_v8.cc.
-//   * `const char* error_messages[]` in file js_native_api_v8.cc with a brief
+//   * `constexpr int last_status` in the definition of `napi_get_last_error_info()'
+//     in file napi.cpp.
+//   * `const char* error_messages[]` in file napi.cpp with a brief
 //     message explaining the error.
-//   * the definition of `napi_status` in doc/api/n-api.md to reflect the newly
-//     added value(s).
 
 typedef napi_value (*napi_callback)(napi_env env, napi_callback_info info);
 typedef void (*napi_finalize)(napi_env env, void *finalize_data,

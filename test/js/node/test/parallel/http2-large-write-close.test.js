@@ -5,12 +5,14 @@
 const fixtures = require("../common/fixtures");
 const http2 = require("http2");
 
+const { beforeEach, afterEach, test, expect } = require("bun:test");
+
 const content = Buffer.alloc(1e5, 0x44);
 
 let server;
 let port;
 
-beforeAll(done => {
+beforeEach(done => {
   if (!process.versions.openssl) {
     return test.skip("missing crypto");
   }
@@ -23,13 +25,14 @@ beforeAll(done => {
   server.on("stream", stream => {
     stream.respond({
       "Content-Type": "application/octet-stream",
-      "Content-Length": content.length.toString() * 2,
+      "Content-Length": content.byteLength.toString() * 2,
       "Vary": "Accept-Encoding",
     });
 
     stream.write(content);
     stream.write(content);
     stream.end();
+    stream.close();
   });
 
   server.listen(0, () => {
@@ -38,7 +41,7 @@ beforeAll(done => {
   });
 });
 
-afterAll(() => {
+afterEach(() => {
   server.close();
 });
 
@@ -50,14 +53,14 @@ test("HTTP/2 large write and close", done => {
 
   let receivedBufferLength = 0;
   req.on("data", buf => {
-    receivedBufferLength += buf.length;
+    receivedBufferLength += buf.byteLength;
   });
 
   req.on("close", () => {
-    expect(receivedBufferLength).toBe(content.length * 2);
+    expect(receivedBufferLength).toBe(content.byteLength * 2);
     client.close();
     done();
   });
-});
+}, 5000);
 
 //<#END_FILE: test-http2-large-write-close.js

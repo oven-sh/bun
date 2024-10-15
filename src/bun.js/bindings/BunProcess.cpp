@@ -2334,7 +2334,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
 #if OS(LINUX) || OS(FREEBSD)
     return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
 #else
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(0)); // TODO:
 #endif
 }
 

@@ -254,7 +254,6 @@ typedef struct {
     size_t value_len;
     bool never_index;
     uint16_t hpack_index;
-    bool hpack_index_withvalue;
 } lshpack_header;
 
 lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
@@ -316,10 +315,8 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     output->never_index = (hdr.flags & LSXPACK_NEVER_INDEX) != 0;
     if (hdr.hpack_index != LSHPACK_HDR_UNKNOWN && hdr.hpack_index <= LSHPACK_HDR_WWW_AUTHENTICATE) {
         output->hpack_index = hdr.hpack_index - 1;
-        output->hpack_index_withvalue = false; // TODO: discover a way of checking if the value also matchs
     } else {
         output->hpack_index = 255;
-        output->hpack_index_withvalue = false;
     }
     return s - src;
 }

@@ -20,16 +20,12 @@ const BunSocket = union(enum) {
     tcp: *TCPSocket,
     tcp_writeonly: *TCPSocket,
 };
-pub const StringPair = extern struct {
-    key: JSC.JSValue,
-    value: JSC.JSValue,
-};
-extern fn JSC__JSGlobalObject__getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) StringPair;
+extern fn JSC__JSGlobalObject__getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) JSC.JSValue;
 
-pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) ?StringPair {
+pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) ?JSC.JSValue {
     if (hpack_index == 255) return null;
     const value = JSC__JSGlobalObject__getHTTP2CommonString(globalObject, hpack_index);
-    if (value.key.isEmptyOrUndefinedOrNull()) return null;
+    if (value.isEmptyOrUndefinedOrNull()) return null;
     return value;
 }
 const JSValue = JSC.JSValue;
@@ -1804,13 +1800,9 @@ pub const H2FrameParser = struct {
             };
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
-                output.push(globalObject, header_info.key);
-                if (header.well_know_value) {
-                    output.push(globalObject, header_info.value);
-                } else {
-                    var header_value = bun.String.fromUTF8(header.value);
-                    output.push(globalObject, header_value.transferToJS(globalObject));
-                }
+                output.push(globalObject, header_info);
+                var header_value = bun.String.fromUTF8(header.value);
+                output.push(globalObject, header_value.transferToJS(globalObject));
             } else {
                 var header_name = bun.String.fromUTF8(header.name);
                 output.push(globalObject, header_name.transferToJS(globalObject));

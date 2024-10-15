@@ -3609,17 +3609,13 @@ extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalOb
     globalObject->drainMicrotasks();
 }
 
-struct Http2StringPair {
-    EncodedJSValue key;
-    EncodedJSValue value;
-};
-extern "C" Http2StringPair JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
+extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
 {
     auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);
-    if (value.key != nullptr) {
-        return Http2StringPair { .key = JSValue::encode(value.key), .value = JSValue::encode(value.value) };
+    if (value != nullptr) {
+        return JSValue::encode(value);
     }
-    return Http2StringPair { .key = JSValue::encode(JSValue::JSUndefined), .value = JSValue::encode(JSValue::JSUndefined) };
+    return JSValue::encode(JSValue::JSUndefined);
 }
 
 template<typename Visitor>

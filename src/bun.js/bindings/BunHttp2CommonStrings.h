@@ -71,10 +71,6 @@ macro(wwwAuthenticate, "www-authenticate"_s, ""_s, 60)
     JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)      \
     {                                                                   \
         return m_names[idx].getInitializedOnMainThread(globalObject);   \
-    }                                                                   \
-    JSC::JSString* name##StringValue(JSC::JSGlobalObject* globalObject) \
-    {                                                                   \
-        return m_values[idx].getInitializedOnMainThread(globalObject);  \
     }
 
 namespace Bun {
@@ -82,10 +78,6 @@ namespace Bun {
 using namespace JSC;
 
 class Http2CommonStrings {
-    struct StringPair {
-        JSC::JSString* key;
-        JSC::JSString* value;
-    };
 
 public:
     typedef JSC::JSString* (*commonStringInitializer)(Http2CommonStrings*, JSC::JSGlobalObject* globalObject);
@@ -97,23 +89,16 @@ public:
     template<typename Visitor>
     void visit(Visitor& visitor);
 
-    StringPair getStringFromHPackIndex(uint16_t index, JSC::JSGlobalObject* globalObject)
+    JSC::JSString* getStringFromHPackIndex(uint16_t index, JSC::JSGlobalObject* globalObject)
     {
         if (index > 60) {
-            return StringPair {
-                .key = nullptr,
-                .value = nullptr,
-            };
+            return nullptr;
         }
-        return StringPair {
-            .key = m_names[index].getInitializedOnMainThread(globalObject),
-            .value = m_values[index].getInitializedOnMainThread(globalObject),
-        };
+        return m_names[index].getInitializedOnMainThread(globalObject);
     }
 
 private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_names[61];
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_values[61];
 };
 
 } // namespace Bun

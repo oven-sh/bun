@@ -15,15 +15,10 @@ using namespace JSC;
     this->m_names[idx].initLater(                                                  \
         [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) { \
             init.set(jsOwnedString(init.vm, key));                                 \
-        });                                                                        \
-    this->m_values[idx].initLater(                                                 \
-        [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) { \
-            init.set(jsOwnedString(init.vm, value));                               \
         });
 
 #define HTTP2_COMMON_STRINGS_LAZY_PROPERTY_VISITOR(name, key, value, idx) \
-    this->m_names[idx].visit(visitor);                                    \
-    this->m_values[idx].visit(visitor);
+    this->m_names[idx].visit(visitor);
 
 void Http2CommonStrings::initialize()
 {

@@ -2346,6 +2346,7 @@ class ServerHttp2Session extends Http2Session {
       self.emit("error", error_instance);
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
+      this[bunHTTP2Socket] = null;
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
       if (!self || typeof stream !== "object") return;
@@ -2369,11 +2370,13 @@ class ServerHttp2Session extends Http2Session {
 
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
+      this[bunHTTP2Socket] = null;
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
+      this[bunHTTP2Socket] = null;
     },
     write(self: ServerHttp2Session, buffer: Buffer) {
       if (!self) return -1;
@@ -2757,6 +2760,7 @@ class ClientHttp2Session extends Http2Session {
       self.emit("error", error_instance);
       self[bunHTTP2Socket]?.destroy();
       self.#parser = null;
+      this[bunHTTP2Socket] = null;
     },
 
     wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
@@ -2778,11 +2782,13 @@ class ClientHttp2Session extends Http2Session {
       }
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
+      this[bunHTTP2Socket] = null;
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       self[bunHTTP2Socket]?.end();
       self.#parser = null;
+      this[bunHTTP2Socket] = null;
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return -1;

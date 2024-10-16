@@ -30,6 +30,7 @@ pub const All = struct {
     timers: TimerHeap = .{
         .context = {},
     },
+    timer_ref: bun.Async.KeepAlive = .{},
     active_timer_count: i32 = 0,
     uv_timer: if (Environment.isWindows) uv.Timer else void =
         if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
@@ -109,18 +110,10 @@ pub const All = struct {
 
         this.active_timer_count = new;
 
-        if (old <= 0 and new > 0) {
-            if (comptime Environment.isWindows) {
-                this.uv_timer.ref();
-            } else {
-                vm.uwsLoop().ref();
-            }
-        } else if (old > 0 and new <= 0) {
-            if (comptime Environment.isWindows) {
-                this.uv_timer.unref();
-            } else {
-                vm.uwsLoop().unref();
-            }
+        if (new > 0) {
+            this.timer_ref.ref(vm);
+        } else {
+            this.timer_ref.unref(vm);
         }
     }
 

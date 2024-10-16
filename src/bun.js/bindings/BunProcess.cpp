@@ -2371,8 +2371,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
         if (!comparatorValue.isUndefined()) {
             JSC::JSObject* comparator = comparatorValue.getObject();
             if (UNLIKELY(!comparator)) {
-                throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "previousValue"_s, "object"_s, comparatorValue);
             }
 
             JSValue userValue;
@@ -2382,34 +2381,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
                 userValue = comparator->getDirect(0);
                 systemValue = comparator->getDirect(1);
             } else {
-                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
-                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+                userValue = comparator->get(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
 
-                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
-                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+                systemValue = comparator->get(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
             }
 
-            if (UNLIKELY(!userValue || !userValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the 'user' property"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
-            }
+            Bun::V::validateNumber(throwScope, globalObject, userValue, jsString(vm, String("prevValue.user"_s)), jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
 
-            if (UNLIKELY(!systemValue || !systemValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the 'system' property"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
-            }
+            Bun::V::validateNumber(throwScope, globalObject, systemValue, jsString(vm, String("prevValue.system"_s)), jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             double userComparator = userValue.toNumber(globalObject);
             double systemComparator = systemValue.toNumber(globalObject);
 
-            if (userComparator > JSC::maxSafeInteger() || userComparator < 0 || std::isnan(userComparator)) {
-                throwRangeError(globalObject, throwScope, "The 'user' property must be a number between 0 and 2^53"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+            if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
             }
 
-            if (systemComparator > JSC::maxSafeInteger() || systemComparator < 0 || std::isnan(systemComparator)) {
-                throwRangeError(globalObject, throwScope, "The 'system' property must be a number between 0 and 2^53"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+            if (!(systemComparator >= 0 && systemComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.system"_s, systemValue, "is invalid"_s);
             }
 
             user -= userComparator;

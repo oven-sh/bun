@@ -750,7 +750,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         dev.server_graph.ensureStaleBitCapacity(true) catch bun.outOfMemory();
     }
 
-    const chunk = bv2.runFromBakeDevServer(files) catch |err| {
+    const bundle_result = bv2.runFromBakeDevServer(files) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
         bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
@@ -762,7 +762,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
 
     bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
 
-    try dev.finalizeBundle(bv2, &chunk);
+    try dev.finalizeBundle(bv2, bundle_result);
 
     try dev.client_graph.ensureStaleBitCapacity(false);
     try dev.server_graph.ensureStaleBitCapacity(false);
@@ -1025,8 +1025,9 @@ pub const HotUpdateContext = struct {
 pub fn finalizeBundle(
     dev: *DevServer,
     bv2: *bun.bundle_v2.BundleV2,
-    chunk: *const [2]bun.bundle_v2.Chunk,
+    result: bun.bundle_v2.BakeBundleOutput,
 ) !void {
+    const js_chunk = result.jsPseudoChunk();
     const input_file_sources = bv2.graph.input_files.items(.source);
     const import_records = bv2.graph.ast.items(.import_records);
     const targets = bv2.graph.ast.items(.target);
@@ -1059,18 +1060,30 @@ pub fn finalizeBundle(
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into it's `IncrementalGraph(...).FileIndex`
     for (
-        chunk[0].content.javascript.parts_in_chunk_in_order,
-        chunk[0].compile_results_for_chunk,
+        js_chunk.content.javascript.parts_in_chunk_in_order,
+        js_chunk.compile_results_for_chunk,
     ) |part_range, compile_result| {
-        try dev.receiveChunk(
-            &ctx,
-            part_range.source_index,
-            targets[part_range.source_index.get()].bakeGraph(),
-            compile_result,
-        );
+        const index = part_range.source_index;
+        switch (targets[part_range.source_index.get()].bakeGraph()) {
+            .server => try dev.server_graph.receiveChunk(&ctx, index, compile_result, .js, false),
+            .ssr => try dev.server_graph.receiveChunk(&ctx, index, compile_result, .js, true),
+            .client => try dev.client_graph.receiveChunk(&ctx, index, compile_result, .js, false),
+        }
     }
 
-    _ = chunk[1].content.css; // TODO: Index CSS files
+    for (result.cssChunks(), result.css_file_list) |*chunk, metadata| {
+        _ = metadata; // autofix
+        const code = try chunk.intermediate_output.code(
+            dev.allocator,
+            &bv2.graph,
+            "/_bun/import-prefix-where-is-this-used?",
+            chunk,
+            result.chunks,
+            null,
+            false, // TODO: sourcemaps true
+        );
+        std.debug.print("WHAT THE FUCK\n---\n{s}\n---\n", .{code.buffer});
+    }
 
     dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.client_graph.bundled_files.count());
     defer dev.client_graph.affected_by_trace = .{};
@@ -1082,7 +1095,7 @@ pub fn finalizeBundle(
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
-    for (chunk[0].content.javascript.parts_in_chunk_in_order) |part_range| {
+    for (js_chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
         try dev.processChunkDependencies(
             &ctx,
             part_range.source_index,
@@ -1115,20 +1128,6 @@ pub fn handleParseTaskFailure(
     };
 }
 
-pub fn receiveChunk(
-    dev: *DevServer,
-    ctx: *HotUpdateContext,
-    index: bun.JSAst.Index,
-    side: bake.Graph,
-    chunk: bun.bundle_v2.CompileResult,
-) !void {
-    return switch (side) {
-        .server => dev.server_graph.receiveChunk(ctx, index, chunk, false),
-        .ssr => dev.server_graph.receiveChunk(ctx, index, chunk, true),
-        .client => dev.client_graph.receiveChunk(ctx, index, chunk, false),
-    };
-}
-
 pub fn processChunkDependencies(
     dev: *DevServer,
     ctx: *HotUpdateContext,
@@ -1142,7 +1141,11 @@ pub fn processChunkDependencies(
     };
 }
 
-pub fn isFileStale(dev: *DevServer, path: []const u8, side: bake.Graph) bool {
+const CacheEntry = struct {
+    kind: FileKind,
+};
+
+pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheEntry {
     switch (side) {
         inline else => |side_comptime| {
             const g = switch (side_comptime) {
@@ -1151,8 +1154,11 @@ pub fn isFileStale(dev: *DevServer, path: []const u8, side: bake.Graph) bool {
                 .ssr => &dev.server_graph,
             };
             const index = g.bundled_files.getIndex(path) orelse
-                return true; // non-existent files are considered stale
-            return g.stale_files.isSet(index);
+                return null; // non-existent files are considered stale
+            if (!g.stale_files.isSet(index)) {
+                return .{ .kind = g.bundled_files.values()[index].fileKind() };
+            }
+            return null;
         },
     }
 }
@@ -1260,6 +1266,13 @@ fn sendStubErrorMessage(dev: *DevServer, route: *Route, resp: *Response, err: JS
     resp.end(a.items, true); // TODO: "You should never call res.end(huge buffer)"
 }
 
+const FileKind = enum {
+    unknown,
+    js,
+    css,
+    asset,
+};
+
 /// The paradigm of Bake's incremental state is to store a separate list of files
 /// than the Graph in bundle_v2. When watch events happen, the bundler is run on
 /// the changed files, excluding non-stale files via `isFileStale`.
@@ -1361,11 +1374,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 /// If the file has an error, the failure can be looked up
                 /// in the `.failures` map.
                 failed: bool,
+                /// CSS and Asset files get special handling
+                kind: FileKind,
 
-                unused: enum(u2) { unused = 0 } = .unused,
+                fn stopsDependencyTrace(file: @This()) bool {
+                    return file.is_client_component_boundary;
+                }
 
-                fn stopsDependencyTrace(flags: @This()) bool {
-                    return flags.is_client_component_boundary;
+                fn fileKind(file: @This()) FileKind {
+                    return file.kind;
                 }
             },
             .client => struct {
@@ -1380,13 +1397,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// If the file has an error, the failure can be looked up
                     /// in the `.failures` map.
                     failed: bool,
-                    /// If set, the client graph contains a matching file.
-                    is_component_root: bool,
+                    /// For JS files, this is a component root; the server contains a matching file.
+                    /// For CSS files, this is also marked on the stylesheet that is imported from JS.
+                    is_hmr_root: bool,
                     /// This is a file is an entry point to the framework.
                     /// Changing this will always cause a full page reload.
                     is_special_framework_file: bool,
-
-                    kind: enum { js, css },
+                    /// CSS and Asset files get special handling
+                    kind: FileKind,
                 };
 
                 comptime {
@@ -1408,6 +1426,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                 inline fn stopsDependencyTrace(_: @This()) bool {
                     return false;
+                }
+
+                fn fileKind(file: @This()) FileKind {
+                    return file.flags.kind;
                 }
             },
         };
@@ -1452,8 +1474,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             ctx: *HotUpdateContext,
             index: bun.JSAst.Index,
             chunk: bun.bundle_v2.CompileResult,
+            kind: FileKind,
             is_ssr_graph: bool,
         ) !void {
+            _ = kind; // autofix
             const dev = g.owner();
             dev.graph_safety_lock.assertLocked();
 
@@ -1475,6 +1499,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             g.current_chunk_len += code.len;
 
+            // Dump to filesystem if enabled
             if (dev.dump_dir) |dump_dir| {
                 const cwd = dev.cwd;
                 var a: bun.PathBuffer = undefined;
@@ -1517,7 +1542,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 SerializedFailure.Owner{ .client = file_index },
                                 SerializedFailure.ArrayHashAdapter{},
                             ) orelse
-                                Output.panic("Missing failure in IncrementalGraph", .{});
+                                Output.panic("Missing SerializedFailure in IncrementalGraph", .{});
                             try dev.incremental_result.failures_removed.append(
                                 dev.allocator,
                                 kv.key,
@@ -1526,7 +1551,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
                     gop.value_ptr.* = File.init(code, .{
                         .failed = false,
-                        .is_component_root = ctx.server_to_client_bitset.isSet(index.get()),
+                        .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = false,
                         .kind = .js,
                     });
@@ -1542,6 +1567,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_route = false,
                             .is_client_component_boundary = client_component_boundary,
                             .failed = false,
+                            .kind = .js,
                         };
 
                         if (client_component_boundary) {
@@ -1784,7 +1810,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
                 },
                 .client => {
-                    if (file.flags.is_component_root) {
+                    if (file.flags.is_hmr_root) {
                         const dev = g.owner();
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
@@ -1901,7 +1927,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .client => {
                     gop.value_ptr.* = File.init("", .{
                         .failed = false,
-                        .is_component_root = false,
+                        .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .kind = .js,
                     });
@@ -1914,6 +1940,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_route = is_route,
                             .is_client_component_boundary = false,
                             .failed = false,
+                            .kind = .js,
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -1952,7 +1979,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .client => {
                     gop.value_ptr.* = File.init("", .{
                         .failed = true,
-                        .is_component_root = false,
+                        .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .kind = .js,
                     });
@@ -1965,6 +1992,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_route = false,
                             .is_client_component_boundary = false,
                             .failed = true,
+                            .kind = .js,
                         };
                     } else {
                         if (is_ssr_graph) {
@@ -2026,7 +2054,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
-                        if (!data.flags.is_component_root)
+                        if (!data.flags.is_hmr_root)
                             try out_paths.append(BakeEntryPoint.init(path, .client));
                     },
                     .server => {
@@ -2819,7 +2847,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
             try w.writeByte(@intFromBool(side == .client and v.flags.is_special_framework_file));
             try w.writeByte(@intFromBool(switch (side) {
                 .server => v.is_client_component_boundary,
-                .client => v.flags.is_component_root,
+                .client => v.flags.is_hmr_root,
             }));
         }
     }

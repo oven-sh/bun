@@ -1916,7 +1916,7 @@ pub const BundleV2 = struct {
 
     /// Dev Server uses this instead to run a subset of the bundler, where
     /// it indexes the chunks into IncrementalGraph on it's own.
-    pub fn runFromBakeDevServer(this: *BundleV2, bake_entry_points: []const BakeEntryPoint) ![2]Chunk {
+    pub fn runFromBakeDevServer(this: *BundleV2, bake_entry_points: []const BakeEntryPoint) !BakeBundleOutput {
         this.unique_key = std.crypto.random.int(u64);
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -1933,29 +1933,50 @@ pub const BundleV2 = struct {
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
 
         // Separate non-failing files into two lists: JS and CSS
-        const js_reachable_files, const css_asts = reachable_files: {
-            var css_asts = try BabyList(bun.css.BundlerStyleSheet).initCapacity(this.graph.allocator, this.graph.css_file_count);
+        const js_reachable_files, const css_entry_points, const css_total_files = reachable_files: {
+            var temp_alloc = std.heap.stackFallback(32, this.graph.allocator);
+            var css_hit_bit_set = try bun.bit_set.DynamicBitSet.initEmpty(temp_alloc.get(), this.graph.ast.len);
+            var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
+            var css_entry_points = try std.ArrayListUnmanaged(BakeBundleOutput.CssEntryPoint).initCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
 
-            for (this.graph.ast.items(.parts)[1..], this.graph.ast.items(.css)[1..], 1..) |part_list, maybe_css, index| {
+            for (
+                this.graph.ast.items(.parts)[1..],
+                @as([]ImportRecord.List, this.graph.ast.items(.import_records)[1..]),
+                this.graph.ast.items(.css)[1..],
+                1..,
+            ) |part_list, import_records, maybe_css, index| {
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
                 // Actual empty files will contain a part exporting an empty object.
                 if (part_list.len != 0) {
-                    if (maybe_css) |css| {
-                        css_asts.appendAssumeCapacity(css.*);
-                    } else {
+                    if (maybe_css == null) {
                         js_files.appendAssumeCapacity(Index.init(index));
+
                         // Mark every part live.
                         for (part_list.slice()) |*p| {
                             p.is_live = true;
                         }
+
+                        // Discover all CSS roots.
+                        for (import_records.slice()) |record| {
+                            if (record.tag != .css) continue;
+                            if (!record.source_index.isValid()) continue;
+                            if (css_hit_bit_set.isSet(record.source_index.get())) continue;
+
+                            css_hit_bit_set.set(record.source_index.get());
+                            css_entry_points.appendAssumeCapacity(record.source_index);
+                        }
+                    } else {
+                        css_total_files.appendAssumeCapacity(Index.init(index));
                     }
                 }
             }
 
-            break :reachable_files .{ js_files.items, css_asts };
+            // TODO: loop over entry points for CSS files. these are also roots
+
+            break :reachable_files .{ js_files.items, css_entry_points.items, css_total_files.items };
         };
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -1992,50 +2013,49 @@ pub const BundleV2 = struct {
             };
         }
 
-        _ = css_asts; // TODO:
+        const chunks = try this.graph.allocator.alloc(Chunk, css_entry_points.len + 1);
 
-        var chunks = [_]Chunk{
-            // One JS chunk
-            .{
-                .entry_point = .{
-                    .entry_point_id = 0,
-                    .source_index = 0,
-                    .is_entry_point = true,
-                },
-                .content = .{
-                    .javascript = .{
-                        // TODO(@paperdave): remove this ptrCast when Source Index is fixed
-                        .files_in_chunk_order = @ptrCast(js_reachable_files),
-                        .parts_in_chunk_in_order = js_part_ranges,
-                    },
-                },
-                .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
+        chunks[0] = .{
+            .entry_point = .{
+                .entry_point_id = 0,
+                .source_index = 0,
+                .is_entry_point = true,
             },
-            // One CSS chunk
-            .{
+            .content = .{
+                .javascript = .{
+                    // TODO(@paperdave): remove this ptrCast when Source Index is fixed
+                    .files_in_chunk_order = @ptrCast(js_reachable_files),
+                    .parts_in_chunk_in_order = js_part_ranges,
+                },
+            },
+            .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
+        };
+
+        for (chunks[1..], css_entry_points) |*chunk, entry_point| {
+            const order = this.linker.findImportedFilesInCSSOrder(this.graph.allocator, &.{entry_point});
+            chunk.* = .{
                 .entry_point = .{
-                    .entry_point_id = 0,
-                    .source_index = 0,
-                    .is_entry_point = true,
+                    .entry_point_id = @intCast(entry_point.get()),
+                    .source_index = entry_point.get(),
+                    .is_entry_point = false,
                 },
                 .content = .{
                     .css = .{
-                        // TODO:
-                        .imports_in_chunk_in_order = BabyList(Chunk.CssImportOrder).init(&.{}),
-                        .asts = &.{},
+                        .imports_in_chunk_in_order = order,
+                        .asts = try this.graph.allocator.alloc(bun.css.BundlerStyleSheet, order.len),
                     },
                 },
                 .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
-            },
-        };
+            };
+        }
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try this.linker.generateChunksInParallel(&chunks, true);
+        try this.linker.generateChunksInParallel(chunks, true);
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        return chunks;
+        return .{ .chunks = chunks, .css_file_list = css_total_files };
     }
 
     pub fn enqueueOnResolvePluginIfNeeded(
@@ -2420,11 +2440,14 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.invalid;
                 import_record.is_external_without_side_effects = true;
 
-                if (!dev_server.isFileStale(path.text, renderer)) {
+                if (dev_server.isFileCached(path.text, renderer)) |entry| {
                     const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                     import_record.path.text = rel;
                     import_record.path.pretty = rel;
                     import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
+                    if (entry.kind == .css) {
+                        import_record.tag = .css;
+                    }
                     continue;
                 }
             }
@@ -2436,6 +2459,9 @@ pub const BundleV2 = struct {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
                     import_record.source_index = Index.init(id);
+                }
+                if (this.graph.input_files.items(.loader)[id] == .css) {
+                    import_record.tag = .css;
                 }
                 continue;
             }
@@ -2474,6 +2500,10 @@ pub const BundleV2 = struct {
             if (resolve_task.loader == null) {
                 resolve_task.loader = path.loader(&this.bundler.options.loaders);
                 resolve_task.tree_shaking = this.bundler.options.tree_shaking;
+            }
+
+            if (resolve_task.loader == .css) {
+                import_record.tag = .css;
             }
 
             resolve_entry.value_ptr.* = resolve_task;
@@ -2646,11 +2676,17 @@ pub const BundleV2 = struct {
 
                 var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
 
+                const input_file_loaders = this.graph.input_files.items(.loader);
+
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
-                        if (this.bundler.options.dev_server == null)
+                        if (this.bundler.options.dev_server == null or
+                            input_file_loaders[to_assign.to_source_index.get()] == .css)
+                        {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
+                        }
                     }
+
                     var list = pending_entry.value.list();
                     list.deinit(this.graph.allocator);
                 }
@@ -2661,7 +2697,8 @@ pub const BundleV2 = struct {
 
                 for (import_records.slice(), 0..) |*record, i| {
                     if (path_to_source_index_map.get(record.path.hashKey())) |source_index| {
-                        if (this.bundler.options.dev_server == null)
+                        if (this.bundler.options.dev_server == null or
+                            input_file_loaders[source_index] == .css)
                             record.source_index.value = source_index;
 
                         if (getRedirectId(result.ast.redirect_import_record_index)) |compare| {
@@ -5567,7 +5604,6 @@ pub const LinkerContext = struct {
                 wrapping_conditions: *BabyList(bun.css.ImportConditions),
                 wrapping_import_records: *BabyList(*const ImportRecord),
             ) void {
-
                 // The CSS specification strangely does not describe what to do when there
                 // is a cycle. So we are left with reverse-engineering the behavior from a
                 // real browser. Here's what the WebKit code base has to say about this:
@@ -5676,7 +5712,7 @@ pub const LinkerContext = struct {
 
                 if (comptime bun.Environment.isDebug) {
                     debug(
-                        "Lookin' at file: {d}={s}",
+                        "Looking at file: {d}={s}",
                         .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
                     );
                     for (visitor.visited.slice()) |idx| {
@@ -5954,7 +5990,7 @@ pub const LinkerContext = struct {
                             visits,
                             o,
                             record.source_index,
-                            record.tag == .css or strings.hasSuffixComptime(record.path.text, ".css"),
+                            record.tag == .css,
                         );
                     }
                 }
@@ -8003,7 +8039,7 @@ pub const LinkerContext = struct {
         defer worker.unget();
         switch (chunk.content) {
             .javascript => postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
-            .css => postProcessCSSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
+            .css => postProcessCSSChunk(ctx, worker, chunk) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)}),
         }
     }
 
@@ -8337,7 +8373,7 @@ pub const LinkerContext = struct {
                     &buffer_writer,
                     bun.css.PrinterOptions{
                         // TODO: make this more configurable
-                        .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
+                        .minify = c.options.minify_whitespace,
                     },
                     &import_records,
                 ) catch {
@@ -8597,8 +8633,7 @@ pub const LinkerContext = struct {
     }
 
     // This runs after we've already populated the compile results
-    fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk, chunk_index: usize) !void {
-        _ = chunk_index; // autofix
+    fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk) !void {
         const c = ctx.c;
         var j = StringJoiner{
             .allocator = worker.allocator,
@@ -10657,47 +10692,53 @@ pub const LinkerContext = struct {
                     // are not handled here because some of those generate
                     // new local variables (it is too late to do that here).
                     const record = ast.import_records.at(st.import_record_index);
-                    const path = if (record.source_index.isValid())
-                        c.parse_graph.input_files.items(.source)[record.source_index.get()].path
-                    else
-                        record.path;
 
-                    const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
                     const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                    const key_expr = Expr.init(E.String, .{
-                        .data = path.pretty,
-                    }, stmt.loc);
-
                     // module.importSync('path', (module) => ns = module)
-                    const call = Expr.init(E.Call, .{
-                        .target = Expr.init(E.Dot, .{
-                            .target = module_id,
-                            .name = if (is_builtin) "importBuiltin" else "importSync",
-                            .name_loc = stmt.loc,
-                        }, stmt.loc),
-                        .args = js_ast.ExprNodeList.init(
-                            try allocator.dupe(Expr, if (is_bare_import or is_builtin)
-                                &.{key_expr}
-                            else
-                                &.{
-                                    key_expr,
-                                    Expr.init(E.Arrow, .{
-                                        .args = receiver_args,
-                                        .body = .{
-                                            .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
-                                                .value = Expr.assign(
-                                                    Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
-                                                    module_id,
-                                                ),
-                                            }, stmt.loc)}),
-                                            .loc = stmt.loc,
-                                        },
-                                        .prefer_expr = true,
-                                    }, stmt.loc),
-                                }),
-                        ),
-                    }, stmt.loc);
+                    const call = if (record.tag != .css) call: {
+                        const path = if (record.source_index.isValid())
+                            c.parse_graph.input_files.items(.source)[record.source_index.get()].path
+                        else
+                            record.path;
+
+                        const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
+
+                        const key_expr = Expr.init(E.String, .{
+                            .data = path.pretty,
+                        }, stmt.loc);
+
+                        break :call Expr.init(E.Call, .{
+                            .target = Expr.init(E.Dot, .{
+                                .target = module_id,
+                                .name = if (is_builtin) "importBuiltin" else "importSync",
+                                .name_loc = stmt.loc,
+                            }, stmt.loc),
+                            .args = js_ast.ExprNodeList.init(
+                                try allocator.dupe(Expr, if (is_bare_import or is_builtin)
+                                    &.{key_expr}
+                                else
+                                    &.{
+                                        key_expr,
+                                        Expr.init(E.Arrow, .{
+                                            .args = receiver_args,
+                                            .body = .{
+                                                .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
+                                                    .value = Expr.assign(
+                                                        Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
+                                                        module_id,
+                                                    ),
+                                                }, stmt.loc)}),
+                                                .loc = stmt.loc,
+                                            },
+                                            .prefer_expr = true,
+                                        }, stmt.loc),
+                                    }),
+                            ),
+                        }, stmt.loc);
+                    } else (
+                    // CSS files just get an empty object
+                        Expr.init(E.Object, .{}, stmt.loc));
 
                     if (is_bare_import) {
                         // the import value is never read
@@ -11612,26 +11653,35 @@ pub const LinkerContext = struct {
                 c.source_maps.quoted_contents_tasks.len = 0;
             }
 
-            // When bake.DevServer is in use, we're going to take a different code path at the end.
-            // We want to extract the source code of each part instead of combining it into a single file.
-            // This is so that when hot-module updates happen, we can:
-            //
-            // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
-            // - Send only the newly changed code through a socket.
-            //
-            // When this isnt the initial bundle, concatenation as usual would produce a
-            // broken module. It is DevServer's job to create and send HMR patches.
-            if (is_dev_server) return;
-
-            {
-                debug(" START {d} postprocess chunks", .{chunks.len});
-                defer debug("  DONE {d} postprocess chunks", .{chunks.len});
+            // For dev server, only post-process CSS chunks.
+            const chunks_to_do = if (is_dev_server) chunks[1..] else chunks;
+            if (!is_dev_server or chunks_to_do.len > 0) {
+                bun.assert(chunks_to_do.len > 0);
+                debug(" START {d} postprocess chunks", .{chunks_to_do.len});
+                defer debug("  DONE {d} postprocess chunks", .{chunks_to_do.len});
                 wait_group.init();
-                wait_group.counter = @as(u32, @truncate(chunks.len));
+                wait_group.counter = @as(u32, @truncate(chunks_to_do.len));
 
-                try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunk, chunks);
+                try c.parse_graph.pool.pool.doPtr(
+                    c.allocator,
+                    wait_group,
+                    chunk_contexts[0],
+                    generateChunk,
+                    chunks_to_do,
+                );
             }
         }
+
+        // When bake.DevServer is in use, we're going to take a different code path at the end.
+        // We want to extract the source code of each part instead of combining it into a single file.
+        // This is so that when hot-module updates happen, we can:
+        //
+        // - Reuse unchanged parts to assemble the full bundle if Cmd+R is used in the browser
+        // - Send only the newly changed code through a socket.
+        //
+        // When this isnt the initial bundle, concatenation as usual would produce a
+        // broken module. It is DevServer's job to create and send HMR patches.
+        if (is_dev_server) return;
 
         // TODO: enforceNoCyclicChunkImports()
         {
@@ -14098,6 +14148,9 @@ pub const Chunk = struct {
 
     pub const CssChunk = struct {
         imports_in_chunk_in_order: BabyList(CssImportOrder),
+        /// When creating a chunk, this is to be an uninitialized slice with
+        /// length of `imports_in_chunk_in_order`
+        ///
         /// Multiple imports may refer to the same file/stylesheet, but may need to
         /// wrap them in conditions (e.g. a layer).
         ///
@@ -14713,5 +14766,19 @@ pub const AstBuilder = struct {
 
     pub fn @"module.exports"(p: *AstBuilder, loc: Logger.Loc) Expr {
         return p.newExpr(E.Dot{ .name = "exports", .name_loc = loc, .target = p.newExpr(E.Identifier{ .ref = p.module_ref }) });
+    }
+};
+
+/// The lifetime of output pointers is tied to the bundler's arena
+pub const BakeBundleOutput = struct {
+    chunks: []Chunk,
+    css_file_list: []const Index,
+
+    pub fn jsPseudoChunk(out: BakeBundleOutput) *Chunk {
+        return &out.chunks[0];
+    }
+
+    pub fn cssChunks(out: BakeBundleOutput) []Chunk {
+        return out.chunks[1..];
     }
 };

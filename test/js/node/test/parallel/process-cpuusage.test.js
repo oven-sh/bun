@@ -50,7 +50,7 @@ test("process.cpuUsage", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
         name: "TypeError",
-        message: expect.stringContaining(`The "prevValue.user" argument must be of type number. Received`),
+        message: expect.stringContaining(`The "prevValue.user" property must be of type number. Received`),
       }),
     );
   });
@@ -63,7 +63,7 @@ test("process.cpuUsage", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
         name: "TypeError",
-        message: expect.stringContaining(`The "prevValue.system" argument must be of type number. Received`),
+        message: expect.stringContaining(`The "prevValue.system" property must be of type number. Received`),
       }),
     );
   });
@@ -77,7 +77,7 @@ test("process.cpuUsage", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_VALUE",
         name: "TypeError",
-        message: expect.stringContaining(`The argument 'prevValue.user' is invalid. Received`),
+        message: expect.stringContaining(`The property 'prevValue.user' must be a number between 0 and 2^53. Received`),
       }),
     );
   });
@@ -90,7 +90,9 @@ test("process.cpuUsage", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_VALUE",
         name: "TypeError",
-        message: expect.stringContaining(`The argument 'prevValue.system' is invalid. Received`),
+        message: expect.stringContaining(
+          `The property 'prevValue.system' must be a number between 0 and 2^53. Received`,
+        ),
       }),
     );
   });

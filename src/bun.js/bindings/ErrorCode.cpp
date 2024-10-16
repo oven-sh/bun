@@ -304,7 +304,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto arg_name = val_arg_name.span8();
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 
-    auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
+    auto arg_kind = String(arg_name).contains("."_s) ? "property"_s : "argument"_s;
 
     auto expected_type = val_expected_type.span8();
     ASSERT(WTF::charactersAreAllASCII(expected_type));
@@ -324,7 +324,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto arg_name = val_arg_name.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
+    auto arg_kind = String(arg_name).contains("."_s) ? "property"_s : "argument"_s;
 
     auto expected_type = val_expected_type.span8();
     ASSERT(WTF::charactersAreAllASCII(expected_type));
@@ -412,13 +412,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
 
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
 {
-    ASCIILiteral type;
-    {
-        auto sp = name.span8();
-        auto str = std::string_view((const char*)(sp.data()), sp.size());
-        auto has = str.find('.') == std::string::npos;
-        type = has ? "property"_s : "argument"_s;
-    }
+    auto type = name.contains("."_s) ? "property"_s : "argument"_s;
 
     auto value_string = JSValueToStringSafe(globalObject, value);
     RETURN_IF_EXCEPTION(throwScope, {});

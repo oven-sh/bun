@@ -2542,11 +2542,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
             double systemComparator = systemValue.toNumber(globalObject);
 
             if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
-                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
+                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.user"_s, userValue, "must be a number between 0 and 2^53"_s);
             }
 
             if (!(systemComparator >= 0 && systemComparator <= JSC::maxSafeInteger())) {
-                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.system"_s, systemValue, "is invalid"_s);
+                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.system"_s, systemValue, "must be a number between 0 and 2^53"_s);
             }
 
             user -= userComparator;

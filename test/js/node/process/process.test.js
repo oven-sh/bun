@@ -452,13 +452,13 @@ describe("process.cpuUsage", () => {
         user: -1,
         system: 100,
       }),
-    ).toThrow("The 'user' property must be a number between 0 and 2^53");
+    ).toThrow("The property 'prevValue.user' must be a number between 0 and 2^53. Received -1");
     expect(() =>
       process.cpuUsage({
         user: 100,
         system: -1,
       }),
-    ).toThrow("The 'system' property must be a number between 0 and 2^53");
+    ).toThrow("The property 'prevValue.system' must be a number between 0 and 2^53. Received -1");
   });
 
   // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
@@ -678,13 +678,14 @@ it("dlopen accepts file: URLs", () => {
 });
 
 it("process.constrainedMemory()", () => {
-  if (process.platform === "linux") {
-    // On Linux, it returns 0 if the kernel doesn't support it
-    expect(process.constrainedMemory() >= 0).toBe(true);
-  } else {
-    // On unsupported platforms, it returns undefined
-    expect(process.constrainedMemory()).toBeUndefined();
+  switch (process.platform) {
+    case "linux":
+    case "darwin":
+    case "win32":
+      expect(process.constrainedMemory() >= 0).toBe(true);
+      return;
   }
+  expect.unreachable();
 });
 
 it("process.report", () => {

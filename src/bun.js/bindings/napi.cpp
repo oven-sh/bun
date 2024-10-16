@@ -208,7 +208,7 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
         "Main thread would deadlock",
     };
 
-    static_assert(sizeof(error_messages) / sizeof(const char*) == last_status + 1,
+    static_assert(std::size(error_messages) == last_status + 1,
         "error_messages array does not cover all status codes");
 
     auto globalObject = toJS(env);

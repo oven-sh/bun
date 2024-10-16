@@ -1718,50 +1718,46 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
-    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
-      const { ending } = this._writableState;
-      if (!ending) {
-        // If the writable side of the Http2Stream is still open, emit the
-        // 'aborted' event and set the aborted flag.
-        if (!this.aborted) {
-          this[kAborted] = true;
-          this.emit("aborted");
-        }
+    const { ending } = this._writableState;
 
-        // at this state destroyed will be true but we need to close the writable side
-        this._writableState.destroyed = false;
-        this.end();
-        // we now restore the destroyed flag
-        this._writableState.destroyed = true;
+    if (!ending) {
+      // If the writable side of the Http2Stream is still open, emit the
+      // 'aborted' event and set the aborted flag.
+      if (!this.aborted) {
+        this[kAborted] = true;
+        this.emit("aborted");
       }
+      // at this state destroyed will be true but we need to close the writable side
+      this._writableState.destroyed = false;
+      this.end();
+      // we now restore the destroyed flag
+      this._writableState.destroyed = true;
+    }
 
-      const session = this[bunHTTP2Session];
-      assertSession(session);
+    const session = this[bunHTTP2Session];
+    assertSession(session);
 
-      let rstCode = this.rstCode;
-      if (!rstCode) {
-        if (err != null) {
-          if (err.code === "ABORT_ERR") {
-            // Enables using AbortController to cancel requests with RST code 8.
-            rstCode = NGHTTP2_CANCEL;
-          } else {
-            rstCode = NGHTTP2_INTERNAL_ERROR;
-          }
+    let rstCode = this.rstCode;
+    if (!rstCode) {
+      if (err != null) {
+        if (err.code === "ABORT_ERR") {
+          // Enables using AbortController to cancel requests with RST code 8.
+          rstCode = NGHTTP2_CANCEL;
         } else {
-          rstCode = this.rstCode = 0;
+          rstCode = NGHTTP2_INTERNAL_ERROR;
         }
-      }
-
-      if (this.writableFinished) {
-        markStreamClosed(this);
-
-        session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
-        this[bunHTTP2Session] = null;
       } else {
-        this.once("finish", Http2Stream.#rstStream);
+        rstCode = this.rstCode = 0;
       }
-    } else {
+    }
+
+    if (this.writableFinished) {
+      markStreamClosed(this);
+
+      session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
       this[bunHTTP2Session] = null;
+    } else {
+      this.once("finish", Http2Stream.#rstStream);
     }
 
     callback(err);
@@ -2155,7 +2151,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     } else {
       error_instance = error;
     }
-    const status = stream[bunHTTP2StreamStatus];
+
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
@@ -2256,7 +2252,6 @@ class ServerHttp2Session extends Http2Session {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
-
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
@@ -2665,13 +2660,11 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
-
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
-
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {

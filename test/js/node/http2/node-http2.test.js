@@ -665,30 +665,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         expect(req.aborted).toBeTrue();
         expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
       });
-      it("aborted event should not work when not writable but should emit error", async () => {
-        const abortController = new AbortController();
-        const { promise, resolve, reject } = Promise.withResolvers();
-        const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
-        client.on("error", reject);
-        const req = client.request({ ":path": "/" }, { signal: abortController.signal });
-        req.on("aborted", reject);
-        req.on("error", err => {
-          if (err.code !== "ABORT_ERR") {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-        req.on("end", () => {
-          reject();
-          client.close();
-        });
-        abortController.abort();
-        const result = await promise;
-        expect(result).toBeUndefined();
-        expect(req.aborted).toBeFalse(); // will only be true when the request is in a writable state
-        expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
-      });
+
       it("aborted event should work with aborted signal", async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);

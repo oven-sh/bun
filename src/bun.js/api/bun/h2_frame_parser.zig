@@ -1558,6 +1558,9 @@ pub const H2FrameParser = struct {
     pub fn flush(this: *H2FrameParser) usize {
         this.ref();
         defer this.deref();
+        const eventLoop = JSC.VirtualMachine.get().eventLoop();
+        eventLoop.enter();
+        defer eventLoop.exit();
         var written = switch (this.native_socket) {
             .tls_writeonly, .tls => |socket| this._genericFlush(*TLSSocket, socket),
             .tcp_writeonly, .tcp => |socket| this._genericFlush(*TCPSocket, socket),
@@ -3636,6 +3639,9 @@ pub const H2FrameParser = struct {
         buffer.ensureStillAlive();
         if (buffer.asArrayBuffer(globalObject)) |array_buffer| {
             var bytes = array_buffer.byteSlice();
+            const eventLoop = globalObject.bunVM().eventLoop();
+            eventLoop.enter();
+            defer eventLoop.exit();
             // read all the bytes
             while (bytes.len > 0) {
                 const result = this.readBytes(bytes);
@@ -3652,6 +3658,9 @@ pub const H2FrameParser = struct {
         this.ref();
         defer this.deref();
         var bytes = data;
+        const eventLoop = JSC.VirtualMachine.get().eventLoop();
+        eventLoop.enter();
+        defer eventLoop.exit();
         while (bytes.len > 0) {
             const result = this.readBytes(bytes);
             bytes = bytes[result..];

@@ -301,6 +301,10 @@ const CountedKeepAlive = struct {
             this.keep_alive.unref(vm);
         }
     }
+
+    pub fn deinit(this: *@This()) void {
+        this.keep_alive.disable();
+    }
 };
 
 pub const SNativeZlib = struct {
@@ -402,6 +406,7 @@ pub const SNativeZlib = struct {
     pub fn deinit(this: *@This()) void {
         this.write_callback.deinit();
         this.onerror_value.deinit();
+        this.poll_ref.deinit();
         this.destroy();
     }
 };
@@ -765,6 +770,7 @@ pub const SNativeBrotli = struct {
     pub fn deinit(this: *@This()) void {
         this.write_callback.deinit();
         this.onerror_value.deinit();
+        this.poll_ref.deinit();
         this.destroy();
     }
 };

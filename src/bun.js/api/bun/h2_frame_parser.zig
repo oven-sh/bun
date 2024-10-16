@@ -1141,7 +1141,7 @@ pub const H2FrameParser = struct {
                 this.signal = null;
                 signal.deinit();
             }
-            JSC.VirtualMachine.eventLoop().processGCTimer();
+            JSC.VirtualMachine.get().eventLoop().processGCTimer();
         }
     };
 

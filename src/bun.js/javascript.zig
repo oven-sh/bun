@@ -1570,10 +1570,6 @@ pub const VirtualMachine = struct {
         this.eventLoop().waitForPromise(promise);
     }
 
-    pub fn waitForTasks(this: *VirtualMachine) void {
-        this.eventLoop().waitForTasks();
-    }
-
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
     pub fn enableMacroMode(this: *VirtualMachine) void {

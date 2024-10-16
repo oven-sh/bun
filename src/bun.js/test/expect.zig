@@ -4684,9 +4684,13 @@ pub const Expect = struct {
         // support for async matcher results
         if (result.asAnyPromise()) |promise| {
             const vm = globalThis.vm();
+            var strong = JSC.Strong{};
+            defer strong.deinit();
             promise.setHandled(vm);
-
-            globalThis.bunVM().waitForPromise(promise);
+            if (promise.status(vm) == .pending) {
+                strong = JSC.Strong.create(promise.asValue(globalThis), globalThis);
+                globalThis.bunVM().waitForPromise(promise);
+            }
 
             result = promise.result(vm);
             result.ensureStillAlive();

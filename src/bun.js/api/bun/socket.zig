@@ -3581,10 +3581,14 @@ pub const DuplexUpgradeContext = struct {
     fn onError(this: *DuplexUpgradeContext, err_value: JSC.JSValue) void {
         if (this.is_open) {
             if (this.tls) |tls| {
+                this.tls = null;
+                defer tls.deref();
                 tls.handleError(err_value);
             }
         } else {
             if (this.tls) |tls| {
+                this.tls = null;
+                defer tls.deref();
                 tls.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
             }
         }
@@ -3602,6 +3606,8 @@ pub const DuplexUpgradeContext = struct {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
         if (this.tls) |tls| {
+            defer tls.deref();
+            this.tls = null;
             tls.onClose(socket, 0, null);
         }
 
@@ -3620,10 +3626,7 @@ pub const DuplexUpgradeContext = struct {
                             else => {
                                 const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
                                 if (this.tls) |tls| {
-                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
-
                                     tls.handleConnectError(errno);
-                                    tls.onClose(socket, errno, null);
                                 }
                             },
                         }

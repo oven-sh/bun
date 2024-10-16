@@ -1051,7 +1051,7 @@ pub const H2FrameParser = struct {
             };
             if (bytes.len > 0) {
                 @memcpy(frame.buffer[0..bytes.len], bytes);
-                // client.globalThis.vm().reportExtraMemory(bytes.len);
+                client.globalThis.vm().reportExtraMemory(bytes.len);
             }
             log("dataFrame enqueued {}", .{frame.len});
             this.dataFrameQueue.enqueue(frame, client.allocator);
@@ -1494,7 +1494,7 @@ pub const H2FrameParser = struct {
 
                     // we still have more to buffer and even more now
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                    // this.globalThis.vm().reportExtraMemory(bytes.len);
+                    this.globalThis.vm().reportExtraMemory(bytes.len);
 
                     log("_genericWrite flushed {} and buffered more {}", .{ written, bytes.len });
                     return false;
@@ -1510,7 +1510,7 @@ pub const H2FrameParser = struct {
                     const pending = bytes[written..];
                     // ops not all data was sent, lets buffer again
                     _ = this.writeBuffer.write(this.allocator, pending) catch bun.outOfMemory();
-                    // this.globalThis.vm().reportExtraMemory(pending.len);
+                    this.globalThis.vm().reportExtraMemory(pending.len);
 
                     log("_genericWrite buffered more {}", .{pending.len});
                     return false;
@@ -1530,7 +1530,7 @@ pub const H2FrameParser = struct {
             const pending = bytes[written..];
             // ops not all data was sent, lets buffer again
             _ = this.writeBuffer.write(this.allocator, pending) catch bun.outOfMemory();
-            // this.globalThis.vm().reportExtraMemory(pending.len);
+            this.globalThis.vm().reportExtraMemory(pending.len);
 
             return false;
         }
@@ -1605,7 +1605,7 @@ pub const H2FrameParser = struct {
                 if (this.has_nonnative_backpressure) {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                    // this.globalThis.vm().reportExtraMemory(bytes.len);
+                    this.globalThis.vm().reportExtraMemory(bytes.len);
 
                     return false;
                 }
@@ -1617,7 +1617,7 @@ pub const H2FrameParser = struct {
                     -1 => {
                         // dropped
                         _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                        // this.globalThis.vm().reportExtraMemory(bytes.len);
+                        this.globalThis.vm().reportExtraMemory(bytes.len);
                         this.has_nonnative_backpressure = true;
                     },
                     0 => {
@@ -1704,7 +1704,7 @@ pub const H2FrameParser = struct {
         if (this.remainingLength > 0) {
             // buffer more data
             _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
-            // this.globalThis.vm().reportExtraMemory(payload.len);
+            this.globalThis.vm().reportExtraMemory(payload.len);
 
             return null;
         } else if (this.remainingLength < 0) {
@@ -1717,7 +1717,7 @@ pub const H2FrameParser = struct {
         if (this.readBuffer.list.items.len > 0) {
             // return buffered data
             _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
-            // this.globalThis.vm().reportExtraMemory(payload.len);
+            this.globalThis.vm().reportExtraMemory(payload.len);
 
             return .{
                 .data = this.readBuffer.list.items,
@@ -2245,7 +2245,7 @@ pub const H2FrameParser = struct {
             if (total < FrameHeader.byteSize) {
                 // buffer more data
                 _ = this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
-                // this.globalThis.vm().reportExtraMemory(bytes.len);
+                this.globalThis.vm().reportExtraMemory(bytes.len);
 
                 return bytes.len;
             }
@@ -2285,7 +2285,7 @@ pub const H2FrameParser = struct {
         if (bytes.len < FrameHeader.byteSize) {
             // buffer more dheaderata
             this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
-            // this.globalThis.vm().reportExtraMemory(bytes.len);
+            this.globalThis.vm().reportExtraMemory(bytes.len);
 
             return bytes.len;
         }
@@ -3676,6 +3676,7 @@ pub const H2FrameParser = struct {
         }
 
         const socket_js = args_list.ptr[0];
+        this.detachNativeSocket();
         if (JSTLSSocket.fromJS(socket_js)) |socket| {
             log("TLSSocket attached", .{});
             if (socket.attachNativeCallback(.{ .h2 = this })) {

@@ -55,22 +55,10 @@ pub const BufferVectorized = struct {
                 @memset(buf, buf[0]);
                 return true;
             },
-            4 => if (comptime Environment.isMac) {
-                const pattern = buf[0..4];
+            inline 4, 8, 16 => |n| if (comptime Environment.isMac) {
+                const pattern = buf[0..n];
                 buf = buf[pattern.len..];
-                bun.C.memset_pattern4(buf.ptr, pattern.ptr, buf.len);
-                return true;
-            },
-            8 => if (comptime Environment.isMac) {
-                const pattern = buf[0..8];
-                buf = buf[pattern.len..];
-                bun.C.memset_pattern8(buf.ptr, pattern.ptr, buf.len);
-                return true;
-            },
-            16 => if (comptime Environment.isMac) {
-                const pattern = buf[0..16];
-                buf = buf[pattern.len..];
-                bun.C.memset_pattern16(buf.ptr, pattern.ptr, buf.len);
+                @field(bun.C, bun.fmt.comptimePrint("memset_pattern{d}", .{n}))(buf.ptr, pattern.ptr, buf.len);
                 return true;
             },
             else => {},

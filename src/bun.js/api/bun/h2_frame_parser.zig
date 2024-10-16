@@ -1141,6 +1141,7 @@ pub const H2FrameParser = struct {
                 this.signal = null;
                 signal.deinit();
             }
+            JSC.VirtualMachine.get().eventLoop().processGCTimer();
         }
     };
 
@@ -1611,7 +1612,7 @@ pub const H2FrameParser = struct {
                 // fallback to onWrite non-native callback
                 const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
                 const result = this.call(.onWrite, output_value);
-                const code = result.to(i32);
+                const code = if (result.isNumber()) result.to(i32) else -1;
                 switch (code) {
                     -1 => {
                         // dropped
@@ -1757,7 +1758,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) *Stream {
+    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) ?*Stream {
         log("decodeHeaderBlock isSever: {}", .{this.isServer});
 
         var offset: usize = 0;
@@ -1776,7 +1777,9 @@ pub const H2FrameParser = struct {
             log("header {s} {s}", .{ header.name, header.value });
             if (this.isServer and strings.eqlComptime(header.name, ":status")) {
                 this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
-                return this.streams.getEntry(stream_id).?.value_ptr;
+
+                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                return null;
             }
             count += 1;
             if (this.maxHeaderListPairs < count) {
@@ -1786,7 +1789,8 @@ pub const H2FrameParser = struct {
                 } else {
                     this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                 }
-                return this.streams.getEntry(stream_id).?.value_ptr;
+                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                return null;
             }
 
             const output = brk: {
@@ -1817,7 +1821,8 @@ pub const H2FrameParser = struct {
 
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, JSC.JSValue.jsNumber(flags));
         // callbacks can change the Stream ptr in this case we always return the new one
-        return this.streams.getEntry(stream_id).?.value_ptr;
+        if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+        return null;
     }
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
@@ -1882,7 +1887,8 @@ pub const H2FrameParser = struct {
             this.currentFrame = null;
             if (emitted) {
                 // we need to revalidate the stream ptr after emitting onStreamData
-                stream = this.streams.getEntry(frame.streamIdentifier).?.value_ptr;
+                const entry = this.streams.getEntry(frame.streamIdentifier) orelse return end;
+                stream = entry.value_ptr;
             }
             if (frame.flags & @intFromEnum(DataFrameFlags.END_STREAM) != 0) {
                 const identifier = stream.getIdentifier();
@@ -2029,7 +2035,10 @@ pub const H2FrameParser = struct {
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
-            stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags);
+            stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) orelse {
+                this.readBuffer.reset();
+                return content.end;
+            };
             this.readBuffer.reset();
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
                 stream.isWaitingMoreHeaders = false;
@@ -2092,7 +2101,10 @@ pub const H2FrameParser = struct {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
                 return data.len;
             }
-            stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags);
+            stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
+                this.readBuffer.reset();
+                return content.end;
+            };
             this.readBuffer.reset();
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
@@ -3253,7 +3265,26 @@ pub const H2FrameParser = struct {
         }
         return array;
     }
-
+    pub fn emitAbortToAllStreams(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+        JSC.markBinding(@src());
+        var it = StreamResumableIterator.init(this);
+        while (it.next()) |stream| {
+            // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
+            if (this.isServer) {
+                if (stream.id % 2 == 0) continue;
+            } else if (stream.id % 2 != 0) continue;
+            if (stream.state != .CLOSED) {
+                const old_state = stream.state;
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
+                const identifier = stream.getIdentifier();
+                identifier.ensureStillAlive();
+                stream.freeResources(this, false);
+                this.dispatchWith2Extra(.onAborted, identifier, .undefined, JSC.JSValue.jsNumber(@intFromEnum(old_state)));
+            }
+        }
+        return .undefined;
+    }
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
@@ -3265,6 +3296,9 @@ pub const H2FrameParser = struct {
 
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
+            if (this.isServer) {
+                if (stream.id % 2 != 0) continue;
+            } else if (stream.id % 2 == 0) continue;
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
                 stream.rstCode = args_list.ptr[0].to(u32);
@@ -3675,6 +3709,7 @@ pub const H2FrameParser = struct {
         }
 
         const socket_js = args_list.ptr[0];
+        this.detachNativeSocket();
         if (JSTLSSocket.fromJS(socket_js)) |socket| {
             log("TLSSocket attached", .{});
             if (socket.attachNativeCallback(.{ .h2 = this })) {
@@ -3859,17 +3894,15 @@ pub const H2FrameParser = struct {
         }
         return this;
     }
-
-    pub fn deinit(this: *H2FrameParser) void {
-        log("deinit", .{});
-
-        defer {
-            if (ENABLE_ALLOCATOR_POOL) {
-                H2FrameParser.pool.?.put(this);
-            } else {
-                this.destroy();
-            }
-        }
+    pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        JSC.markBinding(@src());
+        this.detach(false);
+        return .undefined;
+    }
+    /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
+    /// this function can be called multiple times, it will erase stream info
+    pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
+        this.flushCorked();
         this.detachNativeSocket();
         this.strong_ctx.deinit();
         this.handlers.deinit();
@@ -3886,9 +3919,24 @@ pub const H2FrameParser = struct {
         }
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
-            stream.freeResources(this, true);
+            stream.freeResources(this, finalizing);
         }
-        this.streams.deinit();
+        var streams = this.streams;
+        defer streams.deinit();
+        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+    }
+
+    pub fn deinit(this: *H2FrameParser) void {
+        log("deinit", .{});
+
+        defer {
+            if (ENABLE_ALLOCATOR_POOL) {
+                H2FrameParser.pool.?.put(this);
+            } else {
+                this.destroy();
+            }
+        }
+        this.detach(true);
     }
 
     pub fn finalize(

@@ -1,5 +1,5 @@
 const { hideFromStack } = require("internal/shared");
-
+const { ArrayIsArray } = require("internal/primordials");
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
@@ -28,6 +28,7 @@ function validateLinkHeaderFormat(value, name) {
     );
   }
 }
+
 function validateLinkHeaderValue(hints) {
   if (typeof hints === "string") {
     validateLinkHeaderFormat(hints, "hints");
@@ -58,8 +59,14 @@ function validateLinkHeaderValue(hints) {
   );
 }
 hideFromStack(validateLinkHeaderValue);
+// TODO: do it in NodeValidator.cpp
+function validateObject(value, name) {
+  if (typeof value !== "object") throw $ERR_INVALID_ARG_TYPE(name, "object", value);
+}
+hideFromStack(validateObject);
 
 export default {
+  validateObject: validateObject,
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
   /** `(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER)` */

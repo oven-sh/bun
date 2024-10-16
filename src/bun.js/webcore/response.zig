@@ -210,10 +210,10 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         if (this.init.status_code < 200) {
-            return ZigString.init("error").toJS(globalThis);
+            return bun.String.static("error").toJS(globalThis);
         }
 
-        return ZigString.init("default").toJS(globalThis);
+        return bun.String.static("default").toJS(globalThis);
     }
 
     pub fn getStatusText(
@@ -1305,8 +1305,13 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.call(globalObject, .undefined, &[_]JSC.JSValue{ js_hostname, js_cert });
-                        // if check failed abort the request
+                        const check_result = check_server_identity.call(
+                            globalObject,
+                            .undefined,
+                            &.{ js_hostname, js_cert },
+                        ) catch |err| globalObject.takeException(err);
+
+                        // > Returns <Error> object [...] on failure
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
                             this.is_waiting_abort = this.result.has_more;
@@ -1321,6 +1326,9 @@ pub const Fetch = struct {
                             this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                             return false;
                         }
+
+                        // > On success, returns <undefined>
+                        // We treat any non-error value as a success.
                         return true;
                     }
                 }
@@ -1793,7 +1801,7 @@ pub const Fetch = struct {
             fetch_options: FetchOptions,
             promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
-            http.HTTPThread.init();
+            http.HTTPThread.init(&.{});
             var node = try get(
                 allocator,
                 global,

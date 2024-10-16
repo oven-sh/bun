@@ -42,10 +42,9 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     const event_loop = vm.eventLoop();
     event_loop.enter();
     defer event_loop.exit();
-    const result = callback.call(this.globalThis, this.thisValue, &[_]JSValue{this.thisValue});
-    if (result.toError()) |err| {
-        _ = this.callErrorHandler(.zero, &[_]JSValue{err});
-    }
+    _ = callback.call(this.globalThis, this.thisValue, &.{this.thisValue}) catch |err| {
+        _ = this.callErrorHandler(.zero, &.{this.globalThis.takeException(err)});
+    };
 }
 
 fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) callconv(.C) void {
@@ -91,16 +90,14 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         _ = udpSocket.js_refcount.fetchAdd(1, .monotonic);
         defer _ = udpSocket.js_refcount.fetchSub(1, .monotonic);
 
-        const result = callback.call(globalThis, udpSocket.thisValue, &[_]JSValue{
+        _ = callback.call(globalThis, udpSocket.thisValue, &.{
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
             JSC.ZigString.init(std.mem.span(hostname.?)).toJS(globalThis),
-        });
-
-        if (result.toError()) |err| {
-            _ = udpSocket.callErrorHandler(.zero, &[_]JSValue{err});
-        }
+        }) catch |err| {
+            _ = udpSocket.callErrorHandler(.zero, &.{udpSocket.globalThis.takeException(err)});
+        };
     }
 }
 
@@ -368,10 +365,7 @@ pub const UDPSocket = struct {
             return false;
         }
 
-        const result = callback.call(globalThis, thisValue, err);
-        if (result.isAnyError()) {
-            _ = vm.uncaughtException(globalThis, result, false);
-        }
+        _ = callback.call(globalThis, thisValue, err) catch |e| globalThis.reportActiveExceptionAsUnhandled(e);
 
         return true;
     }
@@ -637,7 +631,8 @@ pub const UDPSocket = struct {
         };
 
         const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return bun.String.createLatin1(slice).toJS(globalThis);
+        var str = bun.String.createLatin1(slice);
+        return str.transferToJS(globalThis);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
@@ -677,9 +672,9 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
     ) JSValue {
         return switch (this.config.binary_type) {
-            .Buffer => JSC.ZigString.init("buffer").toJS(globalThis),
-            .Uint8Array => JSC.ZigString.init("uint8array").toJS(globalThis),
-            .ArrayBuffer => JSC.ZigString.init("arraybuffer").toJS(globalThis),
+            .Buffer => bun.String.static("buffer").toJS(globalThis),
+            .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
+            .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
             else => @panic("Invalid binary type"),
         };
     }

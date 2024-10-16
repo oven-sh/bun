@@ -826,9 +826,9 @@ pub const sockaddr_dl = extern struct {
     sdl_slen: u8, // link layer selector length */
     sdl_data: [12]u8, // minimum work area, can be larger; contains both if name and ll address */
     //#ifndef __APPLE__
-    //	/* For TokenRing */
-    //	u_short sdl_rcf;        /* source routing control */
-    //	u_short sdl_route[16];  /* source routing information */
+    //    /* For TokenRing */
+    //    u_short sdl_rcf;        /* source routing control */
+    //    u_short sdl_route[16];  /* source routing information */
     //#endif
 };
 
@@ -888,3 +888,7 @@ pub const CLOCK_THREAD_CPUTIME_ID = 1;
 pub const netdb = @cImport({
     @cInclude("netdb.h");
 });
+
+pub extern fn memset_pattern4(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+pub extern fn memset_pattern8(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+pub extern fn memset_pattern16(buf: [*]u8, pattern: [*]const u8, len: usize) void;

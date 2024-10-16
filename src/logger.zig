@@ -21,12 +21,13 @@ const assert = bun.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
-pub const Kind = enum(i8) {
-    err,
-    warn,
-    note,
-    debug,
-    verbose,
+
+pub const Kind = enum(u8) {
+    err = 0,
+    warn = 1,
+    note = 2,
+    debug = 3,
+    verbose = 4,
 
     pub inline fn shouldPrint(this: Kind, other: Log.Level) bool {
         return switch (other) {
@@ -379,6 +380,7 @@ pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
     metadata: Metadata = .{ .build = 0 },
+    // TODO: make this non-optional, empty slice for no notes
     notes: ?[]Data = null,
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
@@ -598,7 +600,9 @@ pub const Range = struct {
 
 pub const Log = struct {
     debug: bool = false,
+    // TODO: make u32
     warnings: usize = 0,
+    // TODO: make u32
     errors: usize = 0,
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
@@ -713,7 +717,7 @@ pub const Log = struct {
 
     pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, fmt: string) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        var errors_stack: [256]*anyopaque = undefined;
+        var errors_stack: [256]JSC.JSValue = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
@@ -728,12 +732,12 @@ pub const Log = struct {
             else => {
                 for (msgs[0..count], 0..) |msg, i| {
                     errors_stack[i] = switch (msg.metadata) {
-                        .build => JSC.BuildMessage.create(global, allocator, msg).asVoid(),
-                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, "").asVoid(),
+                        .build => JSC.BuildMessage.create(global, allocator, msg),
+                        .resolve => JSC.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
                 const out = JSC.ZigString.init(fmt);
-                const agg = global.createAggregateError(errors_stack[0..count].ptr, count, &out);
+                const agg = global.createAggregateError(errors_stack[0..count], &out);
                 return agg;
             },
         }
@@ -1051,6 +1055,26 @@ pub const Log = struct {
         });
     }
 
+    pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
+        if (!Kind.shouldPrint(.warn, log.level)) return;
+        log.warnings += 1;
+
+        // TODO: do this properly
+
+        try log.addMsg(.{
+            .kind = .warn,
+            .data = Data.cloneLineText(Data{
+                .text = allocPrint(allocator, text, args) catch unreachable,
+                .location = Location{
+                    .file = filepath,
+                    .line = @intCast(line),
+                    .column = @intCast(col),
+                },
+            }, log.clone_line_text, allocator) catch unreachable,
+        });
+    }
+
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
@@ -1221,7 +1245,7 @@ pub const Log = struct {
         };
     }
 
-    pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printForLogLevelWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
@@ -1285,6 +1309,7 @@ pub inline fn usize2Loc(loc: usize) Loc {
 
 pub const Source = struct {
     path: fs.Path,
+    // TODO(@paperdave): delete key_path
     key_path: fs.Path,
 
     contents: string,

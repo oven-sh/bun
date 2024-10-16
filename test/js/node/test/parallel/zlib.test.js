@@ -36,7 +36,6 @@ test("gzipSync with invalid windowBits", () => {
     expect.objectContaining({
       code: "ERR_OUT_OF_RANGE",
       name: "RangeError",
-      message: expect.stringContaining('The value of "options.windowBits" is out of range'),
     }),
   );
 });

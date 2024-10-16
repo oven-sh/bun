@@ -557,7 +557,7 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.get(globalThis, "asUint8Array")) |val| {
+                if (value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;
@@ -4415,8 +4415,9 @@ pub const ByteStream = struct {
         json: JSC.JSPromise.Strong,
 
         pub fn fulfill(this: *BufferAction, blob: *AnyBlob) void {
-            blob.wrap(.{ .Normal = this.swap() }, this.globalThis().?, this.*);
+            blob.wrap(.{ .normal = this.swap() }, this.globalThis().?, this.*);
         }
+
         pub fn reject(this: *BufferAction, err: StreamResult.StreamError) void {
             this.swap().reject(this.globalThis().?, err.toJSWeak(this.globalThis().?)[0]);
         }

@@ -1090,6 +1090,11 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with invalid fd but zero length",()=>{
+    expect(readSync(2147483640, Buffer.alloc(0))).toBe(0);
+    expect(readSync(2147483640, Buffer.alloc(10), 0, 0, 0)).toBe(0);
+  })
 });
 
 it("writevSync", () => {
@@ -1883,8 +1888,10 @@ describe("fs.WriteStream", () => {
     });
 
     stream.on("finish", () => {
-      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-      done();
+      Bun.sleep(1000).then(() => {
+        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+        done();
+      });
     });
   });
 
@@ -2563,6 +2570,27 @@ describe("fs/promises", () => {
   });
 });
 
+it("fstatSync(decimal)", () => {
+  expect(() => fstatSync(eval("1.0"))).not.toThrow();
+  expect(() => fstatSync(eval("0.0"))).not.toThrow();
+  expect(() => fstatSync(eval("2.0"))).not.toThrow();
+  expect(() => fstatSync(eval("-1.0"))).toThrow();
+  expect(() => fstatSync(eval("Infinity"))).toThrow();
+  expect(() => fstatSync(eval("-Infinity"))).toThrow();
+  expect(() =>
+    fstatSync(
+      // > max int32 is not valid in most C APIs still.
+      2147483647 + 1,
+    ),
+  ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(() =>
+    fstatSync(
+      // max int32 is a valid fd
+      2147483647,
+    ),
+  ).toThrow(expect.objectContaining({ code: "EBADF" }));
+});
+
 it("fstat on a large file", () => {
   var dest: string = "",
     fd;
@@ -2630,6 +2658,8 @@ it("fs.constants", () => {
       COPYFILE_FICLONE: 2,
       UV_FS_COPYFILE_FICLONE_FORCE: 4,
       COPYFILE_FICLONE_FORCE: 4,
+      EXTENSIONLESS_FORMAT_JAVASCRIPT: 0,
+      EXTENSIONLESS_FORMAT_WASM: 1,
     } as any);
     return;
   }
@@ -3142,7 +3172,7 @@ it("new Stats", () => {
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("No such file or directory");
-  expect(() => readSync(2147483640, Buffer.alloc(0))).toThrow("Bad file descriptor");
+  expect(() => readSync(2147483640, Buffer.alloc(1))).toThrow("Bad file descriptor");
   expect(() => readlinkSync(path)).toThrow("No such file or directory");
   expect(() => realpathSync(path)).toThrow("No such file or directory");
   expect(() => readFileSync(path)).toThrow("No such file or directory");

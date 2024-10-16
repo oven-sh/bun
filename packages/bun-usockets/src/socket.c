@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <errno.h>
 
 #ifndef WIN32
@@ -310,7 +309,11 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
 #else
     struct us_poll_t *p1 = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-    us_poll_start(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    int rc = us_poll_start_rc(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    if (rc != 0) {
+        us_poll_free(p1, ctx->loop);
+        return 0;
+    }
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
     s->context = ctx;

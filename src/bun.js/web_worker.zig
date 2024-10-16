@@ -249,11 +249,6 @@ pub const WebWorker = struct {
 
         var b = &vm.bundler;
 
-        b.configureRouter(false) catch {
-            this.flushLogs();
-            this.exitAndDeinit();
-            return;
-        };
         b.configureDefines() catch {
             this.flushLogs();
             this.exitAndDeinit();
@@ -336,7 +331,7 @@ pub const WebWorker = struct {
             bun.outOfMemory();
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
+        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
         if (vm.worker) |worker_| {
             _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -367,7 +362,7 @@ pub const WebWorker = struct {
             return;
         };
 
-        if (promise.status(vm.global.vm()) == .Rejected) {
+        if (promise.status(vm.global.vm()) == .rejected) {
             const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
             if (!handled) {

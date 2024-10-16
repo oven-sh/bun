@@ -3860,7 +3860,7 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.isObject()) {
-            if (template_value.getTruthy(globalThis, "raw")) |maybe_str| {
+            if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {

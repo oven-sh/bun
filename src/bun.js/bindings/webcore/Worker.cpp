@@ -434,14 +434,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto port = callFrame->argument(0);
 
     if (!port.isObject()) {
         throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
@@ -452,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-    return JSC::JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
@@ -460,7 +460,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue workerData = jsUndefined();
+    JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
@@ -477,11 +477,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         threadId = jsNumber(worker->clientIdentifier() - 1);
     }
 
-    JSArray* array = constructEmptyArray(globalObject, nullptr, 3);
+    JSObject* array = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
 
-    array->putByIndexInline(globalObject, (unsigned)0, workerData, false);
-    array->putByIndexInline(globalObject, (unsigned)1, threadId, false);
-    array->putByIndexInline(globalObject, (unsigned)2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic), false);
+    array->putDirectIndex(globalObject, 0, workerData);
+    array->putDirectIndex(globalObject, 1, threadId);
+    array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
 
     return array;
 }

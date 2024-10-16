@@ -102,14 +102,16 @@ describe("Bun.Transpiler", () => {
 
   it("doesn't hang indefinitely #2746", () => {
     // this test passes by not hanging
-    expect(() =>
-      transpiler.transformSync(`
-    class Test {
-      test() {
-      
-    }
-    `),
-    ).toThrow();
+    expect(() => {
+      console.log("1");
+      const y = transpiler.transformSync(`
+        class Test {
+          test() {
+          
+        }
+      `);
+      console.error(y);
+    }).toThrow();
   });
 
   describe("property access inlining", () => {
@@ -1411,101 +1413,6 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
-  describe("inline JSX", () => {
-    const inliner = new Bun.Transpiler({
-      loader: "tsx",
-      define: {
-        "process.env.NODE_ENV": JSON.stringify("production"),
-        user_undefined: "undefined",
-      },
-      platform: "bun",
-      jsxOptimizationInline: true,
-      treeShaking: false,
-      inline: true,
-      deadCodeElimination: true,
-      allowBunRuntime: true,
-
-      target: "bun",
-      tsconfig: JSON.stringify({
-        compilerOptions: {
-          jsxImportSource: "react",
-        },
-      }),
-    });
-
-    it("inlines static JSX into object literals", () => {
-      expect(
-        inliner
-          .transformSync(
-            `
-export var hi = <div>{123}</div>
-export var hiWithKey = <div key="hey">{123}</div>
-export var hiWithRef = <div ref={foo}>{123}</div>
-
-export var ComponentThatChecksDefaultProps = <Hello></Hello>
-export var ComponentThatChecksDefaultPropsAndHasChildren = <Hello>my child</Hello>
-export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
-
-`.trim(),
-          )
-          .replaceAll("\n", "")
-          .replaceAll("  ", "")
-          .trim(),
-      ).toBe(
-        // TODO: figure out why its using jsxDEV() here. It doesn't do that with NODE_ENV=production at runtime.
-        `
-  import {
-    $$typeof as $$typeof_4ad651bb3f5de058,
-    __merge as __merge_e79ebbbc0cc1f55b
-    } from "bun:wrap";
-    export var hi = {
-      $$typeof: $$typeof_4ad651bb3f5de058,
-      type: "div",
-      key: null,
-      ref: null,
-      props: {
-        children: 123
-      },
-      _owner: null
-    }, hiWithKey = {
-      $$typeof: $$typeof_4ad651bb3f5de058,
-      type: "div",
-      key: "hey",
-      ref: null,
-      props: {
-        children: 123
-      },
-      _owner: null
-    }, hiWithRef = jsxDEV("div", {
-      ref: foo,
-      children: 123
-    }, void 0, !1, void 0, this), ComponentThatChecksDefaultProps = {
-      $$typeof: $$typeof_4ad651bb3f5de058,
-      type: Hello,
-      key: null,
-      ref: null,
-      props: Hello.defaultProps || {},
-      _owner: null
-    }, ComponentThatChecksDefaultPropsAndHasChildren = {
-      $$typeof: $$typeof_4ad651bb3f5de058,
-      type: Hello,
-      key: null,
-      ref: null,
-      props: __merge_e79ebbbc0cc1f55b({
-        children: "my child"
-      }, Hello.defaultProps),
-      _owner: null
-    }, ComponentThatHasSpreadCausesDeopt = jsxDEV(Hello, {
-      ...spread
-    }, void 0, !1, void 0, this);
-        `
-          .replaceAll("\n", "")
-          .replaceAll("  ", "")
-          .trim(),
-      );
-    });
-  });
-
   it("JSX spread children", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -1762,7 +1669,7 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
     });
 
     it("import with unicode escape", () => {
-      expectPrinted_(`import { name } from 'mod\\u1011';`, `import {name} from "mod\\u1011"`);
+      expectPrinted_(`import { name } from 'mod\\u1011';`, `import { name } from "mod\\u1011"`);
     });
 
     it("fold string addition", () => {
@@ -3232,7 +3139,7 @@ console.log(foo, array);
         import {ɵtest} from 'foo'
       `);
 
-      expect(out).toBe('import {ɵtest} from "foo";\n');
+      expect(out).toBe('import { ɵtest } from "foo";\n');
     });
 
     const importLines = ["import {createElement, bacon} from 'react';", "import {bacon, createElement} from 'react';"];

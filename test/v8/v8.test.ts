@@ -1,9 +1,19 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync, isWindows } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
-import { join } from "path";
+import { join, basename } from "path";
+
+enum Runtime {
+  node,
+  bun,
+}
+
+enum BuildMode {
+  debug,
+  release,
+}
 
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
 // test environment
@@ -43,7 +53,12 @@ async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promis
   }
 }
 
-async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
+async function build(
+  srcDir: string,
+  tmpDir: string,
+  runtime: Runtime,
+  buildMode: BuildMode,
+): Promise<{ out: string; err: string; description: string }> {
   const build = spawn({
     cmd:
       runtime == Runtime.bun
@@ -52,13 +67,21 @@ async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   await build.exited;
+  const out = await new Response(build.stdout).text();
+  const err = await new Response(build.stderr).text();
   if (build.exitCode != 0) {
+    console.error(err);
     throw new Error("build failed");
   }
+  return {
+    out,
+    err,
+    description: `build ${basename(srcDir)} with ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`,
+  };
 }
 
 beforeAll(async () => {
@@ -73,10 +96,18 @@ beforeAll(async () => {
   await install(srcDir, directories.node, Runtime.node);
   await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
 
-  await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
-  await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
-  await build(srcDir, directories.node, Runtime.node, BuildMode.release);
-  await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
+  const results = await Promise.all([
+    build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+    build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+    build(srcDir, directories.node, Runtime.node, BuildMode.release),
+    build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+  ]);
+  for (const r of results) {
+    console.log(r.description, "stdout:");
+    console.log(r.out);
+    console.log(r.description, "stderr:");
+    console.log(r.err);
+  }
 });
 
 describe("module lifecycle", () => {
@@ -157,7 +188,12 @@ describe("FunctionTemplate", () => {
 
 describe("Function", () => {
   it("correctly receives all its arguments from JS", () => {
-    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}], {});
+    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
+    checkSameOutput("print_native_function", []);
+  });
+
+  it("correctly receives the this value from JS", () => {
+    checkSameOutput("call_function_with_weird_this_values", []);
   });
 });
 
@@ -190,15 +226,23 @@ describe("HandleScope", () => {
   }, 10000);
 });
 
-enum Runtime {
-  node,
-  bun,
-}
+describe("EscapableHandleScope", () => {
+  it("keeps handles alive in the outer scope", () => {
+    checkSameOutput("test_v8_escapable_handle_scope", []);
+  });
+});
 
-enum BuildMode {
-  debug,
-  release,
-}
+describe("uv_os_getpid", () => {
+  it.skipIf(isWindows)("returns the same result as getpid on POSIX", () => {
+    checkSameOutput("test_uv_os_getpid", []);
+  });
+});
+
+describe("uv_os_getppid", () => {
+  it.skipIf(isWindows)("returns the same result as getppid on POSIX", () => {
+    checkSameOutput("test_uv_os_getppid", []);
+  });
+});
 
 function checkSameOutput(testName: string, args: any[], thisValue?: any) {
   const nodeResult = runOn(Runtime.node, BuildMode.release, testName, args, thisValue).trim();
@@ -228,7 +272,14 @@ function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs:
         : directories.bunRelease;
   const exe = runtime == Runtime.node ? "node" : bunExe();
 
-  const cmd = [exe, join(baseDir, "main.js"), testName, JSON.stringify(jsArgs), JSON.stringify(thisValue ?? null)];
+  const cmd = [
+    exe,
+    ...(runtime == Runtime.bun ? ["--smol"] : []),
+    join(baseDir, "main.js"),
+    testName,
+    JSON.stringify(jsArgs),
+    JSON.stringify(thisValue ?? null),
+  ];
   if (buildMode == BuildMode.debug) {
     cmd.push("debug");
   }

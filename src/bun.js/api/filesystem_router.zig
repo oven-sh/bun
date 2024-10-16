@@ -355,7 +355,7 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn getStyle(_: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
-        return ZigString.static("nextjs").toJS(globalThis);
+        return bun.String.static("nextjs").toJS(globalThis);
     }
 
     pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {

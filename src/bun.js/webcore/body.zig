@@ -168,7 +168,7 @@ pub const Body = struct {
             const promise = this.promise orelse return false;
 
             if (promise.asAnyPromise()) |internal| {
-                if (internal.status(this.global.vm()) != .Pending) {
+                if (internal.status(this.global.vm()) != .pending) {
                     promise.unprotect();
                     this.promise = null;
                     return false;
@@ -294,10 +294,10 @@ pub const Body = struct {
         /// Single-use Blob that stores the bytes in the Value itself.
         // InlineBlob: InlineBlob,
         Locked: PendingValue,
-        Used: void,
-        Empty: void,
+        Used,
+        Empty,
         Error: ValueError,
-        Null: void,
+        Null,
 
         pub const heap_breakdown_label = "BodyValue";
         pub const ValueError = union(enum) {

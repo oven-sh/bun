@@ -21,7 +21,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName, upgradeDuplexToTLS } = require("../internal/net");
+const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
 
@@ -175,7 +175,6 @@ const Socket = (function (InternalSocket) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
-              self.emit("error", verifyError);
               self.destroy(verifyError);
               return;
             }
@@ -237,7 +236,6 @@ const Socket = (function (InternalSocket) {
         const chunk = self.#writeChunk;
         const written = socket.write(chunk);
 
-        self.bytesWritten += written;
         if (written < chunk.length) {
           self.#writeChunk = chunk.slice(written);
         } else {
@@ -295,9 +293,9 @@ const Socket = (function (InternalSocket) {
           this.pauseOnConnect = pauseOnConnect;
           if (isTLS) {
             // add secureConnection event handler
-            self.once("secureConnection", () => connectionListener(_socket));
+            self.once("secureConnection", () => connectionListener.$call(self, _socket));
           } else {
-            connectionListener(_socket);
+            connectionListener.$call(self, _socket);
           }
         }
         self.emit("connection", _socket);
@@ -351,7 +349,6 @@ const Socket = (function (InternalSocket) {
     };
 
     bytesRead = 0;
-    bytesWritten = 0;
     #closed = false;
     #ended = false;
     #final_callback = null;
@@ -420,6 +417,9 @@ const Socket = (function (InternalSocket) {
       this.once("connect", () => this.emit("ready"));
     }
 
+    get bytesWritten() {
+      return this[bunSocketInternal]?.bytesWritten || 0;
+    }
     address() {
       return {
         address: this.localAddress,
@@ -561,10 +561,14 @@ const Socket = (function (InternalSocket) {
       // start using existing connection
       try {
         if (connection) {
+          const socket = connection[bunSocketInternal];
+          if (!upgradeDuplex && socket) {
+            // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+            upgradeDuplex = isNamedPipeSocket(socket);
+          }
           if (upgradeDuplex) {
             this.connecting = true;
             this.#upgraded = connection;
-
             const [result, events] = upgradeDuplexToTLS(connection, {
               data: this,
               tls,
@@ -578,8 +582,6 @@ const Socket = (function (InternalSocket) {
 
             this[bunSocketInternal] = result;
           } else {
-            const socket = connection[bunSocketInternal];
-
             if (socket) {
               this.connecting = true;
               this.#upgraded = connection;
@@ -603,26 +605,46 @@ const Socket = (function (InternalSocket) {
               // wait to be connected
               connection.once("connect", () => {
                 const socket = connection[bunSocketInternal];
-                if (!socket) return;
+                if (!upgradeDuplex && socket) {
+                  // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
+                  upgradeDuplex = isNamedPipeSocket(socket);
+                }
+                if (upgradeDuplex) {
+                  this.connecting = true;
+                  this.#upgraded = connection;
 
-                this.connecting = true;
-                this.#upgraded = connection;
-                const result = socket.upgradeTLS({
-                  data: this,
-                  tls,
-                  socket: this.#handlers,
-                });
+                  const [result, events] = upgradeDuplexToTLS(connection, {
+                    data: this,
+                    tls,
+                    socket: this.#handlers,
+                  });
 
-                if (result) {
-                  const [raw, tls] = result;
-                  // replace socket
-                  connection[bunSocketInternal] = raw;
-                  this.once("end", this.#closeRawConnection);
-                  raw.connecting = false;
-                  this[bunSocketInternal] = tls;
+                  connection.on("data", events[0]);
+                  connection.on("end", events[1]);
+                  connection.on("drain", events[2]);
+                  connection.on("close", events[3]);
+
+                  this[bunSocketInternal] = result;
                 } else {
-                  this[bunSocketInternal] = null;
-                  throw new Error("Invalid socket");
+                  this.connecting = true;
+                  this.#upgraded = connection;
+                  const result = socket.upgradeTLS({
+                    data: this,
+                    tls,
+                    socket: this.#handlers,
+                  });
+
+                  if (result) {
+                    const [raw, tls] = result;
+                    // replace socket
+                    connection[bunSocketInternal] = raw;
+                    this.once("end", this.#closeRawConnection);
+                    raw.connecting = false;
+                    this[bunSocketInternal] = tls;
+                  } else {
+                    this[bunSocketInternal] = null;
+                    throw new Error("Invalid socket");
+                  }
                 }
               });
             }
@@ -783,6 +805,7 @@ const Socket = (function (InternalSocket) {
     _write(chunk, encoding, callback) {
       if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
       var written = this[bunSocketInternal]?.write(chunk);
+
       if (written == chunk.length) {
         callback();
       } else if (this.#writeCallback) {
@@ -857,7 +880,7 @@ class Server extends EventEmitter {
     if (typeof callback === "function") {
       if (!this[bunSocketInternal]) {
         this.once("close", function close() {
-          callback(new ERR_SERVER_NOT_RUNNING());
+          callback(ERR_SERVER_NOT_RUNNING());
         });
       } else {
         this.once("close", callback);

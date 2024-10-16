@@ -1157,8 +1157,9 @@ pub fn WindowsStreamingWriter(
             this.source = null;
             if (this.closed_without_reporting) {
                 this.closed_without_reporting = false;
-                onClose(this.parent);
+                return;
             }
+            onClose(this.parent);
         }
 
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {

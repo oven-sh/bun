@@ -246,8 +246,16 @@ void *us_socket_context_get_native_handle(int ssl, us_socket_context_r context);
 /* A socket context holds shared callbacks and user data extension for associated sockets */
 struct us_socket_context_t *us_create_socket_context(int ssl, us_loop_r loop,
     int ext_size, struct us_socket_context_options_t options) nonnull_fn_decl;
+
+enum create_bun_socket_error_t {
+  CREATE_BUN_SOCKET_ERROR_NONE = 0,
+  CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE,
+  CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
+  CREATE_BUN_SOCKET_ERROR_INVALID_CA,
+};
+
 struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop,
-    int ext_size, struct us_bun_socket_context_options_t options) nonnull_fn_decl;
+    int ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err);
 
 /* Delete resources allocated at creation time (will call unref now and only free when ref count == 0). */
 void us_socket_context_free(int ssl, us_socket_context_r context) nonnull_fn_decl;
@@ -371,6 +379,8 @@ void us_poll_init(us_poll_r p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type);
 
 /* Start, change and stop polling for events */
 void us_poll_start(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
+/* Returns 0 if successful */
+int us_poll_start_rc(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 

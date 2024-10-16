@@ -29,7 +29,7 @@ Since our entry point is a `*.ts` file, Bun generates a `tsconfig.json` for you.
 
 ## Run a file
 
-Open `index.ts` and paste the following code snippet, which implements a simple HTTP server with [`Bun.serve`](/docs/api/http).
+Open `index.ts` and paste the following code snippet, which implements a simple HTTP server with [`Bun.serve`](https://bun.sh/docs/api/http).
 
 ```ts
 const server = Bun.serve({

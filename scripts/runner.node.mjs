@@ -146,7 +146,7 @@ async function runTests() {
           },
         });
         if (!error) {
-          break;
+          break downloadLoop;
         }
         const { code } = error;
         if (code === "EBUSY") {
@@ -233,8 +233,13 @@ async function runTests() {
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
-  if (!isCI) console.log("-------");
-  if (!isCI) console.log("passing", results.length - failedTests.length, "/", results.length);
+  if (!isCI) {
+    console.log("-------");
+    console.log("passing", results.length - failedTests.length, "/", results.length);
+    for (const { testPath } of failedTests) {
+      console.log("-", testPath);
+    }
+  }
   return results;
 }
 
@@ -917,10 +922,21 @@ function getRelevantTests(cwd) {
     filteredTests.push(...Array.from(smokeTests));
     console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
   } else if (maxShards > 1) {
-    const firstTest = shardId * Math.ceil(availableTests.length / maxShards);
-    const lastTest = Math.min(firstTest + Math.ceil(availableTests.length / maxShards), availableTests.length);
-    filteredTests.push(...availableTests.slice(firstTest, lastTest));
-    console.log("Sharding tests:", firstTest, "...", lastTest, "/", availableTests.length);
+    for (let i = 0; i < availableTests.length; i++) {
+      if (i % maxShards === shardId) {
+        filteredTests.push(availableTests[i]);
+      }
+    }
+    console.log(
+      "Sharding tests:",
+      shardId,
+      "/",
+      maxShards,
+      "with tests",
+      filteredTests.length,
+      "/",
+      availableTests.length,
+    );
   } else {
     filteredTests.push(...availableTests);
   }

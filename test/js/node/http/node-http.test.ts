@@ -25,7 +25,7 @@ import * as stream from "node:stream";
 import { PassThrough } from "node:stream";
 import url from "node:url";
 import * as zlib from "node:zlib";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -198,6 +198,7 @@ describe("node:http", () => {
           const server = http.createServer(() => {});
           const random_port = randomPort();
           server.listen(random_port);
+          await once(server, "listening");
           const { port } = server.address();
           expect(port).toEqual(random_port);
           server.close();
@@ -2439,3 +2440,39 @@ it("should emit timeout event when using server.setTimeout", async () => {
     server.closeAllConnections();
   }
 }, 12_000);
+
+it("must set headersSent to true after headers are sent #3458", async () => {
+  const server = createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+    const [req, res] = await once(server, "request");
+    expect(res.headersSent).toBe(false);
+    const { promise, resolve } = Promise.withResolvers();
+    res.end("OK", resolve);
+    await promise;
+    expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
+});
+
+it("must set headersSent to true after headers are sent when using chunk encoded", async () => {
+  const server = createServer().listen(0);
+  try {
+    await once(server, "listening");
+    fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+    const [req, res] = await once(server, "request");
+    expect(res.headersSent).toBe(false);
+    const { promise, resolve } = Promise.withResolvers();
+    res.write("first", () => {
+      res.write("second", () => {
+        res.end("OK", resolve);
+      });
+    });
+    await promise;
+    expect(res.headersSent).toBe(true);
+  } finally {
+    server.close();
+  }
+});

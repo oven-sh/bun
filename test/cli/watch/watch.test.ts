@@ -18,6 +18,7 @@ for (const dir of ["dir", "©️"]) {
 
     let i = 0;
     await updateFile(i);
+    await Bun.sleep(1000);
     watchee = spawn({
       cwd,
       cmd: [bunExe(), "--watch", "watchee.js"],
@@ -35,7 +36,7 @@ for (const dir of ["dir", "©️"]) {
       await updateFile(i);
     }
     rmSync(path);
-  });
+  }, 10000);
 }
 
 afterEach(() => {

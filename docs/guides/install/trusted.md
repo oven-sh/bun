@@ -17,7 +17,7 @@ If you are seeing one of the following errors, you are probably trying to use a 
 
 ---
 
-To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
+To allow Bun to execute lifecycle scripts for a specific package, add the package to `trustedDependencies` in your package.json file. You can do this automatically by running the command `bun pm trust <pkg>`.
 
 {% callout %}
 Note that this only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the dependencies of that dependency!
@@ -45,4 +45,4 @@ $ bun install
 
 ---
 
-See [Docs > Package manager > Trusted dependencies](/docs/install/lifecycle) for complete documentation of trusted dependencies.
+See [Docs > Package manager > Trusted dependencies](https://bun.sh/docs/install/lifecycle) for complete documentation of trusted dependencies.

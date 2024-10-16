@@ -1703,11 +1703,12 @@ class Http2Stream extends Duplex {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
+      code = code || 0;
       validateInteger(code, "code", 0, 13);
       this.rstCode = code;
       markStreamClosed(this);
 
-      session[bunHTTP2Native]?.rstStream(this.#id, code || 0);
+      session[bunHTTP2Native]?.rstStream(this.#id, code);
       this[bunHTTP2Session] = null;
     }
 

@@ -2316,6 +2316,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
 
+        var return_value_from_function: JSValue = .zero;
         const result_: ?JSValue = brk: {
             if (!value.jsType().isFunction()) {
                 if (this.flags.promise != .none) {
@@ -2336,8 +2337,7 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{}) catch |err|
-                globalThis.takeException(err);
+            return_value_from_function = value.call(globalThis, .undefined, &.{}) catch |err| globalThis.takeException(err);
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
@@ -2628,12 +2628,13 @@ pub const Expect = struct {
         }
 
         // did not throw
+        const result = return_value_from_function;
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received_line = "Received function did not throw\n";
+        const received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n";
 
         if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const signature = comptime getSignature("toThrow", "", false);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{});
+            this.throw(globalThis, signature, "\n\n" ++ received_line, .{result.toFmt(&formatter)});
             return .zero;
         }
 
@@ -2641,26 +2642,26 @@ pub const Expect = struct {
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         if (expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_message.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
         var expected_class = ZigString.Empty;
         expected_value.getClassName(globalThis, &expected_class);
-        this.throw(globalThis, signature, expected_fmt, .{expected_class});
+        this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
         return .zero;
     }
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {

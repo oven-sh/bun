@@ -3648,7 +3648,7 @@ pub const DuplexUpgradeContext = struct {
 
     fn startTLS(this: *DuplexUpgradeContext) void {
         this.task_event = .StartTLS;
-        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
+        this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *DuplexUpgradeContext) void {

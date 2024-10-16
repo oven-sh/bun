@@ -72,6 +72,11 @@ bundles_since_last_error: usize = 0,
 graph_safety_lock: bun.DebugThreadLock,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
+/// CSS files are accessible via `/_bun/css/<hex key>.css`
+/// Value is bundled code.
+css_files: std.AutoArrayHashMapUnmanaged(u64, []const u8),
+/// Assets are accessible via `/_bun/asset/<key>`
+assets: std.StringHashMapUnmanaged(u64, Asset),
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
 /// serialization only happens once.
@@ -99,6 +104,8 @@ emit_visualizer_events: u32,
 
 pub const internal_prefix = "/_bun";
 pub const client_prefix = internal_prefix ++ "/client";
+pub const asset_prefix = internal_prefix ++ "/asset";
+pub const css_prefix = internal_prefix ++ "/css";
 
 pub const Route = struct {
     pub const Index = bun.GenericIndex(u30, Route);
@@ -150,6 +157,14 @@ pub const Route = struct {
     pub fn clientPublicPath(route: *const Route) []const u8 {
         return route.client_bundled_url[0 .. route.client_bundled_url.len - "/client.js".len];
     }
+};
+
+const Asset = union(enum) {
+    /// File contents are allocated with `dev.allocator`
+    /// The slice is mirrored in `dev.client_graph.bundled_files`, so freeing this slice is not required.
+    css: []const u8,
+    /// A file path relative to cwd, owned by `dev.allocator`
+    file_path: []const u8,
 };
 
 /// DevServer is stored on the heap, storing it's allocator.
@@ -270,14 +285,16 @@ pub fn init(options: Options) !*DevServer {
             has_fallback = true;
     }
 
-    app.get(client_prefix ++ "/:route/:asset", *DevServer, dev, onAssetRequest);
+    app.get(client_prefix ++ "/:route", *DevServer, dev, onJsRequest);
+    app.get(asset_prefix ++ "/:asset", *DevServer, dev, onAssetRequest);
+    app.get(css_prefix ++ "/:asset", *DevServer, dev, onCssRequest);
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, onSrcRequest);
 
     app.ws(
         internal_prefix ++ "/hmr",
         dev,
         0,
-        uws.WebSocketBehavior.Wrap(DevServer, DevWebSocket, false).apply(.{}),
+        uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, false).apply(.{}),
     );
 
     app.get(internal_prefix ++ "/incremental_visualizer", *DevServer, dev, onIncrementalVisualizer);
@@ -415,10 +432,12 @@ fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
     Output.flush();
 }
 
-fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
     const route = route: {
         const route_id = req.parameter(0);
-        const i = std.fmt.parseInt(u16, route_id, 10) catch
+        if (!bun.strings.hasSuffixComptime(route_id, ".js"))
+            return req.setYield(true);
+        const i = std.fmt.parseInt(u16, route_id[0 .. route_id.len - 3], 10) catch
             return req.setYield(true);
         if (i >= dev.routes.len)
             return req.setYield(true);
@@ -464,7 +483,35 @@ fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
         route.client_bundle = out;
         break :code out;
     };
-    sendJavaScriptSource(js_source, resp);
+    sendTextFile(js_source, MimeType.javascript.value, resp);
+}
+
+fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+    _ = resp; // autofix
+    const route_id = req.parameter(0);
+    const asset = dev.assets.get(route_id) orelse
+        return req.setYield(true);
+        _ = asset; // autofix
+
+    bun.todoPanic(@src(), "serve asset file", .{});
+}
+
+fn onCssRequest(dev: *DevServer, req: *Request, resp: *Response) void {
+    const route_id = req.parameter(0);
+    const hex = dev.assets.get(route_id) orelse
+        return req.setYield(true);
+    if (hex.len != @sizeOf(u64) * 2)
+        return req.setYield(true);
+
+    var out: [8]u8 = undefined;
+    assert((std.fmt.hexToBytes(&out, hex) catch
+        return req.setYield(true)).len == 8);
+    const hash: u64 = @bitCast(out);
+
+    const css = dev.css_files.get(hash) orelse
+        return req.setYield(true);
+
+    sendTextFile(css, MimeType.css.value, resp);
 }
 
 fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: *Response) void {
@@ -904,10 +951,10 @@ fn indexFailures(dev: *DevServer) !void {
             route.server_state = .possible_bundling_failures;
         }
 
-        _ = dev.app.publish(DevWebSocket.global_channel, payload.items, .binary, false);
+        _ = dev.app.publish(HmrSocket.global_channel, payload.items, .binary, false);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
         if (dev.bundling_failures.count() == 0) {
-            _ = dev.app.publish(DevWebSocket.global_channel, &.{MessageId.errors_cleared.char()}, .binary, false);
+            _ = dev.app.publish(HmrSocket.global_channel, &.{MessageId.errors_cleared.char()}, .binary, false);
             for (dev.incremental_result.failures_removed.items) |removed| {
                 removed.deinit();
             }
@@ -924,7 +971,7 @@ fn indexFailures(dev: *DevServer) !void {
                 removed.deinit();
             }
 
-            _ = dev.app.publish(DevWebSocket.global_channel, payload.items, .binary, false);
+            _ = dev.app.publish(HmrSocket.global_channel, payload.items, .binary, false);
         }
     }
 
@@ -1065,24 +1112,47 @@ pub fn finalizeBundle(
     ) |part_range, compile_result| {
         const index = part_range.source_index;
         switch (targets[part_range.source_index.get()].bakeGraph()) {
-            .server => try dev.server_graph.receiveChunk(&ctx, index, compile_result, .js, false),
-            .ssr => try dev.server_graph.receiveChunk(&ctx, index, compile_result, .js, true),
-            .client => try dev.client_graph.receiveChunk(&ctx, index, compile_result, .js, false),
+            .server => try dev.server_graph.receiveChunk(&ctx, index, compile_result.code(), .js, false),
+            .ssr => try dev.server_graph.receiveChunk(&ctx, index, compile_result.code(), .js, true),
+            .client => try dev.client_graph.receiveChunk(&ctx, index, compile_result.code(), .js, false),
         }
     }
+    for (result.cssChunks(), result.css_file_list.metas) |*chunk, metadata| {
+        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
 
-    for (result.cssChunks(), result.css_file_list) |*chunk, metadata| {
-        _ = metadata; // autofix
         const code = try chunk.intermediate_output.code(
-            dev.allocator,
+            bv2.graph.allocator,
             &bv2.graph,
-            "/_bun/import-prefix-where-is-this-used?",
+            "/_bun/TODO-import-prefix-where-is-this-used?",
             chunk,
             result.chunks,
             null,
             false, // TODO: sourcemaps true
         );
-        std.debug.print("WHAT THE FUCK\n---\n{s}\n---\n", .{code.buffer});
+
+        // Create an asset entry for this file.
+        const abs_path = ctx.sources[index.get()].path.text;
+        const key = dev.insertOrUpdateCssAsset(abs_path, code.buffer);
+        _ = key; // autofix
+
+        try dev.client_graph.receiveChunk(
+            &ctx,
+            index,
+            code.buffer,
+            .css,
+            false,
+        );
+
+        // If imported on server, there needs to be a server-side file entry
+        // so that edges can be attached. When a file is only imported on
+        // the server, this file is used to trace the CSS to the route.
+        if (metadata.imported_on_server) {
+            try dev.server_graph.insertCssFileOnServer(
+                &ctx,
+                index,
+                abs_path,
+            );
+        }
     }
 
     dev.client_graph.affected_by_trace = try DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.client_graph.bundled_files.count());
@@ -1096,16 +1166,30 @@ pub fn finalizeBundle(
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
     for (js_chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
-        try dev.processChunkDependencies(
-            &ctx,
-            part_range.source_index,
-            targets[part_range.source_index.get()].bakeGraph(),
-            bv2.graph.allocator,
-        );
+        switch (targets[part_range.source_index.get()].bakeGraph()) {
+            .server, .ssr => dev.server_graph.processChunkDependencies(&ctx, part_range.source_index, bv2.graph.allocator),
+            .client => dev.client_graph.processChunkDependencies(&ctx, part_range.source_index, bv2.graph.allocator),
+        }
+    }
+    for (result.cssChunks(), result.css_file_list.metas) |*chunk, metadata| {
+        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        _ = index; // autofix
+        _ = metadata; // autofix
     }
 
     // Index all failed files now that the incremental graph has been updated.
     try dev.indexFailures();
+}
+
+fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) []const u8 {
+    const path_hash = bun.hash(abs_path);
+
+    const gop = dev.assets.getOrPut(dev.allocator, asset_name);
+    if (!gop.found_existing) {
+        // gop.
+    }
+    _ = gop; // autofix
+    _ = code; // autofix
 }
 
 pub fn handleParseTaskFailure(
@@ -1125,19 +1209,6 @@ pub fn handleParseTaskFailure(
         .server => dev.server_graph.insertFailure(abs_path, log, false),
         .ssr => dev.server_graph.insertFailure(abs_path, log, true),
         .client => dev.client_graph.insertFailure(abs_path, log, false),
-    };
-}
-
-pub fn processChunkDependencies(
-    dev: *DevServer,
-    ctx: *HotUpdateContext,
-    index: bun.JSAst.Index,
-    side: bake.Graph,
-    temp_alloc: Allocator,
-) !void {
-    return switch (side) {
-        .server, .ssr => dev.server_graph.processChunkDependencies(ctx, index, temp_alloc),
-        .client => dev.client_graph.processChunkDependencies(ctx, index, temp_alloc),
     };
 }
 
@@ -1167,7 +1238,7 @@ fn onFallbackRoute(_: void, _: *Request, resp: *Response) void {
     sendBuiltInNotFound(resp);
 }
 
-fn sendJavaScriptSource(code: []const u8, resp: *Response) void {
+fn sendTextFile(code: []const u8, content_type: []const u8, resp: *Response) void {
     if (code.len == 0) {
         resp.writeStatus("202 No Content");
         resp.writeHeaderInt("Content-Length", 0);
@@ -1176,8 +1247,7 @@ fn sendJavaScriptSource(code: []const u8, resp: *Response) void {
     }
 
     resp.writeStatus("200 OK");
-    // TODO: CSS, Sourcemap
-    resp.writeHeader("Content-Type", MimeType.javascript.value);
+    resp.writeHeader("Content-Type", content_type);
     resp.end(code, true); // TODO: You should never call res.end(huge buffer)
 }
 
@@ -1267,6 +1337,8 @@ fn sendStubErrorMessage(dev: *DevServer, route: *Route, resp: *Response, err: JS
 }
 
 const FileKind = enum {
+    /// Files that failed to bundle or do not exist on disk will appear in the
+    /// graph as "unknown".
     unknown,
     js,
     css,
@@ -1473,17 +1545,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
             g: *@This(),
             ctx: *HotUpdateContext,
             index: bun.JSAst.Index,
-            chunk: bun.bundle_v2.CompileResult,
+            code: []const u8,
             kind: FileKind,
             is_ssr_graph: bool,
         ) !void {
-            _ = kind; // autofix
             const dev = g.owner();
             dev.graph_safety_lock.assertLocked();
 
             const abs_path = ctx.sources[index.get()].path.text;
 
-            const code = chunk.code();
             if (Environment.allow_assert) {
                 if (bun.strings.isAllWhitespace(code)) {
                     // Should at least contain the function wrapper
@@ -1553,7 +1623,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .failed = false,
                         .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = false,
-                        .kind = .js,
+                        .kind = kind,
                     });
                     try g.current_chunk_parts.append(dev.allocator, file_index);
                 },
@@ -1567,13 +1637,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_route = false,
                             .is_client_component_boundary = client_component_boundary,
                             .failed = false,
-                            .kind = .js,
+                            .kind = kind,
                         };
 
                         if (client_component_boundary) {
                             try dev.incremental_result.client_components_added.append(dev.allocator, file_index);
                         }
                     } else {
+                        gop.value_ptr.kind = kind;
+
                         if (is_ssr_graph) {
                             gop.value_ptr.is_ssr = true;
                         } else {
@@ -1606,7 +1678,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             );
                         }
                     }
-                    try g.current_chunk_parts.append(dev.allocator, chunk.code());
+                    try g.current_chunk_parts.append(dev.allocator, code);
                 },
             }
         }
@@ -1858,7 +1930,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             switch (side) {
                 .server => {
-                    if (file.is_client_component_boundary) {
+                    if (file.is_client_component_boundary or file.kind == .css) {
                         const dev = g.owner();
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.client_graph.getFileIndex(key) orelse
@@ -1929,7 +2001,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .failed = false,
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
-                        .kind = .js,
+                        .kind = .unknown,
                     });
                 },
                 .server => {
@@ -1940,7 +2012,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_route = is_route,
                             .is_client_component_boundary = false,
                             .failed = false,
-                            .kind = .js,
+                            .kind = .unknown,
                         };
                     } else if (is_ssr_graph) {
                         gop.value_ptr.is_ssr = true;
@@ -1951,6 +2023,36 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
 
             return file_index;
+        }
+
+        pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.JSAst.Index, abs_path: []const u8) bun.OOM!void {
+            g.owner().graph_safety_lock.assertLocked();
+
+            debug.log("Insert stale: {s}", .{abs_path});
+            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
+            const file_index = FileIndex.init(@intCast(gop.index));
+
+            if (!gop.found_existing) {
+                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
+                try g.first_dep.append(g.owner().allocator, .none);
+                try g.first_import.append(g.owner().allocator, .none);
+            }
+
+            switch (side) {
+                .client => @compileError("not implemented: use receiveChunk"),
+                .server => {
+                    gop.value_ptr.* = .{
+                        .is_rsc = false,
+                        .is_ssr = false,
+                        .is_route = false,
+                        .is_client_component_boundary = false,
+                        .failed = false,
+                        .kind = .css,
+                    };
+                },
+            }
+
+            ctx.getCachedIndex(.server, index).* = file_index;
         }
 
         pub fn insertFailure(
@@ -1981,7 +2083,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .failed = true,
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
-                        .kind = .js,
+                        .kind = .unknown,
                     });
                 },
                 .server => {
@@ -1992,7 +2094,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             .is_route = false,
                             .is_client_component_boundary = false,
                             .failed = true,
-                            .kind = .js,
+                            .kind = .unknown,
                         };
                     } else {
                         if (is_ssr_graph) {
@@ -2864,7 +2966,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
         }
     }
 
-    _ = dev.app.publish(DevWebSocket.visualizer_channel, payload.items, .binary, false);
+    _ = dev.app.publish(HmrSocket.visualizer_channel, payload.items, .binary, false);
 }
 
 pub fn onWebSocketUpgrade(
@@ -2876,12 +2978,12 @@ pub fn onWebSocketUpgrade(
 ) void {
     assert(id == 0);
 
-    const dw = bun.create(dev.allocator, DevWebSocket, .{
+    const dw = bun.create(dev.allocator, HmrSocket, .{
         .dev = dev,
         .emit_visualizer_events = false,
     });
     res.upgrade(
-        *DevWebSocket,
+        *HmrSocket,
         dw,
         req.header("sec-websocket-key") orelse "",
         req.header("sec-websocket-protocol") orelse "",
@@ -2911,21 +3013,21 @@ pub const MessageId = enum(u8) {
     }
 };
 
-const DevWebSocket = struct {
+const HmrSocket = struct {
     dev: *DevServer,
     emit_visualizer_events: bool,
 
     pub const global_channel = "*";
     pub const visualizer_channel = "v";
 
-    pub fn onOpen(dw: *DevWebSocket, ws: AnyWebSocket) void {
+    pub fn onOpen(dw: *HmrSocket, ws: AnyWebSocket) void {
         _ = dw;
         // TODO: append hash of the framework config
         _ = ws.send(.{MessageId.version.char()} ++ bun.Global.package_json_version_with_revision, .binary, false, true);
         _ = ws.subscribe(global_channel);
     }
 
-    pub fn onMessage(dw: *DevWebSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
+    pub fn onMessage(dw: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
         _ = opcode;
 
         if (msg.len == 1 and msg[0] == MessageId.visualizer.char() and !dw.emit_visualizer_events) {
@@ -2936,7 +3038,7 @@ const DevWebSocket = struct {
         }
     }
 
-    pub fn onClose(dw: *DevWebSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
+    pub fn onClose(dw: *HmrSocket, ws: AnyWebSocket, exit_code: i32, message: []const u8) void {
         _ = ws;
         _ = exit_code;
         _ = message;
@@ -3080,7 +3182,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         const client = try dev.client_graph.takeBundle(.hmr_chunk);
         defer dev.allocator.free(client);
         assert(client[0] == '(');
-        _ = dev.app.publish(DevWebSocket.global_channel, client, .binary, true);
+        _ = dev.app.publish(HmrSocket.global_channel, client, .binary, true);
     }
 
     // This list of routes affected excludes client code. This means changing
@@ -3101,7 +3203,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
             try w.writeAll(pattern);
         }
 
-        _ = dev.app.publish(DevWebSocket.global_channel, payload.items, .binary, true);
+        _ = dev.app.publish(HmrSocket.global_channel, payload.items, .binary, true);
     }
 
     // When client component roots get updated, the `client_components_affected`

@@ -1934,18 +1934,18 @@ pub const BundleV2 = struct {
 
         // Separate non-failing files into two lists: JS and CSS
         const js_reachable_files, const css_entry_points, const css_total_files = reachable_files: {
-            var temp_alloc = std.heap.stackFallback(32, this.graph.allocator);
-            var css_hit_bit_set = try bun.bit_set.DynamicBitSet.initEmpty(temp_alloc.get(), this.graph.ast.len);
             var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
-            var css_entry_points = try std.ArrayListUnmanaged(BakeBundleOutput.CssEntryPoint).initCapacity(this.graph.allocator, this.graph.css_file_count);
+            var css_entry_points: std.AutoArrayHashMapUnmanaged(Index, BakeBundleOutput.CssEntryPointMeta) = .{};
+            try css_entry_points.ensureUnusedCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
 
             for (
                 this.graph.ast.items(.parts)[1..],
                 @as([]ImportRecord.List, this.graph.ast.items(.import_records)[1..]),
                 this.graph.ast.items(.css)[1..],
+                this.graph.ast.items(.target)[1..],
                 1..,
-            ) |part_list, import_records, maybe_css, index| {
+            ) |part_list, import_records, maybe_css, target, index| {
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
@@ -1963,10 +1963,12 @@ pub const BundleV2 = struct {
                         for (import_records.slice()) |record| {
                             if (record.tag != .css) continue;
                             if (!record.source_index.isValid()) continue;
-                            if (css_hit_bit_set.isSet(record.source_index.get())) continue;
 
-                            css_hit_bit_set.set(record.source_index.get());
-                            css_entry_points.appendAssumeCapacity(record.source_index);
+                            const gop = css_entry_points.getOrPutAssumeCapacity(record.source_index);
+                            if (target != .browser)
+                                gop.value_ptr.* = .{ .imported_on_server = true }
+                            else if (!gop.found_existing)
+                                gop.value_ptr.* = .{ .imported_on_server = false };
                         }
                     } else {
                         css_total_files.appendAssumeCapacity(Index.init(index));
@@ -1976,8 +1978,9 @@ pub const BundleV2 = struct {
 
             // TODO: loop over entry points for CSS files. these are also roots
 
-            break :reachable_files .{ js_files.items, css_entry_points.items, css_total_files.items };
+            break :reachable_files .{ js_files.items, css_entry_points, css_total_files };
         };
+        _ = css_total_files; // autofix
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -2013,7 +2016,7 @@ pub const BundleV2 = struct {
             };
         }
 
-        const chunks = try this.graph.allocator.alloc(Chunk, css_entry_points.len + 1);
+        const chunks = try this.graph.allocator.alloc(Chunk, css_entry_points.count() + 1);
 
         chunks[0] = .{
             .entry_point = .{
@@ -2031,7 +2034,7 @@ pub const BundleV2 = struct {
             .output_source_map = sourcemap.SourceMapPieces.init(this.graph.allocator),
         };
 
-        for (chunks[1..], css_entry_points) |*chunk, entry_point| {
+        for (chunks[1..], css_entry_points.keys()) |*chunk, entry_point| {
             const order = this.linker.findImportedFilesInCSSOrder(this.graph.allocator, &.{entry_point});
             chunk.* = .{
                 .entry_point = .{
@@ -2055,7 +2058,13 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        return .{ .chunks = chunks, .css_file_list = css_total_files };
+        return .{
+            .chunks = chunks,
+            .css_file_list = .{
+                .indexes = css_entry_points.keys(),
+                .metas = css_entry_points.values(),
+            },
+        };
     }
 
     pub fn enqueueOnResolvePluginIfNeeded(
@@ -14772,7 +14781,15 @@ pub const AstBuilder = struct {
 /// The lifetime of output pointers is tied to the bundler's arena
 pub const BakeBundleOutput = struct {
     chunks: []Chunk,
-    css_file_list: []const Index,
+    css_file_list: struct {
+        indexes: []const Index,
+        metas: []const CssEntryPointMeta,
+    },
+
+    pub const CssEntryPointMeta = struct {
+        /// When this is true, a stub file is added to the Server's IncrementalGraph
+        imported_on_server: bool,
+    };
 
     pub fn jsPseudoChunk(out: BakeBundleOutput) *Chunk {
         return &out.chunks[0];

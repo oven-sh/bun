@@ -48,8 +48,8 @@ declare var server_exports: {
 };
 
 interface HandleRequestMeta {
-  // url for script tag
   clientEntryPoint: string;
+  css: string;
 }
 
 /*

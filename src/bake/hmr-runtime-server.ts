@@ -10,7 +10,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 
 // Server Side
 server_exports = {
-  async handleRequest(req, { clientEntryPoint }, requested_id) {
+  async handleRequest(req, { clientEntryPoint, css }, requested_id) {
     const serverRenderer = loadModule<Bake.ServerEntryPoint>(config.main, LoadModuleType.AssertPresent).exports.default;
 
     if (!serverRenderer) {
@@ -23,6 +23,8 @@ server_exports = {
     const response = await serverRenderer(req, loadModule(requested_id, LoadModuleType.AssertPresent).exports, {
       styles: [],
       scripts: [clientEntryPoint],
+      devModeStyles: css,
+      devRoutePath: requested_id,
     });
 
     if (!(response instanceof Response)) {

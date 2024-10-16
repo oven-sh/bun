@@ -159,10 +159,20 @@ declare module "bun" {
     }
 
     interface RouteMetadata {
-      /** A list of css files that the route will need to be styled */
-      styles: string[];
-      /** A list of js files that the route will need to be interactive */
+      /**
+       * A list of js files that the route will need to be interactive.
+       */
       scripts: string[];
+      /**
+       * A list of css files that the route will need to be styled.
+       */
+      styles: string[];
+      /**
+       * Can be used by the framework to mention the route file. Only provided in
+       * development mode to prevent leaking these details into production
+       * builds.
+       */
+      devRoutePath?: string;
     }
   }
 

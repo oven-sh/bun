@@ -346,7 +346,7 @@ describe("bun test", () => {
             await expect(sleep(1)).resolves.toBeUndefined();
           });
           test("timeout", async () => {
-            await expect(sleep(64)).resolves.toBeUndefined();
+            await expect(await sleep(64)).resolves.toBeUndefined();
           });
         `,
       });

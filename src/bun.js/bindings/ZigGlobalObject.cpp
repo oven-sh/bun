@@ -4224,6 +4224,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == Bun__Expect__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onReject;
+    } else if (handler == Bun__Expect__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__Expect__onResolve;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

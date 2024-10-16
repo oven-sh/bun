@@ -62,6 +62,11 @@ pub const Expect = struct {
     flags: Flags = .{},
     parent: ParentScope = .{ .global = {} },
     custom_label: bun.String = bun.String.empty,
+    promise_status: enum {
+        none,
+        fulfilled,
+        rejected,
+    } = .none,
 
     pub const TestScope = struct {
         test_id: TestRunner.Test.ID,
@@ -204,13 +209,39 @@ pub const Expect = struct {
         const matcher_params = switch (Output.enable_ansi_colors) {
             inline else => |colors| comptime Output.prettyFmt(matcher_params_fmt, colors),
         };
-        return processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
+        return processPromise(this.custom_label, thisValue, this.flags, globalThis, value, matcher_name, matcher_params, false);
+    }
+
+    export fn Bun__Expect__onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
+        const arguments = callframe.argumentsUndef(2).all();
+        const value = arguments[1];
+
+        const this: *Expect = Expect.fromJS(value) orelse {
+            return .undefined;
+        };
+        this.promise_status = .rejected;
+        Expect.capturedValueSetCached(value, globalThis, arguments[0]);
+
+        return arguments[0];
+    }
+
+    export fn Bun__Expect__onResolve(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
+        const arguments = callframe.argumentsUndef(2).all();
+        const value = arguments[1];
+
+        const this: *Expect = Expect.fromJS(value) orelse {
+            return .undefined;
+        };
+        this.promise_status = .fulfilled;
+        Expect.capturedValueSetCached(value, globalThis, arguments[0]);
+
+        return arguments[0];
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
-    pub fn processPromise(custom_label: bun.String, flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, matcher_name: anytype, matcher_params: anytype, comptime silent: bool) ?JSValue {
+    pub fn processPromise(custom_label: bun.String, thisValue: JSValue, flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, matcher_name: anytype, matcher_params: anytype, comptime silent: bool) ?JSValue {
         switch (flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {
@@ -223,6 +254,7 @@ pub const Expect = struct {
 
                     if (promise.status(vm) == .pending) {
                         strong = JSC.Strong.create(promise.asValue(globalThis), globalThis);
+                        promise.then(globalThis, thisValue, &Bun__Expect__onResolve, &Bun__Expect__onReject);
 
                         const prev_rejection_scope = jsc_vm.unhandledRejectionScope();
                         defer prev_rejection_scope.apply(jsc_vm);
@@ -234,7 +266,6 @@ pub const Expect = struct {
                         jsc_vm.waitForPromise(promise);
                     }
 
-                    const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
                         .fulfilled => switch (resolution) {
                             .resolves => {},
@@ -263,8 +294,7 @@ pub const Expect = struct {
                         .pending => unreachable,
                     }
 
-                    newValue.ensureStillAlive();
-                    return newValue;
+                    return promise.result(vm);
                 } else {
                     if (!silent) {
                         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
@@ -330,7 +360,7 @@ pub const Expect = struct {
         outFlags.* = flags.encode();
 
         // (note that matcher_name/matcher_args are not used because silent=true)
-        if (processPromise(bun.String.empty, flags, globalThis, value.*, "", "", true)) |result| {
+        if (processPromise(bun.String.empty, .undefined, flags, globalThis, value.*, "", "", true)) |result| {
             value.* = result;
             return true;
         }
@@ -4820,7 +4850,7 @@ pub const Expect = struct {
             globalThis.throw("Internal consistency error: failed to retrieve the captured value", .{});
             return .zero;
         };
-        value = Expect.processPromise(expect.custom_label, expect.flags, globalThis, value, matcher_name, matcher_params, false) orelse return .zero;
+        value = Expect.processPromise(expect.custom_label, thisValue, expect.flags, globalThis, value, matcher_name, matcher_params, false) orelse return .zero;
         value.ensureStillAlive();
 
         incrementExpectCallCounter();

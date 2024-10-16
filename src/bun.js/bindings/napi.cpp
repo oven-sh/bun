@@ -2046,6 +2046,8 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
 
     // .toString() can throw
     JSC::JSValue resultValue = JSC::JSValue(jsValue.toString(globalObject));
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
     JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
     *result = toNapi(resultValue, globalObject);
 
@@ -2054,6 +2056,66 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
         return napi_generic_failure;
     }
     scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_coerce_to_bool(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    bool nativeBool = jsValue.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    *result = toNapi(JSC::jsBoolean(nativeBool), globalObject);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_coerce_to_number(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    double nativeNumber = jsValue.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    *result = toNapi(JSC::jsNumber(nativeNumber), globalObject);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_coerce_to_object(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    JSObject* obj = jsValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    *result = toNapi(obj, globalObject);
     return napi_ok;
 }
 
@@ -2210,7 +2272,6 @@ extern "C" napi_status napi_get_value_int32(napi_env env, napi_value value, int3
 extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uint32_t* result)
 {
     NAPI_PREMABLE
-
     auto* globalObject = toJS(env);
     JSC::JSValue jsValue = toJS(value);
 
@@ -2222,12 +2283,7 @@ extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uin
         return napi_number_expected;
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-
-    // should never throw as we know it is a number
-    *result = jsValue.toUInt32(globalObject);
-    scope.assertNoException();
-
+    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asNumber());
     return napi_ok;
 }
 
@@ -2326,6 +2382,21 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         buf[written] = '\0';
     }
 
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !result) {
+        return napi_invalid_arg;
+    }
+    JSValue jsValue = toJS(value);
+    if (!jsValue.isBoolean()) {
+        return napi_boolean_expected;
+    }
+
+    *result = jsValue.asBoolean();
     return napi_ok;
 }
 

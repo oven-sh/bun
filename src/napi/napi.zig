@@ -412,6 +412,7 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     result.set(env, string.toJS(env));
     return .ok;
 }
+
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
@@ -421,21 +422,8 @@ pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f
 pub extern fn napi_get_value_int32(_: napi_env, value_: napi_value, result: ?*i32) napi_status;
 pub extern fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status;
 pub extern fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status;
-pub export fn napi_get_value_bool(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
-    log("napi_get_value_bool", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
+pub extern fn napi_get_value_bool(_: napi_env, value_: napi_value, result_: ?*bool) napi_status;
 
-    result.* = value.to(bool);
-    return .ok;
-}
-inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
-    if (doit) {
-        ptr.* = 0;
-    }
-}
 pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, buf_ptr_: ?[*:0]c_char, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     const value = value_.get();
@@ -543,33 +531,9 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
 
     return .ok;
 }
-pub export fn napi_coerce_to_bool(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
-    log("napi_coerce_to_bool", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    result.set(env, JSValue.jsBoolean(value.coerce(bool, env)));
-    return .ok;
-}
-pub export fn napi_coerce_to_number(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
-    log("napi_coerce_to_number", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    result.set(env, JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.ref(), value.asObjectRef(), TODO_EXCEPTION)));
-    return .ok;
-}
-pub export fn napi_coerce_to_object(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status {
-    log("napi_coerce_to_object", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    result.set(env, JSValue.c(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION)));
-    return .ok;
-}
+pub extern fn napi_coerce_to_bool(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status;
+pub extern fn napi_coerce_to_number(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status;
+pub extern fn napi_coerce_to_object(env: napi_env, value_: napi_value, result_: ?*napi_value) napi_status;
 pub export fn napi_get_prototype(env: napi_env, object_: napi_value, result_: ?*napi_value) napi_status {
     log("napi_get_prototype", .{});
     const result = result_ orelse {

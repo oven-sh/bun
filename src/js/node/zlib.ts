@@ -410,28 +410,15 @@ function processChunk(self, chunk, flushFlag, cb) {
   handle.availOutBefore = availOutBefore;
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
-  if (byteLength < 256) {
-    handle.writeSync(
-      flushFlag, // flush
-      chunk, // in
-      0, // in_off
-      handle.availInBefore, // in_len
-      self._outBuffer, // out
-      outOffset, // out_off
-      availOutBefore, // out_len
-    );
-    processCallback.$call(handle);
-  } else {
-    handle.write(
-      flushFlag, // flush
-      chunk, // in
-      0, // in_off
-      handle.availInBefore, // in_len
-      self._outBuffer, // out
-      outOffset, // out_off
-      availOutBefore, // out_len
-    );
-  }
+  handle.write(
+    flushFlag, // flush
+    chunk, // in
+    0, // in_off
+    handle.availInBefore, // in_len
+    self._outBuffer, // out
+    outOffset, // out_off
+    availOutBefore, // out_len
+  );
 }
 
 function processCallback() {

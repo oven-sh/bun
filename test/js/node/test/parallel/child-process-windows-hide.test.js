@@ -6,7 +6,8 @@
 const cp = require("child_process");
 const cmd = process.execPath;
 const args = ["--print", "42"];
-const options = { windowsHide: true };
+const options = { windowsHide: true, env: { ...Bun.env } };
+delete options.env.FORCE_COLOR;
 
 // Since windowsHide isn't really observable, we'll use Jest's mocking capabilities
 // to verify that the flag is being passed through correctly.

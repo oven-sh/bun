@@ -1758,7 +1758,7 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
-    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) *Stream {
+    pub fn decodeHeaderBlock(this: *H2FrameParser, payload: []const u8, stream: *Stream, flags: u8) ?*Stream {
         log("decodeHeaderBlock isSever: {}", .{this.isServer});
 
         var offset: usize = 0;
@@ -1777,7 +1777,9 @@ pub const H2FrameParser = struct {
             log("header {s} {s}", .{ header.name, header.value });
             if (this.isServer and strings.eqlComptime(header.name, ":status")) {
                 this.sendGoAway(stream_id, ErrorCode.PROTOCOL_ERROR, "Server received :status header", this.lastStreamID, true);
-                return this.streams.getEntry(stream_id).?.value_ptr;
+
+                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                return null;
             }
             count += 1;
             if (this.maxHeaderListPairs < count) {
@@ -1787,7 +1789,8 @@ pub const H2FrameParser = struct {
                 } else {
                     this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
                 }
-                return this.streams.getEntry(stream_id).?.value_ptr;
+                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                return null;
             }
 
             const output = brk: {
@@ -1818,7 +1821,8 @@ pub const H2FrameParser = struct {
 
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, JSC.JSValue.jsNumber(flags));
         // callbacks can change the Stream ptr in this case we always return the new one
-        return this.streams.getEntry(stream_id).?.value_ptr;
+        if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+        return null;
     }
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
@@ -1883,7 +1887,8 @@ pub const H2FrameParser = struct {
             this.currentFrame = null;
             if (emitted) {
                 // we need to revalidate the stream ptr after emitting onStreamData
-                stream = this.streams.getEntry(frame.streamIdentifier).?.value_ptr;
+                const entry = this.streams.getEntry(frame.streamIdentifier) orelse return end;
+                stream = entry.value_ptr;
             }
             if (frame.flags & @intFromEnum(DataFrameFlags.END_STREAM) != 0) {
                 const identifier = stream.getIdentifier();
@@ -2030,7 +2035,10 @@ pub const H2FrameParser = struct {
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
-            stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags);
+            stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) orelse {
+                this.readBuffer.reset();
+                return content.end;
+            };
             this.readBuffer.reset();
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
                 stream.isWaitingMoreHeaders = false;
@@ -2093,7 +2101,10 @@ pub const H2FrameParser = struct {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
                 return data.len;
             }
-            stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags);
+            stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
+                this.readBuffer.reset();
+                return content.end;
+            };
             this.readBuffer.reset();
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
@@ -3888,7 +3899,7 @@ pub const H2FrameParser = struct {
         return .undefined;
     }
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
-    /// this function can be called multiple times
+    /// this function can be called multiple times, it will erase stream info
     pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
         this.flushCorked();
         this.detachNativeSocket();

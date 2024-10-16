@@ -2365,8 +2365,7 @@ class ServerHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
-      const error_instance = sessionErrorFromCode(errorCode);
-      self.destroy(error_instance);
+      self.close();
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -2780,8 +2779,7 @@ class ClientHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
-      const error_instance = sessionErrorFromCode(errorCode);
-      self.destroy(error_instance);
+      self.close();
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

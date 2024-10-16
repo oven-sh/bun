@@ -2145,23 +2145,27 @@ function emitConnectNT(self, socket) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
-    let error_instance: Error | number | undefined = undefined;
-    if (typeof error === "number") {
-      stream.rstCode = error;
-      if (error != 0) {
-        error_instance = streamErrorFromCode(error);
+    const status = stream[bunHTTP2StreamStatus];
+
+    if ((status & StreamState.Closed) === 0) {
+      let error_instance: Error | number | undefined = undefined;
+      if (typeof error === "number") {
+        stream.rstCode = error;
+        if (error != 0) {
+          error_instance = streamErrorFromCode(error);
+        }
+      } else {
+        error_instance = error;
       }
-    } else {
-      error_instance = error;
-    }
-    if (stream.readable) {
-      stream.resume(); // we have a error we consume and close
-      pushToStream(stream, null);
-    }
-    markStreamClosed(stream);
-    if (destroy) stream.destroy(error_instance, stream.rstCode);
-    else if (error_instance) {
-      stream.emit("error", error_instance);
+      if (stream.readable) {
+        stream.resume(); // we have a error we consume and close
+        pushToStream(stream, null);
+      }
+      markStreamClosed(stream);
+      if (destroy) stream.destroy(error_instance, stream.rstCode);
+      else if (error_instance) {
+        stream.emit("error", error_instance);
+      }
     }
     if (destroy_self) self.destroy();
   }
@@ -2394,10 +2398,14 @@ class ServerHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.destroy();
+    this[bunHTTP2Socket] = null;
+    this.#parser?.emitErrorToAllStreams(NGHTTP2_CANCEL);
+    this.#parser = null;
+    this.close();
   }
 
   #onError(error: Error) {
+    this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
 
@@ -2841,9 +2849,13 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    this.destroy();
+    this[bunHTTP2Socket] = null;
+    this.#parser?.emitErrorToAllStreams(NGHTTP2_CANCEL);
+    this.#parser = null;
+    this.close();
   }
   #onError(error: Error) {
+    this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
   #onTimeout() {

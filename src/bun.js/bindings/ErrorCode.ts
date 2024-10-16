@@ -46,6 +46,7 @@ export default [
   ["ERR_UNKNOWN_SIGNAL", TypeError, "TypeError"],
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_IPC_ONE_PIPE", Error, "Error"],
+  ["ERR_UNKNOWN_CREDENTIAL", Error, "Error"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

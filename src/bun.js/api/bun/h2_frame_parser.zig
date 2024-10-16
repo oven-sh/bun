@@ -3882,17 +3882,15 @@ pub const H2FrameParser = struct {
         }
         return this;
     }
-
-    pub fn deinit(this: *H2FrameParser) void {
-        log("deinit", .{});
-
-        defer {
-            if (ENABLE_ALLOCATOR_POOL) {
-                H2FrameParser.pool.?.put(this);
-            } else {
-                this.destroy();
-            }
-        }
+    pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        JSC.markBinding(@src());
+        this.detach(false);
+        return .undefined;
+    }
+    /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
+    /// this function can be called multiple times
+    pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
+        this.flushCorked();
         this.detachNativeSocket();
         this.strong_ctx.deinit();
         this.handlers.deinit();
@@ -3909,9 +3907,24 @@ pub const H2FrameParser = struct {
         }
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
-            stream.freeResources(this, true);
+            stream.freeResources(this, finalizing);
         }
-        this.streams.deinit();
+        var streams = this.streams;
+        defer streams.deinit();
+        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+    }
+
+    pub fn deinit(this: *H2FrameParser) void {
+        log("deinit", .{});
+
+        defer {
+            if (ENABLE_ALLOCATOR_POOL) {
+                H2FrameParser.pool.?.put(this);
+            } else {
+                this.destroy();
+            }
+        }
+        this.detach(true);
     }
 
     pub fn finalize(

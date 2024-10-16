@@ -1,5 +1,5 @@
 const { hideFromStack } = require("internal/shared");
-
+const { ArrayIsArray } = require("internal/primordials");
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
@@ -28,6 +28,7 @@ function validateLinkHeaderFormat(value, name) {
     );
   }
 }
+
 function validateLinkHeaderValue(hints) {
   if (typeof hints === "string") {
     validateLinkHeaderFormat(hints, "hints");

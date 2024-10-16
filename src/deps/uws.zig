@@ -3485,6 +3485,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
 
+            pub fn isClosed(res: *Response) bool {
+                return uws_res_is_closed(ssl_flag, res.downcast()) != 0;
+            }
+
             pub fn tryEnd(res: *Response, data: []const u8, total: usize, close_: bool) bool {
                 return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
             }
@@ -4427,3 +4431,4 @@ pub fn onThreadExit() void {
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 extern fn uws_res_clear_corked_socket(loop: *Loop) void;
+extern fn uws_res_is_closed(ssl_flag: c_int, res: *anyopaque) i32;

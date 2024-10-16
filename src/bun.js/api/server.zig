@@ -6548,7 +6548,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     },
                     .tracker = JSC.AsyncTaskTracker.init(vm),
                 });
-                event_loop.enqueueTask(JSC.Task.init(task));
+                event_loop.enqueueImmediateTask(JSC.Task.init(task));
             }
             if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
@@ -6603,7 +6603,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
             task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
-            this.vm.enqueueTask(JSC.Task.init(task));
+            this.vm.enqueueImmediateTask(JSC.Task.init(task));
         }
 
         pub fn deinit(this: *ThisServer) void {
@@ -7008,6 +7008,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (should_deinit_context) {
                 ctx.deinit();
                 return;
+            }
+
+            if (ctx.resp != null) {
+                if (resp.isClosed()) {
+                    ctx.resp = null;
+                    ctx.deref();
+                    return;
+                }
             }
 
             if (ctx.shouldRenderMissing()) {

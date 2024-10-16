@@ -3643,12 +3643,12 @@ pub const DuplexUpgradeContext = struct {
 
     fn deinitInNextTick(this: *DuplexUpgradeContext) void {
         this.task_event = .Close;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn startTLS(this: *DuplexUpgradeContext) void {
         this.task_event = .StartTLS;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *DuplexUpgradeContext) void {
@@ -3758,7 +3758,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     fn deinitInNextTick(this: *WindowsNamedPipeListeningContext) void {
         bun.assert(this.task_event != .deinit);
         this.task_event = .deinit;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *WindowsNamedPipeListeningContext) void {
@@ -3938,7 +3938,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
         bun.assert(this.task_event != .deinit);
         this.task_event = .deinit;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {

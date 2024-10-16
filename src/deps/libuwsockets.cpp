@@ -1619,6 +1619,10 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+int uws_res_is_closed(int ssl, uws_res_r res) {
+  return us_socket_is_closed(ssl, (us_socket_t *)res);
+}
+
 __attribute__((callback (corker, ctx)))
   void uws_res_cork(int ssl, uws_res_r res, void *ctx,
                     void (*corker)(void *ctx)) nonnull_fn_decl;

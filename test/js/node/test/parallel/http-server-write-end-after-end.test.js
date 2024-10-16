@@ -7,13 +7,9 @@ const http = require("http");
 
 let server;
 
-beforeAll(() => {
-  server = http.createServer(handle);
-});
+beforeAll(() => {});
 
-afterAll(() => {
-  server.close();
-});
+afterAll(() => {});
 
 function handle(req, res) {
   res.on("error", jest.fn());
@@ -37,11 +33,18 @@ function handle(req, res) {
   });
 }
 
-test("http server write end after end", done => {
+test("http server write end after end", async () => {
+  server = http.createServer(handle);
+  const { promise, resolve, reject } = Promise.withResolvers();
   server.listen(0, () => {
-    http.get(`http://localhost:${server.address().port}`);
-    done();
+    http
+      .get(`http://localhost:${server.address().port}`)
+      .once("close", () => {
+        resolve();
+      })
+      .once("error", reject);
   });
+  await promise;
 });
 
 //<#END_FILE: test-http-server-write-end-after-end.js

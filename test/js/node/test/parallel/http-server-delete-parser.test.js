@@ -27,7 +27,8 @@ test("HTTP server deletes parser after write", async () => {
   });
 
   await new Promise(resolve => {
-    req.end(resolve);
+    req.once("close", resolve);
+    req.end();
   });
 
   server.close();

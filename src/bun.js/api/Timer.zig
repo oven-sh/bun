@@ -110,10 +110,18 @@ pub const All = struct {
 
         this.active_timer_count = new;
 
-        if (new > 0) {
-            this.timer_ref.ref(vm);
-        } else {
-            this.timer_ref.unref(vm);
+        if (comptime Environment.isPosix) {
+            if (new > 0) {
+                this.timer_ref.ref(vm);
+            } else {
+                this.timer_ref.unref(vm);
+            }
+        } else if (Environment.isWindows) {
+            if (old <= 0 and new > 0) {
+                this.uv_timer.ref();
+            } else if (old > 0 and new <= 0) {
+                this.uv_timer.unref();
+            }
         }
     }
 

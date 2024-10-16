@@ -1,6 +1,7 @@
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 const Encoder = JSC.WebCore.Encoder;
+const Environment = bun.Environment;
 
 pub const BufferVectorized = struct {
     pub fn fill(
@@ -49,23 +50,45 @@ pub const BufferVectorized = struct {
         } catch return false;
 
         switch (written) {
-            0 => {},
-            1 => @memset(buf, buf[0]),
-            else => {
-                var contents = buf[0..written];
-                buf = buf[written..];
-
-                while (buf.len >= contents.len) {
-                    bun.copy(u8, buf, contents);
-                    buf = buf[contents.len..];
-                    contents.len *= 2;
-                }
-
-                if (buf.len > 0) {
-                    bun.copy(u8, buf, contents[0..buf.len]);
-                }
+            0 => return true,
+            1 => {
+                @memset(buf, buf[0]);
+                return true;
             },
+            4 => if (comptime Environment.isMac) {
+                const pattern = buf[0..4];
+                buf = buf[pattern.len..];
+                bun.C.memset_pattern4(buf.ptr, pattern.ptr, buf.len);
+                return true;
+            },
+            8 => if (comptime Environment.isMac) {
+                const pattern = buf[0..8];
+                buf = buf[pattern.len..];
+                bun.C.memset_pattern8(buf.ptr, pattern.ptr, buf.len);
+                return true;
+            },
+            16 => if (comptime Environment.isMac) {
+                const pattern = buf[0..16];
+                buf = buf[pattern.len..];
+                bun.C.memset_pattern16(buf.ptr, pattern.ptr, buf.len);
+                return true;
+            },
+            else => {},
         }
+
+        var contents = buf[0..written];
+        buf = buf[written..];
+
+        while (buf.len >= contents.len) {
+            @memcpy(buf[0..contents.len], contents);
+            buf = buf[contents.len..];
+            contents.len *= 2;
+        }
+
+        if (buf.len > 0) {
+            @memcpy(buf, contents[0..buf.len]);
+        }
+
         return true;
     }
 };

@@ -1710,7 +1710,6 @@ class Http2Stream extends Duplex {
       markStreamClosed(this);
 
       session[bunHTTP2Native]?.rstStream(this.#id, code);
-      this[bunHTTP2Session] = null;
     }
 
     if (typeof callback === "function") {

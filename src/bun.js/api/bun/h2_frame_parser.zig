@@ -1612,7 +1612,7 @@ pub const H2FrameParser = struct {
                 // fallback to onWrite non-native callback
                 const output_value = this.handlers.binary_type.toJS(bytes, this.handlers.globalObject);
                 const result = this.call(.onWrite, output_value);
-                const code = result.to(i32);
+                const code = if (result.isNumber()) result.to(i32) else -1;
                 switch (code) {
                     -1 => {
                         // dropped

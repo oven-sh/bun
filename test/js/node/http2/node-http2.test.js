@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 
-for (const nodeExecutable of [nodeExe()]) {
+for (const nodeExecutable of [nodeExe(), bunExe()]) {
   describe(`${path.basename(nodeExecutable)}`, () => {
     let nodeEchoServer_;
 

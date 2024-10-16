@@ -1541,6 +1541,7 @@ function markStreamClosed(stream: Http2Stream) {
 
   if ((status & StreamState.Closed) === 0) {
     stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+
     markWritableDone(stream);
   }
 }
@@ -2145,28 +2146,26 @@ function emitConnectNT(self, socket) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
-    const status = stream[bunHTTP2StreamStatus];
-
-    if ((status & StreamState.Closed) === 0) {
-      let error_instance: Error | number | undefined = undefined;
-      if (typeof error === "number") {
-        stream.rstCode = error;
-        if (error != 0) {
-          error_instance = streamErrorFromCode(error);
-        }
-      } else {
-        error_instance = error;
+    let error_instance: Error | number | undefined = undefined;
+    if (typeof error === "number") {
+      stream.rstCode = error;
+      if (error != 0) {
+        error_instance = streamErrorFromCode(error);
       }
-      if (stream.readable) {
-        stream.resume(); // we have a error we consume and close
-        pushToStream(stream, null);
-      }
-      markStreamClosed(stream);
-      if (destroy) stream.destroy(error_instance, stream.rstCode);
-      else if (error_instance) {
-        stream.emit("error", error_instance);
-      }
+    } else {
+      error_instance = error;
     }
+    const status = stream[bunHTTP2StreamStatus];
+    if (stream.readable) {
+      stream.resume(); // we have a error we consume and close
+      pushToStream(stream, null);
+    }
+    markStreamClosed(stream);
+    if (destroy) stream.destroy(error_instance, stream.rstCode);
+    else if (error_instance) {
+      stream.emit("error", error_instance);
+    }
+
     if (destroy_self) self.destroy();
   }
 }
@@ -2251,9 +2250,7 @@ class ServerHttp2Session extends Http2Session {
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
-
       stream.rstCode = constants.NGHTTP2_CANCEL;
-      markStreamClosed(stream);
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;
@@ -2399,7 +2396,7 @@ class ServerHttp2Session extends Http2Session {
 
   #onClose() {
     this[bunHTTP2Socket] = null;
-    this.#parser?.emitErrorToAllStreams(NGHTTP2_CANCEL);
+    this.#parser?.emitAbortToAllStreams();
     this.#parser = null;
     this.close();
   }
@@ -2663,8 +2660,6 @@ class ClientHttp2Session extends Http2Session {
     },
     aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
-
-      markStreamClosed(stream);
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
@@ -2672,11 +2667,13 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
+
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
@@ -2850,7 +2847,7 @@ class ClientHttp2Session extends Http2Session {
 
   #onClose() {
     this[bunHTTP2Socket] = null;
-    this.#parser?.emitErrorToAllStreams(NGHTTP2_CANCEL);
+    this.#parser?.emitAbortToAllStreams();
     this.#parser = null;
     this.close();
   }

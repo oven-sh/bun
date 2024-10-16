@@ -3254,7 +3254,25 @@ pub const H2FrameParser = struct {
         }
         return array;
     }
-
+    pub fn emitAbortToAllStreams(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+        JSC.markBinding(@src());
+        var it = StreamResumableIterator.init(this);
+        while (it.next()) |stream| {
+            if (this.isServer) {
+                if (stream.id % 2 == 0) continue;
+            } else if (stream.id % 2 != 0) continue;
+            if (stream.state != .CLOSED) {
+                const old_state = stream.state;
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.CANCEL);
+                const identifier = stream.getIdentifier();
+                identifier.ensureStillAlive();
+                stream.freeResources(this, false);
+                this.dispatchWith2Extra(.onAborted, identifier, .undefined, JSC.JSValue.jsNumber(@intFromEnum(old_state)));
+            }
+        }
+        return .undefined;
+    }
     pub fn emitErrorToAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
@@ -3266,6 +3284,9 @@ pub const H2FrameParser = struct {
 
         var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
+            if (this.isServer) {
+                if (stream.id % 2 == 0) continue;
+            } else if (stream.id % 2 != 0) continue;
             if (stream.state != .CLOSED) {
                 stream.state = .CLOSED;
                 stream.rstCode = args_list.ptr[0].to(u32);

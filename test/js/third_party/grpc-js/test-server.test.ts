@@ -171,7 +171,7 @@ describe("Server", () => {
       });
     });
 
-    it.todo("successfully unbinds a bound ephemeral port", done => {
+    it("successfully unbinds a bound ephemeral port", done => {
       server.bindAsync("localhost:0", ServerCredentials.createInsecure(), (err, port) => {
         client = new grpc.Client(`localhost:${port}`, grpc.credentials.createInsecure());
         client.makeUnaryRequest(
@@ -194,7 +194,6 @@ describe("Server", () => {
               { deadline: deadline },
               (callError2, result) => {
                 assert(callError2);
-                console.error(callError2.code);
                 // DEADLINE_EXCEEDED means that the server is unreachable
                 assert(
                   callError2.code === grpc.status.DEADLINE_EXCEEDED || callError2.code === grpc.status.UNAVAILABLE,

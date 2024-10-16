@@ -80,13 +80,13 @@ pub const BufferVectorized = struct {
         buf = buf[written..];
 
         while (buf.len >= contents.len) {
-            @memcpy(buf[0..contents.len], contents);
+            bun.copy(u8, buf, contents);
             buf = buf[contents.len..];
             contents.len *= 2;
         }
 
         if (buf.len > 0) {
-            @memcpy(buf, contents[0..buf.len]);
+            bun.copy(u8, buf, contents[0..buf.len]);
         }
 
         return true;

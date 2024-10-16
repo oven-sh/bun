@@ -1541,6 +1541,7 @@ function markStreamClosed(stream: Http2Stream) {
 
   if ((status & StreamState.Closed) === 0) {
     stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+
     markWritableDone(stream);
   }
 }
@@ -1709,7 +1710,6 @@ class Http2Stream extends Duplex {
       markStreamClosed(this);
 
       session[bunHTTP2Native]?.rstStream(this.#id, code);
-      this[bunHTTP2Session] = null;
     }
 
     if (typeof callback === "function") {
@@ -1717,50 +1717,46 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
-    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
-      const { ending } = this._writableState;
-      if (!ending) {
-        // If the writable side of the Http2Stream is still open, emit the
-        // 'aborted' event and set the aborted flag.
-        if (!this.aborted) {
-          this[kAborted] = true;
-          this.emit("aborted");
-        }
+    const { ending } = this._writableState;
 
-        // at this state destroyed will be true but we need to close the writable side
-        this._writableState.destroyed = false;
-        this.end();
-        // we now restore the destroyed flag
-        this._writableState.destroyed = true;
+    if (!ending) {
+      // If the writable side of the Http2Stream is still open, emit the
+      // 'aborted' event and set the aborted flag.
+      if (!this.aborted) {
+        this[kAborted] = true;
+        this.emit("aborted");
       }
+      // at this state destroyed will be true but we need to close the writable side
+      this._writableState.destroyed = false;
+      this.end();
+      // we now restore the destroyed flag
+      this._writableState.destroyed = true;
+    }
 
-      const session = this[bunHTTP2Session];
-      assertSession(session);
+    const session = this[bunHTTP2Session];
+    assertSession(session);
 
-      let rstCode = this.rstCode;
-      if (!rstCode) {
-        if (err != null) {
-          if (err.code === "ABORT_ERR") {
-            // Enables using AbortController to cancel requests with RST code 8.
-            rstCode = NGHTTP2_CANCEL;
-          } else {
-            rstCode = NGHTTP2_INTERNAL_ERROR;
-          }
+    let rstCode = this.rstCode;
+    if (!rstCode) {
+      if (err != null) {
+        if (err.code === "ABORT_ERR") {
+          // Enables using AbortController to cancel requests with RST code 8.
+          rstCode = NGHTTP2_CANCEL;
         } else {
-          rstCode = this.rstCode = 0;
+          rstCode = NGHTTP2_INTERNAL_ERROR;
         }
-      }
-
-      if (this.writableFinished) {
-        markStreamClosed(this);
-
-        session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
-        this[bunHTTP2Session] = null;
       } else {
-        this.once("finish", Http2Stream.#rstStream);
+        rstCode = this.rstCode = 0;
       }
-    } else {
+    }
+
+    if (this.writableFinished) {
+      markStreamClosed(this);
+
+      session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
       this[bunHTTP2Session] = null;
+    } else {
+      this.once("finish", Http2Stream.#rstStream);
     }
 
     callback(err);
@@ -2154,6 +2150,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     } else {
       error_instance = error;
     }
+
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
@@ -2163,6 +2160,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     else if (error_instance) {
       stream.emit("error", error_instance);
     }
+
     if (destroy_self) self.destroy();
   }
 }
@@ -2247,15 +2245,12 @@ class ServerHttp2Session extends Http2Session {
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
-
       stream.rstCode = constants.NGHTTP2_CANCEL;
-      markStreamClosed(stream);
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
-
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
@@ -2343,9 +2338,7 @@ class ServerHttp2Session extends Http2Session {
     error(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       const error_instance = sessionErrorFromCode(errorCode);
-      self.emit("error", error_instance);
-      self[bunHTTP2Socket]?.end();
-      self.#parser = null;
+      self.destroy(error_instance);
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
       if (!self || typeof stream !== "object") return;
@@ -2366,14 +2359,11 @@ class ServerHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
-
-      self[bunHTTP2Socket]?.end();
-      self.#parser = null;
+      self.close();
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self[bunHTTP2Socket]?.end();
-      self.#parser = null;
+      self.destroy();
     },
     write(self: ServerHttp2Session, buffer: Buffer) {
       if (!self) return -1;
@@ -2391,7 +2381,12 @@ class ServerHttp2Session extends Http2Session {
   }
 
   #onClose() {
-    // this.destroy();
+    const parser = this.#parser;
+    if (parser) {
+      parser.emitAbortToAllStreams();
+      parser.detach();
+      this.#parser = null;
+    }
     this.close();
   }
 
@@ -2602,8 +2597,12 @@ class ServerHttp2Session extends Http2Session {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
     }
-    this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
-    this.#parser = null;
+    const parser = this.#parser;
+    if (parser) {
+      parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+      parser.detach();
+      this.#parser = null;
+    }
     this[bunHTTP2Socket] = null;
 
     if (error) {
@@ -2653,8 +2652,6 @@ class ClientHttp2Session extends Http2Session {
     },
     aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
-
-      markStreamClosed(stream);
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
@@ -2754,9 +2751,7 @@ class ClientHttp2Session extends Http2Session {
     error(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       const error_instance = sessionErrorFromCode(errorCode);
-      self.emit("error", error_instance);
-      self[bunHTTP2Socket]?.destroy();
-      self.#parser = null;
+      self.destroy(error_instance);
     },
 
     wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
@@ -2776,13 +2771,11 @@ class ClientHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         self.#parser.emitErrorToAllStreams(errorCode);
       }
-      self[bunHTTP2Socket]?.end();
-      self.#parser = null;
+      self.close();
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self[bunHTTP2Socket]?.end();
-      self.#parser = null;
+      self.destroy();
     },
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return -1;
@@ -2836,9 +2829,17 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
+    const parser = this.#parser;
+    if (parser) {
+      parser.emitAbortToAllStreams();
+      parser.detach();
+      this.#parser = null;
+    }
     this.close();
+    this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
+    this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
   #onTimeout() {
@@ -3055,9 +3056,13 @@ class ClientHttp2Session extends Http2Session {
       this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       socket.end();
     }
-    this.#parser?.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
-    this[bunHTTP2Socket] = null;
+    const parser = this.#parser;
+    if (parser) {
+      parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
+      parser.detach();
+    }
     this.#parser = null;
+    this[bunHTTP2Socket] = null;
 
     if (error) {
       this.emit("error", error);

@@ -158,15 +158,19 @@ declare module "bun" {
       onServerSideReload?: () => void;
     }
 
+    /**
+     * This object and it's children may be re-used between invocations, so it
+     * is not safe to mutate it at all.
+     */
     interface RouteMetadata {
       /**
        * A list of js files that the route will need to be interactive.
        */
-      scripts: string[];
+      readonly scripts: ReadonlyArray<string>;
       /**
        * A list of css files that the route will need to be styled.
        */
-      styles: string[];
+      readonly styles: ReadonlyArray<string>;
       /**
        * Can be used by the framework to mention the route file. Only provided in
        * development mode to prevent leaking these details into production

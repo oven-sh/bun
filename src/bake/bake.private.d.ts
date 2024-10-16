@@ -39,18 +39,13 @@ declare const side: "client" | "server";
  * interface as opposed to a WebSocket connection.
  */
 declare var server_exports: {
-  handleRequest: (req: Request, meta: HandleRequestMeta, id: Id) => any;
+  handleRequest: (req: Request, routeModuleId: Id, clientEntryUrl: string, styles: string[]) => any;
   registerUpdate: (
     modules: any,
     componentManifestAdd: null | string[],
     componentManifestDelete: null | string[],
   ) => void;
 };
-
-interface HandleRequestMeta {
-  clientEntryPoint: string;
-  css: string;
-}
 
 /*
  * If you are running a debug build of Bun. These debug builds should provide

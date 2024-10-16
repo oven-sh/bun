@@ -1946,9 +1946,62 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
 
     // .toString() can throw
     JSC::JSValue resultValue = JSC::JSValue(jsValue.toString(globalObject));
+    NAPI_RETURN_IF_EXCEPTION(env);
+
     JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
     *result = toNapi(resultValue, globalObject);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+}
+
+extern "C" napi_status napi_coerce_to_bool(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    bool nativeBool = jsValue.toBoolean(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    *result = toNapi(JSC::jsBoolean(nativeBool), globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_coerce_to_number(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    double nativeNumber = jsValue.toNumber(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    *result = toNapi(JSC::jsNumber(nativeNumber), globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_coerce_to_object(napi_env env, napi_value value, napi_value* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSValue jsValue = toJS(value);
+    // might throw
+    JSObject* obj = jsValue.toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    *result = toNapi(obj, globalObject);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
@@ -2060,7 +2113,7 @@ extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uin
     JSC::JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isNumber(), napi_number_expected);
 
-    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asDouble());
+    *result = jsValue.isUInt32() ? jsValue.asUInt32() : JSC::toUInt32(jsValue.asNumber());
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -2217,6 +2270,18 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         buf[written] = '\0';
     }
 
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+    JSValue jsValue = toJS(value);
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isBoolean(), napi_boolean_expected);
+
+    *result = jsValue.asBoolean();
     NAPI_RETURN_SUCCESS(env);
 }
 

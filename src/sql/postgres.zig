@@ -2920,13 +2920,18 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onDrain(this: *PostgresSQLConnection) void {
         var vm = this.globalObject.bunVM();
-        defer vm.drainMicrotasks();
+        const event_loop = vm.eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
         this.flushData();
     }
 
     pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
         var vm = this.globalObject.bunVM();
-        defer vm.drainMicrotasks();
+        const event_loop = vm.eventLoop();
+        event_loop.enter();
+        defer event_loop.exit();
+
         if (this.read_buffer.remaining().len == 0) {
             var consumed: usize = 0;
             var offset: usize = 0;

@@ -824,7 +824,7 @@ pub const EventLoop = struct {
             const vm = this.virtual_machine;
             const global = this.global;
             const jsc = vm.jsc;
-            this.drainTasks(vm, global, jsc);
+            this.drainTasksWithoutRejection(vm, global, jsc);
         }
 
         this.entered_event_loop_count -= 1;
@@ -1480,6 +1480,19 @@ pub const EventLoop = struct {
 
     pub fn processGCTimer(this: *EventLoop) void {
         this.virtual_machine.gc_controller.processGCTimer();
+    }
+
+    pub fn drainTasksWithoutRejection(this: *EventLoop, ctx: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, js_vm: *JSC.VM) void {
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, js_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
     }
 
     pub fn drainTasks(this: *EventLoop, ctx: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, js_vm: *JSC.VM) void {

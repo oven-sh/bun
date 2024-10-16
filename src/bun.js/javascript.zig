@@ -1083,7 +1083,7 @@ pub const VirtualMachine = struct {
         onUnhandledRejection: *const OnUnhandledRejection = undefined,
         count: usize = 0,
 
-        pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+        pub fn apply(this: *const UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
             vm.onUnhandledRejection = this.onUnhandledRejection;
             vm.onUnhandledRejectionCtx = this.ctx;
             vm.unhandled_error_counter = this.count;
@@ -2562,7 +2562,7 @@ pub const VirtualMachine = struct {
     pub const main_file_name: string = "bun:main";
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
-        this.eventLoop().drainTasks(this, this.global, this.jsc);
+        this.eventLoop().drainTasksWithoutRejection(this, this.global, this.jsc);
     }
 
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {

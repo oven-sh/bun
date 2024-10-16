@@ -1946,7 +1946,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn drainMicrotasks(this: *const RequestContext) void {
             if (this.isAsync()) return;
-            if (this.server) |server| server.vm.drainMicrotasks();
+            if (this.server) |server| {
+                if (Environment.isDebug) server.vm.eventLoop().debug.enter();
+                defer if (Environment.isDebug) server.vm.eventLoop().debug.exit();
+                server.vm.drainMicrotasks();
+            }
         }
 
         pub fn setAbortHandler(this: *RequestContext) void {
@@ -2393,7 +2397,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var any_js_calls = false;
             var vm = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
+            if (comptime Environment.isDebug) vm.eventLoop().debug.enter();
             defer {
+                defer if (comptime Environment.isDebug) vm.eventLoop().debug.exit();
                 // This is a task in the event loop.
                 // If we called into JavaScript, we must drain the microtask queue
                 if (any_js_calls) {
@@ -2417,9 +2423,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.detachResponse();
             var any_js_calls = false;
-            var vm = this.server.?.vm;
+            var vm: *JSC.VirtualMachine = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
+            if (comptime Environment.isDebug) vm.eventLoop().debug.enter();
             defer {
+                defer if (comptime Environment.isDebug) vm.eventLoop().debug.exit();
                 // This is a task in the event loop.
                 // If we called into JavaScript, we must drain the microtask queue
                 if (any_js_calls) {
@@ -2986,6 +2994,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
                 if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
+                    if (comptime Environment.isDebug) JSC.VirtualMachine.get().eventLoop().debug.enter();
+                    defer if (comptime Environment.isDebug) JSC.VirtualMachine.get().eventLoop().debug.exit();
                     this.drainMicrotasks();
 
                     switch (promise.status(globalThis.vm())) {

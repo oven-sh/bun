@@ -217,7 +217,22 @@ pub const Expect = struct {
                     const vm = globalThis.vm();
                     promise.setHandled(vm);
 
-                    globalThis.bunVM().waitForPromise(promise);
+                    const jsc_vm = globalThis.bunVM();
+                    var strong = JSC.Strong{};
+                    defer strong.deinit();
+
+                    if (promise.status(vm) == .pending) {
+                        strong = JSC.Strong.create(promise.asValue(globalThis), globalThis);
+
+                        const prev_rejection_scope = jsc_vm.unhandledRejectionScope();
+                        defer prev_rejection_scope.apply(jsc_vm);
+
+                        var new_rejection_scope = prev_rejection_scope;
+                        new_rejection_scope.onUnhandledRejection = JSC.VirtualMachine.onQuietUnhandledRejectionHandler;
+                        new_rejection_scope.apply(jsc_vm);
+
+                        jsc_vm.waitForPromise(promise);
+                    }
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
@@ -2328,9 +2343,6 @@ pub const Expect = struct {
 
             var vm = globalThis.bunVM();
             var return_value: JSValue = .zero;
-
-            // Drain existing unhandled rejections
-            vm.global.handleRejectedPromises();
 
             var scope = vm.unhandledRejectionScope();
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;

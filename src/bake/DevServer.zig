@@ -325,7 +325,7 @@ pub fn init(options: Options) !*DevServer {
         route.dev = dev;
         route.client_bundled_url = std.fmt.allocPrint(
             allocator,
-            client_prefix ++ "/{d}/client.js",
+            client_prefix ++ "/{d}.js",
             .{i},
         ) catch bun.outOfMemory();
 
@@ -547,7 +547,10 @@ fn onAssetRequest(dev: *DevServer, req: *Request, resp: *Response) void {
 }
 
 fn onCssRequest(dev: *DevServer, req: *Request, resp: *Response) void {
-    const hex = req.parameter(0);
+    const param = req.parameter(0);
+    if (!bun.strings.hasSuffixComptime(param, ".css"))
+        return req.setYield(true);
+    const hex = param[0 .. param.len - ".css".len];
     if (hex.len != @sizeOf(u64) * 2)
         return req.setYield(true);
 
@@ -670,7 +673,7 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
             // clientId
             route.client_bundle_url_value.get() orelse str: {
                 const js = bun.String.createUTF8(route.client_bundled_url).toJS(global);
-                route.module_name_string = JSC.Strong.create(js, dev.server_global.js());
+                route.client_bundle_url_value = JSC.Strong.create(js, dev.server_global.js());
                 break :str js;
             },
             // styles
@@ -715,10 +718,11 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
     //
     // This would allow us to support all of the nice things `new Response` allows
 
+    bun.assert(result.isString());
     const bun_string = result.toBunString(dev.server_global.js());
     defer bun_string.deref();
     if (bun_string.tag == .Dead) {
-        bun.todoPanic(@src(), "Bake: support non-string return value", .{});
+        bun.outOfMemory();
     }
 
     const utf8 = bun_string.toUTF8(dev.allocator);

@@ -17,8 +17,8 @@ steps:
           queue: "hosted-darwin"
         command:
           - "brew install cirruslabs/cli/tart packer"
-          - "packer init packer/darwin.pkr.hcl"
-          - "packer build packer/darwin.pkr.hcl"
+          - "packer init scripts/ci/darwin.pkr.hcl"
+          - "packer build scripts/ci/darwin.pkr.hcl"
   # # macOS aarch64
   # - key: "darwin-aarch64"
   #   group: ":darwin: aarch64"

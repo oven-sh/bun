@@ -4,6 +4,10 @@ export default [
   define({
     name: "H2FrameParser",
     JSType: "0b11101110",
+    finalize: true,
+    construct: true,
+    estimatedSize: true,
+    klass: {},
     proto: {
       request: {
         fn: "request",
@@ -106,8 +110,5 @@ export default [
         length: 0,
       },
     },
-    finalize: true,
-    construct: true,
-    klass: {},
   }),
 ];

@@ -30,14 +30,14 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
+🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips` (tracking [#13681](https://github.com/oven-sh/bun/issues/13681))
 
 Some methods are not optimized yet.
 
 ### [`node:dgram`](https://nodejs.org/api/dgram.html)
 
 🟡 Missing `setBroadcast` `setTTL` `setMulticastTTL` `setMulticastLoopback` `setMulticastInterface` `addMembership` `dropMembership`
-`addSourceSpecificMembership` `dropSourceSpecificMembership`
+`addSourceSpecificMembership` `dropSourceSpecificMembership` (tracking [#10381](https://github.com/oven-sh/bun/issues/10381))
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
@@ -45,7 +45,7 @@ Some methods are not optimized yet.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟡 Missing `cancel` `setServers` `getDefaultResultOrder`
+🟡 Missing `cancel` [`setServers`](https://github.com/oven-sh/bun/issues/11543) `getDefaultResultOrder`
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
@@ -65,7 +65,7 @@ Some methods are not optimized yet.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
-🟡 Client is supported, but server isn't yet.
+🟡 Client is supported, but server isn't yet. (tracking [#8823](https://github.com/oven-sh/bun/issues/8823))
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -73,7 +73,7 @@ Some methods are not optimized yet.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
-🔴 Not implemented.
+🔴 Not implemented. (tracking [#2445](https://github.com/oven-sh/bun/issues/2445))
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
@@ -129,7 +129,7 @@ Some methods are not optimized yet.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 
-🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
+🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead. (tracking [#5090](https://github.com/oven-sh/bun/issues/5090))
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
@@ -233,7 +233,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
 
-🔴 Not implemented.
+🔴 Not implemented. (tracking [#1723](https://github.com/oven-sh/bun/issues/1723))
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 

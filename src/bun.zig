@@ -37,6 +37,19 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+const cmath = struct {
+    extern "c" fn powf(x: f32, y: f32) f32;
+    extern "c" fn pow(x: f64, y: f64) f64;
+};
+
+pub inline fn powf(x: f32, y: f32) f32 {
+    return cmath.powf(x, y);
+}
+
+pub inline fn pow(x: f64, y: f64) f64 {
+    return cmath.pow(x, y);
+}
+
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
     bun.debugAssert(min <= max);

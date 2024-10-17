@@ -4355,7 +4355,7 @@ const Tokenizer = struct {
                     this.advance(1);
                     if (this.isEof()) break;
                 }
-                value *= std.math.pow(f64, 10, sign2 * exponent);
+                value *= bun.pow(10, sign2 * exponent);
             }
         }
 

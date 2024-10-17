@@ -659,7 +659,7 @@ pub fn Calc(comptime V: type) type {
                             };
 
                             return .{ .result = This{
-                                .number = std.math.pow(f32, a, b),
+                                .number = bun.powf(a, b),
                             } };
                         }
                     };
@@ -1235,7 +1235,7 @@ pub fn Calc(comptime V: type) type {
             for (args.items[i..]) |*arg| {
                 const Fn = struct {
                     pub fn applyOpFn(_: void, a: f32, b: f32) f32 {
-                        return a + std.math.pow(f32, b, 2);
+                        return a + bun.powf(b, 2);
                     }
                 };
                 sum = This.applyOp(&sum, arg, allocator, {}, Fn.applyOpFn) orelse {
@@ -1745,7 +1745,7 @@ fn hypot(_: void, a: f32, b: f32) f32 {
 }
 
 fn powi2(v: f32) f32 {
-    return std.math.pow(f32, v, 2);
+    return bun.powf(v, 2);
 }
 
 fn sqrtf32(v: f32) f32 {

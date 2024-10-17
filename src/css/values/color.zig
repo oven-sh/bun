@@ -491,95 +491,86 @@ pub const CssColor = union(enum) {
 pub fn parseColorFunction(location: css.SourceLocation, function: []const u8, input: *css.Parser) Result(CssColor) {
     var parser = ComponentParser.new(true);
 
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lab")) {
-        return parseLab(LAB, input, &parser, struct {
-            fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {
-                return .{ .lab = .{ .l = l, .a = a, .b = b, .alpha = alpha } };
-            }
-        }.callback);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklab")) {
-        return parseLab(OKLAB, input, &parser, struct {
-            fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {
-                return .{ .oklab = .{ .l = l, .a = a, .b = b, .alpha = alpha } };
-            }
-        }.callback);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lch")) {
-        return parseLch(LCH, input, &parser, struct {
-            fn callback(l: f32, c: f32, h: f32, alpha: f32) LABColor {
-                return .{ .lch = .{ .l = l, .c = c, .h = h, .alpha = alpha } };
-            }
-        }.callback);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklch")) {
-        return parseLch(OKLCH, input, &parser, struct {
-            fn callback(l: f32, c: f32, h: f32, alpha: f32) LABColor {
-                return .{ .oklch = .{ .l = l, .c = c, .h = h, .alpha = alpha } };
-            }
-        }.callback);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color")) {
-        return parsePredefined(input, &parser);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsl") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsla"))
-    {
-        return parseHslHwb(HSL, input, &parser, true, struct {
-            fn callback(allocator: Allocator, h: f32, s: f32, l: f32, a: f32) CssColor {
-                const hsl = HSL{ .h = h, .s = s, .l = l, .alpha = a };
-                if (!std.math.isNan(h) and !std.math.isNan(s) and !std.math.isNan(l) and !std.math.isNan(a)) {
-                    return CssColor{ .rgba = hsl.intoRGBA() };
-                } else {
-                    return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hsl = hsl }) };
+    const ColorFunctions = enum { lab, oklab, lch, oklch, color, hsl, hsla, hwb, rgb, rgba, @"color-mix", @"light-dark" };
+    const Map = bun.ComptimeEnumMap(ColorFunctions);
+
+    if (Map.get(function)) |val| {
+        return switch (val) {
+            .lab => parseLab(LAB, input, &parser, struct {
+                fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {
+                    return .{ .lab = .{ .l = l, .a = a, .b = b, .alpha = alpha } };
                 }
-            }
-        }.callback);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hwb")) {
-        return parseHslHwb(HWB, input, &parser, false, struct {
-            fn callback(allocator: Allocator, h: f32, w: f32, b: f32, a: f32) CssColor {
-                const hwb = HWB{ .h = h, .w = w, .b = b, .alpha = a };
-                if (!std.math.isNan(h) and !std.math.isNan(w) and !std.math.isNan(b) and !std.math.isNan(a)) {
-                    return CssColor{ .rgba = hwb.intoRGBA() };
-                } else {
-                    return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hwb = hwb }) };
+            }.callback),
+            .oklab => parseLab(OKLAB, input, &parser, struct {
+                fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {
+                    return .{ .oklab = .{ .l = l, .a = a, .b = b, .alpha = alpha } };
                 }
-            }
-        }.callback);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgb") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgba"))
-    {
-        return parseRgb(input, &parser);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color-mix")) {
-        return input.parseNestedBlock(CssColor, {}, struct {
-            pub fn parseFn(_: void, i: *css.Parser) Result(CssColor) {
-                return parseColorMix(i);
-            }
-        }.parseFn);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "light-dark")) {
-        return input.parseNestedBlock(CssColor, {}, struct {
-            fn callback(_: void, i: *css.Parser) Result(CssColor) {
-                const light = switch (switch (CssColor.parse(i)) {
-                    .result => |v| v,
-                    .err => |e| return .{ .err = e },
-                }) {
-                    .light_dark => |ld| ld.takeLightFreeDark(i.allocator()),
-                    else => |v| bun.create(i.allocator(), CssColor, v),
-                };
-                if (i.expectComma().asErr()) |e| return .{ .err = e };
-                const dark = switch (switch (CssColor.parse(i)) {
-                    .result => |v| v,
-                    .err => |e| return .{ .err = e },
-                }) {
-                    .light_dark => |ld| ld.takeDarkFreeLight(i.allocator()),
-                    else => |v| bun.create(i.allocator(), CssColor, v),
-                };
-                return .{ .result = .{
-                    .light_dark = .{
-                        .light = light,
-                        .dark = dark,
-                    },
-                } };
-            }
-        }.callback);
-    } else {
-        return .{ .err = location.newUnexpectedTokenError(.{ .ident = function }) };
+            }.callback),
+            .lch => parseLch(LCH, input, &parser, struct {
+                fn callback(l: f32, c: f32, h: f32, alpha: f32) LABColor {
+                    return .{ .lch = .{ .l = l, .c = c, .h = h, .alpha = alpha } };
+                }
+            }.callback),
+            .oklch => parseLch(OKLCH, input, &parser, struct {
+                fn callback(l: f32, c: f32, h: f32, alpha: f32) LABColor {
+                    return .{ .oklch = .{ .l = l, .c = c, .h = h, .alpha = alpha } };
+                }
+            }.callback),
+            .color => parsePredefined(input, &parser),
+            .hsl, .hsla => parseHslHwb(HSL, input, &parser, true, struct {
+                fn callback(allocator: Allocator, h: f32, s: f32, l: f32, a: f32) CssColor {
+                    const hsl = HSL{ .h = h, .s = s, .l = l, .alpha = a };
+                    if (!std.math.isNan(h) and !std.math.isNan(s) and !std.math.isNan(l) and !std.math.isNan(a)) {
+                        return CssColor{ .rgba = hsl.intoRGBA() };
+                    } else {
+                        return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hsl = hsl }) };
+                    }
+                }
+            }.callback),
+            .hwb => parseHslHwb(HWB, input, &parser, false, struct {
+                fn callback(allocator: Allocator, h: f32, w: f32, b: f32, a: f32) CssColor {
+                    const hwb = HWB{ .h = h, .w = w, .b = b, .alpha = a };
+                    if (!std.math.isNan(h) and !std.math.isNan(w) and !std.math.isNan(b) and !std.math.isNan(a)) {
+                        return CssColor{ .rgba = hwb.intoRGBA() };
+                    } else {
+                        return CssColor{ .float = bun.create(allocator, FloatColor, .{ .hwb = hwb }) };
+                    }
+                }
+            }.callback),
+            .rgb, .rgba => parseRgb(input, &parser),
+            .@"color-mix" => input.parseNestedBlock(CssColor, {}, struct {
+                pub fn parseFn(_: void, i: *css.Parser) Result(CssColor) {
+                    return parseColorMix(i);
+                }
+            }.parseFn),
+            .@"light-dark" => input.parseNestedBlock(CssColor, {}, struct {
+                fn callback(_: void, i: *css.Parser) Result(CssColor) {
+                    const light = switch (switch (CssColor.parse(i)) {
+                        .result => |v| v,
+                        .err => |e| return .{ .err = e },
+                    }) {
+                        .light_dark => |ld| ld.takeLightFreeDark(i.allocator()),
+                        else => |v| bun.create(i.allocator(), CssColor, v),
+                    };
+                    if (i.expectComma().asErr()) |e| return .{ .err = e };
+                    const dark = switch (switch (CssColor.parse(i)) {
+                        .result => |v| v,
+                        .err => |e| return .{ .err = e },
+                    }) {
+                        .light_dark => |ld| ld.takeDarkFreeLight(i.allocator()),
+                        else => |v| bun.create(i.allocator(), CssColor, v),
+                    };
+                    return .{ .result = .{
+                        .light_dark = .{
+                            .light = light,
+                            .dark = dark,
+                        },
+                    } };
+                }
+            }.callback),
+        };
     }
+    return .{ .err = location.newUnexpectedTokenError(.{ .ident = function }) };
 }
 
 pub fn parseRGBComponents(input: *css.Parser, parser: *ComponentParser) Result(struct { f32, f32, f32, bool }) {
@@ -736,12 +727,12 @@ pub fn deltaEok(comptime T: type, _a: T, _b: OKLCH) f32 {
 
     const delta_l = a.l - b.l;
     const delta_a = a.a - b.a;
-    const delta_b = a.b - b.a;
+    const delta_b = a.b - b.b;
 
     return @sqrt(
-        std.math.pow(f32, delta_l, 2) +
-            std.math.pow(f32, delta_a, 2) +
-            std.math.pow(f32, delta_b, 2),
+        bun.powf(delta_l, 2) +
+            bun.powf(delta_a, 2) +
+            bun.powf(delta_b, 2),
     );
 }
 
@@ -2434,10 +2425,13 @@ pub const ChannelType = packed struct(u8) {
 };
 
 pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssColor) {
-    // https://www.w3.org/TR/css-color-4/#color-function
-    const Closure = struct {
-        p: *ComponentParser,
-        pub fn parseNestedBlockFn(this: *@This(), i: *css.Parser) Result(CssColor) {
+    const Closure = struct { p: *ComponentParser };
+    var closure = Closure{
+        .p = parser,
+    };
+    const res = switch (input.parseNestedBlock(CssColor, &closure, struct {
+        // https://www.w3.org/TR/css-color-4/#color-function
+        pub fn parseFn(this: *Closure, i: *css.Parser) Result(CssColor) {
             const from: ?CssColor = if (i.tryParse(css.Parser.expectIdentMatching, .{"from"}).isOk())
                 switch (CssColor.parse(i)) {
                     .result => |vv| vv,
@@ -2482,13 +2476,7 @@ pub fn parsePredefined(input: *css.Parser, parser: *ComponentParser) Result(CssC
 
             return parsePredefinedRelative(i, this.p, colorspace, if (from) |*f| f else null);
         }
-    };
-
-    var closure = Closure{
-        .p = parser,
-    };
-
-    const res = switch (input.parseNestedBlock(CssColor, &closure, Closure.parseNestedBlockFn)) {
+    }.parseFn)) {
         .result => |vv| vv,
         .err => |e| return .{ .err = e },
     };
@@ -2819,14 +2807,14 @@ pub const HueInterpolationMethod = enum {
 fn rectangularToPolar(l: f32, a: f32, b: f32) struct { f32, f32, f32 } {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L375
 
-    var h = std.math.atan2(a, b) * 180.0 / std.math.pi;
+    var h = std.math.atan2(b, a) * 180.0 / std.math.pi;
     if (h < 0.0) {
         h += 360.0;
     }
 
     // const c = @sqrt(std.math.powi(f32, a, 2) + std.math.powi(f32, b, 2));
     // PERF: Zig does not have Rust's f32::powi
-    const c = @sqrt(std.math.pow(f32, a, 2) + std.math.pow(f32, b, 2));
+    const c = @sqrt(bun.powf(a, 2) + bun.powf(b, 2));
 
     // h = h % 360.0;
     h = @mod(h, 360.0);
@@ -3281,6 +3269,8 @@ pub fn writePredefined(
     return dest.writeChar(')');
 }
 
+extern "c" fn powf(f32, f32) f32;
+
 pub fn gamSrgb(r: f32, g: f32, b: f32) struct { f32, f32, f32 } {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L31
     // convert an array of linear-light sRGB values in the range 0.0-1.0
@@ -3295,18 +3285,28 @@ pub fn gamSrgb(r: f32, g: f32, b: f32) struct { f32, f32, f32 } {
             const abs = @abs(c);
             if (abs > 0.0031308) {
                 const sign: f32 = if (c < 0.0) @as(f32, -1.0) else @as(f32, 1.0);
-
-                return sign * (1.055 * std.math.pow(f32, abs, 1.0 / 2.4) - 0.055);
+                // const x: f32 = bun.powf( abs,  1.0 / 2.4);
+                const x: f32 = powf(abs, 1.0 / 2.4);
+                const xx: f32 = bun.powf(abs, @floatCast(@as(f64, 1.0) / @as(f64, 2.4)));
+                const xxx: f32 = bun.powf(abs, @as(f32, 1.0) / @as(f32, 2.4));
+                std.debug.print("XX: {d} {d}\n", .{ xx, xxx });
+                const y: f32 = 1.055 * x;
+                const z: f32 = y - 0.055;
+                // return sign * (1.055 * bun.powf( abs,  1.0 / 2.4) - 0.055);
+                return sign * z;
             }
 
             return 12.92 * c;
         }
     };
 
+    const rr = Helpers.gamSrgbComponent(r);
+    const gg = Helpers.gamSrgbComponent(g);
+    const bb = Helpers.gamSrgbComponent(b);
     return .{
-        Helpers.gamSrgbComponent(r),
-        Helpers.gamSrgbComponent(g),
-        Helpers.gamSrgbComponent(b),
+        rr,
+        gg,
+        bb,
     };
 }
 
@@ -3327,8 +3327,7 @@ pub fn linSrgb(r: f32, g: f32, b: f32) struct { f32, f32, f32 } {
             }
 
             const sign: f32 = if (c < 0.0) -1.0 else 1.0;
-            return sign * std.math.pow(
-                f32,
+            return sign * bun.powf(
                 ((abs + 0.055) / 1.055),
                 2.4,
             );
@@ -3405,15 +3404,15 @@ const color_conversions = struct {
             const f2 = f1 - b / 200.0;
 
             // compute xyz
-            const x = if (std.math.pow(f32, f0, 3) > E)
-                std.math.pow(f32, f0, 3)
+            const x = if (bun.powf(f0, 3) > E)
+                bun.powf(f0, 3)
             else
                 (116.0 * f0 - 16.0) / K;
 
-            const y = if (l > K * E) std.math.pow(f32, (l + 16.0) / 116.0, 3) else l / K;
+            const y = if (l > K * E) bun.powf((l + 16.0) / 116.0, 3) else l / K;
 
-            const z = if (std.math.pow(f32, f2, 3) > E)
-                std.math.pow(f32, f0, 3)
+            const z = if (bun.powf(f2, 3) > E)
+                bun.powf(f0, 3)
             else
                 (116.0 * f2 - 16.0) / K;
 
@@ -3686,7 +3685,7 @@ const color_conversions = struct {
             const H = struct {
                 pub fn linA98rgbComponent(c: f32) f32 {
                     const sign: f32 = if (c < 0.0) @as(f32, -1.0) else @as(f32, 1.0);
-                    return sign * std.math.pow(f32, @abs(c), 563.0 / 256.0);
+                    return sign * bun.powf(@abs(c), 563.0 / 256.0);
                 }
             };
 
@@ -3760,7 +3759,7 @@ const color_conversions = struct {
                         return c / 16.0;
                     }
                     const sign: f32 = if (c < 0.0) -1.0 else 1.0;
-                    return sign * std.math.pow(f32, abs, 1.8);
+                    return sign * bun.powf(abs, 1.8);
                 }
             };
 
@@ -3829,8 +3828,7 @@ const color_conversions = struct {
                     }
 
                     const sign: f32 = if (c < 0.0) -1.0 else 1.0;
-                    return sign * std.math.pow(
-                        f32,
+                    return sign * bun.powf(
                         (abs + A - 1.0) / A,
                         1.0 / 0.45,
                     );
@@ -3967,7 +3965,7 @@ const color_conversions = struct {
                     const abs = @abs(c);
                     if (abs >= ET) {
                         const sign: f32 = if (c < 0.0) -1.0 else 1.0;
-                        return sign * std.math.pow(f32, abs, 1.0 / 1.8);
+                        return sign * bun.powf(abs, 1.0 / 1.8);
                     }
                     return 16.0 * c;
                 }
@@ -4075,7 +4073,7 @@ const color_conversions = struct {
                     // to gamma corrected form
                     // negative values are also now accepted
                     const sign: f32 = if (c < 0.0) -1.0 else 1.0;
-                    return sign * std.math.pow(f32, @abs(c), 256.0 / 563.0);
+                    return sign * bun.powf(@abs(c), 256.0 / 563.0);
                 }
             };
 
@@ -4118,7 +4116,7 @@ const color_conversions = struct {
                     const abs = @abs(c);
                     if (abs > B) {
                         const sign: f32 = if (c < 0.0) -1.0 else 1.0;
-                        return sign * (A * std.math.pow(f32, abs, 0.45) - (A - 1.0));
+                        return sign * (A * bun.powf(abs, 0.45) - (A - 1.0));
                     }
 
                     return 4.5 * c;
@@ -4164,9 +4162,11 @@ const color_conversions = struct {
                 -0.8086757660,
             };
 
+            const cbrt = std.math.cbrt;
+
             const xyz = _xyz.resolveMissing();
             const a1, const b1, const c1 = multiplyMatrix(&XYZ_TO_LMS, xyz.x, xyz.y, xyz.z);
-            const l, const a, const b = multiplyMatrix(&LMS_TO_OKLAB, a1, b1, c1);
+            const l, const a, const b = multiplyMatrix(&LMS_TO_OKLAB, cbrt(a1), cbrt(b1), cbrt(c1));
 
             return OKLAB{
                 .l = l,
@@ -4281,9 +4281,9 @@ const color_conversions = struct {
             const a, const b, const c = multiplyMatrix(&OKLAB_TO_LMS, lab.l, lab.a, lab.b);
             const x, const y, const z = multiplyMatrix(
                 &LMS_TO_XYZ,
-                std.math.pow(f32, a, 3),
-                std.math.pow(f32, b, 3),
-                std.math.pow(f32, c, 3),
+                bun.powf(a, 3),
+                bun.powf(b, 3),
+                bun.powf(c, 3),
             );
 
             return XYZd65{
@@ -4308,7 +4308,7 @@ const color_conversions = struct {
 
         pub fn intoOKLAB(_lch: *const OKLCH) OKLAB {
             const lch = _lch.resolveMissing();
-            const l, const a, const b = rectangularToPolar(lch.l, lch.c, lch.h);
+            const l, const a, const b = polarToRectangular(lch.l, lch.c, lch.h);
             return OKLAB{
                 .l = l,
                 .a = a,

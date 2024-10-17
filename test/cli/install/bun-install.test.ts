@@ -8210,12 +8210,8 @@ it("should ensure read permissions of all extracted files", async () => {
 
   await runBunInstall(env, package_dir);
 
-  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o666).toBe(
-    isWindows ? 0o666 : 0o644,
-  );
-  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o666).toBe(
-    isWindows ? 0o666 : 0o644,
-  );
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o444).toBe(0o444);
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o444).toBe(0o444);
 });
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {

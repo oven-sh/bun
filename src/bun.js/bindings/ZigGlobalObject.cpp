@@ -172,6 +172,7 @@ using namespace Bun;
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
+BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -2737,6 +2738,7 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();
+    m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
 
@@ -3607,6 +3609,15 @@ extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalOb
     globalObject->drainMicrotasks();
 }
 
+extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
+{
+    auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);
+    if (value != nullptr) {
+        return JSValue::encode(value);
+    }
+    return JSValue::encode(JSValue::JSUndefined);
+}
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -3630,6 +3641,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_builtinInternalFunctions.visit(visitor);
     thisObject->m_commonStrings.visit<Visitor>(visitor);
+    thisObject->m_http2_commongStrings.visit<Visitor>(visitor);
     visitor.append(thisObject->m_assignToStream);
     visitor.append(thisObject->m_readableStreamToArrayBuffer);
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);

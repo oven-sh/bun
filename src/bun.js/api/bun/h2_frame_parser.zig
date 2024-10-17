@@ -3757,7 +3757,6 @@ pub const H2FrameParser = struct {
             globalObject.throwInvalidArguments("expected options as argument", .{});
             return null;
         }
-     
 
         var exception: JSC.C.JSValueRef = null;
         const context_obj = options.get(globalObject, "context") orelse {
@@ -3811,7 +3810,7 @@ pub const H2FrameParser = struct {
                 });
             }
         };
-       const socket_js = args_list.ptr[1];
+        const socket_js = args_list.ptr[1];
 
         if (!socket_js.isEmptyOrUndefinedOrNull()) {
             // check if socket is provided, and if it is a valid native socket
@@ -3835,8 +3834,7 @@ pub const H2FrameParser = struct {
                 }
             }
         }
-        
-        
+
         if (options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
                 if (!this.loadSettingsFromJSValue(globalObject, settings_js)) {

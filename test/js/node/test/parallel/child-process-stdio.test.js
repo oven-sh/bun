@@ -25,7 +25,7 @@
 "use strict";
 const { spawn } = require("child_process");
 
-const pwdCommand = process.platform === "win32" ? ["cmd", "/c", "cd"] : ["pwd"];
+const pwdCommand = process.platform === "win32" ? ["cmd", ["/c", "cd"]] : ["pwd"];
 
 test("stdio piping", () => {
   const child = spawn(...pwdCommand, { stdio: ["pipe"] });

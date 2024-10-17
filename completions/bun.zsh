@@ -260,6 +260,7 @@ _bun_pm_completion() {
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
             'cache\:"print the path to the cache folder" '
+            'version\:"bump a package version" '
         )
 
         _alternative "args:cmd3:(($sub_commands))"
@@ -570,7 +571,7 @@ _bun_outdated_completion() {
         '--no-progress[Disable the progress bar]' \
         '--help[Print this help menu]' &&
         ret=0
-    
+
     case $state in
     config)
         _bun_list_bunfig_toml

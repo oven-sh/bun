@@ -42,6 +42,10 @@ locals {
     release = "13"
     ipsw = "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-92188/2C38BCD1-2BFF-4A10-B358-94E8E28BE805/UniversalMac_13.0_22A380_Restore.ipsw"
   }
+  provision_script = templatefile("provision.darwin.sh", {
+    username = var.username
+    password = var.password
+  })
 }
 
 source "tart-cli" "bun-darwin-aarch64" {
@@ -88,4 +92,8 @@ source "tart-cli" "bun-darwin-aarch64" {
 
 build {
   sources = ["source.tart-cli.bun-darwin-aarch64"]
+
+  provisioner "shell" {
+    inline = [local.provision_script]
+  }
 }

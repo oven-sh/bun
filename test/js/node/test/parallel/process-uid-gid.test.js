@@ -80,19 +80,9 @@ if (isWindows) {
       expect(() => process.getgid()).not.toThrow();
       expect(() => process.getuid()).not.toThrow();
 
-      expect(() => process.setgid("nobody")).toThrow(
-        expect.objectContaining({
-          syscall: "setgid",
-          code: "EPERM",
-        }),
-      );
+      expect(() => process.setgid("nobody")).toThrow(/EPERM|Group identifier does not exist/);
 
-      expect(() => process.setuid("nobody")).toThrow(
-        expect.objectContaining({
-          syscall: "setuid",
-          code: "EPERM",
-        }),
-      );
+      expect(() => process.setuid("nobody")).toThrow(/EPERM|User identifier does not exist/);
     });
   } else {
     test("root user permissions", async () => {

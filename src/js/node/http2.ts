@@ -2388,9 +2388,11 @@ class ServerHttp2Session extends Http2Session {
       this.#parser = null;
     }
     this.close();
+    this[bunHTTP2Socket] = null;
   }
 
   #onError(error: Error) {
+    this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
 
@@ -2439,13 +2441,15 @@ class ServerHttp2Session extends Http2Session {
     const nativeSocket = socket[bunSocketInternal];
     this.#encrypted = socket instanceof TLSSocket;
 
-    this.#parser = new H2FrameParser({
-      native: nativeSocket,
-      context: this,
-      settings: options || {},
-      type: 0, // server type
-      handlers: ServerHttp2Session.#Handlers,
-    });
+    this.#parser = new H2FrameParser(
+      {
+        settings: options || {},
+        type: 0, // server type
+        handlers: ServerHttp2Session.#Handlers,
+      },
+      this,
+      nativeSocket,
+    );
     socket.on("close", this.#onClose.bind(this));
     socket.on("error", this.#onError.bind(this));
     socket.on("timeout", this.#onTimeout.bind(this));
@@ -2836,9 +2840,11 @@ class ClientHttp2Session extends Http2Session {
       this.#parser = null;
     }
     this.close();
+    this[bunHTTP2Socket]?.removeAllListeners();
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
+    this[bunHTTP2Socket]?.removeAllListeners();
     this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
@@ -3022,12 +3028,14 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket[bunSocketInternal];
-    this.#parser = new H2FrameParser({
-      native: nativeSocket,
-      context: this,
-      settings: options,
-      handlers: ClientHttp2Session.#Handlers,
-    });
+    this.#parser = new H2FrameParser(
+      {
+        settings: options,
+        handlers: ClientHttp2Session.#Handlers,
+      },
+      this,
+      nativeSocket,
+    );
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
     socket.on("close", this.#onClose.bind(this));

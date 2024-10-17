@@ -693,7 +693,7 @@ pub const H2FrameParser = struct {
     const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
     pub threadlocal var pool: if (ENABLE_ALLOCATOR_POOL) ?*H2FrameParserHiveAllocator else u0 = if (ENABLE_ALLOCATOR_POOL) null else 0;
 
-    strong_ctx: JSC.Strong = .{},
+    jsContext: JSC.Weak(H2FrameParser) = .{},
     globalThis: *JSC.JSGlobalObject,
     allocator: Allocator,
     handlers: Handlers,
@@ -1051,7 +1051,6 @@ pub const H2FrameParser = struct {
             };
             if (bytes.len > 0) {
                 @memcpy(frame.buffer[0..bytes.len], bytes);
-                client.globalThis.vm().reportExtraMemory(bytes.len);
             }
             log("dataFrame enqueued {}", .{frame.len});
             this.dataFrameQueue.enqueue(frame, client.allocator);
@@ -1393,7 +1392,7 @@ pub const H2FrameParser = struct {
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
@@ -1401,7 +1400,7 @@ pub const H2FrameParser = struct {
     pub fn call(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return .zero;
+        const ctx_value = this.jsContext.get() orelse return .zero;
         value.ensureStillAlive();
         return this.handlers.callEventHandlerWithResult(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
@@ -1413,7 +1412,7 @@ pub const H2FrameParser = struct {
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra });
@@ -1422,7 +1421,7 @@ pub const H2FrameParser = struct {
     pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
         extra2.ensureStillAlive();
@@ -1431,7 +1430,7 @@ pub const H2FrameParser = struct {
     pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
         extra2.ensureStillAlive();
@@ -1481,6 +1480,10 @@ pub const H2FrameParser = struct {
         return buffer.len;
     }
 
+    pub fn estimatedSize(this: *H2FrameParser) callconv(.C) usize {
+        return @sizeOf(H2FrameParser) + this.writeBuffer.len + this.queuedDataSize + (this.streams.capacity() * @sizeOf(Stream));
+    }
+
     pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
         log("_genericWrite {}", .{bytes.len});
 
@@ -1494,8 +1497,6 @@ pub const H2FrameParser = struct {
 
                     // we still have more to buffer and even more now
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                    this.globalThis.vm().reportExtraMemory(bytes.len);
-
                     log("_genericWrite flushed {} and buffered more {}", .{ written, bytes.len });
                     return false;
                 }
@@ -1510,7 +1511,6 @@ pub const H2FrameParser = struct {
                     const pending = bytes[written..];
                     // ops not all data was sent, lets buffer again
                     _ = this.writeBuffer.write(this.allocator, pending) catch bun.outOfMemory();
-                    this.globalThis.vm().reportExtraMemory(pending.len);
 
                     log("_genericWrite buffered more {}", .{pending.len});
                     return false;
@@ -1530,7 +1530,6 @@ pub const H2FrameParser = struct {
             const pending = bytes[written..];
             // ops not all data was sent, lets buffer again
             _ = this.writeBuffer.write(this.allocator, pending) catch bun.outOfMemory();
-            this.globalThis.vm().reportExtraMemory(pending.len);
 
             return false;
         }
@@ -1605,7 +1604,6 @@ pub const H2FrameParser = struct {
                 if (this.has_nonnative_backpressure) {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                    this.globalThis.vm().reportExtraMemory(bytes.len);
 
                     return false;
                 }
@@ -1617,7 +1615,6 @@ pub const H2FrameParser = struct {
                     -1 => {
                         // dropped
                         _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
-                        this.globalThis.vm().reportExtraMemory(bytes.len);
                         this.has_nonnative_backpressure = true;
                     },
                     0 => {
@@ -1648,6 +1645,7 @@ pub const H2FrameParser = struct {
                 if (bytes.len > 0) {
                     _ = this._write(bytes);
                 }
+                CORKED_H2 = null;
             }
         }
     }
@@ -1704,7 +1702,6 @@ pub const H2FrameParser = struct {
         if (this.remainingLength > 0) {
             // buffer more data
             _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
-            this.globalThis.vm().reportExtraMemory(payload.len);
 
             return null;
         } else if (this.remainingLength < 0) {
@@ -1717,7 +1714,6 @@ pub const H2FrameParser = struct {
         if (this.readBuffer.list.items.len > 0) {
             // return buffered data
             _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
-            this.globalThis.vm().reportExtraMemory(payload.len);
 
             return .{
                 .data = this.readBuffer.list.items,
@@ -2198,7 +2194,7 @@ pub const H2FrameParser = struct {
         const settings = this.remoteSettings orelse this.localSettings;
         const entry = this.streams.getOrPut(streamIdentifier) catch bun.outOfMemory();
         entry.value_ptr.* = Stream.init(streamIdentifier, settings.initialWindowSize);
-        const ctx_value = this.strong_ctx.get() orelse return entry.value_ptr;
+        const ctx_value = this.jsContext.get() orelse return entry.value_ptr;
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
             // we assume that onStreamStart will never mutate the stream hash map
@@ -2256,7 +2252,6 @@ pub const H2FrameParser = struct {
             if (total < FrameHeader.byteSize) {
                 // buffer more data
                 _ = this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
-                this.globalThis.vm().reportExtraMemory(bytes.len);
 
                 return bytes.len;
             }
@@ -2296,7 +2291,6 @@ pub const H2FrameParser = struct {
         if (bytes.len < FrameHeader.byteSize) {
             // buffer more dheaderata
             this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
-            this.globalThis.vm().reportExtraMemory(bytes.len);
 
             return bytes.len;
         }
@@ -3753,9 +3747,9 @@ pub const H2FrameParser = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*H2FrameParser {
-        const args_list = callframe.arguments(1);
-        if (args_list.len < 1) {
-            globalObject.throw("Expected 1 argument", .{});
+        const args_list = callframe.arguments(3);
+        if (args_list.len < 2) {
+            globalObject.throw("Expected 3 argument", .{});
             return null;
         }
 
@@ -3765,15 +3759,18 @@ pub const H2FrameParser = struct {
             return null;
         }
 
-        var exception: JSC.C.JSValueRef = null;
-        const context_obj = options.get(globalObject, "context") orelse {
-            globalObject.throw("Expected \"context\" option", .{});
+        const context_obj = args_list.ptr[1];
+        if (context_obj.isEmptyOrUndefinedOrNull()) {
+            globalObject.throwInvalidArguments("expected context as argument", .{});
             return null;
-        };
+        }
+
         var handler_js = JSC.JSValue.zero;
         if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
+        var exception: JSC.C.JSValueRef = null;
+
         var handlers = Handlers.fromJS(globalObject, handler_js, &exception) orelse {
             globalObject.throwValue(exception.?.value());
             return null;
@@ -3817,8 +3814,12 @@ pub const H2FrameParser = struct {
                 });
             }
         };
-        // check if socket is provided, and if it is a valid native socket
-        if (options.get(globalObject, "native")) |socket_js| {
+        this.jsContext = JSC.Weak(H2FrameParser).create(context_obj, globalObject, .Common, this);
+
+        const socket_js = args_list.ptr[2];
+
+        if (!socket_js.isEmptyOrUndefinedOrNull()) {
+            // check if socket is provided, and if it is a valid native socket
             if (JSTLSSocket.fromJS(socket_js)) |socket| {
                 log("TLSSocket attached", .{});
                 if (socket.attachNativeCallback(.{ .h2 = this })) {
@@ -3839,6 +3840,7 @@ pub const H2FrameParser = struct {
                 }
             }
         }
+
         if (options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {
                 if (!this.loadSettingsFromJSValue(globalObject, settings_js)) {
@@ -3881,7 +3883,6 @@ pub const H2FrameParser = struct {
         }
 
         this.isServer = is_server;
-        this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
 
@@ -3904,7 +3905,7 @@ pub const H2FrameParser = struct {
     pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
         this.flushCorked();
         this.detachNativeSocket();
-        this.strong_ctx.deinit();
+        this.jsContext.deinit();
         this.handlers.deinit();
         this.readBuffer.deinit();
         {

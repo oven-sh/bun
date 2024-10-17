@@ -350,8 +350,6 @@ pub fn init(options: Options) !*DevServer {
     if (!has_fallback)
         app.any("/*", void, {}, onFallbackRoute);
 
-    app.listenWithConfig(*DevServer, dev, onListen, options.listen_config);
-
     // Some indices at the start of the graph are reserved for framework files.
     {
         dev.graph_safety_lock.lock();
@@ -385,6 +383,8 @@ pub fn init(options: Options) !*DevServer {
             bun.todoPanic(@src(), "handle error", .{});
         };
     }
+
+    app.listenWithConfig(*DevServer, dev, onListen, options.listen_config);
 
     return dev;
 }
@@ -2276,7 +2276,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
-                        if (!data.flags.is_hmr_root or data.flags.kind == .css)
+                        if (data.flags.kind == .css)
+                            try out_paths.append(BakeEntryPoint.initCss(path))
+                        else if (!data.flags.is_hmr_root)
                             try out_paths.append(BakeEntryPoint.init(path, .client));
                     },
                     .server => {

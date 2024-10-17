@@ -322,6 +322,7 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 pub const BakeEntryPoint = struct {
     path: []const u8,
     graph: bake.Graph,
+    css: bool = false,
     route_index: bake.DevServer.Route.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
@@ -334,6 +335,10 @@ pub const BakeEntryPoint = struct {
             .graph = .server,
             .route_index = index.toOptional(),
         };
+    }
+
+    pub fn initCss(path: []const u8) BakeEntryPoint {
+        return .{ .path = path, .graph = .client, .css = true };
     }
 };
 
@@ -914,8 +919,14 @@ pub const BundleV2 = struct {
 
     pub fn enqueueEntryPoints(
         this: *BundleV2,
-        user_entry_points: []const []const u8,
-        bake_entry_points: []const BakeEntryPoint,
+        comptime variant: enum { normal, dev_server },
+        data: switch (variant) {
+            .normal => []const []const u8,
+            .dev_server => struct {
+                files: []const BakeEntryPoint,
+                css_data: *std.AutoArrayHashMapUnmanaged(Index, BakeBundleOutput.CssEntryPointMeta),
+            },
+        },
     ) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
 
@@ -929,8 +940,8 @@ pub const BundleV2 = struct {
             });
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
-            this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
-            this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get()) catch unreachable;
+            try this.graph.ast.append(bun.default_allocator, JSAst.empty);
+            try this.graph.path_to_source_index_map.put(this.graph.allocator, bun.hash("bun:wrap"), Index.runtime.get());
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
@@ -943,33 +954,52 @@ pub const BundleV2 = struct {
 
         // Bake reserves two source indexes at the start of the file list, but
         // gets its content set after the scan+parse phase, but before linking.
-        try this.reserveSourceIndexesForBake();
+        //
+        // The dev server does not use these, as it is implement in the HMR runtime.
+        if (this.bundler.options.dev_server == null) {
+            try this.reserveSourceIndexesForBake();
+        }
 
         {
             // Setup entry points
-            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
-            try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
-            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @as(u32, @truncate(user_entry_points.len)));
+            const entry_points = switch (variant) {
+                .normal => data,
+                .dev_server => data.files,
+            };
 
-            for (user_entry_points) |entry_point| {
-                const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved, true, this.bundler.options.target)) |source_index| {
-                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                } else {}
-            }
+            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
+            try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
+            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @as(u32, @truncate(entry_points.len)));
 
-            for (bake_entry_points) |entry_point| {
-                const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved, true, switch (entry_point.graph) {
-                    .client => .browser,
-                    .server => this.bundler.options.target,
-                    .ssr => .kit_server_components_ssr,
-                })) |source_index| {
-                    this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
-                } else {}
+            for (entry_points) |entry_point| {
+                switch (variant) {
+                    .normal => {
+                        const resolved = this.bundler.resolveEntryPoint(entry_point) catch
+                            continue;
+                        const source_index = try this.enqueueItem(null, &batch, resolved, true, this.bundler.options.target) orelse
+                            continue;
+                        try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
+                    },
+                    .dev_server => {
+                        // Dev server provides target and some extra integration.
+                        const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch
+                            continue;
+                        const source_index = try this.enqueueItem(null, &batch, resolved, true, switch (entry_point.graph) {
+                            .client => .browser,
+                            .server => this.bundler.options.target,
+                            .ssr => .kit_server_components_ssr,
+                        }) orelse continue;
 
-                if (entry_point.route_index.unwrap()) |route_index| {
-                    _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
+                        try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
+
+                        if (entry_point.route_index.unwrap()) |route_index| {
+                            _ = try this.bundler.options.dev_server.?.server_graph.insertStaleExtra(resolved.path_pair.primary.text, false, true, route_index);
+                        }
+
+                        if (entry_point.css) {
+                            try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
+                        }
+                    },
                 }
             }
         }
@@ -1265,7 +1295,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(this.bundler.options.entry_points, &.{}));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, this.bundler.options.entry_points));
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1876,7 +1906,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points, &.{}));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -1921,7 +1951,11 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(&.{}, bake_entry_points));
+        var css_entry_points: std.AutoArrayHashMapUnmanaged(Index, BakeBundleOutput.CssEntryPointMeta) = .{};
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.dev_server, .{
+            .files = bake_entry_points,
+            .css_data = &css_entry_points,
+        }));
         this.waitForParse();
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -1933,17 +1967,17 @@ pub const BundleV2 = struct {
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
 
         // Separate non-failing files into two lists: JS and CSS
-        const js_reachable_files, const css_entry_points, const css_total_files = reachable_files: {
+        const js_reachable_files, const css_total_files = reachable_files: {
             var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
-            var css_entry_points: std.AutoArrayHashMapUnmanaged(Index, BakeBundleOutput.CssEntryPointMeta) = .{};
             try css_entry_points.ensureUnusedCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
 
+            const asts = this.graph.ast.slice();
             for (
-                this.graph.ast.items(.parts)[1..],
-                @as([]ImportRecord.List, this.graph.ast.items(.import_records)[1..]),
-                this.graph.ast.items(.css)[1..],
-                this.graph.ast.items(.target)[1..],
+                asts.items(.parts)[1..],
+                asts.items(.import_records)[1..],
+                asts.items(.css)[1..],
+                asts.items(.target)[1..],
                 1..,
             ) |part_list, import_records, maybe_css, target, index| {
                 // Dev Server proceeds even with failed files.
@@ -1976,9 +2010,7 @@ pub const BundleV2 = struct {
                 }
             }
 
-            // TODO: loop over entry points for CSS files. these are also roots
-
-            break :reachable_files .{ js_files.items, css_entry_points, css_total_files };
+            break :reachable_files .{ js_files.items, css_total_files };
         };
         _ = css_total_files; // autofix
 

@@ -3758,9 +3758,9 @@ pub const H2FrameParser = struct {
             globalObject.throwInvalidArguments("expected options as argument", .{});
             return null;
         }
-     
-       const context_obj = args_list.ptr[1];
-       if (context_obj.isEmptyOrUndefinedOrNull()) {
+
+        const context_obj = args_list.ptr[1];
+        if (context_obj.isEmptyOrUndefinedOrNull()) {
             globalObject.throwInvalidArguments("expected context as argument", .{});
             return null;
         }
@@ -3814,9 +3814,9 @@ pub const H2FrameParser = struct {
                 });
             }
         };
-        this.jsContext =  JSC.Weak(H2FrameParser).create(context_obj, globalObject, .Common, this);
+        this.jsContext = JSC.Weak(H2FrameParser).create(context_obj, globalObject, .Common, this);
 
-       const socket_js = args_list.ptr[2];
+        const socket_js = args_list.ptr[2];
 
         if (!socket_js.isEmptyOrUndefinedOrNull()) {
             // check if socket is provided, and if it is a valid native socket

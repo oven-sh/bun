@@ -7,6 +7,23 @@ packer {
   }
 }
 
+variable "distro" {
+  type    = string
+  default = "sequoia"
+}
+
+variable "username" {
+  type    = string
+  default = "administrator"
+}
+
+variable "password" {
+  type      = string
+  sensitive = true
+  default   = "administrator"
+}
+
+# IPSWs are available at:
 # https://ipsw.me/VirtualMac2,1
 
 locals {
@@ -25,11 +42,16 @@ locals {
     release = "13"
     ipsw = "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-92188/2C38BCD1-2BFF-4A10-B358-94E8E28BE805/UniversalMac_13.0_22A380_Restore.ipsw"
   }
+}
+
+source "tart-cli" "bun-darwin-aarch64" {
+  vm_name      = "bun-darwin-aarch64-${var.distro}-${local[var.distro].release}"
+  from_ipsw    = local[var.distro].ipsw
   cpu_count    = 2
   memory_gb    = 4
   disk_size_gb = 20
-  ssh_username = "admin"
-  ssh_password = "admin"
+  ssh_username = var.username
+  ssh_password = var.password
   ssh_timeout  = "300s"
   create_grace_time = "30s"
   boot_command = [
@@ -44,7 +66,7 @@ locals {
     "<wait10s><tab><spacebar>", # Are you sure you want to skip signing in with an Apple ID?
     "<wait10s><leftShiftOn><tab><leftShiftOff><spacebar>", # Terms and Conditions
     "<wait10s><tab><spacebar>", # I have read and agree to the macOS Software License Agreement
-    "<wait10s>${local.ssh_username}<tab><tab>${local.ssh_password}<tab>${local.ssh_password}<tab><tab><tab><spacebar>", # Create a Computer Account
+    "<wait10s>${var.username}<tab><tab>${var.password}<tab>${var.password}<tab><tab><tab><spacebar>", # Create a Computer Account
     "<wait120s><leftShiftOn><tab><leftShiftOff><spacebar>", # Enable Location Services
     "<wait10s><tab><spacebar>", # Are you sure you don't want to use Location Services?
     "<wait10s><tab>UTC<enter><leftShiftOn><tab><leftShiftOff><spacebar>", # Select Your Time Zone
@@ -64,23 +86,8 @@ locals {
   ]
 }
 
-source "tart-cli" "darwin-aarch64-sequoia-15" {
-  vm_name      = "bun-darwin-aarch64-sequoia-15"
-  from_ipsw    = local.sequoia.ipsw
-  cpu_count    = local.cpu_count
-  memory_gb    = local.memory_gb
-  disk_size_gb = local.disk_size_gb
-  ssh_username = local.ssh_username
-  ssh_password = local.ssh_password
-  ssh_timeout  = local.ssh_timeout
-  boot_command = local.boot_command
-  create_grace_time = local.create_grace_time
-}
-
 build {
-  sources = [
-    "source.tart-cli.darwin-aarch64-sequoia-15"
-  ]
+  sources = ["source.tart-cli.bun-darwin-aarch64"]
 
   provisioner "shell" {
     inline = [

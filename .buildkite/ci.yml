@@ -8,17 +8,6 @@
 # for a particular commit.
 
 steps:
-  - key: "build-image"
-    group: ":docker: build image"
-    steps:
-      - key: "build-image-darwin-aarch64-sequoia-15"
-        label: "darwin-aarch64-sequoia-15"
-        agents:
-          queue: "hosted-darwin"
-        command:
-          - "brew install cirruslabs/cli/tart packer"
-          - "packer init scripts/ci/darwin.pkr.hcl"
-          - "packer build scripts/ci/darwin.pkr.hcl"
   # # macOS aarch64
   # - key: "darwin-aarch64"
   #   group: ":darwin: aarch64"

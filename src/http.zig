@@ -1007,7 +1007,7 @@ pub const HTTPThread = struct {
 
     queued_tasks: Queue = Queue{},
 
-    queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
+    queued_shutdowns: ShutdownMessage.List = ShutdownMessage.List{},
     queued_shutdowns_lock: bun.Lock = .{},
 
     queued_proxy_deref: std.ArrayListUnmanaged(*ProxyTunnel) = std.ArrayListUnmanaged(*ProxyTunnel){},
@@ -1022,6 +1022,8 @@ pub const HTTPThread = struct {
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
+
+        pub const List = std.ArrayListUnmanaged(ShutdownMessage);
     };
 
     pub const LibdeflateState = struct {
@@ -1188,10 +1190,19 @@ pub const HTTPThread = struct {
     }
 
     fn drainEvents(this: *@This()) void {
-        {
-            this.queued_shutdowns_lock.lock();
-            defer this.queued_shutdowns_lock.unlock();
-            for (this.queued_shutdowns.items) |http| {
+        while (true) {
+            // We need to make sure we don't hold the lock while we call close because
+            // close calls the socket close callback, which reads the list of queued shutdowns
+            // Meaning we can end up in a deadlock if we don't swap the list and release the lock
+            var queued_shutdowns = ShutdownMessage.List{};
+            {
+                this.queued_shutdowns_lock.lock();
+                defer this.queued_shutdowns_lock.unlock();
+                queued_shutdowns = this.queued_shutdowns;
+                this.queued_shutdowns = .{};
+            }
+
+            for (queued_shutdowns.items) |http| {
                 if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                     if (http.is_tls) {
                         const socket = uws.SocketTLS.fromAny(socket_ptr.value);
@@ -1203,7 +1214,13 @@ pub const HTTPThread = struct {
                     }
                 }
             }
-            this.queued_shutdowns.clearRetainingCapacity();
+
+            // If we had any queued shutdowns, let's loop back around and try again
+            if (queued_shutdowns.items.len > 0) {
+                queued_shutdowns.deinit(bun.default_allocator);
+                continue;
+            }
+            break;
         }
 
         while (this.queued_proxy_deref.popOrNull()) |http| {

@@ -3581,10 +3581,14 @@ pub const DuplexUpgradeContext = struct {
     fn onError(this: *DuplexUpgradeContext, err_value: JSC.JSValue) void {
         if (this.is_open) {
             if (this.tls) |tls| {
+                this.tls = null;
+                defer tls.deref();
                 tls.handleError(err_value);
             }
         } else {
             if (this.tls) |tls| {
+                this.tls = null;
+                defer tls.deref();
                 tls.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
             }
         }
@@ -3602,6 +3606,8 @@ pub const DuplexUpgradeContext = struct {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
         if (this.tls) |tls| {
+            defer tls.deref();
+            this.tls = null;
             tls.onClose(socket, 0, null);
         }
 
@@ -3620,10 +3626,7 @@ pub const DuplexUpgradeContext = struct {
                             else => {
                                 const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
                                 if (this.tls) |tls| {
-                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
-
                                     tls.handleConnectError(errno);
-                                    tls.onClose(socket, errno, null);
                                 }
                             },
                         }
@@ -3640,7 +3643,7 @@ pub const DuplexUpgradeContext = struct {
 
     fn deinitInNextTick(this: *DuplexUpgradeContext) void {
         this.task_event = .Close;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn startTLS(this: *DuplexUpgradeContext) void {
@@ -3755,7 +3758,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     fn deinitInNextTick(this: *WindowsNamedPipeListeningContext) void {
         bun.assert(this.task_event != .deinit);
         this.task_event = .deinit;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *WindowsNamedPipeListeningContext) void {
@@ -3935,7 +3938,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
         bun.assert(this.task_event != .deinit);
         this.task_event = .deinit;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {

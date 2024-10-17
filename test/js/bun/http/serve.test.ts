@@ -499,27 +499,22 @@ describe("streaming", () => {
     });
 
     it("throw on pull after writing should not call the error handler", async () => {
-      let subprocess;
-
-      afterAll(() => {
-        subprocess?.kill();
-      });
-
-      const onMessage = mock(async href => {
+      var onMessage = mock(async href => {
         const url = new URL("write", href);
         const response = await fetch(url);
         expect(response.status).toBe(402);
         expect(response.headers.get("X-Hey")).toBe("123");
-        expect(response.text()).resolves.toBe("");
+        expect(await response.text()).toBe("");
         subprocess.kill();
       });
 
-      subprocess = Bun.spawn({
+      await using subprocess = Bun.spawn({
         cwd: import.meta.dirname,
         cmd: [bunExe(), "readable-stream-throws.fixture.js"],
         env: bunEnv,
         stdout: "ignore",
         stderr: "pipe",
+        stdin: "inherit",
         ipc: onMessage,
       });
 
@@ -2053,5 +2048,5 @@ it("allow custom timeout per request", async () => {
   expect(server.timeout).toBeFunction();
   const res = await fetch(new URL("/long-timeout", server.url.origin));
   expect(res.status).toBe(200);
-  expect(res.text()).resolves.toBe("Hello, World!");
+  expect(await res.text()).toBe("Hello, World!");
 }, 20_000);

@@ -821,7 +821,10 @@ pub const EventLoop = struct {
         defer this.debug.exit();
 
         if (count == 1) {
-            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+            const vm = this.virtual_machine;
+            const global = this.global;
+            const jsc = vm.jsc;
+            this.drainTasksWithoutRejection(vm, global, jsc);
         }
 
         this.entered_event_loop_count -= 1;
@@ -1356,8 +1359,9 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
 
-        this.flushImmediateQueue();
-        this.tickImmediateTasks(ctx);
+        while (this.flushImmediateQueue()) {
+            this.tickImmediateTasks(ctx);
+        }
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1394,22 +1398,28 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        this.flushImmediateQueue();
+        while (this.flushImmediateQueue()) {
+            this.tickImmediateTasks(ctx);
+        }
+
         ctx.onAfterEventLoop();
     }
 
-    pub fn flushImmediateQueue(this: *EventLoop) void {
+    pub fn flushImmediateQueue(this: *EventLoop) bool {
         // If we can get away with swapping the queues, do that rather than copying the data
         if (this.immediate_tasks.count > 0) {
             this.immediate_tasks.write(this.next_immediate_tasks.readableSlice(0)) catch unreachable;
             this.next_immediate_tasks.head = 0;
             this.next_immediate_tasks.count = 0;
+            return true;
         } else if (this.next_immediate_tasks.count > 0) {
             const prev_immediate = this.immediate_tasks;
             const next_immediate = this.next_immediate_tasks;
             this.immediate_tasks = next_immediate;
             this.next_immediate_tasks = prev_immediate;
+            return true;
         }
+        return false;
     }
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
@@ -1447,8 +1457,9 @@ pub const EventLoop = struct {
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
-        this.flushImmediateQueue();
-        this.tickImmediateTasks(ctx);
+        while (this.flushImmediateQueue()) {
+            this.tickImmediateTasks(ctx);
+        }
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1471,12 +1482,40 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        this.flushImmediateQueue();
+        while (this.flushImmediateQueue()) {
+            this.tickImmediateTasks(ctx);
+        }
         ctx.onAfterEventLoop();
     }
 
     pub fn processGCTimer(this: *EventLoop) void {
         this.virtual_machine.gc_controller.processGCTimer();
+    }
+
+    pub fn drainTasksWithoutRejection(this: *EventLoop, ctx: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, js_vm: *JSC.VM) void {
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, js_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
+    }
+
+    pub fn drainTasks(this: *EventLoop, ctx: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, js_vm: *JSC.VM) void {
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) : (global.handleRejectedPromises()) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, js_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
     }
 
     pub fn tick(this: *EventLoop) void {
@@ -1496,16 +1535,7 @@ pub const EventLoop = struct {
             const global = ctx.global;
             const global_vm = ctx.jsc;
 
-            while (true) {
-                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
-                    this.tickConcurrent();
-                } else {
-                    this.drainMicrotasksWithGlobal(global, global_vm);
-                    this.tickConcurrent();
-                    if (this.tasks.count > 0) continue;
-                }
-                break;
-            }
+            this.drainTasks(ctx, global, global_vm);
 
             while (this.tickWithCount(ctx) > 0) {
                 this.tickConcurrent();

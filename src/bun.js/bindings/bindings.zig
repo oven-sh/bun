@@ -2826,6 +2826,9 @@ pub const AnyPromise = union(enum) {
             inline else => |promise| promise.isHandled(vm),
         };
     }
+    pub fn then(this: AnyPromise, globalThis: *JSGlobalObject, ctx: JSValue, onFulfilled: JSNativeFn, onRejected: JSNativeFn) void {
+        this.asValue(globalThis)._then(globalThis, ctx, onFulfilled, onRejected);
+    }
     pub fn setHandled(this: AnyPromise, vm: *VM) void {
         switch (this) {
             inline else => |promise| promise.setHandled(vm),

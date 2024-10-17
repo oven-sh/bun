@@ -487,10 +487,6 @@ pub const Listener = struct {
         return true;
     }
 
-    pub fn estimatedSize(_: *Listener) callconv(.C) usize {
-        return @sizeOf(Listener);
-    }
-
     const UnixOrHost = union(enum) {
         unix: []const u8,
         host: struct {

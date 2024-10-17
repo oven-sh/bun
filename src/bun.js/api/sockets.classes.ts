@@ -189,7 +189,6 @@ export default [
     name: "Listener",
     noConstructor: true,
     JSType: "0b11101110",
-    estimatedSize: true,
     proto: {
       stop: {
         fn: "stop",

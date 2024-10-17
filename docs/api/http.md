@@ -402,7 +402,7 @@ Bun.serve({
 });
 ```
 
-### Sever name indication (SNI)
+### Server name indication (SNI)
 
 To configure the server name indication (SNI) for the server, set the `serverName` field in the `tls` object.
 

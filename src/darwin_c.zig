@@ -888,3 +888,7 @@ pub const CLOCK_THREAD_CPUTIME_ID = 1;
 pub const netdb = @cImport({
     @cInclude("netdb.h");
 });
+
+pub extern fn memset_pattern4(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+pub extern fn memset_pattern8(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+pub extern fn memset_pattern16(buf: [*]u8, pattern: [*]const u8, len: usize) void;

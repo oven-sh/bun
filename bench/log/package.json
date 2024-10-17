@@ -3,9 +3,9 @@
   "scripts": {
     "deps": "exit 0",
     "build": "exit 0",
-    "bench:bun": "$BUN bun.js | grep iter",
-    "bench:node": "$NODE node.mjs | grep iter",
-    "bench:deno": "$DENO run -A --unstable deno.mjs | grep iter",
+    "bench:bun": "bun bun.js | grep iter",
+    "bench:node": "node node.mjs | grep iter",
+    "bench:deno": "deno run -A --unstable deno.mjs | grep iter",
     "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
   }
 }

@@ -2072,7 +2072,7 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            const tag = parent.tag;
+            var tag = parent.tag;
 
             if (tag == .only) {
                 Jest.runner.?.setOnly();
@@ -2082,33 +2082,37 @@ fn eachBind(
                 (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
                 (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-            if (Jest.runner.?.filter_regex) |regex| {
-                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
-                buffer.reset();
-                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(formattedLabel) catch unreachable;
-                const str = bun.String.fromBytes(buffer.slice());
-                is_skip = !regex.matches(str);
-            }
+            if (each_data.is_test) {
+                if (!is_skip) {
+                    if (Jest.runner.?.filter_regex) |regex| {
+                        var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                        buffer.reset();
+                        appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                        buffer.append(formattedLabel) catch unreachable;
+                        const str = bun.String.fromBytes(buffer.slice());
+                        is_skip = !regex.matches(str);
+                        if (is_skip) {
+                            tag = .skip;
+                        }
+                    }
+                }
 
-            if (is_skip) {
-                parent.skip_count += 1;
-                function.unprotect();
-            } else if (each_data.is_test) {
-                if (Jest.runner.?.only and tag != .only) {
-                    return .undefined;
+                if (is_skip) {
+                    parent.skip_count += 1;
+                    function.unprotect();
                 } else {
                     function.protect();
-                    parent.tests.append(allocator, TestScope{
-                        .label = formattedLabel,
-                        .parent = parent,
-                        .tag = tag,
-                        .func = function,
-                        .func_arg = function_args,
-                        .func_has_callback = has_callback_function,
-                        .timeout_millis = timeout_ms,
-                    }) catch unreachable;
                 }
+
+                parent.tests.append(allocator, TestScope{
+                    .label = formattedLabel,
+                    .parent = parent,
+                    .tag = tag,
+                    .func = if (is_skip) .zero else function,
+                    .func_arg = function_args,
+                    .func_has_callback = has_callback_function,
+                    .timeout_millis = timeout_ms,
+                }) catch unreachable;
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;
                 scope.* = .{

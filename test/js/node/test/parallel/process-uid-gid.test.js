@@ -52,25 +52,27 @@ if (isWindows) {
     );
   });
 
-  test("edge cases for uid/gid functions", () => {
+  {
     // Passing -0 shouldn't crash the process
     // Refs: https://github.com/nodejs/node/issues/32750
     // And neither should values exceeding 2 ** 31 - 1.
     const ids = [-0, 2 ** 31, 2 ** 32 - 1];
     const fns = [process.setuid, process.setuid, process.setgid, process.setegid];
 
-    for (const id of ids) {
-      for (const fn of fns) {
-        expect(() => {
-          try {
-            fn(id);
-          } catch {
-            // Continue regardless of error.
-          }
-        }).not.toThrow();
+    for (const fn of fns) {
+      for (const id of ids) {
+        test(`edge cases for uid/gid functions: ${fn.name}: ${id}`, () => {
+          expect(() => {
+            try {
+              fn(id);
+            } catch {
+              // Continue regardless of error.
+            }
+          }).not.toThrow();
+        });
       }
     }
-  });
+  }
 
   if (process.getuid() !== 0) {
     test("non-root user permissions", () => {

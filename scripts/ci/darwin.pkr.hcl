@@ -20,7 +20,7 @@ variable "username" {
 variable "password" {
   type      = string
   sensitive = true
-  default   = "administrator"
+  default   = "administrator!?"
 }
 
 # IPSWs are available at:
@@ -47,8 +47,8 @@ locals {
 source "tart-cli" "bun-darwin-aarch64" {
   vm_name      = "bun-darwin-aarch64-${var.distro}-${local[var.distro].release}"
   from_ipsw    = local[var.distro].ipsw
-  cpu_count    = 2
-  memory_gb    = 4
+  cpu_count    = 1
+  memory_gb    = 2
   disk_size_gb = 30
   ssh_username = var.username
   ssh_password = var.password
@@ -88,28 +88,4 @@ source "tart-cli" "bun-darwin-aarch64" {
 
 build {
   sources = ["source.tart-cli.bun-darwin-aarch64"]
-
-  provisioner "shell" {
-    inline = [
-      // Enable passwordless sudo
-      "echo admin | sudo -S sh -c \"mkdir -p /etc/sudoers.d/; echo 'admin ALL=(ALL) NOPASSWD: ALL' | EDITOR=tee visudo /etc/sudoers.d/admin-nopasswd\"",
-      // Enable auto-login
-      //
-      // See https://github.com/xfreebird/kcpassword for details.
-      "echo '00000000: 1ced 3f4a bcbc ba2c caca 4e82' | sudo xxd -r - /etc/kcpassword",
-      "sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser admin",
-      // Disable screensaver at login screen
-      "sudo defaults write /Library/Preferences/com.apple.screensaver loginWindowIdleTime 0",
-      // Disable screensaver for admin user
-      "defaults -currentHost write com.apple.screensaver idleTime 0",
-      // Prevent the VM from sleeping
-      "sudo systemsetup -setsleep Off 2>/dev/null",
-      // Disable screen lock
-      //
-      // Note that this only works if the user is logged-in,
-      // i.e. not on login screen.
-      "sysadminctl -screenLock off -password admin",
-    ]
-    # script = "scripts/bootstrap.sh"
-  }
 }

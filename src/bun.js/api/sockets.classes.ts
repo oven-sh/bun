@@ -7,7 +7,6 @@ function generate(ssl) {
     hasPendingActivity: true,
     noConstructor: true,
     configurable: false,
-    estimatedSize: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",

@@ -1385,10 +1385,6 @@ fn NewSocket(comptime ssl: bool) type {
         else
             JSC.Codegen.JSTLSSocket;
 
-        pub fn estimatedSize(_: *This) callconv(.C) usize {
-            return @sizeOf(This);
-        }
-
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
             @fence(.acquire);
 

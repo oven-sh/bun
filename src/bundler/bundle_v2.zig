@@ -3833,8 +3833,6 @@ pub const ServerComponentParseTask = struct {
         const module_path = b.newExpr(E.String{ .data = data.other_source.path.pretty });
 
         for (client_named_exports.keys()) |key| {
-            const export_ref = try b.newSymbol(.other, key);
-
             const is_default = bun.strings.eqlComptime(key, "default");
 
             // This error message is taken from
@@ -3869,31 +3867,40 @@ pub const ServerComponentParseTask = struct {
                 .close_parens_loc = Logger.Loc.Empty,
             });
 
-            // export const Comp = registerClientReference(
+            // registerClientReference(
             //   () => { throw new Error(...) },
             //   "src/filepath.tsx",
             //   "Comp"
             // );
-            try b.appendStmt(S.Local{
-                .decls = try G.Decl.List.fromSlice(b.allocator, &.{.{
-                    .binding = Binding.alloc(b.allocator, B.Identifier{ .ref = export_ref }, Logger.Loc.Empty),
-                    .value = b.newExpr(E.Call{
-                        .target = register_client_reference,
-                        .args = try js_ast.ExprNodeList.fromSlice(b.allocator, &.{
-                            b.newExpr(E.Arrow{ .body = .{
-                                .stmts = try b.allocator.dupe(Stmt, &.{
-                                    b.newStmt(S.Throw{ .value = err_msg }),
-                                }),
-                                .loc = Logger.Loc.Empty,
-                            } }),
-                            module_path,
-                            b.newExpr(E.String{ .data = key }),
+            const value = b.newExpr(E.Call{
+                .target = register_client_reference,
+                .args = try js_ast.ExprNodeList.fromSlice(b.allocator, &.{
+                    b.newExpr(E.Arrow{ .body = .{
+                        .stmts = try b.allocator.dupe(Stmt, &.{
+                            b.newStmt(S.Throw{ .value = err_msg }),
                         }),
-                    }),
-                }}),
-                .is_export = true,
-                .kind = .k_const,
+                        .loc = Logger.Loc.Empty,
+                    } }),
+                    module_path,
+                    b.newExpr(E.String{ .data = key }),
+                }),
             });
+
+            if (is_default) {
+                // export default registerClientReference(...);
+                try b.appendStmt(S.ExportDefault{ .value = .{ .expr = value }, .default_name = .{} });
+            } else {
+                // export const Component = registerClientReference(...);
+                const export_ref = try b.newSymbol(.other, key);
+                try b.appendStmt(S.Local{
+                    .decls = try G.Decl.List.fromSlice(b.allocator, &.{.{
+                        .binding = Binding.alloc(b.allocator, B.Identifier{ .ref = export_ref }, Logger.Loc.Empty),
+                        .value = value,
+                    }}),
+                    .is_export = true,
+                    .kind = .k_const,
+                });
+            }
         }
     }
 };

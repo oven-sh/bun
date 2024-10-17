@@ -1196,7 +1196,7 @@ pub fn finalizeBundle(
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
 
         const code = try chunk.intermediate_output.code(
-            bv2.graph.allocator,
+            dev.allocator,
             &bv2.graph,
             "/_bun/TODO-import-prefix-where-is-this-used?",
             chunk,
@@ -1461,6 +1461,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// so garbage collection can run less often.
         edges_free_list: ArrayListUnmanaged(EdgeIndex),
 
+        // TODO: delete
         /// Used during an incremental update to determine what "HMR roots"
         /// are affected. Set for all `bundled_files` that have been visited
         /// by the dependency tracing logic.
@@ -2275,7 +2276,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
-                        if (!data.flags.is_hmr_root)
+                        if (!data.flags.is_hmr_root or data.flags.kind == .css)
                             try out_paths.append(BakeEntryPoint.init(path, .client));
                     },
                     .server => {
@@ -3376,7 +3377,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
 
     // TODO: improve this visual feedback
     if (dev.bundling_failures.count() == 0) {
-        const clear_terminal = true;
+        const clear_terminal = !debug.isVisible();
         if (clear_terminal) {
             Output.flush();
             Output.disableBuffering();

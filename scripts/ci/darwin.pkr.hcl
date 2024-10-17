@@ -49,7 +49,7 @@ source "tart-cli" "bun-darwin-aarch64" {
   from_ipsw    = local[var.distro].ipsw
   cpu_count    = 2
   memory_gb    = 4
-  disk_size_gb = 20
+  disk_size_gb = 30
   ssh_username = var.username
   ssh_password = var.password
   ssh_timeout  = "300s"

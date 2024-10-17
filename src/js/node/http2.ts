@@ -2441,11 +2441,11 @@ class ServerHttp2Session extends Http2Session {
 
     this.#parser = new H2FrameParser(
       {
-        context: this,
         settings: options || {},
         type: 0, // server type
         handlers: ServerHttp2Session.#Handlers,
       },
+      this,
       nativeSocket,
     );
     socket.on("close", this.#onClose.bind(this));
@@ -3026,10 +3026,10 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket[bunSocketInternal];
     this.#parser = new H2FrameParser(
       {
-        context: this,
         settings: options,
         handlers: ClientHttp2Session.#Handlers,
       },
+      this,
       nativeSocket,
     );
     socket.on("data", this.#onRead.bind(this));

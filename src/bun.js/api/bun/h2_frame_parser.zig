@@ -693,7 +693,7 @@ pub const H2FrameParser = struct {
     const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
     pub threadlocal var pool: if (ENABLE_ALLOCATOR_POOL) ?*H2FrameParserHiveAllocator else u0 = if (ENABLE_ALLOCATOR_POOL) null else 0;
 
-    strong_ctx: JSC.Strong = .{},
+    jsContext: JSC.Weak(H2FrameParser) = .{},
     globalThis: *JSC.JSGlobalObject,
     allocator: Allocator,
     handlers: Handlers,
@@ -1392,7 +1392,7 @@ pub const H2FrameParser = struct {
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
@@ -1400,7 +1400,7 @@ pub const H2FrameParser = struct {
     pub fn call(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return .zero;
+        const ctx_value = this.jsContext.get() orelse return .zero;
         value.ensureStillAlive();
         return this.handlers.callEventHandlerWithResult(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
@@ -1412,7 +1412,7 @@ pub const H2FrameParser = struct {
     pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra });
@@ -1421,7 +1421,7 @@ pub const H2FrameParser = struct {
     pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
         extra2.ensureStillAlive();
@@ -1430,7 +1430,7 @@ pub const H2FrameParser = struct {
     pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
         JSC.markBinding(@src());
 
-        const ctx_value = this.strong_ctx.get() orelse return;
+        const ctx_value = this.jsContext.get() orelse return;
         value.ensureStillAlive();
         extra.ensureStillAlive();
         extra2.ensureStillAlive();
@@ -1645,6 +1645,7 @@ pub const H2FrameParser = struct {
                 if (bytes.len > 0) {
                     _ = this._write(bytes);
                 }
+                CORKED_H2 = null;
             }
         }
     }
@@ -2193,7 +2194,7 @@ pub const H2FrameParser = struct {
         const settings = this.remoteSettings orelse this.localSettings;
         const entry = this.streams.getOrPut(streamIdentifier) catch bun.outOfMemory();
         entry.value_ptr.* = Stream.init(streamIdentifier, settings.initialWindowSize);
-        const ctx_value = this.strong_ctx.get() orelse return entry.value_ptr;
+        const ctx_value = this.jsContext.get() orelse return entry.value_ptr;
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
             // we assume that onStreamStart will never mutate the stream hash map
@@ -3746,9 +3747,9 @@ pub const H2FrameParser = struct {
     }
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*H2FrameParser {
-        const args_list = callframe.arguments(2);
+        const args_list = callframe.arguments(3);
         if (args_list.len < 2) {
-            globalObject.throw("Expected 2 argument", .{});
+            globalObject.throw("Expected 3 argument", .{});
             return null;
         }
 
@@ -3757,16 +3758,26 @@ pub const H2FrameParser = struct {
             globalObject.throwInvalidArguments("expected options as argument", .{});
             return null;
         }
+<<<<<<< HEAD
 
         var exception: JSC.C.JSValueRef = null;
         const context_obj = options.get(globalObject, "context") orelse {
             globalObject.throw("Expected \"context\" option", .{});
+=======
+     
+       const context_obj = args_list.ptr[1];
+       if (context_obj.isEmptyOrUndefinedOrNull()) {
+            globalObject.throwInvalidArguments("expected context as argument", .{});
+>>>>>>> fc0eb08f8 (try another strategy)
             return null;
-        };
+        }
+
         var handler_js = JSC.JSValue.zero;
         if (options.get(globalObject, "handlers")) |handlers_| {
             handler_js = handlers_;
         }
+        var exception: JSC.C.JSValueRef = null;
+
         var handlers = Handlers.fromJS(globalObject, handler_js, &exception) orelse {
             globalObject.throwValue(exception.?.value());
             return null;
@@ -3810,7 +3821,9 @@ pub const H2FrameParser = struct {
                 });
             }
         };
-        const socket_js = args_list.ptr[1];
+        this.jsContext =  JSC.Weak(H2FrameParser).create(context_obj, globalObject, .Common, this);
+
+       const socket_js = args_list.ptr[2];
 
         if (!socket_js.isEmptyOrUndefinedOrNull()) {
             // check if socket is provided, and if it is a valid native socket
@@ -3877,7 +3890,6 @@ pub const H2FrameParser = struct {
         }
 
         this.isServer = is_server;
-        this.strong_ctx.set(globalObject, context_obj);
 
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
 
@@ -3900,7 +3912,7 @@ pub const H2FrameParser = struct {
     pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
         this.flushCorked();
         this.detachNativeSocket();
-        this.strong_ctx.deinit();
+        this.jsContext.deinit();
         this.handlers.deinit();
         this.readBuffer.deinit();
         {

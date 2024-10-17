@@ -1417,7 +1417,6 @@ fn NewPrinter(
         pub fn printSymbol(p: *Printer, ref: Ref) void {
             bun.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
-
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
@@ -3330,7 +3329,8 @@ fn NewPrinter(
                 .e_template_part,
                 => {
                     if (Environment.isDebug)
-                        Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
+                        //Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
+                        p.fmt("/* Unexpected expression of type .{s} */", .{@tagName(expr.data)}) catch bun.outOfMemory();
                 },
             }
         }
@@ -3784,7 +3784,7 @@ fn NewPrinter(
                 },
             }
 
-            if (item.kind != .normal) {
+            if (item.kind != .normal and item.kind != .accessor) {
                 if (comptime is_json) {
                     bun.unreachablePanic("item.kind must be normal in json, received: {any}", .{item.kind});
                 }

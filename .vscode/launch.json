@@ -146,6 +146,21 @@
         "action": "openExternally",
       },
     },
+    // bun build [file]
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun build [file]",
+      "program": "${workspaceFolder}/build/debug/bun-debug",
+      "args": ["build", "${fileBasename}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "0",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
+      "console": "internalConsole",
+    },
     // bun run [file]
     {
       "type": "lldb",

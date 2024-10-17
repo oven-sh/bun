@@ -4037,3 +4037,19 @@ pub fn Once(comptime f: anytype) type {
         }
     };
 }
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        inline .Struct, .Union => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
+}

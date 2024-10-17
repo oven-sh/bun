@@ -2234,6 +2234,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
     auto count = groupsArray->length();
     gid_t groupsStack[64];
+    if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
 
     for (unsigned i = 0; i < count; i++) {
         auto item = groupsArray->getIndexQuickly(i);

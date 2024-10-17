@@ -7,6 +7,7 @@ function generate(ssl) {
     hasPendingActivity: true,
     noConstructor: true,
     configurable: false,
+    estimatedSize: true,
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -188,6 +189,7 @@ export default [
     name: "Listener",
     noConstructor: true,
     JSType: "0b11101110",
+    estimatedSize: true,
     proto: {
       stop: {
         fn: "stop",

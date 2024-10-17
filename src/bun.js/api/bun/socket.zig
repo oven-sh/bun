@@ -487,6 +487,10 @@ pub const Listener = struct {
         return true;
     }
 
+    pub fn estimatedSize(_: *Listener) callconv(.C) usize {
+        return @sizeOf(Listener);
+    }
+
     const UnixOrHost = union(enum) {
         unix: []const u8,
         host: struct {
@@ -1384,6 +1388,10 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.Codegen.JSTCPSocket
         else
             JSC.Codegen.JSTLSSocket;
+
+        pub fn estimatedSize(_: *This) callconv(.C) usize {
+            return @sizeOf(This);
+        }
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
             @fence(.acquire);

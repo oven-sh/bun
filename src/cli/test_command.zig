@@ -1244,7 +1244,7 @@ pub const TestCommand = struct {
                 vm.eventLoop().tick();
 
                 var prev_unhandled_count = vm.unhandled_error_counter;
-                while (vm.active_tasks > 0) : (_ = vm.eventLoop().flushImmediateQueue()) {
+                while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
                     if (!jest.Jest.runner.?.has_pending_tests) {
                         jest.Jest.runner.?.drain();
                     }
@@ -1264,9 +1264,8 @@ pub const TestCommand = struct {
                     }
                 }
 
-                while (vm.eventLoop().flushImmediateQueue()) {
-                    vm.eventLoop().tickImmediateTasks(vm);
-                }
+                vm.eventLoop().flushImmediateQueue();
+                vm.eventLoop().tickImmediateTasks(vm);
 
                 switch (vm.aggressive_garbage_collection) {
                     .none => {},

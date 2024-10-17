@@ -47,8 +47,8 @@ locals {
 source "tart-cli" "bun-darwin-aarch64" {
   vm_name      = "bun-darwin-aarch64-${var.distro}-${local[var.distro].release}"
   from_ipsw    = local[var.distro].ipsw
-  cpu_count    = 1
-  memory_gb    = 2
+  cpu_count    = 2
+  memory_gb    = 4
   disk_size_gb = 30
   ssh_username = var.username
   ssh_password = var.password

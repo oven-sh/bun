@@ -284,6 +284,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * global
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto minLength = callFrame->argument(2);
+    return V::validateArray(scope, globalObject, value, name, minLength);
+}
+JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
+{
+    JSC::VM& vm = globalObject->vm();
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
@@ -335,7 +340,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globa
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto positive = callFrame->argument(2);
-
+    return V::validateUint32(scope, globalObject, value, name, positive);
+}
+JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive)
+{
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (positive.isUndefined()) positive = jsBoolean(false);
 

@@ -304,7 +304,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto arg_name = val_arg_name.span8();
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 
-    auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
+    auto arg_kind = String(arg_name).contains("."_s) ? "property"_s : "argument"_s;
 
     auto expected_type = val_expected_type.span8();
     ASSERT(WTF::charactersAreAllASCII(expected_type));
@@ -324,7 +324,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     auto arg_name = val_arg_name.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto arg_kind = String(arg_name).startsWith("options."_s) ? "property"_s : "argument"_s;
+    auto arg_kind = String(arg_name).contains("."_s) ? "property"_s : "argument"_s;
 
     auto expected_type = val_expected_type.span8();
     ASSERT(WTF::charactersAreAllASCII(expected_type));
@@ -360,6 +360,11 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
     auto actual_value = JSValueToStringSafe(globalObject, actual);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    if (lower == upper) {
+        auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, lowerStr, ". Received "_s, actual_value);
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
+        return {};
+    }
     auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be >= "_s, lowerStr, " and <= "_s, upperStr, ". Received "_s, actual_value);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_OUT_OF_RANGE, message));
     return {};
@@ -407,13 +412,7 @@ JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObjec
 
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
 {
-    ASCIILiteral type;
-    {
-        auto sp = name.span8();
-        auto str = std::string_view((const char*)(sp.data()), sp.size());
-        auto has = str.find('.') == std::string::npos;
-        type = has ? "property"_s : "argument"_s;
-    }
+    auto type = name.contains("."_s) ? "property"_s : "argument"_s;
 
     auto value_string = JSValueToStringSafe(globalObject, value);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -612,6 +611,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_ZLIB_INITIALIZATION_FAILED, (JSC::JSGlob
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_BUFFER_OUT_OF_BOUNDS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_ONE_PIPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_ONE_PIPE, "Child process can have only one IPC pipe"_s));
 }
 
 } // namespace Bun

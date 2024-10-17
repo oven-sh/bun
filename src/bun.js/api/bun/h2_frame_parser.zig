@@ -3758,17 +3758,10 @@ pub const H2FrameParser = struct {
             globalObject.throwInvalidArguments("expected options as argument", .{});
             return null;
         }
-<<<<<<< HEAD
-
-        var exception: JSC.C.JSValueRef = null;
-        const context_obj = options.get(globalObject, "context") orelse {
-            globalObject.throw("Expected \"context\" option", .{});
-=======
      
        const context_obj = args_list.ptr[1];
        if (context_obj.isEmptyOrUndefinedOrNull()) {
             globalObject.throwInvalidArguments("expected context as argument", .{});
->>>>>>> fc0eb08f8 (try another strategy)
             return null;
         }
 

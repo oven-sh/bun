@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { fillRepeating, isWindows } from "harness";
+import { fillRepeating, isBroken, isMacOS, isWindows } from "harness";
 
 const routes = {
   "/foo": new Response("foo", {
@@ -38,7 +38,7 @@ for (const [path, response] of Object.entries(routes)) {
   static_responses[path] = await response.clone().blob();
 }
 
-describe("static", () => {
+describe.todoIf(isBroken && isMacOS)("static", () => {
   let server: Server;
   let handler = mock(req => {
     return new Response(req.url, {

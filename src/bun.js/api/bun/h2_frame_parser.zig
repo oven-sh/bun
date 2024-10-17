@@ -3757,31 +3757,7 @@ pub const H2FrameParser = struct {
             globalObject.throwInvalidArguments("expected options as argument", .{});
             return null;
         }
-        const socket_js = args_list.ptr[0];
-
-        if (!socket_js.isEmptyOrUndefinedOrNull()) {
-            // check if socket is provided, and if it is a valid native socket
-            if (JSTLSSocket.fromJS(socket_js)) |socket| {
-                log("TLSSocket attached", .{});
-                if (socket.attachNativeCallback(.{ .h2 = this })) {
-                    this.native_socket = .{ .tls = socket };
-                } else {
-                    socket.ref();
-
-                    this.native_socket = .{ .tls_writeonly = socket };
-                }
-            } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
-                log("TCPSocket attached", .{});
-                if (socket.attachNativeCallback(.{ .h2 = this })) {
-                    this.native_socket = .{ .tcp = socket };
-                } else {
-                    socket.ref();
-
-                    this.native_socket = .{ .tcp_writeonly = socket };
-                }
-            }
-        }
-        
+     
 
         var exception: JSC.C.JSValueRef = null;
         const context_obj = options.get(globalObject, "context") orelse {
@@ -3835,6 +3811,31 @@ pub const H2FrameParser = struct {
                 });
             }
         };
+       const socket_js = args_list.ptr[1];
+
+        if (!socket_js.isEmptyOrUndefinedOrNull()) {
+            // check if socket is provided, and if it is a valid native socket
+            if (JSTLSSocket.fromJS(socket_js)) |socket| {
+                log("TLSSocket attached", .{});
+                if (socket.attachNativeCallback(.{ .h2 = this })) {
+                    this.native_socket = .{ .tls = socket };
+                } else {
+                    socket.ref();
+
+                    this.native_socket = .{ .tls_writeonly = socket };
+                }
+            } else if (JSTCPSocket.fromJS(socket_js)) |socket| {
+                log("TCPSocket attached", .{});
+                if (socket.attachNativeCallback(.{ .h2 = this })) {
+                    this.native_socket = .{ .tcp = socket };
+                } else {
+                    socket.ref();
+
+                    this.native_socket = .{ .tcp_writeonly = socket };
+                }
+            }
+        }
+        
         
         if (options.get(globalObject, "settings")) |settings_js| {
             if (!settings_js.isEmptyOrUndefinedOrNull()) {

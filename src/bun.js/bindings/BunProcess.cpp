@@ -2161,9 +2161,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
     value = maybe_uid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 32) - 1));
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
     RETURN_IF_EXCEPTION(scope, {});
     auto id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2178,9 +2179,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionseteuid, (JSGlobalObject * globalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
     value = maybe_uid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 32) - 1));
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
     RETURN_IF_EXCEPTION(scope, {});
     auto id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2195,9 +2197,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetegid, (JSGlobalObject * globalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
     value = maybe_gid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 32) - 1));
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
     RETURN_IF_EXCEPTION(scope, {});
     auto id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2212,9 +2215,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgid, (JSGlobalObject * globalObject,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
     value = maybe_gid_by_name(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 32) - 1));
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
     RETURN_IF_EXCEPTION(scope, {});
     auto id = value.toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

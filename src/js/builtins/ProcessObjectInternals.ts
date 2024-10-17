@@ -61,6 +61,12 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
+  const tty = require("node:tty");
+  const fs = require("node:fs");
+  if (!tty.isatty(fd) && fs.fstatSync(fd).isFile()) {
+    return new fs.ReadStream(null, { fd: fd, autoClose: false });
+  }
+
   // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
   // but we need to extend TTY/FS ReadStream
@@ -106,21 +112,12 @@ export function getStdinStream(fd) {
             $getByIdDirectPrivate(native, "readableStreamController"),
             "underlyingByteSource",
           ).$resume(false);
-        } catch (e) {
-          if (IS_BUN_DEVELOPMENT) {
-            // we assume this isn't possible, but because we aren't sure
-            // we will ignore if error during release, but make a big deal in debug
-            console.error(e);
-            $assert(!"reachable");
-          }
-        }
+        } catch (e) {}
       }
     }
   }
 
-  const tty = require("node:tty");
-  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(fd);
+  const stream = new tty.ReadStream(fd);
 
   const originalOn = stream.on;
 
@@ -194,7 +191,11 @@ export function getStdinStream(fd) {
           unref();
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+        // Not a bug. Happens in unref().
+        return;
+      }
       stream.destroy(err);
     }
   }

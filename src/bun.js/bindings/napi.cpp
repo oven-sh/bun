@@ -1753,18 +1753,24 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     size_t byte_offset,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
     JSC::JSValue arraybufferValue = toJS(arraybuffer);
     auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
 
-    Zig::GlobalObject* globalObject = toJS(env);
+    if (byte_offset + length > arraybufferPtr->impl()->byteLength()) {
+        JSC::throwRangeError(globalObject, scope, "byteOffset exceeds source ArrayBuffer byteLength"_s);
+        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    }
 
     auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
     *result = toNapi(dataView->wrap(globalObject, globalObject), globalObject);
-    NAPI_RETURN_SUCCESS(env);
+    RELEASE_AND_RETURN(scope, napi_set_last_error(env, napi_ok));
 }
 
 namespace Zig {

@@ -158,7 +158,9 @@ void napi_log(long line, const char* function, const char* fmt, ...)
 // extended error info.
 //
 // Usually, you should use the above macros instead of this function.
-static napi_status napi_set_last_error(napi_env env, napi_status status)
+//
+// This is not part of Node-API, it's a convenience function for Bun.
+extern "C" napi_status napi_set_last_error(napi_env env, napi_status status)
 {
     if (env) {
         // napi_get_last_error_info will fill in the other fields if they are requested
@@ -2219,12 +2221,9 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     NAPI_RETURN_SUCCESS(env);
 }
 
-extern "C" napi_status napi_get_value_string_utf8(napi_env env,
-    napi_value napiValue, char* buf,
-    size_t bufsize,
-    size_t* writtenPtr)
+template<typename BufferElement, WebCore::BufferEncodingType EncodeTo>
+napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValue, BufferElement* buf, size_t bufsize, size_t* writtenPtr)
 {
-    NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, napiValue);
     JSValue jsValue = toJS(napiValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isString(), napi_string_expected);
@@ -2237,29 +2236,29 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         // they just want to know the length
         NAPI_CHECK_ARG(env, writtenPtr);
         if (view.is8Bit()) {
-            *writtenPtr = Bun__encoding__byteLengthLatin1(view.span8().data(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+            *writtenPtr = Bun__encoding__byteLengthLatin1(view.span8().data(), length, static_cast<uint8_t>(EncodeTo));
         } else {
-            *writtenPtr = Bun__encoding__byteLengthUTF16(view.span16().data(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+            *writtenPtr = Bun__encoding__byteLengthUTF16(view.span16().data(), length, static_cast<uint8_t>(EncodeTo));
         }
-        NAPI_RETURN_SUCCESS(env);
+        return napi_set_last_error(env, napi_ok);
     }
 
     if (UNLIKELY(bufsize == 0)) {
         if (writtenPtr) *writtenPtr = 0;
-        NAPI_RETURN_SUCCESS(env);
+        return napi_set_last_error(env, napi_ok);
     }
 
     if (UNLIKELY(bufsize == NAPI_AUTO_LENGTH)) {
         if (writtenPtr) *writtenPtr = 0;
         buf[0] = '\0';
-        NAPI_RETURN_SUCCESS(env);
+        return napi_set_last_error(env, napi_ok);
     }
 
     size_t written;
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(EncodeTo));
     } else {
-        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(EncodeTo));
     }
 
     if (writtenPtr != nullptr) {
@@ -2270,7 +2269,31 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
         buf[written] = '\0';
     }
 
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
+}
+
+extern "C" napi_status napi_get_value_string_utf8(napi_env env,
+    napi_value napiValue, char* buf,
+    size_t bufsize,
+    size_t* writtenPtr)
+{
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    // this function does set_last_error
+    return napi_get_value_string_any_encoding<char, WebCore::BufferEncodingType::utf8>(env, napiValue, buf, bufsize, writtenPtr);
+}
+
+extern "C" napi_status napi_get_value_string_latin1(napi_env env, napi_value napiValue, char* buf, size_t bufsize, size_t* writtenPtr)
+{
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    // this function does set_last_error
+    return napi_get_value_string_any_encoding<char, WebCore::BufferEncodingType::latin1>(env, napiValue, buf, bufsize, writtenPtr);
+}
+
+extern "C" napi_status napi_get_value_string_utf16(napi_env env, napi_value napiValue, char16_t* buf, size_t bufsize, size_t* writtenPtr)
+{
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    // this function does set_last_error
+    return napi_get_value_string_any_encoding<char16_t, WebCore::BufferEncodingType::latin1>(env, napiValue, buf, bufsize, writtenPtr);
 }
 
 extern "C" napi_status napi_get_value_bool(napi_env env, napi_value value, bool* result)

@@ -2901,7 +2901,7 @@ pub const H2FrameParser = struct {
     }
     pub fn noTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
-        const args_list = callframe.arguments(22);
+        const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
             globalObject.throw("Expected stream, headers and sensitiveHeaders arguments", .{});
             return .zero;

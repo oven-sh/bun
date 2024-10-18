@@ -1612,7 +1612,7 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (!session) return 0;
     // native queued + socket queued
-    return session.bufferSize() + (session[bunHTTP2Socket]?.bufferSize || 0);
+    return h2BufferSize(session[bunHTTP2Parser]) + (session[bunHTTP2Socket]?.bufferSize || 0);
   }
 
   get sentHeaders() {

@@ -19,6 +19,13 @@ export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
 export const isBuildKite = process.env.BUILDKITE === "true";
 
+// Use these to mark a test as flaky or broken.
+// This will help us keep track of these tests.
+//
+// test.todoIf(isFlaky && isMacOS)("this test is flaky");
+export const isFlaky = isCI;
+export const isBroken = isCI;
+
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",

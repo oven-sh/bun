@@ -3909,8 +3909,6 @@ pub const H2FrameParser = struct {
     pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame, this_value: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
         this.detach(false);
-        _ = H2FrameParser.dangerouslySetPtr(this_value, null);
-        this.deref();
         return .undefined;
     }
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore

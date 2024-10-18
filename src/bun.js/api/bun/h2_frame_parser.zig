@@ -1787,7 +1787,7 @@ pub const H2FrameParser = struct {
                 if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
                 return null;
             }
-           
+
             const output = brk: {
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
@@ -1798,11 +1798,11 @@ pub const H2FrameParser = struct {
                 } else break :brk headers;
             };
 
-            if(i < 31) {
+            if (i < 31) {
                 if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
                     output.putIndex(globalObject, i, header_info);
                     var header_value = bun.String.fromUTF8(header.value);
-                    output.putIndex(globalObject, i + 1,header_value.transferToJS(globalObject));
+                    output.putIndex(globalObject, i + 1, header_value.transferToJS(globalObject));
                 } else {
                     var header_name = bun.String.fromUTF8(header.name);
                     output.putIndex(globalObject, i, header_name.transferToJS(globalObject));
@@ -1827,7 +1827,7 @@ pub const H2FrameParser = struct {
                 break;
             }
         }
-        if(i < 32) {
+        if (i < 32) {
             headers.put(globalObject, JSC.ZigString.static("length"), JSC.JSValue.jsNumber(count));
         }
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, JSC.JSValue.jsNumber(flags));
@@ -3908,10 +3908,9 @@ pub const H2FrameParser = struct {
             stream.freeResources(this, finalizing);
         }
         var streams = this.streams;
-        // TODO: we can use a pool for this   
+        // TODO: we can use a pool for this
         this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
         streams.deinit();
-    
     }
 
     pub fn deinit(this: *H2FrameParser) void {

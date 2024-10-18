@@ -1649,6 +1649,24 @@ describe("should error with invalid options", async () => {
       });
     }).toThrow("Expected lowMemoryMode to be a boolean");
   });
+  it("multiple missing server name", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: [
+          {
+            key: "lkwejflkwjeflkj",
+          },
+          {
+            key: "lkwjefhwlkejfklwj",
+          },
+        ],
+      });
+    }).toThrow("SNI tls object must have a serverName");
+  });
 });
 it("should resolve pending promise if requested ended with pending read", async () => {
   let error: Error;

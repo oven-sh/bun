@@ -753,7 +753,7 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn enqueueItem(
+    pub fn enqueueEntryItem(
         this: *BundleV2,
         hash: ?u64,
         batch: *ThreadPoolLib.Batch,
@@ -764,7 +764,7 @@ pub const BundleV2 = struct {
         var result = resolve;
         var path = result.path() orelse return null;
 
-        const entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse path.hashKey());
+        const entry = try this.pathToSourceIndexMap(target).getOrPut(this.graph.allocator, hash orelse path.hashKey());
         if (entry.found_existing) {
             return null;
         }
@@ -976,7 +976,7 @@ pub const BundleV2 = struct {
                     .normal => {
                         const resolved = this.bundler.resolveEntryPoint(entry_point) catch
                             continue;
-                        const source_index = try this.enqueueItem(null, &batch, resolved, true, this.bundler.options.target) orelse
+                        const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, this.bundler.options.target) orelse
                             continue;
                         try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
                     },
@@ -984,7 +984,7 @@ pub const BundleV2 = struct {
                         // Dev server provides target and some extra integration.
                         const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch
                             continue;
-                        const source_index = try this.enqueueItem(null, &batch, resolved, true, switch (entry_point.graph) {
+                        const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
                             .client => .browser,
                             .server => this.bundler.options.target,
                             .ssr => .kit_server_components_ssr,

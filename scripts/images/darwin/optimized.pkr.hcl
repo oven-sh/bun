@@ -16,6 +16,10 @@ build {
   sources = ["source.tart-cli.bun-darwin-aarch64-optimized"]
 
   provisioner "shell" {
+    inline = ["echo '${local.password}' | sudo -S sh -c 'echo \"00000000: 1ced 3f4a bcbc ba2c caca 4e82\" | xxd -r - /etc/kcpassword; defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser \"${local.username}\"; sysadminctl -screenLock off -password \"${local.password}\"'"]
+  }
+
+  provisioner "shell" {
     script = "scripts/images/darwin/optimize.sh"
     env = {
       username = local.username

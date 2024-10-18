@@ -31,6 +31,7 @@ bun install
 Start the development server with the `vite` CLI using `bunx`.
 
 The `--bun` flag tells Bun to run Vite's CLI using `bun` instead of `node`; by default Bun respects Vite's `#!/usr/bin/env node` [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>).
+
 ```bash
 bunx --bun vite
 ```

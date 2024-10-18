@@ -1599,6 +1599,7 @@ pub const H2FrameParser = struct {
             .tls_writeonly, .tls => |socket| this._genericWrite(*TLSSocket, socket, bytes),
             .tcp_writeonly, .tcp => |socket| this._genericWrite(*TCPSocket, socket, bytes),
             else => {
+
                 if (this.has_nonnative_backpressure) {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
@@ -3174,6 +3175,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn getNextStream(this: *H2FrameParser) JSValue {
+
         const id = this.getNextStreamID();
         _ = this.handleReceivedStreamID(id) orelse {
             return JSC.JSValue.jsNumber(-1);
@@ -3230,6 +3232,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+
         const array = JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
         var count: u32 = 0;
         var it = this.streams.valueIterator();
@@ -3890,8 +3893,18 @@ pub const H2FrameParser = struct {
             stream.freeResources(this, finalizing);
         }
         var streams = this.streams;
-        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
-        streams.deinit();
+        if(ENABLE_ALLOCATOR_POOL) {
+            // if we are reusing the parser we can keep the capacity if its less than 16
+            if(H2FrameParser.pool.?.in(this) and streams.capacity() <= 16) {
+                streams.clearRetainingCapacity();
+            } else {
+                this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+                streams.deinit();
+            }
+        }else {
+            this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+            streams.deinit();
+        }
     }
 
     pub fn deinit(this: *H2FrameParser) void {

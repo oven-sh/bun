@@ -1359,9 +1359,8 @@ pub const EventLoop = struct {
         var ctx = this.virtual_machine;
         var loop = this.usocketsLoop();
 
-        while (this.flushImmediateQueue()) {
-            this.tickImmediateTasks(ctx);
-        }
+        this.flushImmediateQueue();
+        this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
             // Some tasks need to keep the event loop alive for one more tick.
@@ -1398,28 +1397,22 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        while (this.flushImmediateQueue()) {
-            this.tickImmediateTasks(ctx);
-        }
-
+        this.flushImmediateQueue();
         ctx.onAfterEventLoop();
     }
 
-    pub fn flushImmediateQueue(this: *EventLoop) bool {
+    pub fn flushImmediateQueue(this: *EventLoop) void {
         // If we can get away with swapping the queues, do that rather than copying the data
         if (this.immediate_tasks.count > 0) {
             this.immediate_tasks.write(this.next_immediate_tasks.readableSlice(0)) catch unreachable;
             this.next_immediate_tasks.head = 0;
             this.next_immediate_tasks.count = 0;
-            return true;
         } else if (this.next_immediate_tasks.count > 0) {
             const prev_immediate = this.immediate_tasks;
             const next_immediate = this.next_immediate_tasks;
             this.immediate_tasks = next_immediate;
             this.next_immediate_tasks = prev_immediate;
-            return true;
         }
-        return false;
     }
 
     pub fn tickPossiblyForever(this: *EventLoop) void {
@@ -1457,9 +1450,8 @@ pub const EventLoop = struct {
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
         var ctx = this.virtual_machine;
-        while (this.flushImmediateQueue()) {
-            this.tickImmediateTasks(ctx);
-        }
+        this.flushImmediateQueue();
+        this.tickImmediateTasks(ctx);
 
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
@@ -1482,9 +1474,7 @@ pub const EventLoop = struct {
             ctx.timer.drainTimers(ctx);
         }
 
-        while (this.flushImmediateQueue()) {
-            this.tickImmediateTasks(ctx);
-        }
+        this.flushImmediateQueue();
         ctx.onAfterEventLoop();
     }
 

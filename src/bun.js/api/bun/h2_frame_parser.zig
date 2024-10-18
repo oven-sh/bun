@@ -20,6 +20,7 @@ const BunSocket = union(enum) {
     tcp: *TCPSocket,
     tcp_writeonly: *TCPSocket,
 };
+extern fn JSC__JSGlobalObject_writeBarrier(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void;
 extern fn JSC__JSGlobalObject__getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) JSC.JSValue;
 
 pub fn getHTTP2CommonString(globalObject: *JSC.JSGlobalObject, hpack_index: u32) ?JSC.JSValue {
@@ -1763,7 +1764,7 @@ pub const H2FrameParser = struct {
 
         var sensitiveHeaders = JSC.JSValue.jsUndefined();
         var count: usize = 0;
-
+        
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
@@ -3713,6 +3714,7 @@ pub const H2FrameParser = struct {
             },
             inline .tcp_writeonly, .tls_writeonly => |socket| {
                 socket.deref();
+
             },
             .none => {},
         }

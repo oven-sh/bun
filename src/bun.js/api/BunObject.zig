@@ -3305,21 +3305,22 @@ pub fn serve(
         const exception = &exception_;
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
-        var config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
+        var config: JSC.API.ServerConfig = .{};
+        JSC.API.ServerConfig.fromJS(globalObject, &config, &args, exception);
         if (exception[0] != null) {
-            config_.deinit();
+            config.deinit();
 
             globalObject.throwValue(exception_[0].?.value());
-            return .undefined;
+            return .zero;
         }
 
         if (globalObject.hasException()) {
-            config_.deinit();
+            config.deinit();
 
             return .zero;
         }
 
-        break :brk config_;
+        break :brk config;
     };
 
     var exception_value: *JSC.JSValue = undefined;

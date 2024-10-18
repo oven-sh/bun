@@ -1061,6 +1061,7 @@ pub const H2FrameParser = struct {
             client.outboundQueueSize += 1;
             client.queuedDataSize += frame.len;
             client.calculateEstimatedByteSize();
+
         }
 
         pub fn init(streamIdentifier: u32, initialWindowSize: u32) Stream {
@@ -1137,6 +1138,7 @@ pub const H2FrameParser = struct {
                 client.outboundQueueSize -= 1;
             }
             client.calculateEstimatedByteSize();
+
         }
         /// this can be called multiple times
         pub fn freeResources(this: *Stream, client: *H2FrameParser, comptime finalizing: bool) void {
@@ -1489,7 +1491,8 @@ pub const H2FrameParser = struct {
 
     pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
         log("_genericWrite {}", .{bytes.len});
-        defer this.calculateEstimatedByteSize();
+        defer   this.calculateEstimatedByteSize();
+
 
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
@@ -1727,6 +1730,7 @@ pub const H2FrameParser = struct {
             // return buffered data
             _ = this.readBuffer.appendSlice(payload) catch bun.outOfMemory();
             this.calculateEstimatedByteSize();
+
 
             return .{
                 .data = this.readBuffer.list.items,
@@ -2267,6 +2271,7 @@ pub const H2FrameParser = struct {
                 // buffer more data
                 _ = this.readBuffer.appendSlice(bytes) catch bun.outOfMemory();
                 this.calculateEstimatedByteSize();
+
 
                 return bytes.len;
             }
@@ -3141,7 +3146,7 @@ pub const H2FrameParser = struct {
         }
         return stream_id;
     }
-
+    
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args = callframe.argumentsUndef(5);
@@ -3906,7 +3911,7 @@ pub const H2FrameParser = struct {
         }
         return this;
     }
-    pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame, this_value: JSC.JSValue) JSValue {
+    pub fn detachFromJS(this: *H2FrameParser, _: *JSC.JSGlobalObject, _: *JSC.CallFrame, _: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
         this.detach(false);
         return .undefined;
@@ -3914,7 +3919,7 @@ pub const H2FrameParser = struct {
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
     /// this function can be called multiple times, it will erase stream info
     pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
-        log("detach {s}", .{if (this.isServer) "server" else "client"});
+        log("detach {s}", .{ if(this.isServer) "server" else "client" });
         this.flushCorked();
         this.detachNativeSocket();
         this.strong_ctx.deinit();
@@ -3937,9 +3942,10 @@ pub const H2FrameParser = struct {
         var streams = this.streams;
         this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
         streams.deinit();
-
+       
         this.has_pending_activity.store(false, .release);
         this.calculateEstimatedByteSize();
+
     }
 
     pub fn deinit(this: *H2FrameParser) void {
@@ -3956,7 +3962,7 @@ pub const H2FrameParser = struct {
     }
 
     pub fn estimatedSize(this: ?*H2FrameParser) callconv(.C) usize {
-        if (this == null) {
+        if(this == null) {
             return 0;
         }
         return this.?.reported_estimated_size;
@@ -3964,10 +3970,10 @@ pub const H2FrameParser = struct {
 
     pub fn calculateEstimatedByteSize(this: *H2FrameParser) void {
         this.reported_estimated_size = @sizeOf(H2FrameParser) + this.writeBuffer.len + this.queuedDataSize + (this.streams.capacity() * @sizeOf(Stream));
-    }
+    }    
     pub fn hasPendingActivity(this: ?*H2FrameParser) callconv(.C) bool {
         @fence(.acquire);
-        if (this == null) {
+        if(this == null) {
             return false;
         }
         return this.?.has_pending_activity.load(.acquire);
@@ -3976,7 +3982,7 @@ pub const H2FrameParser = struct {
     pub fn finalize(
         this: *H2FrameParser,
     ) void {
-        log("finalize {s}", .{if (this.isServer) "server" else "client"});
+        log("finalize {s}", .{ if(this.isServer) "server" else "client" });
         this.deref();
     }
 };

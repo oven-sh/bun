@@ -250,9 +250,12 @@ const Socket = (function (InternalSocket) {
     static [bunSocketServerHandlers] = {
       data: Socket.#Handlers.data,
       close(socket) {
+        const data = this.data;
+        if (!data) return;
+
         Socket.#Handlers.close(socket);
-        this.data.server[bunSocketServerConnections]--;
-        this.data.server._emitCloseIfDrained();
+        data.server[bunSocketServerConnections]--;
+        data.server._emitCloseIfDrained();
       },
       end(socket) {
         Socket.#Handlers.end(socket);
@@ -339,9 +342,11 @@ const Socket = (function (InternalSocket) {
         }
       },
       error(socket, error) {
+        const data = this.data;
+        if (!data) return;
         Socket.#Handlers.error(socket, error);
-        this.data.emit("error", error);
-        this.data.server.emit("clientError", error, this.data);
+        data.emit("error", error);
+        data.server.emit("clientError", error, data);
       },
       timeout: Socket.#Handlers.timeout,
       connectError: Socket.#Handlers.connectError,

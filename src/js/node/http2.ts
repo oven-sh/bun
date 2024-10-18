@@ -2586,8 +2586,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    //TODO:
-    // return this[bunHTTP2Parser].setLocalWindowSize(windowSize);
+    // TODO: do we really wanna to allow this?
   }
 
   settings(settings: Settings, callback) {
@@ -2967,8 +2966,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    // TODO:
-    // return this[bunHTTP2Parser]?.setLocalWindowSize(windowSize);
+    // TODO: do we really wanna to allow this?
   }
   get socket() {
     if (this.#socket_proxy) return this.#socket_proxy;

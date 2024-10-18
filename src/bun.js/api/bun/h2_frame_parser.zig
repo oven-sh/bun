@@ -3933,167 +3933,167 @@ fn createH2ParserFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallF
 
 fn jsH2FrameParserRequest(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.request(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserSetNativeSocket(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.setNativeSocketFromJS(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserPing(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.ping(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserGoaway(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.goaway(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserGetCurrentState(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.getCurrentState(this, globalObject);
 }
 
 fn jsH2FrameParserSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.updateSettings(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserRead(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.read(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserFlush(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.flushFromJS(this);
 }
 
 fn jsH2FrameParserDetach(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.detachFromJS(this);
 }
 
 fn jsH2FrameParserRstStream(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.rstStream(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserWriteStream(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.writeStream(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserSendTrailers(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.sendTrailers(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserNoTrailers(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.noTrailers(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserSetStreamPriority(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.setStreamPriority(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserGetStreamContext(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.getStreamContext(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserSetStreamContext(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.setStreamContext(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserGetEndAfterHeaders(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.getEndAfterHeaders(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserIsStreamAborted(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.isStreamAborted(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserGetStreamState(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.getStreamState(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserBufferSize(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.getBufferSize(this);
 }
 
 fn jsH2FrameParserHasNativeRead(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.hasNativeRead(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserGetAllStreams(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
     return H2FrameParser.getAllStreams(this, globalObject);
 }
 
 fn jsH2FrameParserEmitErrorToAllStreams(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.emitErrorToAllStreams(this, globalObject, callframe);
 }
 
 fn jsH2FrameParserEmitAbortToAllStreams(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.emitAbortToAllStreams(this);
 }
 
 fn jsH2FrameParserGetNextStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const this = getH2FrameParserFromJS(callframe) orelse JSC.JSValue.jsUndefined();
+    const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
     return H2FrameParser.getNextStream(this);
 }

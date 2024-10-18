@@ -42,7 +42,6 @@ expect.extend({
   toBeValidBin,
   toHaveBins,
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
     } else {
@@ -50,7 +49,6 @@ expect.extend({
     }
   },
   toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
     } else {
@@ -8212,12 +8210,8 @@ it("should ensure read permissions of all extracted files", async () => {
 
   await runBunInstall(env, package_dir);
 
-  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o666).toBe(
-    isWindows ? 0o666 : 0o644,
-  );
-  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o666).toBe(
-    isWindows ? 0o666 : 0o644,
-  );
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o444).toBe(0o444);
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o444).toBe(0o444);
 });
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {

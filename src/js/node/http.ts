@@ -65,7 +65,7 @@ const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors"
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, checkIsHttpToken } = require("internal/validators");
 
 const {
   getHeader,
@@ -123,8 +123,7 @@ function checkInvalidHeaderChar(val: string) {
 
 const validateHeaderName = (name, label) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    // throw new ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-    throw new Error("ERR_INVALID_HTTP_TOKEN");
+    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
 };
 
@@ -2592,8 +2591,7 @@ class ClientRequest extends (OutgoingMessage as unknown as typeof import("node:h
 
     if (methodIsString && method) {
       if (!checkIsHttpToken(method)) {
-        // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
-        throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
+        throw $ERR_INVALID_HTTP_TOKEN("Method");
       }
       method = this.#method = StringPrototypeToUpperCase.$call(method);
     } else {
@@ -2833,16 +2831,6 @@ function validateHost(host, name) {
     throw new Error("Invalid arg type in options");
   }
   return host;
-}
-
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-/**
- * Verifies that the given val is a valid HTTP token
- * per the rules defined in RFC 7230
- * See https://tools.ietf.org/html/rfc7230#section-3.2.6
- */
-function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.

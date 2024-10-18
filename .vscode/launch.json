@@ -14,7 +14,7 @@
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -29,7 +29,7 @@
       "name": "bun test [file] --only",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--only", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -50,7 +50,7 @@
       "name": "bun test [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -65,7 +65,7 @@
       "name": "bun test [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
@@ -80,7 +80,7 @@
       "name": "bun test [file] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--watch", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -95,7 +95,7 @@
       "name": "bun test [file] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--hot", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -110,7 +110,7 @@
       "name": "bun test [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -131,7 +131,7 @@
       "name": "bun test [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -268,7 +268,7 @@
       "name": "bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -283,7 +283,7 @@
       "name": "bun test [...] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -298,7 +298,7 @@
       "name": "bun test [...] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -313,7 +313,7 @@
       "name": "bun test [...] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--watch", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -328,7 +328,7 @@
       "name": "bun test [...] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--hot", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -343,7 +343,7 @@
       "name": "bun test [...] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -364,7 +364,7 @@
       "name": "bun test [...] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -401,7 +401,7 @@
       "name": "bun test [*]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -415,7 +415,7 @@
       "name": "bun test [*] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -429,7 +429,7 @@
       "name": "bun test [*] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -481,7 +481,7 @@
       "name": "Windows: bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -510,7 +510,7 @@
       "name": "Windows: bun test --only [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "--only", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -539,7 +539,7 @@
       "name": "Windows: bun test [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -568,7 +568,7 @@
       "name": "Windows: bun test [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -597,7 +597,7 @@
       "name": "Windows: bun test [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -635,7 +635,7 @@
       "name": "Windows: bun test [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -822,7 +822,7 @@
       "name": "Windows: bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -851,7 +851,7 @@
       "name": "Windows: bun test [...] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -880,7 +880,7 @@
       "name": "Windows: bun test [...] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -909,7 +909,7 @@
       "name": "Windows: bun test [...] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "--watch", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -938,7 +938,7 @@
       "name": "Windows: bun test [...] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "--hot", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -967,7 +967,7 @@
       "name": "Windows: bun test [...] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1005,7 +1005,7 @@
       "name": "Windows: bun test [...] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1070,7 +1070,7 @@
       "name": "Windows: bun test [*]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1095,7 +1095,7 @@
       "name": "Windows: bun test [*] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1124,7 +1124,7 @@
       "name": "Windows: bun test [*] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",

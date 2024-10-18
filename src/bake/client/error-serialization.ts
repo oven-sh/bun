@@ -1,16 +1,16 @@
 // This implements error deserialization from the WebSocket protocol
+import { BundlerMessageLevel } from "../enums";
 import { DataViewReader } from "./reader";
 
-export const enum BundlerMessageKind {
-  err = 0,
-  warn = 1,
-  note = 2,
-  debug = 3,
-  verbose = 4,
-}
+export interface DeserializedFailure {
+  // If not specified, it is a client-side error.
+  file: string | null;
+  messages: BundlerMessage[];
+};
 
 export interface BundlerMessage {
-  kind: BundlerMessageKind;
+  kind: "bundler";
+  level: BundlerMessageLevel;
   message: string;
   location: BundlerMessageLocation | null;
   notes: BundlerNote[];
@@ -19,11 +19,10 @@ export interface BundlerMessage {
 export interface BundlerMessageLocation {
   /** One-based */
   line: number;
-  /** Zero-based byte offset */
+  /** One-based */
   column: number;
-
-  namespace: string;
-  file: string;
+  /** Byte length */
+  length: number;
   lineText: string;
 }
 
@@ -32,22 +31,17 @@ export interface BundlerNote {
   location: BundlerMessageLocation | null;
 }
 
-export function decodeSerializedErrorPayload(arrayBuffer: DataView, start: number) {
-  const r = new DataViewReader(arrayBuffer, start);
-  const owner = r.u32();
-  const messageCount = r.u32();
-  const messages = new Array(messageCount);
-  for (let i = 0; i < messageCount; i++) {
-    const kind = r.u8();
-    // TODO: JS errors
-    messages[i] = readLogMsg(r, kind);
+export function decodeSerializedError(reader: DataViewReader) {
+  const kind = reader.u8();
+  if (kind >= 0 && kind <= 4) {
+    return readLogMsg(reader, kind);
+  } else {
+    throw new Error("TODO: JS Errors");
   }
-  console.log({owner, messageCount, messages});
-  return messages;
 }
 
 /** First byte is already read in. */
-function readLogMsg(r: DataViewReader, kind: BundlerMessageKind) {
+function readLogMsg(r: DataViewReader, level: BundlerMessageLevel) {
   const message = r.string32();
   const location = readBundlerMessageLocationOrNull(r);
   const noteCount = r.u32();
@@ -56,7 +50,8 @@ function readLogMsg(r: DataViewReader, kind: BundlerMessageKind) {
     notes[i] = readLogData(r);
   }
   return {
-    kind,
+    kind: 'bundler',
+    level,
     message,
     location,
     notes,
@@ -75,15 +70,13 @@ function readBundlerMessageLocationOrNull(r: DataViewReader): BundlerMessageLoca
   if (line == 0) return null;
 
   const column = r.u32();
-  const namespace = r.string32();
-  const file = r.string32();
+  const length = r.u32();
   const lineText = r.string32();
 
   return {
     line,
     column,
-    namespace,
-    file,
+    length,
     lineText,
   };
 }

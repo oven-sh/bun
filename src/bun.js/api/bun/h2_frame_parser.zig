@@ -3890,10 +3890,9 @@ pub const H2FrameParser = struct {
             stream.freeResources(this, finalizing);
         }
         var streams = this.streams;
-        // TODO: we can use a pool for this   
+        // TODO: we can use a pool for this
         this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
         streams.deinit();
-    
     }
 
     pub fn deinit(this: *H2FrameParser) void {

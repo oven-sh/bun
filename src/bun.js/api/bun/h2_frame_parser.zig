@@ -1764,7 +1764,7 @@ pub const H2FrameParser = struct {
 
         var sensitiveHeaders = JSC.JSValue.jsUndefined();
         var count: usize = 0;
-        
+
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
@@ -3714,7 +3714,6 @@ pub const H2FrameParser = struct {
             },
             inline .tcp_writeonly, .tls_writeonly => |socket| {
                 socket.deref();
-
             },
             .none => {},
         }

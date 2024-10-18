@@ -348,11 +348,14 @@ private:
                 return (us_socket_t *) asyncSocket;
             }
 
-            /* It is okay to uncork a closed socket and we need to */
-            ((AsyncSocket<SSL> *) s)->uncork();
+            if (returnedSocket != nullptr) {
+                /* It is okay to uncork a closed socket, and we need to */
+                ((AsyncSocket<SSL> *) s)->uncork();
+                return s;
+            }
 
-            /* We cannot return nullptr to the underlying stack in any case */
-            return s;
+            // It's okay if this returns nullptr.
+            return static_cast<us_socket_t*>(nullptr);
         });
 
         /* Handle HTTP write out (note: SSL_read may trigger this spuriously, the app need to handle spurious calls) */

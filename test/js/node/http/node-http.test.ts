@@ -1904,27 +1904,29 @@ it("should emit events in the right order", async () => {
 it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
   const payload = Buffer.alloc(128 * 1024, "X");
+  let byteLengths = {};
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      let running = true;
+      req.signal.onabort = () => (running = false);
+      const index = new URL(req.url).searchParams.get("index");
+      byteLengths[index] = 0;
+      return new Response(async function* () {
+        while (running) {
+          byteLengths[index] += payload.byteLength;
+          yield payload;
+          await Bun.sleep(10);
+        }
+      });
+    },
+  });
+  let index = 0;
   for (let i = 0; i < 5; i++) {
-    let sendedByteLength = 0;
-    using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        let running = true;
-        req.signal.onabort = () => (running = false);
-        return new Response(async function* () {
-          while (running) {
-            sendedByteLength += payload.byteLength;
-            yield payload;
-            await Bun.sleep(10);
-          }
-        });
-      },
-    });
-
-    async function run() {
+    async function run(index: number) {
       let receivedByteLength = 0;
       let { promise, resolve } = Promise.withResolvers();
-      const req = request(server.url, res => {
+      const req = request(`${server.url}/?index=${index}`, res => {
         res.on("data", data => {
           receivedByteLength += data.length;
           if (resolve) {
@@ -1939,7 +1941,7 @@ it("destroy should end download", async () => {
       await Bun.sleep(10);
       const initialByteLength = receivedByteLength;
       // we should receive the same amount of data we sent
-      expect(initialByteLength).toBeLessThanOrEqual(sendedByteLength);
+      expect(initialByteLength).toBeLessThanOrEqual(byteLengths[index]);
       await Bun.sleep(10);
       // we should not receive more data after destroy
       expect(initialByteLength).toBe(receivedByteLength);
@@ -1947,7 +1949,7 @@ it("destroy should end download", async () => {
     }
 
     const runCount = 50;
-    const runs = Array.from({ length: runCount }, run);
+    const runs = Array.from({ length: runCount }, () => run(index++));
     await Promise.all(runs);
     Bun.gc(true);
     await Bun.sleep(10);

@@ -1,7 +1,10 @@
 #!/bin/sh
 
 # This script generates the boot commands for the macOS installer GUI.
-# It will boot macOS and configure it to be accesible using VNC.
+# It is run on your local machine, not inside the VM.
+
+# Sources:
+# - https://github.com/cirruslabs/macos-image-templates/blob/master/templates/vanilla-sequoia.pkr.hcl
 
 if ! [ "${release}" ] || ! [ "${username}" ] || ! [ "${password}" ]; then
   echo "Script must be run with variables: release, username, and password" >&2
@@ -43,7 +46,7 @@ echo "<wait10s><tab><spacebar>"
 echo "<wait10s>${username}<tab><tab>${password}<tab>${password}<tab><tab><tab><spacebar>"
 
 # Enable Location Services
-echo "<wait120s><leftShiftOn><tab><leftShiftOff><spacebar>"
+echo "<wait10s><leftShiftOn><tab><leftShiftOff><spacebar>"
 
 # Are you sure you don't want to use Location Services?
 echo "<wait10s><tab><spacebar>"

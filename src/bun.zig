@@ -3864,7 +3864,7 @@ pub const DebugThreadLock = if (Environment.allow_assert)
             if (impl.owning_thread) |thread| {
                 Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
                 crash_handler.dumpStackTrace(impl.locked_at.trace());
-                @panic("Safety lock violated");
+                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
             }
             impl.owning_thread = std.Thread.getCurrentId();
             impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
@@ -4036,4 +4036,20 @@ pub fn Once(comptime f: anytype) type {
             }
         }
     };
+}
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        inline .Struct, .Union => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
 }

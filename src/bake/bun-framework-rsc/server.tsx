@@ -19,12 +19,25 @@ export default async function (request: Request, route: any, meta: Bake.RouteMet
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
   const Route = route.default;
+
+  if (import.meta.env.DEV) {
+    if (typeof Route !== "function") {
+      throw new Error(
+        "Expected the default export of " +
+          JSON.stringify(meta.devRoutePath) +
+          " to be a React component, got " +
+          JSON.stringify(Route),
+      );
+    }
+  }
+
+  const { styles } = meta;
   const page = (
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Bun + React Server Components</title>
-        {meta.styles.map(url => (
+        {styles.map(url => (
           <link key={url} rel="stylesheet" href={url} />
         ))}
       </head>

@@ -98,7 +98,7 @@ pre {
   cursor: pointer;
 }
 
-/* .file-name:hover,
+.file-name:hover,
 .file-name:focus-visible {
   background-color: var(--item-bg-hover);
 }
@@ -108,20 +108,21 @@ pre {
   font-size: 70%;
 }
 
-.file-name:hover::after {
+.file-name:hover::after,
+.file-name:focus-visible {
   content: " (click to open in editor)";
-} */
+}
 
 .message {
   margin: 1rem;
   margin-bottom: 0;
 }
 
-button+.message {
+button + .message {
   margin-top: 0.5rem;
 }
 
-.message-text>span {
+.message-text > span {
   color: var(--color);
 }
 
@@ -168,7 +169,6 @@ button+.message {
 }
 
 @media (prefers-color-scheme: light) {
-
   .log-warn,
   .log-note {
     font-weight: bold;

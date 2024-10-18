@@ -1758,7 +1758,7 @@ pub const H2FrameParser = struct {
         const globalObject = this.handlers.globalObject;
 
         const stream_id = stream.id;
-        const headers = JSC.JSValue.createEmptyArray(globalObject, 64);
+        const headers = JSC.JSValue.createEmptyArray(globalObject, 0);
         headers.ensureStillAlive();
 
         var sensitiveHeaders = JSC.JSValue.jsUndefined();

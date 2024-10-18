@@ -5,7 +5,6 @@ pub const WeakRefType = enum(u32) {
     None = 0,
     FetchResponse = 1,
     PostgreSQLQueryClient = 2,
-    Common = 3,
 };
 const WeakImpl = opaque {
     pub fn init(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, refType: WeakRefType, ctx: ?*anyopaque) *WeakImpl {

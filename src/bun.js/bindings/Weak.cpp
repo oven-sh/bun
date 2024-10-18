@@ -10,7 +10,6 @@ enum class WeakRefType : uint32_t {
     None = 0,
     FetchResponse = 1,
     PostgreSQLQueryClient = 2,
-    Common = 3,
 };
 
 typedef void (*WeakRefFinalizeFn)(void* context);
@@ -18,8 +17,7 @@ typedef void (*WeakRefFinalizeFn)(void* context);
 // clang-format off
 #define FOR_EACH_WEAK_REF_TYPE(macro) \
     macro(FetchResponse) \
-    macro(PostgreSQLQueryClient) \
-    macro(Common)
+    macro(PostgreSQLQueryClient)
 
 // clang-format on
 
@@ -40,8 +38,6 @@ public:
                 break;
             case WeakRefType::PostgreSQLQueryClient:
                 // Bun__PostgreSQLQueryClient_finalize(context);
-                break;
-            case WeakRefType::Common:
                 break;
             default:
                 break;
@@ -65,9 +61,6 @@ static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
     }
     case WeakRefType::PostgreSQLQueryClient: {
         return getWeakRefOwner<WeakRefType::PostgreSQLQueryClient>();
-    }
-    case WeakRefType::Common: {
-        return getWeakRefOwner<WeakRefType::Common>();
     }
     default: {
         RELEASE_ASSERT_NOT_REACHED();

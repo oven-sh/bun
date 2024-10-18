@@ -693,7 +693,7 @@ pub const H2FrameParser = struct {
     const H2FrameParserHiveAllocator = bun.HiveArray(H2FrameParser, 256).Fallback;
     pub threadlocal var pool: if (ENABLE_ALLOCATOR_POOL) ?*H2FrameParserHiveAllocator else u0 = if (ENABLE_ALLOCATOR_POOL) null else 0;
 
-    jsContext: JSC.Weak(H2FrameParser) = .{},
+    jsContext: JSC.Strong = .{},
     globalThis: *JSC.JSGlobalObject,
     allocator: Allocator,
     handlers: Handlers,
@@ -3814,7 +3814,7 @@ pub const H2FrameParser = struct {
                 });
             }
         };
-        this.jsContext = JSC.Weak(H2FrameParser).create(context_obj, globalObject, .Common, this);
+        this.jsContext = JSC.Strong.create(context_obj, globalObject);
 
         const socket_js = args_list.ptr[2];
 

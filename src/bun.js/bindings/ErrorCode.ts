@@ -75,6 +75,7 @@ export default [
   ["ERR_HTTP2_PAYLOAD_FORBIDDEN", Error, "Error"],
   ["ERR_HTTP2_NO_SOCKET_MANIPULATION", Error, "Error"],
   ["ERR_HTTP2_SOCKET_UNBOUND", Error, "Error"],
+  ["ERR_HTTP2_SOCKET_BOUND", Error, "Error"],
   ["ERR_HTTP2_ERROR", Error, "Error"],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error, "Error"],
 ] as ErrorCodeMapping;

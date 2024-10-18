@@ -1671,7 +1671,7 @@ class Http2Stream extends Duplex {
       }
     }
 
-    h2SendTrailers(session[bunHTTP2Parser], this.#id, headers, sensitiveHeaders);
+    h2SendTrailers(session[bunHTTP2Parser], this.#id, headers, sensitiveNames);
     this.#sentTrailers = headers;
   }
 

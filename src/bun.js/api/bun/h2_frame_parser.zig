@@ -3890,18 +3890,10 @@ pub const H2FrameParser = struct {
             stream.freeResources(this, finalizing);
         }
         var streams = this.streams;
-        if (ENABLE_ALLOCATOR_POOL) {
-            // if we are reusing the parser we can keep the capacity if its less than 16
-            if (H2FrameParser.pool.?.in(this) and streams.capacity() <= 16) {
-                streams.clearRetainingCapacity();
-            } else {
-                this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
-                streams.deinit();
-            }
-        } else {
-            this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
-            streams.deinit();
-        }
+        // TODO: we can use a pool for this   
+        this.streams = bun.U32HashMap(Stream).init(bun.default_allocator);
+        streams.deinit();
+    
     }
 
     pub fn deinit(this: *H2FrameParser) void {

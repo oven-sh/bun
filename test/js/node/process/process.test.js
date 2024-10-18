@@ -678,14 +678,7 @@ it("dlopen accepts file: URLs", () => {
 });
 
 it("process.constrainedMemory()", () => {
-  switch (process.platform) {
-    case "linux":
-    case "darwin":
-    case "win32":
-      expect(process.constrainedMemory() >= 0).toBe(true);
-      return;
-  }
-  expect.unreachable();
+  expect(process.constrainedMemory() >= 0).toBe(true);
 });
 
 it("process.report", () => {

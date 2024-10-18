@@ -1838,7 +1838,7 @@ fn NewSocket(comptime ssl: bool) type {
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
-            defer this.markInactive();
+            defer this.cleanup();
 
             if (this.flags.finalizing) {
                 return;
@@ -2323,7 +2323,7 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn deinit(this: *This) void {
+        pub fn cleanup(this: *This) void {
             this.markInactive();
             this.detachNativeCallback();
 
@@ -2349,6 +2349,9 @@ fn NewSocket(comptime ssl: bool) type {
                 this.socket_context = null;
                 socket_context.deinit(ssl);
             }
+        }
+        pub fn deinit(this: *This) void {
+            this.cleanup();
             this.destroy();
         }
 

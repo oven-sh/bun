@@ -1758,7 +1758,7 @@ pub const H2FrameParser = struct {
         const globalObject = this.handlers.globalObject;
 
         const stream_id = stream.id;
-        // almost sure that we have between 5-32 headers
+        // Almost sure that we have between 5-32 headers
         const headers = JSC.JSValue.createEmptyArray(globalObject, 32);
         headers.ensureStillAlive();
 
@@ -1798,7 +1798,7 @@ pub const H2FrameParser = struct {
                 } else break :brk headers;
             };
 
-            if(i < 63) {
+            if(i < 31) {
                 if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
                     output.putIndex(globalObject, i, header_info);
                     var header_value = bun.String.fromUTF8(header.value);
@@ -1827,7 +1827,7 @@ pub const H2FrameParser = struct {
                 break;
             }
         }
-        if(i < 64) {
+        if(i < 32) {
             headers.put(globalObject, JSC.ZigString.static("length"), JSC.JSValue.jsNumber(count));
         }
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, JSC.JSValue.jsNumber(flags));

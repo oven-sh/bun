@@ -38,7 +38,7 @@ variable "memory_gb" {
 
 variable "disk_size_gb" {
   type    = number
-  default = 30
+  default = 50
 }
 
 locals {

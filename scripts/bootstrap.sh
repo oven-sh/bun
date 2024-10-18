@@ -1,5 +1,4 @@
 #!/bin/sh
-# Version: 3
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -7,13 +6,13 @@
 # If this script does not work on your machine, please open an issue:
 # https://github.com/oven-sh/bun/issues
 
+# If you need to make a change to this script, such as upgrading a dependency,
+# increment the version number to indicate that a new image should be built.
+# Otherwise, the existing image will be retroactively updated.
+v="3"
+
 pid=$$
 script="$(realpath "$0")"
-
-# if [ "$(id -u)" != "0" ]; then
-#   echo "Running with sudo..."
-#   exec sudo "$script" "$@"
-# fi
 
 print() {
 	echo "$@"
@@ -30,6 +29,14 @@ execute() {
   if ! "$@"; then
     error "Command failed: $@"
   fi
+}
+
+execute_sudo() {
+	if [ "$sudo" = "1" ]; then
+		execute "$@"
+	else
+		execute sudo "$@"
+	fi
 }
 
 execute_non_root() {
@@ -96,24 +103,30 @@ append_to_file() {
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" >>"$file"
+			echo "$line" >> "$file"
 		fi
 	done
 }
 
-add_to_path() {
+append_to_profile() {
+	content="$1"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	for profile in $profiles; do
+		file="$HOME/$profile"
+		if [ "$ci" = "1" ] || [ -f "$file" ]; then
+			append_to_file "$file" "$content"
+		fi
+	done
+}
+
+append_to_path() {
 	path="$1"
 	if ! [ -d "$path" ]; then
 		error "Could not find directory: \"$path\""
 	fi
 
-	profiles=".profile .bash_profile .bashrc .zshrc"
-	for profile in $profiles; do
-		file="$HOME/$profile"
-		if [ -f "$file" ]; then
-			append_to_file "$file" "export PATH=\"$path:\$PATH\""
-		fi
-	done
+	append_to_profile "export PATH=\"$path:\$PATH\""
+	export PATH="$path:$PATH"
 }
 
 check_system() {
@@ -132,6 +145,8 @@ check_system() {
 	aarch64 | arm64) arch="aarch64" ;;
 	*) error "Unsupported architecture: $arch" ;;
 	esac
+
+	kernel="$(uname -r)"
 
 	if [ "$os" = "darwin" ]; then
 		sw_vers="$(which sw_vers)"
@@ -198,12 +213,16 @@ check_system() {
 		fi
 	fi
 
-  whoami="$(which whoami)"
-  if [ -f "$whoami" ]; then
-    user="$($whoami)"
-  else
-    error "Could not determine the current user, set \$USER."
-  fi
+	if [ -n "$SUDO_USER" ]; then
+		user="$SUDO_USER"
+	else
+		whoami="$(which whoami)"
+		if [ -f "$whoami" ]; then
+			user="$($whoami)"
+		else
+			error "Could not determine the current user, set \$USER."
+		fi
+	fi
 
 	id="$(which id)"
 	if [ -f "$id" ] && [ "$($id -u)" = "0" ]; then
@@ -246,10 +265,7 @@ package_manager() {
     if ! [ -f "$(which brew)" ]; then
       install_brew
     fi
-    HOMEBREW_NO_INSTALL_CLEANUP=1 \
-		HOMEBREW_NO_AUTO_UPDATE=1 \
-		HOMEBREW_NO_ANALYTICS=1 \
-		execute_non_root "$brew" "$@"
+    execute_non_root brew "$@"
     ;;
 	*) error "Unsupported package manager: $pm" ;;
 	esac
@@ -319,10 +335,18 @@ install_brew() {
 
 	case "$arch" in
 	x64)
-		add_to_path "/usr/local/bin"
+		append_to_path "/usr/local/bin"
 		;;
 	aarch64)
-		add_to_path "/opt/homebrew/bin"
+		append_to_path "/opt/homebrew/bin"
+		;;
+	esac
+
+	case "$ci" in
+	1)
+		append_to_profile "export HOMEBREW_NO_INSTALL_CLEANUP=1"
+		append_to_profile "export HOMEBREW_NO_AUTO_UPDATE=1"
+		append_to_profile "export HOMEBREW_NO_ANALYTICS=1"
 		;;
 	esac
 }
@@ -339,17 +363,19 @@ install_common_software() {
     ;;
 	esac
 
-  install_command go
-
 	install_packages \
+		bash \
 		ca-certificates \
 		curl \
-		bash \
+		jq \
+		htop \
 		gnupg \
 		git \
 		unzip \
+		wget \
 		zip
 
+	install_rosetta
 	install_nodejs
 	install_bun
 }
@@ -391,7 +417,19 @@ install_bun() {
 		;;
 	esac
 
-	add_to_path "$HOME/.bun/bin"
+	append_to_path "$HOME/.bun/bin"
+}
+
+install_rosetta() {
+	case "$os" in
+	darwin)
+		if ! [ "$(which arch)" ]; then
+			execute softwareupdate \
+				--install-rosetta \
+				--agree-to-license
+		fi
+		;;
+	esac
 }
 
 install_build_essentials() {
@@ -399,7 +437,6 @@ install_build_essentials() {
 	apt) install_packages \
 		build-essential \
 		ninja-build \
-		ccache \
 		xz-utils
     ;;
 	dnf | yum) install_packages \
@@ -423,6 +460,7 @@ install_build_essentials() {
 		golang
 
 	install_llvm
+	install_ccache
 	install_rust
 	install_docker
 }
@@ -522,8 +560,7 @@ install_rust() {
   sh="$(require sh)"
   script=$(download_file "https://sh.rustup.rs")
   execute "$sh" "$script" -y
-
-	add_to_path "$HOME/.cargo/bin"
+	append_to_path "$HOME/.cargo/bin"
 }
 
 install_docker() {
@@ -574,62 +611,59 @@ install_tailscale() {
 		;;
 	darwin)
 		install_packages go
-		add_to_path "$HOME/go/bin"
-		execute_non_root go install "tailscale.com/cmd/tailscale{,d}@main"
-		tailscaled install-system-daemon
+		execute_non_root go install tailscale.com/cmd/tailscale{,d}@latest
+		append_to_path "$HOME/go/bin"
 		;;
 	esac
 }
 
 install_buildkite() {
-	case "$os" in
-	linux)
-		install_buildkite_linux
-		;;
-	darwin)
-		install_packages buildkite/buildkite/buildkite-agent
-		;;
-	esac
-}
-
-install_buildkite_linux() {
 	home_dir="/var/lib/buildkite-agent"
 	config_dir="/etc/buildkite-agent"
 	config_file="$config_dir/buildkite-agent.cfg"
 
-	getent="$(require getent)"
-	if [ -z "$("$getent" passwd buildkite-agent)" ]; then
-		useradd="$(require useradd)"
-		execute "$useradd" buildkite-agent \
-			--system \
-			--no-create-home \
-			--home-dir "$home_dir"
-	fi
-
-	if [ -n "$("$getent" group docker)" ]; then
-		usermod="$(require usermod)"
-		execute "$usermod" -aG docker buildkite-agent
-	fi
-
 	if ! [ -d "$home_dir" ]; then
-		execute mkdir -p "$home_dir"
+		execute_sudo mkdir -p "$home_dir"
 	fi
 
 	if ! [ -d "$config_dir" ]; then
-		execute mkdir -p "$config_dir"
+		execute_sudo mkdir -p "$config_dir"
 	fi
+
+	case "$os" in
+	linux)
+		getent="$(require getent)"
+		if [ -z "$("$getent" passwd buildkite-agent)" ]; then
+			useradd="$(require useradd)"
+			execute "$useradd" buildkite-agent \
+				--system \
+				--no-create-home \
+				--home-dir "$home_dir"
+		fi
+
+		if [ -n "$("$getent" group docker)" ]; then
+			usermod="$(require usermod)"
+			execute "$usermod" -aG docker buildkite-agent
+		fi
+
+		execute chown -R buildkite-agent:buildkite-agent "$home_dir"
+		execute chown -R buildkite-agent:buildkite-agent "$config_dir"
+		;;
+	darwin)
+		execute_sudo chown -R "$user:admin" "$home_dir"
+		execute_sudo chown -R "$user:admin" "$config_dir"
+		;;
+	esac
 
 	if ! [ -f "$config_file" ]; then
 		cat <<EOF >"$config_file"
 # This is generated by scripts/bootstrap.sh
 # https://buildkite.com/docs/agent/v3/configuration
-token="xxx"
 
-name="%hostname-%pid"
-spawn=1
-tags="os=$os,arch=$arch,distro=$distro,release=$release,glibc=$glibc"
+name="%hostname-%random"
+tags="v=$v,os=$os,arch=$arch,distro=$distro,release=$release,kernel=$kernel,glibc=$glibc"
 
-build-path="$home_dir"
+build-path="$home_dir/builds"
 git-mirrors-path="$home_dir/git"
 job-log-path="$home_dir/logs"
 plugins-path="$config_dir/plugins"
@@ -642,52 +676,13 @@ experiment="normalised-upload-paths,resolve-commit-after-checkout,agent-api"
 EOF
 	fi
 
-	agent="$(which buildkite-agent)"
-	if ! [ -f "$agent" ]; then
-    bash="$(require bash)"
-    script=$(download_file "https://raw.githubusercontent.com/buildkite/agent/main/install.sh")
-    execute "$bash" "$script"
+	bash="$(require bash)"
+	script=$(download_file "https://raw.githubusercontent.com/buildkite/agent/main/install.sh")
+	execute "$bash" "$script"
 
-		out_dir="$HOME/.buildkite-agent"
-		add_to_path "$out_dir/bin"
-		execute rm -rf "$out_dir"
-	fi
-
-	agent="$(require buildkite-agent)"
-	systemctl="$(which systemctl)"
-	if [ -f "$systemctl" ]; then
-		service_file="/etc/systemd/system/buildkite-agent.service"
-		if ! [ -f "$service_file" ]; then
-			cat <<EOF >"$service_file"
-# This is generated by scripts/bootstrap.sh
-# https://buildkite.com/docs/agent/v3/configuration
-
-[Unit]
-Description=Buildkite Agent
-Documentation=https://buildkite.com/agent
-After=syslog.target
-After=network.target
-
-[Service]
-Type=simple
-User=buildkite-agent
-Environment=HOME=$home_dir
-ExecStart=$agent start 
-RestartSec=5
-Restart=on-failure
-RestartForceExitStatus=SIGPIPE
-TimeoutStartSec=10
-TimeoutStopSec=0
-KillMode=process
-
-[Install]
-WantedBy=multi-user.target
-EOF
-		fi
-	fi
-
-	execute chown -R buildkite-agent:buildkite-agent "$home_dir"
-	execute chown -R buildkite-agent:buildkite-agent "$config_dir"
+	out_dir="$HOME/.buildkite-agent"
+	execute_sudo mv -f "$out_dir/bin/buildkite-agent" "/usr/local/bin/buildkite-agent"
+	execute rm -rf "$out_dir"
 }
 
 install_chrome_dependencies() {
@@ -763,127 +758,13 @@ install_chrome_dependencies() {
 	esac
 }
 
-optimize_system() {
-	if ! [ "$ci" = "1" ]; then
-		return
-	fi
-
-	case "$os" in
-	darwin)
-		optimize_system_darwin
-		;;
-	esac
-}
-
-optimize_system_darwin() {
-	# https://github.com/sickcodes/osx-optimizer
-	# https://github.com/koding88/MacBook-Optimization-Script
-	# https://www.macstadium.com/blog/simple-optimizations-for-macos-and-ios-build-agents
-
-	disable_software_update() {
-		execute softwareupdate --schedule off
-		execute defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false
-		execute defaults write com.apple.SoftwareUpdate AutomaticCheckEnabled -bool false
-		execute defaults write com.apple.commerce AutoUpdate -bool false
-		execute defaults write com.apple.commerce AutoUpdateRestartRequired -bool false
-		execute defaults write com.apple.SoftwareUpdate ConfigDataInstall -int 0
-		execute defaults write com.apple.SoftwareUpdate CriticalUpdateInstall -int 0
-		execute defaults write com.apple.SoftwareUpdate ScheduleFrequency -int 0
-		execute defaults write com.apple.SoftwareUpdate AutomaticDownload -int 0
-	}
-
-	disable_spotlight() {
-		execute mdutil -i off -a
-		execute mdutil -E /
-		execute launchctl unload -w /System/Library/LaunchDaemons/com.apple.metadata.mds.plist
-	}
-
-	disable_siri() {
-		execute plutil -replace Disabled -bool true /System/Library/LaunchAgents/com.apple.Siri.agent.plist
-		execute defaults write com.apple.Siri StatusMenuVisible -bool false
-		execute defaults write com.apple.Siri UserHasDeclinedEnable -bool true
-		execute defaults write com.apple.assistant.support "Assistant Enabled" 0
-	}
-
-	disable_sleep() {
-		execute systemsetup -setsleep Never
-		execute systemsetup -setharddisksleep Never
-		execute systemsetup -setcomputersleep Never
-		execute systemsetup -setdisplaysleep Never
-	}
-
-	disable_screen_saver() {
-		execute defaults write com.apple.screensaver loginWindowIdleTime 0
-		execute defaults write com.apple.screensaver idleTime 0
-	}
-
-	disable_wallpaper() {
-		execute defaults write /Library/Preferences/com.apple.loginwindow DesktopPicture ""
-	}
-
-	disable_application_state() {
-		execute defaults write com.apple.loginwindow TALLogoutSavesState -bool false
-	}
-
-	disable_accessibility() {
-		execute defaults write com.apple.Accessibility DifferentiateWithoutColor -int 1
-		execute defaults write com.apple.Accessibility ReduceMotionEnabled -int 1
-		execute defaults write com.apple.universalaccess reduceMotion -int 1
-		execute defaults write com.apple.universalaccess reduceTransparency -int 1
-	}
-
-	disable_dashboard() {
-		execute defaults write com.apple.dashboard mcx-disabled -boolean YES && killall Dock
-	}
-
-	disable_animations() {
-		execute defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
-		execute defaults write -g QLPanelAnimationDuration -float 0
-		execute defaults write com.apple.finder DisableAllAnimations -bool true
-	}
-
-	disable_time_machine() {
-		execute tmutil disablelocal
-	}
-
-	enable_performance_mode() {
-		# https://support.apple.com/en-us/101992
-		if ! [ $(nvram boot-args 2>/dev/null | grep -q serverperfmode) ]; then
-			execute nvram boot-args="serverperfmode=1 $(nvram boot-args 2>/dev/null | cut -f 2-)"
-		fi
-	}
-
-	disable_software_update
-	disable_spotlight
-	disable_siri
-	disable_sleep
-	disable_screen_saver
-	disable_wallpaper
-	disable_application_state
-	disable_accessibility
-	disable_dashboard
-	disable_animations
-	disable_time_machine
-	enable_performance_mode
-}
-
-clean_system() {
-	if ! [ "$ci" = "1" ]; then
-		return
-	fi
-
-  execute rm -rf /tmp/*
-}
-
 main() {
   check_system
-  optimize_system
   update_packages
   install_common_software
   install_build_essentials
   install_chrome_dependencies
   install_ci_dependencies
-  clean_system
 }
 
 main

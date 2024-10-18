@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# A script that optimizes macOS for virtualized environments.
+# This script optimizes macOS for virtualized environments.
 # It disables things like spotlight, screen saver, and sleep.
 
 # Sources:
@@ -25,12 +25,12 @@ disable_software_update() {
   execute softwareupdate --schedule off
   execute defaults write com.apple.SoftwareUpdate AutomaticDownload -bool false
   execute defaults write com.apple.SoftwareUpdate AutomaticCheckEnabled -bool false
-  execute defaults write com.apple.commerce AutoUpdate -bool false
-  execute defaults write com.apple.commerce AutoUpdateRestartRequired -bool false
   execute defaults write com.apple.SoftwareUpdate ConfigDataInstall -int 0
   execute defaults write com.apple.SoftwareUpdate CriticalUpdateInstall -int 0
   execute defaults write com.apple.SoftwareUpdate ScheduleFrequency -int 0
   execute defaults write com.apple.SoftwareUpdate AutomaticDownload -int 0
+  execute defaults write com.apple.commerce AutoUpdate -bool false
+  execute defaults write com.apple.commerce AutoUpdateRestartRequired -bool false
 }
 
 disable_spotlight() {

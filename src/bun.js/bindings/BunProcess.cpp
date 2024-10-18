@@ -2286,9 +2286,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
     return {};
 }
 
+extern "C" uint64_t Bun__Os__getFreeMemory(void);
 JSC_DEFINE_HOST_FUNCTION(Process_availableMemory, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsNumber(0)); // TODO:
+    return JSValue::encode(jsDoubleNumber(Bun__Os__getFreeMemory()));
 }
 
 #define PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE(str, issue)                                                                                                                                                                                \

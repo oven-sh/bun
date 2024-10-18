@@ -58,8 +58,6 @@ steps:
         label: ":darwin: 14 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 3
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -86,8 +84,6 @@ steps:
         label: ":darwin: 13 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 3
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -160,8 +156,6 @@ steps:
         label: ":darwin: 14 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 3
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -188,8 +182,6 @@ steps:
         label: ":darwin: 13 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 3
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -262,8 +254,6 @@ steps:
         label: ":debian: 12 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -291,8 +281,6 @@ steps:
         label: ":ubuntu: 22.04 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -320,8 +308,6 @@ steps:
         label: ":ubuntu: 20.04 x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -401,8 +387,6 @@ steps:
         label: ":debian: 12 x64-baseline - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -430,8 +414,6 @@ steps:
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -459,8 +441,6 @@ steps:
         label: ":ubuntu: 20.04 x64-baseline - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -534,8 +514,6 @@ steps:
         label: ":debian: 12 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -563,8 +541,6 @@ steps:
         label: ":ubuntu: 22.04 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -592,8 +568,6 @@ steps:
         label: ":ubuntu: 20.04 aarch64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 2
         retry:
           automatic:
             - exit_status: 1
@@ -679,8 +653,6 @@ steps:
         label: ":windows: x64 - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 1
         retry:
           automatic:
             - exit_status: -1
@@ -768,8 +740,6 @@ steps:
         label: ":windows: x64-baseline - test-bun"
         if: "build.branch != 'main'"
         parallelism: 10
-        soft_fail:
-          - exit_status: 1
         retry:
           automatic:
             - exit_status: -1

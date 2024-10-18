@@ -285,7 +285,7 @@ pub fn init(options: Options) !*DevServer {
             hash.update(bake.getHmrRuntime(.client));
             hash.update(bake.getHmrRuntime(.server));
         } else {
-            hash.update(bun.Environment.git_sha_short ++ &.{0});
+            hash.update(bun.Environment.git_sha_short);
         }
 
         hash.update(dev.framework.entry_client);

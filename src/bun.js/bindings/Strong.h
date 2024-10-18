@@ -28,6 +28,11 @@ public:
     {
     }
 
+    ~StrongRef()
+    {
+        m_cell.clear();
+    }
+
     JSC::Strong<JSC::Unknown> m_cell;
 };
 

@@ -4,6 +4,11 @@ export default [
   define({
     name: "H2FrameParser",
     JSType: "0b11101110",
+    finalize: true,
+    construct: true,
+    hasPendingActivity: true,
+    estimatedSize: true,
+    klass: {},
     proto: {
       request: {
         fn: "request",
@@ -40,6 +45,7 @@ export default [
       detach: {
         fn: "detachFromJS",
         length: 0,
+        passThis: true,
       },
       rstStream: {
         fn: "rstStream",
@@ -106,8 +112,5 @@ export default [
         length: 0,
       },
     },
-    finalize: true,
-    construct: true,
-    klass: {},
   }),
 ];

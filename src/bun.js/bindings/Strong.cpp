@@ -17,6 +17,7 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(StrongRef);
 
 extern "C" void Bun__StrongRef__delete(Bun::StrongRef* strongRef)
 {
+    strongRef->m_cell.clear();
     delete strongRef;
 }
 

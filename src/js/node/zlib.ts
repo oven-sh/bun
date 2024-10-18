@@ -401,21 +401,23 @@ function processChunk(self, chunk, flushFlag, cb) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
 
+  const outOffset = self._outOffset;
+  const byteLength = chunk.byteLength;
   handle.buffer = chunk;
   handle.cb = cb;
-  handle.availOutBefore = self._chunkSize - self._outOffset;
-  handle.availInBefore = chunk.byteLength;
+  const availOutBefore = self._chunkSize - outOffset;
+  handle.availInBefore = byteLength;
+  handle.availOutBefore = availOutBefore;
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
-
   handle.write(
     flushFlag, // flush
     chunk, // in
     0, // in_off
     handle.availInBefore, // in_len
     self._outBuffer, // out
-    self._outOffset, // out_off
-    handle.availOutBefore, // out_len
+    outOffset, // out_off
+    availOutBefore, // out_len
   );
 }
 

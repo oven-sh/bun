@@ -17,6 +17,10 @@ const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
 const JSC = bun.JSC;
 const EventLoopTimer = @import("../bun.js//api//Timer.zig").EventLoopTimer;
+const WriteResult = union(enum) {
+    want_more: usize,
+    backpressure: usize,
+};
 
 pub const CloseCode = enum(i32) {
     normal = 0,
@@ -55,6 +59,7 @@ pub const InternalLoopData = extern struct {
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
     iteration_nr: usize,
+    jsc_vm: ?*JSC.VM,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
@@ -2372,6 +2377,10 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
+
     pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
@@ -3043,11 +3052,62 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn socket(this: AnyResponse) *uws_res {
+        return switch (this) {
+            .SSL => |resp| resp.downcast(),
+            .TCP => |resp| resp.downcast(),
+        };
+    }
+    pub fn getRemoteSocketInfo(this: AnyResponse) ?SocketAddress {
+        return switch (this) {
+            .SSL => |resp| resp.getRemoteSocketInfo(),
+            .TCP => |resp| resp.getRemoteSocketInfo(),
+        };
+    }
+
+    pub fn getWriteOffset(this: AnyResponse) u64 {
+        return switch (this) {
+            .SSL => |resp| resp.getWriteOffset(),
+            .TCP => |resp| resp.getWriteOffset(),
+        };
+    }
+
+    pub fn getBufferedAmount(this: AnyResponse) u64 {
+        return switch (this) {
+            .SSL => |resp| resp.getBufferedAmount(),
+            .TCP => |resp| resp.getBufferedAmount(),
+        };
+    }
+
+    pub fn writeContinue(this: AnyResponse) void {
+        return switch (this) {
+            .SSL => |resp| resp.writeContinue(),
+            .TCP => |resp| resp.writeContinue(),
+        };
+    }
+
+    pub fn state(this: AnyResponse) State {
+        return switch (this) {
+            .SSL => |resp| resp.state(),
+            .TCP => |resp| resp.state(),
+        };
+    }
+
     pub fn timeout(this: AnyResponse, seconds: u8) void {
         switch (this) {
             .SSL => |resp| resp.timeout(seconds),
             .TCP => |resp| resp.timeout(seconds),
         }
+    }
+
+    pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, opcional_data: UserDataType) void {
+        return switch (this) {
+            inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
+                pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
+                    @call(.always_inline, handler, .{ user_data, data, last });
+                }
+            }.onDataCallback, opcional_data),
+        };
     }
 
     pub fn writeStatus(this: AnyResponse, status: []const u8) void {
@@ -3064,7 +3124,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn write(this: AnyResponse, data: []const u8) void {
+    pub fn write(this: AnyResponse, data: []const u8) WriteResult {
         return switch (this) {
             .SSL => |resp| resp.write(data),
             .TCP => |resp| resp.write(data),
@@ -3133,6 +3193,22 @@ pub const AnyResponse = union(enum) {
         return switch (this) {
             .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, opcional_data),
             .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, opcional_data),
+        };
+    }
+
+    pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
+                handler(user_data, .{ .SSL = resp });
+            }
+            pub fn tcp_handler(user_data: UserDataType, resp: *NewApp(false).Response) void {
+                handler(user_data, .{ .TCP = resp });
+            }
+        };
+
+        return switch (this) {
+            .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, opcional_data),
+            .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, opcional_data),
         };
     }
 
@@ -3533,8 +3609,15 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn resetTimeout(res: *Response) void {
                 uws_res_reset_timeout(ssl_flag, res.downcast());
             }
-            pub fn write(res: *Response, data: []const u8) bool {
-                return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
+            pub fn getBufferedAmount(res: *Response) u64 {
+                return uws_res_get_buffered_amount(ssl_flag, res.downcast());
+            }
+            pub fn write(res: *Response, data: []const u8) WriteResult {
+                var len: usize = data.len;
+                return switch (uws_res_write(ssl_flag, res.downcast(), data.ptr, &len)) {
+                    true => .{ .want_more = len },
+                    false => .{ .backpressure = len },
+                };
             }
             pub fn getWriteOffset(res: *Response) u64 {
                 return uws_res_get_write_offset(ssl_flag, res.downcast());
@@ -3959,7 +4042,8 @@ extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bo
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
 extern fn uws_res_reset_timeout(ssl: i32, res: *uws_res) void;
-extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
+extern fn uws_res_get_buffered_amount(ssl: i32, res: *uws_res) u64;
+extern fn uws_res_write(ssl: i32, res: *uws_res, data: ?[*]const u8, length: *usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
@@ -4056,11 +4140,16 @@ pub const State = enum(u8) {
     HTTP_END_CALLED = 4,
     HTTP_RESPONSE_PENDING = 8,
     HTTP_CONNECTION_CLOSE = 16,
+    HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
 
     _,
 
     pub inline fn isResponsePending(this: State) bool {
         return @intFromEnum(this) & @intFromEnum(State.HTTP_RESPONSE_PENDING) != 0;
+    }
+
+    pub inline fn hasWrittenContentLengthHeader(this: State) bool {
+        return @intFromEnum(this) & @intFromEnum(State.HTTP_WROTE_CONTENT_LENGTH_HEADER) != 0;
     }
 
     pub inline fn isHttpEndCalled(this: State) bool {
@@ -4102,6 +4191,10 @@ pub const WindowsLoop = extern struct {
     is_default: c_int,
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
+
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
 
     pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
@@ -4418,3 +4511,4 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+extern fn uws_res_clear_corked_socket(loop: *Loop) void;

@@ -59,13 +59,14 @@ pub const TextEncoder = struct {
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
             bun.assert(result.written <= buf.len);
             bun.assert(result.read == slice.len);
-            const array_buffer = uint8array.asArrayBuffer(globalThis).?;
+            const array_buffer = uint8array.asArrayBuffer(globalThis) orelse return .zero;
             bun.assert(result.written == array_buffer.len);
             @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
             const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
-                return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
+                globalThis.throwOutOfMemory();
+                return .zero;
             };
             bun.assert(bytes.len >= slice.len);
             return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
@@ -112,7 +113,8 @@ pub const TextEncoder = struct {
                 @TypeOf(slice),
                 slice,
             ) catch {
-                return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
+                globalThis.throwOutOfMemory();
+                return .zero;
             };
             return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
         }

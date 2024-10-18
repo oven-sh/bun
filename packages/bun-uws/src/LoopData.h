@@ -63,6 +63,7 @@ public:
         }
         delete [] corkBuffer;
     }
+
     void* getCorkedSocket() {
         return this->corkedSocket;
     }

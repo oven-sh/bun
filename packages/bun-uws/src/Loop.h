@@ -24,6 +24,7 @@
 #include "LoopData.h"
 #include <libusockets.h>
 #include <iostream>
+#include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
 
@@ -51,6 +52,15 @@ private:
 
         for (auto &p : loopData->preHandlers) {
             p.second((Loop *) loop);
+        }
+
+        void *corkedSocket = loopData->getCorkedSocket();
+        if (corkedSocket) {
+            if (loopData->isCorkedSSL()) {
+                ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
+            } else {
+                ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
+            }
         }
     }
 
@@ -146,6 +156,10 @@ public:
 
         /* Reset lazyLoop */
         getLazyLoop().loop = nullptr;
+    }
+
+    static LoopData* data(struct us_loop_t *loop) {
+        return (LoopData *) us_loop_ext(loop);
     }
 
     void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {

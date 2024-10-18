@@ -119,6 +119,18 @@ extern "C"
     }
   }
 
+  extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
+    uWS::LoopData *loopData = uWS::Loop::data(loop);
+    void *corkedSocket = loopData->getCorkedSocket();
+    if (corkedSocket) {
+        if (loopData->isCorkedSSL()) {
+            ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
+        } else {
+            ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
+        }
+    }
+}
+
   void uws_app_delete(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
   {
     if (ssl)
@@ -273,6 +285,19 @@ extern "C"
       uwsApp->trace(pattern, [handler, user_data](auto *res, auto *req)
                     { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
     }
+  }
+
+  size_t uws_res_get_buffered_amount(int ssl, uws_res_t *res) nonnull_fn_decl;
+
+  size_t uws_res_get_buffered_amount(int ssl, uws_res_t *res)
+  {
+      if (ssl) {
+        uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+        return uwsRes->getBufferedAmount();
+      } else {
+        uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+        return uwsRes->getBufferedAmount();
+      }
   }
 
   void uws_app_any(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
@@ -1241,17 +1266,27 @@ extern "C"
     }
   }
 
-  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t length) nonnull_fn_decl;
+  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;
   
-  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t length)
+  bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      return uwsRes->write(std::string_view(data, length));
+      if (*length < 16 * 1024 && *length > 0) {
+        if (uwsRes->canCork()) {
+          uwsRes->uWS::AsyncSocket<true>::cork();
+        }
+      }
+      return uwsRes->write(std::string_view(data, *length), length);
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    return uwsRes->write(std::string_view(data, length));
+    if (*length < 16 * 1024 && *length > 0) {
+        if (uwsRes->canCork()) {
+          uwsRes->uWS::AsyncSocket<false>::cork();
+        }
+      }
+    return uwsRes->write(std::string_view(data, *length), length);
   }
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)

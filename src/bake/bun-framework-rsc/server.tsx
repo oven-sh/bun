@@ -1,5 +1,4 @@
 import type { Bake } from "bun";
-import {} from "react";
 import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
 import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";

@@ -679,7 +679,6 @@ const Handlers = struct {
 
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
-    pub usingnamespace JSC.Codegen.JSH2FrameParser;
     pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
     pub const DEBUG_REFCOUNT_NAME = "H2";
     const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
@@ -3922,8 +3921,8 @@ pub const H2FrameParser = struct {
 fn getH2FrameParserFromJS(callframe: *JSC.CallFrame) ?*H2FrameParser {
     const args = callframe.arguments(1);
     if (args.len == 0) return null;
-    if (!args[0].isNumber()) return null;
-    return @ptrFromInt(args[0].to(u64));
+    if (!args.ptr[0].isNumber()) return null;
+    return @ptrFromInt(args.ptr[0].to(u64));
 }
 fn createH2ParserFromJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
@@ -4065,10 +4064,10 @@ fn jsH2FrameParserBufferSize(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     return H2FrameParser.getBufferSize(this);
 }
 
-fn jsH2FrameParserHasNativeRead(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+fn jsH2FrameParserHasNativeRead(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     const this = getH2FrameParserFromJS(callframe) orelse return .undefined;
 
-    return H2FrameParser.hasNativeRead(this, globalObject, callframe);
+    return H2FrameParser.hasNativeRead(this);
 }
 
 fn jsH2FrameParserGetAllStreams(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {

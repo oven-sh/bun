@@ -1758,14 +1758,12 @@ pub const H2FrameParser = struct {
         const globalObject = this.handlers.globalObject;
 
         const stream_id = stream.id;
-        // Almost sure that we have between 5-32 headers
-        const headers = JSC.JSValue.createEmptyArray(globalObject, 32);
+        const headers = JSC.JSValue.createEmptyArray(globalObject, 64);
         headers.ensureStillAlive();
 
         var sensitiveHeaders = JSC.JSValue.jsUndefined();
         var count: usize = 0;
-        var i: u32 = 0;
-
+        
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
@@ -1798,37 +1796,20 @@ pub const H2FrameParser = struct {
                 } else break :brk headers;
             };
 
-            if (i < 31) {
-                if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
-                    output.putIndex(globalObject, i, header_info);
-                    var header_value = bun.String.fromUTF8(header.value);
-                    output.putIndex(globalObject, i + 1, header_value.transferToJS(globalObject));
-                } else {
-                    var header_name = bun.String.fromUTF8(header.name);
-                    output.putIndex(globalObject, i, header_name.transferToJS(globalObject));
-                    var header_value = bun.String.fromUTF8(header.value);
-                    output.putIndex(globalObject, i + 1, header_value.transferToJS(globalObject));
-                }
+            if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
+                output.push(globalObject, header_info);
+                var header_value = bun.String.fromUTF8(header.value);
+                output.push(globalObject, header_value.transferToJS(globalObject));
             } else {
-                if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
-                    output.push(globalObject, header_info);
-                    var header_value = bun.String.fromUTF8(header.value);
-                    output.push(globalObject, header_value.transferToJS(globalObject));
-                } else {
-                    var header_name = bun.String.fromUTF8(header.name);
-                    output.push(globalObject, header_name.transferToJS(globalObject));
-                    var header_value = bun.String.fromUTF8(header.value);
-                    output.push(globalObject, header_value.transferToJS(globalObject));
-                }
+                var header_name = bun.String.fromUTF8(header.name);
+                output.push(globalObject, header_name.transferToJS(globalObject));
+                var header_value = bun.String.fromUTF8(header.value);
+                output.push(globalObject, header_value.transferToJS(globalObject));
             }
-            i += 2;
 
             if (offset >= payload.len) {
                 break;
             }
-        }
-        if (i < 32) {
-            headers.put(globalObject, JSC.ZigString.static("length"), JSC.JSValue.jsNumber(count));
         }
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, JSC.JSValue.jsNumber(flags));
         // callbacks can change the Stream ptr in this case we always return the new one

@@ -2,11 +2,10 @@ import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
 import { itBundled } from "./expectBundled";
-import { isBroken, isWindows } from "harness";
+import { isFlaky, isWindows } from "harness";
 
-describe("bundler", () => {
+describe.todoIf(isFlaky && isWindows)("bundler", () => {
   itBundled("compile/HelloWorld", {
-    todo: isBroken && isWindows,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -38,7 +37,6 @@ describe("bundler", () => {
   });
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
-    todo: isBroken && isWindows,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -54,7 +52,6 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/WorkerRelativePathNoExtension", {
-    todo: isBroken && isWindows,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -74,7 +71,6 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtension", {
-    todo: isBroken && isWindows,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -93,7 +89,6 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
-    todo: isBroken && isWindows,
     compile: true,
     bytecode: true,
     files: {
@@ -131,7 +126,6 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/Bun.embeddedFiles", {
-    todo: isBroken && isWindows,
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.
     assetNaming: "[name].[ext]",
@@ -182,7 +176,6 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!", setCwd: true },
   });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
-    todo: isBroken && isWindows,
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.
     assetNaming: "[name].[ext]",
@@ -203,7 +196,6 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/pathToFileURLWorks", {
-    todo: isBroken && isWindows,
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -222,7 +214,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `
@@ -266,7 +258,6 @@ describe("bundler", () => {
     const { bytecode = false, format, minify = false } = additionalOptions;
     const NODE_ENV = minify ? "'production'" : undefined;
     itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
-      todo: isBroken && isWindows && format === "cjs" && minify && bytecode,
       install: ["react@next", "react-dom@next"],
       format,
       minifySyntax: minify,

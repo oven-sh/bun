@@ -118,11 +118,11 @@ pre {
   margin-bottom: 0;
 }
 
-button+.message {
+button + .message {
   margin-top: 0.5rem;
 }
 
-.message-text>span {
+.message-text > span {
   color: var(--color);
 }
 
@@ -169,7 +169,6 @@ button+.message {
 }
 
 @media (prefers-color-scheme: light) {
-
   .log-warn,
   .log-note {
     font-weight: bold;

@@ -1,5 +1,5 @@
 import type { Bake } from "bun";
-import { } from 'react';
+import {} from "react";
 import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
 import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
@@ -23,7 +23,12 @@ export default async function (request: Request, route: any, meta: Bake.RouteMet
 
   if (import.meta.env.DEV) {
     if (typeof Route !== "function") {
-      throw new Error("Expected the default export of " + JSON.stringify(meta.devRoutePath) + " to be a React component, got " + JSON.stringify(Route));
+      throw new Error(
+        "Expected the default export of " +
+          JSON.stringify(meta.devRoutePath) +
+          " to be a React component, got " +
+          JSON.stringify(Route),
+      );
     }
   }
 

@@ -8705,7 +8705,7 @@ pub const LinkerContext = struct {
         // TODO: (this is where we would put the imports)
         // Generate any prefix rules now
         // (THIS SHOULD BE SET WHEN GENERATING PREFIX RULES!)
-        newline_before_comment = true;
+        // newline_before_comment = true;
 
         // TODO: meta
 

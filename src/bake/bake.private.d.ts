@@ -6,10 +6,10 @@ type FileIndex = number;
 interface Config {
   // Server + Client
   main: Id;
-  
+
   // Server
   separateSSRGraph?: true;
-  
+
   // Client
   /** Dev Server's `configuration_hash_key` */
   version: string;

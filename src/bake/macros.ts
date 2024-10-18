@@ -12,5 +12,5 @@ export async function css(file: string, is_development: boolean): string {
   // if (!success) throw new Error(stderr.toString("utf-8"));
   // return stdout.toString("utf-8");
 
-  return readFileSync(resolve(import.meta.dir, file)).toString('utf-8');
+  return readFileSync(resolve(import.meta.dir, file)).toString("utf-8");
 }

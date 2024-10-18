@@ -926,6 +926,37 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         }
     }
 
+    const css_chunks = bundle_result.cssChunks();
+    if ((dev.client_graph.current_chunk_len > 0 or
+        css_chunks.len > 0) and
+        dev.app.num_subscribers(HmrSocket.global_topic) > 0)
+    {
+        var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
+        var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
+            unreachable; // enough space
+        defer payload.deinit();
+        payload.appendAssumeCapacity(MessageId.hot_update.char());
+        const w = payload.writer();
+
+        const css_values = dev.css_files.values();
+        try w.writeInt(u32, @intCast(css_chunks.len), .little);
+        const sources = bv2.graph.input_files.items(.source);
+        for (css_chunks) |chunk| {
+            const abs_path = sources[chunk.entry_point.source_index].path.text;
+
+            try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&bun.hash(abs_path)), .lower));
+
+            const css_data = css_values[chunk.entry_point.entry_point_id];
+            try w.writeInt(u32, @intCast(css_data.len), .little);
+            try w.writeAll(css_data);
+        }
+
+        if (dev.client_graph.current_chunk_len > 0)
+            try dev.client_graph.takeBundleToList(.hmr_chunk, &payload);
+
+        _ = dev.app.publish(HmrSocket.global_topic, payload.items, .binary, true);
+    }
+
     if (dev.incremental_result.failures_added.items.len > 0) {
         dev.bundles_since_last_error = 0;
         return error.BuildFailed;
@@ -1207,7 +1238,9 @@ pub fn finalizeBundle(
 
         // Create an asset entry for this file.
         const abs_path = ctx.sources[index.get()].path.text;
-        try dev.insertOrUpdateCssAsset(abs_path, code.buffer);
+        // Later code needs to retrieve the CSS content
+        // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
+        chunk.entry_point.entry_point_id = try dev.insertOrUpdateCssAsset(abs_path, code.buffer);
 
         try dev.client_graph.receiveChunk(&ctx, index, "", .css, false);
 
@@ -1250,13 +1283,14 @@ pub fn finalizeBundle(
     try dev.indexFailures();
 }
 
-fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !void {
+fn insertOrUpdateCssAsset(dev: *DevServer, abs_path: []const u8, code: []const u8) !u31 {
     const path_hash = bun.hash(abs_path);
     const gop = try dev.css_files.getOrPut(dev.allocator, path_hash);
     if (gop.found_existing) {
         dev.allocator.free(gop.value_ptr.*);
     }
     gop.value_ptr.* = code;
+    return @intCast(gop.index);
 }
 
 pub fn handleParseTaskFailure(
@@ -2298,6 +2332,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         pub fn takeBundle(g: *@This(), kind: ChunkKind) ![]const u8 {
+            var chunk = std.ArrayList(u8).init(g.owner().allocator);
+            try g.takeBundleToList(kind, &chunk);
+            bun.assert(chunk.items.len == chunk.capacity);
+            return chunk.items;
+        }
+
+        pub fn takeBundleToList(g: *@This(), kind: ChunkKind, list: *std.ArrayList(u8)) !void {
             g.owner().graph_safety_lock.assertLocked();
             // initial bundle needs at least the entry point
             // hot updates shouldnt be emitted if there are no chunks
@@ -2365,35 +2406,33 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             const files = g.bundled_files.values();
 
-            // This function performs one allocation, right here
-            var chunk = try ArrayListUnmanaged(u8).initCapacity(
-                g.owner().allocator,
-                g.current_chunk_len + runtime.len + end.len,
-            );
+            const start = list.items.len;
+            if (start == 0)
+                try list.ensureTotalCapacityPrecise(g.current_chunk_len + runtime.len + end.len)
+            else
+                try list.ensureUnusedCapacity(g.current_chunk_len + runtime.len + end.len);
 
-            chunk.appendSliceAssumeCapacity(runtime);
+            list.appendSliceAssumeCapacity(runtime);
             for (g.current_chunk_parts.items) |entry| {
-                chunk.appendSliceAssumeCapacity(switch (side) {
+                list.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
                     .client => files[entry.get()].code(),
                     // entry is the '[]const u8' itself
                     .server => entry,
                 });
             }
-            chunk.appendSliceAssumeCapacity(end);
+            list.appendSliceAssumeCapacity(end);
 
             if (g.owner().dump_dir) |dump_dir| {
                 const rel_path_escaped = "latest_chunk.js";
                 dumpBundle(dump_dir, switch (side) {
                     .client => .client,
                     .server => .server,
-                }, rel_path_escaped, chunk.items, false) catch |err| {
+                }, rel_path_escaped, list.items[start..], false) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.warn("Could not dump bundle: {}", .{err});
                 };
             }
-
-            return chunk.items;
         }
 
         fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) void {
@@ -2489,6 +2528,9 @@ const IncrementalResult = struct {
     /// When tracing a file's dependencies via `traceDependencies`, this is
     /// populated with the hit routes. Tracing is used for many purposes.
     routes_affected: ArrayListUnmanaged(Route.Index),
+    // /// When tracing a file's imports via `traceImports` this is populated
+    // /// with hit css files.
+    // css_files: ArrayListUnmanaged(IncrementalGraph(.client).FileIndex),
 
     // Following three fields are populated during `receiveChunk`
 
@@ -3139,25 +3181,84 @@ pub fn onWebSocketUpgrade(
     );
 }
 
+/// Every message is to use `.binary`/`ArrayBuffer` transport mode. The first byte
+/// indicates a Message ID; see comments on each type for how to interpret the rest.
+///
+/// This format is only intended for communication for the browser build of
+/// `hmr-runtime.ts` <-> `DevServer.zig`. Server-side HMR is implemented using a
+/// different interface. This document is aimed for contributors to these two
+/// components; Any other use-case is unsupported.
+///
+/// All integers are sent in little-endian
 pub const MessageId = enum(u8) {
-    /// Version packet
+    /// Version payload. Sent on connection startup. The client should issue a
+    /// hard-reload when it mismatches with its `config.version`.
     version = 'V',
-    /// When visualization mode is enabled, this packet contains
-    /// the entire serialized IncrementalGraph state.
-    visualizer = 'v',
     /// Sent on a successful bundle, containing client code and changed CSS files.
-    hot_update = '(',
-    /// Sent on a successful bundle, containing a list of
-    /// routes that are updated.
+    ///
+    /// - u32: Number of CSS updates. For Each:
+    ///   - [16]u8 ASCII: CSS identifier (hash of source path)
+    ///   - u32: Length of CSS code
+    ///   - [n]u8 UTF-8: CSS payload
+    /// - [n]u8 UTF-8: JS Payload. No length, rest of buffer is text.
+    ///
+    /// The JS payload will be code to hand to `eval`
+    // TODO: the above structure does not consider CSS attachments/detachments
+    hot_update = 'u',
+    /// Sent on a successful bundle, containing a list of routes that have
+    /// server changes. This is not sent when only client code changes.
+    ///
+    /// - `u32`: Number of updated routes.
+    /// - For each route:
+    ///   - `u32`: Route ID
+    ///   - `u32`: Length of route pattern
+    ///   - `[n]u8` UTF-8: Route pattern
+    ///
+    /// HMR Runtime contains code that performs route matching at runtime
+    /// against `location.pathname`. The server is unaware of its routing
+    /// state.
     route_update = 'R',
     /// Sent when the list of errors changes.
+    ///
+    /// - `u32`: Removed errors. For Each:
+    ///   - `u32`: Error owner
+    /// - Remainder are added errors. For Each:
+    ///   - `SerializedFailure`: Error Data
     errors = 'E',
-    /// Sent when all errors are cleared. Semi-redundant
+    /// Sent when all errors are cleared.
+    // TODO: Remove this message ID
     errors_cleared = 'c',
+    /// Payload for `incremental_visualizer.html`. This can be accessed via
+    /// `/_bun/incremental_visualizer`. This contains both graphs.
+    ///
+    /// - `u32`: Number of files in `client_graph`. For Each:
+    ///   - `u32`: Length of name. If zero then no other fields are provided.
+    ///   - `[n]u8`: File path in UTF-8 encoded text
+    ///   - `u8`: If file is stale, set 1
+    ///   - `u8`: If file is in server graph, set 1
+    ///   - `u8`: If file is in ssr graph, set 1
+    ///   - `u8`: If file is a server-side route root, set 1
+    ///   - `u8`: If file is a server-side component boundary file, set 1
+    /// - `u32`: Number of files in the server graph. For Each:
+    ///   - Repeat the same parser for the client graph
+    /// - `u32`: Number of client edges. For Each:
+    ///   - `u32`: File index of the dependency file
+    ///   - `u32`: File index of the imported file
+    /// - `u32`: Number of server edges. For Each:
+    ///   - `u32`: File index of the dependency file
+    ///   - `u32`: File index of the imported file
+    visualizer = 'v',
 
     pub fn char(id: MessageId) u8 {
         return @intFromEnum(id);
     }
+};
+
+pub const IncomingMessageId = enum(u8) {
+    /// Subscribe to `.visualizer` events. No payload.
+    visualizer = 'v',
+    /// Invalid data
+    _,
 };
 
 const HmrSocket = struct {
@@ -3175,11 +3276,23 @@ const HmrSocket = struct {
     pub fn onMessage(dw: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
         _ = opcode;
 
-        if (msg.len == 1 and msg[0] == MessageId.visualizer.char() and !dw.emit_visualizer_events) {
-            dw.emit_visualizer_events = true;
-            dw.dev.emit_visualizer_events += 1;
-            _ = ws.subscribe(visualizer_topic);
-            dw.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
+        if (msg.len == 0) {
+            ws.close();
+            return;
+        }
+
+        switch (@as(IncomingMessageId, @enumFromInt(msg[0]))) {
+            .visualizer => {
+                if (!dw.emit_visualizer_events) {
+                    dw.emit_visualizer_events = true;
+                    dw.dev.emit_visualizer_events += 1;
+                    _ = ws.subscribe(visualizer_topic);
+                    dw.dev.emitVisualizerMessageIfNeeded() catch bun.outOfMemory();
+                }
+            },
+            else => {
+                ws.close();
+            },
         }
     }
 
@@ -3323,13 +3436,6 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
-    if (dev.client_graph.current_chunk_len > 0) {
-        const client = try dev.client_graph.takeBundle(.hmr_chunk);
-        defer dev.allocator.free(client);
-        assert(client[0] == '(');
-        _ = dev.app.publish(HmrSocket.global_topic, client, .binary, true);
-    }
-
     // This list of routes affected excludes client code. This means changing
     // a client component wont count as a route to trigger a reload on.
     if (dev.incremental_result.routes_affected.items.len > 0) {
@@ -3337,14 +3443,14 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
         var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
             unreachable; // enough space
         defer payload.deinit();
-        payload.appendAssumeCapacity('R');
+        payload.appendAssumeCapacity(MessageId.route_update.char());
         const w = payload.writer();
         try w.writeInt(u32, @intCast(dev.incremental_result.routes_affected.items.len), .little);
 
         for (dev.incremental_result.routes_affected.items) |route| {
             try w.writeInt(u32, route.get(), .little);
             const pattern = dev.routes[route.get()].pattern;
-            try w.writeInt(u16, @intCast(pattern.len), .little);
+            try w.writeInt(u32, @intCast(pattern.len), .little);
             try w.writeAll(pattern);
         }
 

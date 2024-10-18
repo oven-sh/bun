@@ -7,6 +7,7 @@ export default [
     finalize: true,
     construct: true,
     estimatedSize: true,
+    hasPendingActivity: true,
     klass: {},
     proto: {
       request: {

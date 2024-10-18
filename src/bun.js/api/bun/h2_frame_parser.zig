@@ -1599,7 +1599,6 @@ pub const H2FrameParser = struct {
             .tls_writeonly, .tls => |socket| this._genericWrite(*TLSSocket, socket, bytes),
             .tcp_writeonly, .tcp => |socket| this._genericWrite(*TCPSocket, socket, bytes),
             else => {
-
                 if (this.has_nonnative_backpressure) {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     _ = this.writeBuffer.write(this.allocator, bytes) catch bun.outOfMemory();
@@ -3175,7 +3174,6 @@ pub const H2FrameParser = struct {
     }
 
     pub fn getNextStream(this: *H2FrameParser) JSValue {
-
         const id = this.getNextStreamID();
         _ = this.handleReceivedStreamID(id) orelse {
             return JSC.JSValue.jsNumber(-1);
@@ -3232,7 +3230,6 @@ pub const H2FrameParser = struct {
     }
 
     pub fn getAllStreams(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-
         const array = JSC.JSValue.createEmptyArray(globalObject, this.streams.count());
         var count: u32 = 0;
         var it = this.streams.valueIterator();

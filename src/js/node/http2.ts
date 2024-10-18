@@ -2388,9 +2388,11 @@ class ServerHttp2Session extends Http2Session {
       this.#parser = null;
     }
     this.close();
+    this[bunHTTP2Socket] = null;
   }
 
   #onError(error: Error) {
+    this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
 

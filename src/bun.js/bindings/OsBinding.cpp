@@ -35,8 +35,8 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
 #endif
 
 #if OS(WINDOWS)
+extern "C" uint64_t uv_get_available_memory(void);
 
-uint64_t uv_get_available_memory(void);
 extern "C" uint64_t Bun__Os__getFreeMemory(void)
 {
     return uv_get_available_memory();

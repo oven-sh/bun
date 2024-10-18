@@ -51,6 +51,7 @@
 #include "JSRsaKeyGenParams.h"
 #include "JSRsaOaepParams.h"
 #include "JSRsaPssParams.h"
+#include "CryptoAlgorithmX25519Params"
 #include <JavaScriptCore/JSONObject.h>
 
 namespace WebCore {
@@ -357,6 +358,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
             return Exception { NotSupportedError };
+        case CryptoAlgorithmIdentifier::X25519:
+            result = makeUnique<CryptoAlgorithmX25519Params>(params);
+            break;
         case CryptoAlgorithmIdentifier::None:
             return Exception { NotSupportedError };
         }

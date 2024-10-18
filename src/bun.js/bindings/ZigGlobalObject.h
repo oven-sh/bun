@@ -479,6 +479,12 @@ public:
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 
+    // Used by napi_wrap to associate native objects with JS values that are not NapiPrototype or NapiClass
+    // Should only use JSCell* keys and NapiExternal values that contain NapiRefs
+    LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiWraps;
+
+    JSC::JSWeakMap* napiWraps() const { return m_napiWraps.getInitializedOnMainThread(this); }
+
     Bun::JSMockModule mockModule;
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;

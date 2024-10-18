@@ -1916,13 +1916,20 @@ pub const Example = struct {
     ) !MutableString {
         const owner_i = std.mem.indexOfScalar(u8, name, '/').?;
         const owner = name[0..owner_i];
-        var repository = name[owner_i + 1 ..];
+        var repository_and_branch = name[owner_i + 1 ..];
+        var repository = repository_and_branch;
+        var branch: ?string = null;
 
-        if (std.mem.indexOfScalar(u8, repository, '/')) |i| {
-            repository = repository[0..i];
+        if (std.mem.indexOfScalar(u8, repository_and_branch, '@')) |i| {
+            repository = repository_and_branch[0..i];
+            branch = repository_and_branch[i + 1 ..];
         }
 
-        progress.name = try ProgressBuf.pretty("<d>[github] <b>GET<r> <blue>{s}/{s}<r>", .{ owner, repository });
+        if (branch) |b| {
+            progress.name = try ProgressBuf.pretty("<d>[github] <b>GET<r> <blue>{s}/{s}@{s}<r>", .{ owner, repository, b });
+        } else {
+            progress.name = try ProgressBuf.pretty("<d>[github] <b>GET<r> <blue>{s}/{s}<r>", .{ owner, repository });
+        }
         refresher.refresh();
 
         var github_api_domain: string = "api.github.com";
@@ -1932,12 +1939,18 @@ pub const Example = struct {
             }
         }
 
-        const api_url = URL.parse(
+        const api_url = if (branch) |b| URL.parse(
+            try std.fmt.bufPrint(
+                &github_repository_url_buf,
+                "https://{s}/repos/{s}/{s}/tarball/{s}",
+                .{ github_api_domain, owner, repository, b },
+            )
+        ) else URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
                 "https://{s}/repos/{s}/{s}/tarball",
                 .{ github_api_domain, owner, repository },
-            ),
+            )
         );
 
         var header_entries: Headers.Entries = .{};

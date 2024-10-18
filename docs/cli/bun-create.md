@@ -37,6 +37,13 @@ $ bun create <user>/<repo> mydir
 $ bun create github.com/<user>/<repo> mydir
 ```
 
+You can also specify a branch or commit. If no branch or commit is specified, the default branch will be used.
+
+```bash
+$ bun create <user>/<repo>@<branch>
+$ bun create <user>/<repo>@<commit>
+```
+
 Bun will perform the following steps:
 
 - Download the template

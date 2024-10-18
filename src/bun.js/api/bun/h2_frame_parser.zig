@@ -736,7 +736,6 @@ pub const H2FrameParser = struct {
     ref_count: u8 = 1,
     has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
-
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
     pub const StreamResumableIterator = struct {

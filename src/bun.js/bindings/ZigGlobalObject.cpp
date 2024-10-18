@@ -2990,6 +2990,10 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
     });
 
+    m_napiWraps.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
+        init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+    });
+
     m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
@@ -3720,6 +3724,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
+    thisObject->m_napiWraps.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockImplementationStructure.visit(visitor);

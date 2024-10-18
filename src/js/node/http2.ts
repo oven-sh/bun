@@ -2374,7 +2374,7 @@ class ServerHttp2Session extends Http2Session {
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
 
       if (stream.listenerCount("wantTrailers") === 0) {
-        h2NoTrailers(self[bunHTTP2Parser]);
+        h2NoTrailers(self[bunHTTP2Parser], stream.id);
       } else {
         stream.emit("wantTrailers");
       }

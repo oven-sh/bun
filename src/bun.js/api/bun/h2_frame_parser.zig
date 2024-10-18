@@ -2646,8 +2646,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-        const args_list = callframe.arguments(4);
-        if (args_list.len < 4) {
+        const args_list = callframe.arguments(3);
+        if (args_list.len < 3) {
             globalObject.throw("Expected stream and options arguments", .{});
             return .zero;
         }

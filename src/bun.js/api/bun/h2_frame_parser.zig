@@ -734,6 +734,8 @@ pub const H2FrameParser = struct {
     autouncork_registered: bool = false,
     has_nonnative_backpressure: bool = false,
     ref_count: u8 = 1,
+    has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
@@ -1482,6 +1484,11 @@ pub const H2FrameParser = struct {
 
     pub fn estimatedSize(this: *H2FrameParser) callconv(.C) usize {
         return @sizeOf(H2FrameParser) + this.writeBuffer.len + this.queuedDataSize + (this.streams.capacity() * @sizeOf(Stream));
+    }
+    pub fn hasPendingActivity(this: *H2FrameParser) callconv(.C) bool {
+        @fence(.acquire);
+
+        return this.has_pending_activity.load(.acquire);
     }
 
     pub fn _genericWrite(this: *H2FrameParser, comptime T: type, socket: T, bytes: []const u8) bool {
@@ -3692,6 +3699,7 @@ pub const H2FrameParser = struct {
     pub fn onNativeClose(this: *H2FrameParser) void {
         log("onNativeClose", .{});
         this.detachNativeSocket();
+        this.has_pending_activity.store(false, .release);
     }
 
     pub fn setNativeSocketFromJS(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
@@ -3903,6 +3911,8 @@ pub const H2FrameParser = struct {
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
     /// this function can be called multiple times, it will erase stream info
     pub fn detach(this: *H2FrameParser, comptime finalizing: bool) void {
+        defer this.has_pending_activity.store(false, .release);
+
         this.flushCorked();
         this.detachNativeSocket();
         this.jsContext.deinit();

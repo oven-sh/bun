@@ -128,6 +128,7 @@ function cleanupSession(session) {
   const socket = session[bunHTTP2Socket];
   if (socket) {
     socket[kBoundSession] = null;
+    session[bunHTTP2Socket] = null;
   }
   const parser = session[bunHTTP2Parser];
   if (parser) {
@@ -2223,7 +2224,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   return obj;
 }
 
-function onSessionRead(data: Buffer) {
+function onSocketRead(data: Buffer) {
   const self = this[kBoundSession] as Http2Session;
   if (!self) return;
 
@@ -2259,7 +2260,7 @@ function onClientSessionConnect() {
   self[bunHTTP2Parser].flush();
 }
 
-function onSessionClose() {
+function onSocketClose() {
   const self = this[kBoundSession] as Http2Session;
   if (!self) return;
 
@@ -2267,7 +2268,7 @@ function onSessionClose() {
   self.close();
   cleanupSession(self);
 }
-function onSessionError(error: Error) {
+function onSocketError(error: Error) {
   const self = this[kBoundSession] as Http2Session;
   if (!self) return;
 
@@ -2275,7 +2276,7 @@ function onSessionError(error: Error) {
   cleanupSession(self);
 }
 
-function onSessionTimeout() {
+function onSocketTimeout() {
   const self = this[kBoundSession] as Http2Session;
   if (!self) return;
 
@@ -2291,7 +2292,7 @@ function onSessionTimeout() {
   self.destroy();
 }
 
-function onSessionDrain() {
+function onSocketDrain() {
   const parser = self[bunHTTP2Parser];
   if (parser) {
     parser.flush();
@@ -2501,11 +2502,11 @@ class ServerHttp2Session extends Http2Session {
       this,
       nativeSocket,
     );
-    socket.on("close", onSessionClose);
-    socket.on("error", onSessionError);
-    socket.on("timeout", onSessionTimeout);
-    socket.on("data", onSessionRead);
-    socket.on("drain", onSessionDrain);
+    socket.on("close", onSocketClose);
+    socket.on("error", onSocketError);
+    socket.on("timeout", onSocketTimeout);
+    socket.on("data", onSocketRead);
+    socket.on("drain", onSocketDrain);
 
     process.nextTick(emitConnectNT, this, socket);
   }
@@ -2971,7 +2972,7 @@ class ClientHttp2Session extends Http2Session {
     function onConnect() {
       const self = this[kBoundSession] as Http2Session;
       if (!self) return;
-      onClientSessionConnect(self);
+      onClientSessionConnect.$call(this);
       listener?.$apply(self, arguments);
     }
 
@@ -2985,7 +2986,7 @@ class ClientHttp2Session extends Http2Session {
       } else if (socket.connecting === true) {
         socket.on("connect", onConnect);
       } else {
-        process.nextTick(onClientSessionConnect.bind(socket));
+        process.nextTick(onConnect.bind(socket));
       }
     } else {
       socket = connectWithProtocol(
@@ -3002,10 +3003,11 @@ class ClientHttp2Session extends Http2Session {
               port,
               ALPNProtocols: ["h2"],
             },
-        onConnect,
+        onConnect.bind(socket),
       );
       this[bunHTTP2Socket] = socket;
     }
+    socket[kBoundSession] = this;
 
     this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket[bunSocketInternal];
@@ -3017,11 +3019,11 @@ class ClientHttp2Session extends Http2Session {
       this,
       nativeSocket,
     );
-    socket.on("data", onSessionRead);
-    socket.on("drain", onSessionDrain);
-    socket.on("close", onSessionClose);
-    socket.on("error", onSessionError);
-    socket.on("timeout", onSessionTimeout);
+    socket.on("data", onSocketRead);
+    socket.on("drain", onSocketDrain);
+    socket.on("close", onSocketClose);
+    socket.on("error", onSocketError);
+    socket.on("timeout", onSocketTimeout);
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -3210,6 +3212,7 @@ function connectionListener(socket: Socket) {
   }
 
   const session = new ServerHttp2Session(socket, options, this);
+  socket[kBoundSession] = session;
   session.on("error", sessionOnError);
   const timeout = this.timeout;
   if (timeout) session.setTimeout(timeout, sessionOnTimeout);

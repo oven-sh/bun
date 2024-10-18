@@ -1568,7 +1568,6 @@ function markStreamClosed(stream: Http2Stream) {
 
   if ((status & StreamState.Closed) === 0) {
     stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
-
     markWritableDone(stream);
   }
 }
@@ -2325,7 +2324,6 @@ class ServerHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
-
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.StreamResponded) !== 0) {
         stream.emit("trailers", headers, flags, rawheaders);
@@ -2411,6 +2409,7 @@ class ServerHttp2Session extends Http2Session {
     if (parser) {
       h2EmitAbortToAllStreams(parser);
       h2Detach(parser);
+      this[bunHTTP2Socket]?.removeAllListeners();
       this[bunHTTP2Parser] = null;
     }
     this.close();
@@ -2625,6 +2624,7 @@ class ServerHttp2Session extends Http2Session {
     if (parser) {
       h2EmitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       h2Detach(parser);
+      this[bunHTTP2Socket]?.removeAllListeners();
       this[bunHTTP2Parser] = null;
     }
     this[bunHTTP2Socket] = null;
@@ -2857,12 +2857,14 @@ class ClientHttp2Session extends Http2Session {
     if (parser) {
       h2EmitAbortToAllStreams(parser);
       h2Detach(parser);
+      this[bunHTTP2Socket]?.removeAllListeners();
       this[bunHTTP2Parser] = null;
     }
     this.close();
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
+    this[bunHTTP2Socket]?.removeAllListeners();
     this[bunHTTP2Socket] = null;
     this.destroy(error);
   }
@@ -3085,6 +3087,7 @@ class ClientHttp2Session extends Http2Session {
     if (parser) {
       h2EmitErrorToAllStreams(parser, code || constants.NGHTTP2_NO_ERROR);
       h2Detach(parser);
+      this[bunHTTP2Socket]?.removeAllListeners();
     }
     this[bunHTTP2Parser] = null;
     this[bunHTTP2Socket] = null;

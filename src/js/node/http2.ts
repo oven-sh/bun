@@ -2813,7 +2813,7 @@ class ClientHttp2Session extends Http2Session {
   };
 
   #onRead(data: Buffer) {
-    h2Read(data);
+    h2Read(this[bunHTTP2Parser], data);
   }
 
   get originSet() {
@@ -3010,7 +3010,7 @@ class ClientHttp2Session extends Http2Session {
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
     function onConnect() {
-      this.#onConnect(arguments);
+      this.#onConnect();
       listener?.$apply(this, arguments);
     }
 

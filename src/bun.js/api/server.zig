@@ -7155,12 +7155,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             this.deinit();
                             return;
                         };
-
-                        // Check for SSL errors, just in case.
                         if (throwSSLErrorIfNecessary(globalThis)) {
                             this.deinit();
                             return;
                         }
+
                         app.domain(server_name);
                         if (throwSSLErrorIfNecessary(globalThis)) {
                             this.deinit();
@@ -7177,7 +7176,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     for (sni.slice()) |*sni_ssl_config| {
                         const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name);
                         if (sni_servername.len > 0) {
-                            app.addServerNameWithOptions(sni_ssl_config.server_name, sni_ssl_config.asUSockets()) catch {
+                            app.addServerNameWithOptions(sni_servername, sni_ssl_config.asUSockets()) catch {
                                 if (!globalThis.hasException()) {
                                     if (!throwSSLErrorIfNecessary(globalThis)) {
                                         globalThis.throw("Failed to add serverName: {s}", .{sni_servername});
@@ -7187,10 +7186,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                 this.deinit();
                                 return;
                             };
-                            if (throwSSLErrorIfNecessary(globalThis)) {
-                                this.deinit();
-                                return;
-                            }
+
                             app.domain(sni_servername);
 
                             if (throwSSLErrorIfNecessary(globalThis)) {

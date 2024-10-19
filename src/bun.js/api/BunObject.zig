@@ -1221,9 +1221,10 @@ pub const Crypto = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn init(algorithm: EVP.Algorithm, key: []const u8) ?*HMAC {
+            const md = algorithm.md() orelse return null;
             var ctx: BoringSSL.HMAC_CTX = undefined;
             BoringSSL.HMAC_CTX_init(&ctx);
-            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), algorithm.md(), null) != 1) {
+            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), md, null) != 1) {
                 BoringSSL.HMAC_CTX_cleanup(&ctx);
                 return null;
             }
@@ -2645,7 +2646,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
+                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                             return JSC.JSValue.zero;
                         };
 
@@ -2714,7 +2715,7 @@ pub const Crypto = struct {
                                     BoringSSL.ERR_clear_error();
                                     globalThis.throwValue(instance);
                                 } else {
-                                    globalThis.throwTODO("HMAC is not supported for this algorithm");
+                                    globalThis.throwTODO("HMAC is not supported for this algorithm yet");
                                 }
                             }
                             return null;
@@ -2833,7 +2834,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str.*});
+                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                             return JSC.JSValue.zero;
                         };
 
@@ -2964,8 +2965,16 @@ pub const Crypto = struct {
                 switch (string_or_buffer) {
                     inline else => |*str| {
                         defer str.deinit();
-                        globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
-                        return JSC.JSValue.zero;
+                        const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
+                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                            return JSC.JSValue.zero;
+                        };
+
+                        if (encoding == .buffer) {
+                            return hashByNameInnerToBytes(globalThis, Algorithm, input, null);
+                        }
+
+                        return hashByNameInnerToString(globalThis, Algorithm, input, encoding);
                     },
                     .buffer => |buffer| {
                         return hashByNameInnerToBytes(globalThis, Algorithm, input, buffer.buffer);
@@ -2973,6 +2982,23 @@ pub const Crypto = struct {
                 }
             }
             return hashByNameInnerToBytes(globalThis, Algorithm, input, null);
+        }
+
+        fn hashByNameInnerToString(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) JSC.JSValue {
+            defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
+
+            var h = Algorithm.init(.{});
+            h.update(input.slice());
+
+            var out: [digestLength(Algorithm)]u8 = undefined;
+            h.final(&out);
+
+            return encoding.encodeWithSize(globalThis, digestLength(Algorithm), &out);
         }
 
         fn hashByNameInnerToBytes(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) JSC.JSValue {
@@ -3156,7 +3182,7 @@ pub const Crypto = struct {
                         inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
+                                globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                                 return JSC.JSValue.zero;
                             };
 
@@ -3220,7 +3246,7 @@ pub const Crypto = struct {
                         inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: \"{s}\"", .{str.slice()});
+                                globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                                 return JSC.JSValue.zero;
                             };
 

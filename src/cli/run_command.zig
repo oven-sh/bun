@@ -574,27 +574,33 @@ pub const RunCommand = struct {
                     },
 
                     .signaled => |signal| {
-                        if (!silent) {
+                        if (!silent and signal != .SIGINT and signal != .SIGTERM) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
                                 basenameOrBun(executable),
                                 signal.name() orelse "unknown",
                             });
                         }
 
-                        Global.raiseIgnoringPanicHandler(signal);
+                        Output.flush();
+                        Output.Source.Stdio.restore();
+                        bun.crash_handler.resetSegfaultHandler();
+                        Global.exit(signal.toExitCode() orelse 1);
                     },
 
                     .exited => |exit_code| {
                         // A process can be both signaled and exited
                         if (exit_code.signal.valid()) {
-                            if (!silent) {
+                            if (!silent and exit_code.signal != .SIGINT and exit_code.signal != .SIGTERM) {
                                 Output.prettyErrorln("<r><red>error<r>: \"<b>{s}<r>\" exited with signal <b>{s}<r>", .{
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });
                             }
 
-                            Global.raiseIgnoringPanicHandler(exit_code.signal);
+                            Output.flush();
+                            Output.Source.Stdio.restore();
+                            bun.crash_handler.resetSegfaultHandler();
+                            Global.exit(exit_code.signal.toExitCode() orelse 1);
                         }
 
                         const code = exit_code.code;

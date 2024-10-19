@@ -4050,3 +4050,18 @@ pub fn Once(comptime f: anytype) type {
         }
     };
 }
+
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function takes the value out of the optional, replacing it with null, and returns the value.
+pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
+    if (val.*) |v| {
+        val.* = null;
+        return v;
+    }
+    return null;
+}
+
+pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
+    return 0 -% val;
+}

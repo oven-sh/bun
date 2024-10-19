@@ -444,7 +444,7 @@ generateCode({
     ty: "SmallList(css_values.position.HorizontalPosition, 1)",
   },
   "background-position-y": {
-    ty: "SmallList(css_values.position.HorizontalPosition, 1)",
+    ty: "SmallList(css_values.position.VerticalPosition, 1)",
   },
   "background-position": {
     ty: "SmallList(background.BackgroundPosition, 1)",
@@ -454,13 +454,13 @@ generateCode({
     ty: "SmallList(background.BackgroundSize, 1)",
   },
   "background-repeat": {
-    ty: "SmallList(background.BackgroundSize, 1)",
+    ty: "SmallList(background.BackgroundRepeat, 1)",
   },
   "background-attachment": {
     ty: "SmallList(background.BackgroundAttachment, 1)",
   },
   "background-clip": {
-    ty: "SmallList(background.BackgroundAttachment, 1)",
+    ty: "SmallList(background.BackgroundClip, 1)",
     valid_prefixes: ["webkit", "moz"],
   },
   "background-origin": {

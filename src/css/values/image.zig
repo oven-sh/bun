@@ -28,6 +28,28 @@ pub const Image = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn getNecessaryPrefixes(this: *const @This(), targets: css.targets.Targets) css.VendorPrefix {
+        return switch (this.*) {
+            .gradient => |grad| grad.getNecessaryPrefixes(targets),
+            .image_set => |*image_set| image_set.getNecessaryPrefixes(targets),
+            else => css.VendorPrefix{ .none = true },
+        };
+    }
+
+    pub fn hasVendorPrefix(this: *const @This()) bool {
+        const prefix = this.getVendorPrefix();
+        return !prefix.isEmpty() and !prefix.eq(VendorPrefix{ .none = true });
+    }
+
+    /// Returns the vendor prefix used in the image value.
+    pub fn getVendorPrefix(this: *const @This()) VendorPrefix {
+        return switch (this.*) {
+            .gradient => |a| a.getVendorPrefix(),
+            .image_set => |a| a.getVendorPrefix(),
+            else => VendorPrefix.empty(),
+        };
+    }
+
     pub fn default() Image {
         return .none;
     }
@@ -55,6 +77,23 @@ pub const Image = union(enum) {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    /// Returns a legacy `-webkit-gradient()` value for the image.
+    ///
+    /// May return an error in case the gradient cannot be converted.
+    pub fn getLegacyWebkit(this: *const @This(), allocator: Allocator) ?Image {
+        return switch (this.*) {
+            .gradient => |gradient| Image{ .gradient = bun.create(allocator, Gradient, gradient.getLegacyWebkit(allocator) orelse return null) },
+            else => this.deepClone(allocator),
+        };
+    }
+
+    pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
+        return switch (this.*) {
+            .gradient => |grad| grad.getNecessaryPrefixes(targets),
+            else => css.ColorFallbackKind.empty(),
+        };
     }
 
     // pub fn parse(input: *css.Parser) Result(Image) {
@@ -133,6 +172,15 @@ pub const ImageSet = struct {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn getVendorPrefix(this: *const @This()) VendorPrefix {
+        return this.vendor_prefix;
+    }
+
+    /// Returns the vendor prefixes needed for the given browser targets.
+    pub fn getNecessaryPrefixes(this: *const @This(), targets: css.targets.Targets) css.VendorPrefix {
+        return targets.prefixes(this.vendor_prefix, css.prefixes.Feature.image_set);
     }
 };
 

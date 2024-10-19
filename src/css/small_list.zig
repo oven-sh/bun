@@ -94,6 +94,12 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             return &this.as_ptr()[idx];
         }
 
+        pub inline fn last(this: *const @This()) ?*const T {
+            const sl = this.slice();
+            if (sl.len == 0) return null;
+            return &sl[sl.len - 1];
+        }
+
         pub inline fn toOwnedSlice(this: *const @This(), allocator: Allocator) []T {
             if (this.spilled()) return this.data.heap.ptr[0..this.data.heap.len];
             return allocator.dupe(T, this.data.inlined[0..this.capacity]) catch bun.outOfMemory();
@@ -111,6 +117,127 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         pub inline fn slice_mut(this: *@This()) []T {
             if (this.capacity > N) return this.data.heap.ptr[0..this.data.heap.len];
             return this.data.inlined[0..this.capacity];
+        }
+
+        fn getFallbacksReturnType(comptime Type: type, comptime InlineSize: comptime_int) type {
+            // Implements ImageFallback interface
+            if (@hasDecl(Type, "getImage") and InlineSize == 1) {
+                return bun.BabyList(SmallList(Type, 1));
+            }
+            @compileError("Unhandled.");
+        }
+
+        pub fn getFallbacks(this: *@This(), allocator: Allocator, targets: css.targets.Targets) getFallbacksReturnType(T, N) {
+            // Implements ImageFallback interface
+            if (@hasDecl(T, "getImage") and N == 1) {
+                const ColorFallbackKind = css.css_values.color.ColorFallbackKind;
+                // Determine what vendor prefixes and color fallbacks are needed.
+                var prefixes = css.VendorPrefix.empty();
+                var fallbacks = ColorFallbackKind.empty();
+                var res: bun.BabyList(@This()) = .{};
+                for (this.slice()) |*item| {
+                    prefixes.insert(item.getImage().getNecessaryPrefixes(targets));
+                    fallbacks.insert(item.getNecessaryFallbacks(targets));
+                }
+
+                // Get RGB fallbacks if needed.
+                const rgb: ?SmallList(T, 1) = if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) brk: {
+                    var shallow_clone = this.shallowClone(allocator);
+                    shallow_clone.map(struct {
+                        pub fn mapFn(item: *T) void {
+                            item.* = item.getFallback(ColorFallbackKind{ .rgb = true });
+                        }
+                    }.mapFn);
+                    break :brk shallow_clone;
+                } else null;
+
+                // Prefixed properties only support RGB.
+                const prefix_images: *const SmallList(T, 1) = if (rgb) |*r| r else this;
+
+                // Legacy -webkit-gradient()
+                if (prefixes.contains(css.VendorPrefix{ .webkit = true }) and targets.browsers != null and css.prefixes.Feature.isWebkitGradient(targets.browsers.?)) {
+                    const images = images: {
+                        var images = SmallList(T, 1){};
+                        for (prefix_images.slice()) |*item| {
+                            if (item.getImage().getLegacyWebkit(allocator)) |img| {
+                                images.append(allocator, item.withImage(allocator, img));
+                            }
+                        }
+                        break :images images;
+                    };
+                    if (!images.isEmpty()) {
+                        res.push(allocator, images) catch bun.outOfMemory();
+                    }
+                }
+
+                const prefix = struct {
+                    pub inline fn helper(comptime prefix: []const u8, pfs: *css.VendorPrefix, pfi: *const SmallList(T, 1), r: *bun.BabyList(@This()), alloc: Allocator) void {
+                        if (pfs.contains(css.VendorPrefix.fromName(prefix))) {
+                            var images = pfi.shallowClone(alloc);
+                            images.map(struct {
+                                pub fn mapfn(item: *T) void {
+                                    const image = item.getImage().getPrefixed(css.VendorPrefix.fromName(prefix));
+                                    const old = item.*;
+                                    item.* = item.with_image(image);
+                                    defer old.deinit(alloc);
+                                }
+                            }.mapfn);
+                            r.push(allocator, images);
+                        }
+                    }
+                }.helper;
+
+                prefix("webkit", &prefixes, &prefix_images, &res, allocator);
+                prefix("moz", &prefixes, &prefix_images, &res, allocator);
+                prefix("o", &prefixes, &prefix_images, &res, allocator);
+
+                if (prefixes.contains(css.VendorPrefix{ .none = true })) {
+                    if (rgb) |r| {
+                        res.push(allocator, r) catch bun.outOfMemory();
+                    }
+
+                    if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
+                        var p3_images = this.shallowClone(allocator);
+                        p3_images.map(struct {
+                            pub fn mapfn(item: *T) void {
+                                item.* = item.getFallback(ColorFallbackKind{ .p3 = true });
+                            }
+                        }.mapfn);
+                    }
+
+                    // Convert to lab if needed (e.g. if oklab is not supported but lab is).
+                    if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
+                        for (this.slice_mut()) |*item| {
+                            const old = item.*;
+                            item.* = item.getFallback(ColorFallbackKind{ .lab = true });
+                            old.deinit(allocator);
+                        }
+                    }
+                } else if (res.popOrNull()) |the_last| {
+                    const old = this.*;
+                    // Prefixed property with no unprefixed version.
+                    // Replace self with the last prefixed version so that it doesn't
+                    // get duplicated when the caller pushes the original value.
+                    this.* = the_last;
+                    old.deinit(allocator);
+                }
+                return;
+            }
+            @compileError("Dunno what to do here.");
+        }
+
+        pub fn map(this: *@This(), comptime func: anytype) void {
+            for (this.slice_mut()) |*item| {
+                func(item);
+            }
+        }
+
+        /// `predicate` must be: `fn(*const T) bool`
+        pub fn any(this: *const @This(), comptime predicate: anytype) bool {
+            for (this.slice()) |*item| {
+                if (predicate(item)) return true;
+            }
+            return false;
         }
 
         pub fn orderedRemove(this: *@This(), idx: u32) T {
@@ -146,6 +273,16 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             } else {
                 this.capacity = 0;
             }
+        }
+
+        pub fn shallowClone(this: *const @This(), allocator: Allocator) @This() {
+            if (!this.spilled()) return this.*;
+            var h = HeapData.initCapacity(allocator, this.capacity);
+            @memcpy(h.ptr[0..this.capacity], this.data.heap.ptr[0..this.capacity]);
+            return .{
+                .capacity = this.capacity,
+                .data = .{ .heap = h },
+            };
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
@@ -207,6 +344,11 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             };
         }
 
+        pub fn ensureTotalCapacity(this: *@This(), allocator: Allocator, new_capacity: u32) void {
+            if (this.capacity >= new_capacity) return;
+            this.tryGrow(allocator, new_capacity);
+        }
+
         pub fn insert(
             this: *@This(),
             allocator: Allocator,
@@ -232,6 +374,13 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             }
             len_ptr.* = length + 1;
             ptr[0] = item;
+        }
+
+        pub fn appendAssumeCapacity(this: *@This(), item: T) void {
+            var ptr, const len_ptr, const capp = this.tripleMut();
+            bun.debugAssert(len_ptr.* < capp);
+            ptr[len_ptr.*] = item;
+            len_ptr.* += 1;
         }
 
         pub fn append(this: *@This(), allocator: Allocator, item: T) void {

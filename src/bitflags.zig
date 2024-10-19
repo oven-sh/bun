@@ -40,7 +40,7 @@ pub fn Bitflags(comptime T: type) type {
         }
 
         pub inline fn remove(this: *T, other: T) void {
-            this.* = bitwiseAnd(this.*, ~other);
+            this.* = @bitCast(asBits(this.*) & ~asBits(other));
         }
 
         pub inline fn maskOut(this: T, other: T) T {
@@ -49,6 +49,35 @@ pub fn Bitflags(comptime T: type) type {
 
         pub fn contains(lhs: T, rhs: T) bool {
             return @as(IntType, @bitCast(lhs)) & @as(IntType, @bitCast(rhs)) != 0;
+        }
+
+        pub inline fn leadingZeroes(this: T) IntType {
+            return @clz(asBits(this));
+        }
+
+        pub inline fn all() T {
+            var ret: T = @bitCast(@as(IntType, 0));
+            inline for (std.meta.fields(T)) |field| {
+                if (comptime !std.mem.eql(u8, field.name, "__unused")) {
+                    @field(ret, field.name) = true;
+                }
+            }
+            return ret;
+        }
+
+        pub inline fn not(this: T) T {
+            return fromBitsTruncate(~asBits(this));
+        }
+
+        pub inline fn difference(lhs: T, rhs: T) T {
+            // 1100     1100        1100
+            // 1010     0101        0100
+            return @bitCast(asBits(lhs) & asBits(not(rhs)));
+        }
+
+        /// Convert from a bits value, unsetting any unknown bits.
+        pub inline fn fromBitsTruncate(bits: IntType) T {
+            return bitwiseAnd(@bitCast(bits), all());
         }
 
         pub inline fn asBits(this: T) IntType {

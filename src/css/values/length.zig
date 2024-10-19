@@ -472,6 +472,13 @@ pub const Length = union(enum) {
         return .{ .value = .{ .px = p } };
     }
 
+    pub fn toPx(this: *const Length) ?CSSNumber {
+        return switch (this.*) {
+            .value => |a| a.toPx(),
+            else => null,
+        };
+    }
+
     pub fn mulF32(this: Length, allocator: Allocator, other: f32) Length {
         return switch (this) {
             .value => Length{ .value = this.value.mulF32(allocator, other) },

@@ -43,6 +43,7 @@ pub const css_values = @import("./values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
 pub const DashedIdentFns = css_values.ident.DashedIdentFns;
 pub const CssColor = css_values.color.CssColor;
+pub const ColorFallbackKind = css_values.color.ColorFallbackKind;
 pub const CSSString = css_values.string.CSSString;
 pub const CSSStringFns = css_values.string.CSSStringFns;
 pub const CSSInteger = css_values.number.CSSInteger;
@@ -162,10 +163,6 @@ pub const VendorPrefix = packed struct(u8) {
     __unused: u3 = 0,
 
     pub usingnamespace Bitflags(@This());
-
-    pub fn all() VendorPrefix {
-        return VendorPrefix{ .webkit = true, .moz = true, .ms = true, .o = true, .none = true };
-    }
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {

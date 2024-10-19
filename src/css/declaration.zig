@@ -14,6 +14,8 @@ const Result = css.Result;
 const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
+const BackgroundHandler = css.css_properties.background.BackgroundHandler;
+
 /// A CSS declaration block.
 ///
 /// Properties are separated into a list of `!important` declararations,
@@ -300,10 +302,13 @@ pub fn parse_declaration(
 }
 
 pub const DeclarationHandler = struct {
+    background: BackgroundHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
 
     pub fn finalize(this: *DeclarationHandler, context: *css.PropertyHandlerContext) void {
+        const allocator = context.allocator;
+        _ = allocator; // autofix
         if (this.direction) |direction| {
             this.direction = null;
             this.decls.append(context.allocator, css.Property{ .direction = direction }) catch bun.outOfMemory();
@@ -314,15 +319,11 @@ pub const DeclarationHandler = struct {
         // }
 
         // TODO:
-        // this.background.finalize(&this.decls, context);
+        this.background.finalize(&this.decls, context);
     }
 
     pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
-        _ = this; // autofix
-        _ = property; // autofix
-        _ = context; // autofix
-        // TODO
-        return false;
+        return this.background.handleProperty(property, &this.decls, context);
     }
 
     pub fn default() DeclarationHandler {

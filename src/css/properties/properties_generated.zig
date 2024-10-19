@@ -248,12 +248,12 @@ pub const Property = union(PropertyIdTag) {
     @"background-color": CssColor,
     @"background-image": SmallList(Image, 1),
     @"background-position-x": SmallList(css_values.position.HorizontalPosition, 1),
-    @"background-position-y": SmallList(css_values.position.HorizontalPosition, 1),
+    @"background-position-y": SmallList(css_values.position.VerticalPosition, 1),
     @"background-position": SmallList(background.BackgroundPosition, 1),
     @"background-size": SmallList(background.BackgroundSize, 1),
-    @"background-repeat": SmallList(background.BackgroundSize, 1),
+    @"background-repeat": SmallList(background.BackgroundRepeat, 1),
     @"background-attachment": SmallList(background.BackgroundAttachment, 1),
-    @"background-clip": struct { SmallList(background.BackgroundAttachment, 1), VendorPrefix },
+    @"background-clip": struct { SmallList(background.BackgroundClip, 1), VendorPrefix },
     @"background-origin": SmallList(background.BackgroundOrigin, 1),
     background: SmallList(background.Background, 1),
     @"box-shadow": struct { SmallList(box_shadow.BoxShadow, 1), VendorPrefix },
@@ -540,20 +540,20 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(SmallList(css_values.position.HorizontalPosition, 1), "eql")) {
-                compile_error = compile_error ++ @typeName(SmallList(css_values.position.HorizontalPosition, 1)) ++ ": does not have a eql() function.\n";
+            if (!@hasDecl(SmallList(css_values.position.VerticalPosition, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(css_values.position.VerticalPosition, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundPosition, 1), "deepClone")) {
@@ -588,36 +588,20 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a deepClone() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a deepClone() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a parse() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a parse() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a toCss() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a toCss() function.\n";
             }
 
-            if (!@hasDecl(SmallList(background.BackgroundSize, 1), "eql")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundSize, 1)) ++ ": does not have a eql() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a deepClone() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "parse")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a parse() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "toCss")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a toCss() function.\n";
-            }
-
-            if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "eql")) {
-                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a eql() function.\n";
+            if (!@hasDecl(SmallList(background.BackgroundRepeat, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundRepeat, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "deepClone")) {
@@ -634,6 +618,22 @@ pub const Property = union(PropertyIdTag) {
 
             if (!@hasDecl(SmallList(background.BackgroundAttachment, 1), "eql")) {
                 compile_error = compile_error ++ @typeName(SmallList(background.BackgroundAttachment, 1)) ++ ": does not have a eql() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(background.BackgroundClip, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(background.BackgroundClip, 1)) ++ ": does not have a eql() function.\n";
             }
 
             if (!@hasDecl(SmallList(background.BackgroundOrigin, 1), "deepClone")) {
@@ -4047,7 +4047,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"background-position-y" => {
-                if (css.generic.parseWithOptions(SmallList(css_values.position.HorizontalPosition, 1), input, options).asValue()) |c| {
+                if (css.generic.parseWithOptions(SmallList(css_values.position.VerticalPosition, 1), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-position-y" = c } };
                     }
@@ -4068,7 +4068,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"background-repeat" => {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundSize, 1), input, options).asValue()) |c| {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundRepeat, 1), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-repeat" = c } };
                     }
@@ -4082,7 +4082,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"background-clip" => |pre| {
-                if (css.generic.parseWithOptions(SmallList(background.BackgroundAttachment, 1), input, options).asValue()) |c| {
+                if (css.generic.parseWithOptions(SmallList(background.BackgroundClip, 1), input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"background-clip" = .{ c, pre } } };
                     }
@@ -6695,12 +6695,12 @@ pub const Property = union(PropertyIdTag) {
             .@"background-color" => |*v| css.generic.eql(CssColor, v, &rhs.@"background-color"),
             .@"background-image" => |*v| css.generic.eql(SmallList(Image, 1), v, &rhs.@"background-image"),
             .@"background-position-x" => |*v| css.generic.eql(SmallList(css_values.position.HorizontalPosition, 1), v, &rhs.@"background-position-x"),
-            .@"background-position-y" => |*v| css.generic.eql(SmallList(css_values.position.HorizontalPosition, 1), v, &rhs.@"background-position-y"),
+            .@"background-position-y" => |*v| css.generic.eql(SmallList(css_values.position.VerticalPosition, 1), v, &rhs.@"background-position-y"),
             .@"background-position" => |*v| css.generic.eql(SmallList(background.BackgroundPosition, 1), v, &rhs.@"background-position"),
             .@"background-size" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-size"),
-            .@"background-repeat" => |*v| css.generic.eql(SmallList(background.BackgroundSize, 1), v, &rhs.@"background-repeat"),
+            .@"background-repeat" => |*v| css.generic.eql(SmallList(background.BackgroundRepeat, 1), v, &rhs.@"background-repeat"),
             .@"background-attachment" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), v, &rhs.@"background-attachment"),
-            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundAttachment, 1), &v[0], &v[0]) and v[1].eq(rhs.@"background-clip"[1]),
+            .@"background-clip" => |*v| css.generic.eql(SmallList(background.BackgroundClip, 1), &v[0], &v[0]) and v[1].eq(rhs.@"background-clip"[1]),
             .@"background-origin" => |*v| css.generic.eql(SmallList(background.BackgroundOrigin, 1), v, &rhs.@"background-origin"),
             .background => |*v| css.generic.eql(SmallList(background.Background, 1), v, &rhs.background),
             .@"box-shadow" => |*v| css.generic.eql(SmallList(box_shadow.BoxShadow, 1), &v[0], &v[0]) and v[1].eq(rhs.@"box-shadow"[1]),

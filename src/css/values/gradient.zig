@@ -187,6 +187,13 @@ pub const Gradient = union(enum) {
         return dest.writeChar(')');
     }
 
+    /// Attempts to convert the gradient to the legacy `-webkit-gradient()` syntax.
+    ///
+    /// Returns an error in case the conversion is not possible.
+    pub fn getLegacyWebkit(this: *const @This(), allocator: Allocator) ?Gradient {
+        return Gradient{ .@"webkit-gradient" = if (WebKitGradient.fromStandard(this, allocator)) |g| g else null };
+    }
+
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }
@@ -209,6 +216,35 @@ pub const Gradient = union(enum) {
         //     return this.@"webkit-gradient".eql(&other.@"webkit-gradient");
         // }
         // ret
+    }
+
+    /// Returns the vendor prefix of the gradient.
+    pub fn getVendorPrefix(this: *const @This()) VendorPrefix {
+        return switch (this.*) {
+            .linear => |linear| linear.vendor_prefix,
+            .repeating_linear => |linear| linear.vendor_prefix,
+            .radial => |radial| radial.vendor_prefix,
+            .repeating_radial => |radial| radial.vendor_prefix,
+            .@"webkit-gradient" => VendorPrefix{ .webkit = true },
+            else => VendorPrefix{ .none = true },
+        };
+    }
+
+    /// Returns the vendor prefixes needed for the given browser targets.
+    pub fn getNecessaryPrefixes(this: *const @This(), targets: css.targets.Targets) css.VendorPrefix {
+        const getPrefixes = struct {
+            fn call(tgts: css.targets.Targets, feature: css.prefixes.Feature, prefix: VendorPrefix) VendorPrefix {
+                return tgts.prefixes(prefix, feature);
+            }
+        }.call;
+
+        return switch (this.*) {
+            .linear => |linear| getPrefixes(targets, .linear_gradient, linear.vendor_prefix),
+            .repeating_linear => |linear| getPrefixes(targets, .repeating_linear_gradient, linear.vendor_prefix),
+            .radial => |radial| getPrefixes(targets, .radial_gradient, radial.vendor_prefix),
+            .repeating_radial => |radial| getPrefixes(targets, .repeating_radial_gradient, radial.vendor_prefix),
+            else => VendorPrefix{ .none = true },
+        };
     }
 };
 
@@ -490,23 +526,6 @@ pub const WebKitGradient = union(enum) {
         }
     },
 
-    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
-        return css.implementDeepClone(@This(), this, allocator);
-    }
-
-    pub fn eql(this: *const WebKitGradient, other: *const WebKitGradient) bool {
-        return switch (this.*) {
-            .linear => |*a| switch (other.*) {
-                .linear => a.from.eql(&other.linear.from) and a.to.eql(&other.linear.to) and css.generic.eqlList(WebKitColorStop, &a.stops, &other.linear.stops),
-                else => false,
-            },
-            .radial => |*a| switch (other.*) {
-                .radial => a.from.eql(&other.radial.from) and a.to.eql(&other.radial.to) and a.r0 == other.radial.r0 and a.r1 == other.radial.r1 and css.generic.eqlList(WebKitColorStop, &a.stops, &other.radial.stops),
-                else => false,
-            },
-        };
-    }
-
     pub fn parse(input: *css.Parser) Result(WebKitGradient) {
         const location = input.currentSourceLocation();
         const ident = switch (input.expectIdent()) {
@@ -606,6 +625,112 @@ pub const WebKitGradient = union(enum) {
                 }
             },
         }
+    }
+
+    pub fn fromStandard(gradient: *const Gradient, allocator: Allocator) ?WebKitGradient {
+        switch (gradient.*) {
+            .linear => |*linear| {
+                // Convert from line direction to a from and to point, if possible.
+                const from: struct { f32, f32 }, const to: struct { f32, f32 } = switch (linear.direction) {
+                    .horizontal => |horizontal| switch (horizontal) {
+                        .left => .{ .{ 1.0, 0.0 }, .{ 0.0, 0.0 } },
+                        .right => .{ .{ 0.0, 0.0 }, .{ 1.0, 0.0 } },
+                    },
+                    .vertical => |vertical| switch (vertical) {
+                        .top => .{ .{ 0.0, 1.0 }, .{ 0.0, 0.0 } },
+                        .bottom => .{ .{ 0.0, 0.0 }, .{ 0.0, 1.0 } },
+                    },
+                    .corner => |corner| switch (corner.horizontal) {
+                        .left => switch (corner.vertical) {
+                            .top => .{ .{ 1.0, 1.0 }, .{ 0.0, 0.0 } },
+                            .bottom => .{ .{ 1.0, 0.0 }, .{ 0.0, 1.0 } },
+                        },
+                        .right => switch (corner.vertical) {
+                            .top => .{ .{ 0.0, 1.0 }, .{ 1.0, 0.0 } },
+                            .bottom => .{ .{ 0.0, 0.0 }, .{ 1.0, 1.0 } },
+                        },
+                    },
+                    .angle => |angle| brk: {
+                        const degrees = angle.toDegrees();
+                        if (degrees == 0.0) {
+                            break :brk .{ .{ 0.0, 1.0 }, .{ 0.0, 0.0 } };
+                        } else if (degrees == 90.0) {
+                            break :brk .{ .{ 0.0, 0.0 }, .{ 1.0, 0.0 } };
+                        } else if (degrees == 180.0) {
+                            break :brk .{ .{ 0.0, 0.0 }, .{ 0.0, 1.0 } };
+                        } else if (degrees == 270.0) {
+                            break :brk .{ .{ 1.0, 0.0 }, .{ 0.0, 0.0 } };
+                        } else {
+                            return null;
+                        }
+                    },
+                };
+
+                return WebKitGradient{
+                    .linear = .{
+                        .from = .{
+                            .x = .{ .number = .{ .percentage = .{ .value = from[0] } } },
+                            .y = .{ .number = .{ .percentage = .{ .value = from[1] } } },
+                        },
+                        .to = .{
+                            .x = .{ .number = .{ .percentage = .{ .value = to[0] } } },
+                            .y = .{ .number = .{ .percentage = .{ .value = to[1] } } },
+                        },
+                        .stops = convertStopsToWebkit(&linear.items) orelse return null,
+                    },
+                };
+            },
+            .radial => |*radial| {
+                // Webkit radial gradients are always circles, not ellipses, and must be specified in pixels.
+                const radius = switch (radial.shape) {
+                    .circle => |*circle| switch (circle.*) {
+                        .radius => |r| if (r.toPx()) |px| px else return null,
+                        else => return null,
+                    },
+                    else => return null,
+                };
+
+                const x = switch (WebKitGradientPointComponent.fromPosition(&radial.position.x)) {
+                    .result => |v| v,
+                    .err => return null,
+                };
+                const y = switch (WebKitGradientPointComponent.fromPosition(&radial.position.y)) {
+                    .result => |v| v,
+                    .err => return null,
+                };
+                const point = WebKitGradientPoint{ .x = x, .y = y };
+                return WebKitGradient{
+                    .radial = .{
+                        .from = point.deepClone(allocator),
+                        .r0 = 0.0,
+                        .to = point,
+                        .r1 = radius,
+                        .stops = switch (convertStopsToWebkit(allocator, &radial.items)) {
+                            .result => |v| v,
+                            .err => return null,
+                        },
+                    },
+                };
+            },
+            else => return null,
+        }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const WebKitGradient, other: *const WebKitGradient) bool {
+        return switch (this.*) {
+            .linear => |*a| switch (other.*) {
+                .linear => a.from.eql(&other.linear.from) and a.to.eql(&other.linear.to) and css.generic.eqlList(WebKitColorStop, &a.stops, &other.linear.stops),
+                else => false,
+            },
+            .radial => |*a| switch (other.*) {
+                .radial => a.from.eql(&other.radial.from) and a.to.eql(&other.radial.to) and a.r0 == other.radial.r0 and a.r1 == other.radial.r1 and css.generic.eqlList(WebKitColorStop, &a.stops, &other.radial.stops),
+                else => false,
+            },
+        };
     }
 };
 
@@ -1288,4 +1413,39 @@ pub fn serializeItems(
         try item.toCss(W, dest);
         last = item;
     }
+}
+
+pub fn convertStopsToWebkit(allocator: Allocator, items: *const ArrayList(GradientItem(LengthPercentage))) ?ArrayList(WebKitColorStop) {
+    var stops: ArrayList(WebKitColorStop) = ArrayList(WebKitColorStop).initCapacity(allocator, items.items.len) catch bun.outOfMemory();
+    for (items.items, 0..) |*item, i| {
+        switch (item.*) {
+            .color_stop => |*stop| {
+                // webkit stops must always be percentage based, not length based.
+                const position = if (stop.position) |pos| {
+                    switch (pos) {
+                        .percentage => |percentage| percentage.v,
+                        else => {
+                            stops.deinit(allocator);
+                            return null;
+                        },
+                    }
+                } else if (i == 0) brk: {
+                    break :brk 0.0;
+                } else if (i == items.items.len - 1) brk: {
+                    break :brk 1.0;
+                } else {
+                    stops.deinit(allocator);
+                    return null;
+                };
+
+                stops.append(.{
+                    .color = stop.color.deepClone(allocator),
+                    .position = position,
+                }) catch return null;
+            },
+            else => return null,
+        }
+    }
+
+    return stops;
 }

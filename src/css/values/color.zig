@@ -97,28 +97,6 @@ pub const CssColor = union(enum) {
 
     pub const jsFunctionColor = @import("./color_js.zig").jsFunctionColor;
 
-    pub fn default() @This() {
-        return .{ .rgba = RGBA.transparent() };
-    }
-
-    pub fn eql(this: *const This, other: *const This) bool {
-        if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
-
-        return switch (this.*) {
-            .current_color => true,
-            .rgba => std.meta.eql(this.rgba, other.rgba),
-            .lab => std.meta.eql(this.lab.*, other.lab.*),
-            .predefined => std.meta.eql(this.predefined.*, other.predefined.*),
-            .float => std.meta.eql(this.float.*, other.float.*),
-            .light_dark => this.light_dark.light.eql(other.light_dark.light) and this.light_dark.dark.eql(other.light_dark.dark),
-            .system => this.system == other.system,
-        };
-    }
-
-    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
-        return css.implementHash(@This(), this, hasher);
-    }
-
     pub fn toCss(
         this: *const This,
         comptime W: type,
@@ -484,6 +462,163 @@ pub const CssColor = union(enum) {
                 .light = bun.create(allocator, CssColor, light),
                 .dark = bun.create(allocator, CssColor, dark),
             },
+        };
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: ColorFallbackKind) CssColor {
+        if (this.* == .rgba) return this.deepClone(allocator);
+
+        return switch (kind) {
+            ColorFallbackKind.RGB => this.toRgb(allocator).?,
+            ColorFallbackKind.P3 => this.toP3(allocator).?,
+            ColorFallbackKind.LAB => this.toLAB(allocator).?,
+            else => bun.unreachablePanic("Expected RGBA, P3, LAB fallback. This is a bug in Bun.", .{}),
+        };
+    }
+
+    pub fn getFallbacks(this: *@This(), allocator: Allocator, targets: css.targets.Targets) css.SmallList(CssColor, 2) {
+        const fallbacks = this.getNecessaryFallbacks(targets);
+
+        var res = css.SmallList(CssColor, 2){};
+
+        if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) {
+            res.appendAssumeCapacity(this.toRGB(allocator));
+        }
+
+        if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
+            res.appendAssumeCapacity(this.toP3(allocator));
+        }
+
+        if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
+            this.* = this.toLAB(allocator);
+        }
+
+        return res;
+    }
+
+    /// Returns the color fallback types needed for the given browser targets.
+    pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) ColorFallbackKind {
+        // Get the full set of possible fallbacks, and remove the highest one, which
+        // will replace the original declaration. The remaining fallbacks need to be added.
+        const fallbacks = this.getPossibleFallbacks(targets);
+        return fallbacks.difference(fallbacks.highest());
+    }
+
+    pub fn getPossibleFallbacks(this: *const @This(), targets: css.targets.Targets) ColorFallbackKind {
+        // Fallbacks occur in levels: Oklab -> Lab -> P3 -> RGB. We start with all levels
+        // below and including the authored color space, and remove the ones that aren't
+        // compatible with our browser targets.
+        var fallbacks = switch (this.*) {
+            .current_color, .rgba, .float, .system => return ColorFallbackKind.empty(),
+            .lab => |lab| brk: {
+                if (lab.* == .lab or lab.* == .lch and targets.shouldCompileSame(.lab_colors))
+                    break :brk ColorFallbackKind.andBelow(.{ .lab = true });
+                if (lab.* == .oklab or lab.* == .oklch and targets.shouldCompileSame(.oklab_colors))
+                    break :brk ColorFallbackKind.andBelow(.{ .lab = true });
+                return ColorFallbackKind.empty();
+            },
+            .predefined => |predefined| brk: {
+                if (predefined.* == .display_p3 and targets.shouldCompileSame(.p3_colors)) break :brk ColorFallbackKind.andBelow(.{ .p3 = true });
+                if (targets.shouldCompileSame(.color_function)) break :brk ColorFallbackKind.andBelow(.{ .lab = true });
+                return ColorFallbackKind.empty();
+            },
+            .light_dark => |*ld| {
+                return ld.light.getPossibleFallbacks(targets).bitwiseOr(ld.dark.getPossibleFallbacks(targets));
+            },
+        };
+
+        if (fallbacks.contains(.{ .oklab = true })) {
+            if (!targets.shouldCompileSame(.oklab_colors)) {
+                fallbacks = fallbacks.remove(ColorFallbackKind.andBelow(.{ .lab = true }));
+            }
+        }
+
+        if (fallbacks.contains(.{ .lab = true })) {
+            if (!targets.shouldCompileSame(.lab_colors)) {
+                fallbacks = fallbacks.difference(ColorFallbackKind.andBelow(.{ .p3 = true }));
+            } else if (targets.browsers != null and css.compat.Feature.isPartiallyCompatible(&css.compat.Feature.lab_colors, targets.browsers.?)) {
+                // We don't need P3 if Lab is supported by some of our targets.
+                // No browser implements Lab but not P3.
+                fallbacks = fallbacks.remove(.{ .p3 = true });
+            }
+        }
+
+        if (fallbacks.contains(.{ .p3 = true })) {
+            if (!targets.shouldCompileSame(.p3_colors)) {
+                fallbacks = fallbacks.remove(.{ .rgb = true });
+            } else if (fallbacks.highest() != ColorFallbackKind{ .p3 = true } and
+                (targets.browsers == null or !css.compat.Feature.isPartiallyCompatible(&css.compat.Feature.p3_colors, targets.browsers.?)))
+            {
+                // Remove P3 if it isn't supported by any targets, and wasn't the
+                // original authored color.
+                fallbacks = fallbacks.remove(.{ .p3 = true });
+            }
+        }
+
+        return fallbacks;
+    }
+
+    pub fn default() @This() {
+        return .{ .rgba = RGBA.transparent() };
+    }
+
+    pub fn eql(this: *const This, other: *const This) bool {
+        if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
+
+        return switch (this.*) {
+            .current_color => true,
+            .rgba => std.meta.eql(this.rgba, other.rgba),
+            .lab => std.meta.eql(this.lab.*, other.lab.*),
+            .predefined => std.meta.eql(this.predefined.*, other.predefined.*),
+            .float => std.meta.eql(this.float.*, other.float.*),
+            .light_dark => this.light_dark.light.eql(other.light_dark.light) and this.light_dark.dark.eql(other.light_dark.dark),
+            .system => this.system == other.system,
+        };
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn toRGB(this: *const @This(), allocator: Allocator) ?CssColor {
+        if (this.* == .light_dark) {
+            return CssColor{ .light_dark = .{
+                .light = bun.create(allocator, CssColor, this.light_dark.light.toRGB(allocator) orelse return null),
+                .dark = bun.create(allocator, CssColor, this.light_dark.dark.toRGB(allocator) orelse return null),
+            } };
+        }
+        return CssColor{ .rgba = RGBA.tryFromCssColor(this) orelse return null };
+    }
+
+    pub fn toP3(this: *const @This(), allocator: Allocator) ?CssColor {
+        return switch (this.*) {
+            .light_dark => |ld| blk: {
+                const light = ld.light.toP3(allocator) orelse break :blk null;
+                const dark = ld.dark.toP3(allocator) orelse break :blk null;
+                break :blk .{
+                    .light_dark = .{
+                        .light = bun.create(allocator, CssColor, light),
+                        .dark = bun.create(allocator, CssColor, dark),
+                    },
+                };
+            },
+            else => return .{ .predefined = .{ .display_p3 = P3.tryFromCssColor(this) orelse return null } },
+        };
+    }
+
+    pub fn toLAB(this: *const @This(), allocator: Allocator) ?CssColor {
+        return switch (this.*) {
+            .light_dark => |ld| blk: {
+                const light = ld.light.toLAB(allocator) orelse break :blk null;
+                const dark = ld.dark.toLAB(allocator) orelse break :blk null;
+                break :blk .{
+                    .light_dark = .{
+                        .light = bun.create(allocator, CssColor, light),
+                        .dark = bun.create(allocator, CssColor, dark),
+                    },
+                };
+            },
+            else => .{ .lab = bun.create(allocator, LABColor, .{ .lab = LAB.tryFromCssColor(this) orelse return null }) },
         };
     }
 };
@@ -1290,6 +1425,7 @@ pub const RGBA = struct {
     /// The alpha component.
     alpha: u8,
 
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace color_conversions.convert_RGBA;
 
     pub fn new(red: u8, green: u8, blue: u8, alpha: f32) RGBA {
@@ -1344,10 +1480,6 @@ pub const RGBA = struct {
             .b = rgb.blueF32(),
             .alpha = rgb.alphaF32(),
         };
-    }
-
-    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
-        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -1570,6 +1702,7 @@ pub const LAB = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
     pub usingnamespace AdjustPowerlessLAB(@This());
@@ -1599,6 +1732,7 @@ pub const SRGB = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace DeriveInterpolate(@This(), "r", "g", "b");
@@ -1638,6 +1772,7 @@ pub const HSL = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace HslHwbColorGamut(@This(), "s", "l");
 
     pub usingnamespace PolarPremultiply(@This(), "s", "l");
@@ -1681,6 +1816,7 @@ pub const HWB = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace HslHwbColorGamut(@This(), "w", "b");
 
     pub usingnamespace PolarPremultiply(@This(), "w", "b");
@@ -1719,6 +1855,7 @@ pub const SRGBLinear = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace DeriveInterpolate(@This(), "r", "g", "b");
@@ -1748,6 +1885,7 @@ pub const P3 = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace color_conversions.convert_P3;
@@ -1771,6 +1909,7 @@ pub const A98 = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace color_conversions.convert_A98;
@@ -1794,6 +1933,7 @@ pub const ProPhoto = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace color_conversions.convert_ProPhoto;
@@ -1817,6 +1957,7 @@ pub const Rec2020 = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace BoundedColorGamut(@This());
 
     pub usingnamespace color_conversions.convert_Rec2020;
@@ -1840,6 +1981,7 @@ pub const XYZd50 = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
     pub usingnamespace DeriveInterpolate(@This(), "x", "y", "z");
@@ -1866,6 +2008,7 @@ pub const XYZd65 = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
     pub usingnamespace DeriveInterpolate(@This(), "x", "y", "z");
@@ -1895,6 +2038,7 @@ pub const LCH = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
     pub usingnamespace AdjustPowerlessLCH(@This());
@@ -1922,6 +2066,7 @@ pub const OKLAB = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
     pub usingnamespace AdjustPowerlessLAB(@This());
@@ -1951,6 +2096,7 @@ pub const OKLCH = struct {
     alpha: f32,
 
     pub usingnamespace DefineColorspace(@This());
+    pub usingnamespace ColorspaceConversions(@This());
     pub usingnamespace UnboundedColorGamut(@This());
 
     pub usingnamespace AdjustPowerlessLCH(@This());
@@ -2629,6 +2775,55 @@ pub fn parsePredefinedRelative(
     } };
 }
 
+/// A color type that is used as a fallback when compiling colors for older browsers.
+pub const ColorFallbackKind = packed struct(u8) {
+    rgb: bool = false,
+    p3: bool = false,
+    lab: bool = false,
+    oklab: bool = false,
+    __unused: u4 = 0,
+
+    pub const P3 = ColorFallbackKind{ .p3 = true };
+    pub const RGB = ColorFallbackKind{ .rgb = true };
+    pub const LAB = ColorFallbackKind{ .lab = true };
+    pub const OKLAB = ColorFallbackKind{ .oklab = true };
+
+    pub usingnamespace css.Bitflags(@This());
+
+    pub fn lowest(this: @This()) ColorFallbackKind {
+        return this.bitwiseAnd(ColorFallbackKind.fromBitsTruncate(bun.wrappingNegation(this.asBits())));
+    }
+
+    pub fn highest(this: @This()) ColorFallbackKind {
+        // This finds the highest set bit.
+        if (this.isEmpty()) return ColorFallbackKind.empty();
+
+        const zeroes: u8 = 7 - this.leadingZeroes();
+        return ColorFallbackKind.fromBitsTruncate(1 << zeroes);
+    }
+
+    pub fn andBelow(this: @This()) ColorFallbackKind {
+        if (this.isEmpty()) return ColorFallbackKind.empty();
+
+        return this.bitwiseOr(ColorFallbackKind.fromBitsTruncate(this.asBits() - 1));
+    }
+
+    pub fn supportsCondition(this: @This()) css.SupportsCondition {
+        const s = switch (this) {
+            @This().P3 => "color(display-p3 0 0 0)",
+            @This().LAB => "lab(0% 0 0)",
+            else => bun.unreachablePanic("Expected P3 or LAB. THis is a bug", .{}),
+        };
+
+        return css.SupportsCondition{
+            .declaration = .{
+                .property_id = .color,
+                .value = s,
+            },
+        };
+    }
+};
+
 /// A [color space](https://www.w3.org/TR/css-color-4/#interpolation-space) keyword
 /// used in interpolation functions such as `color-mix()`.
 pub const ColorSpaceName = enum {
@@ -2821,73 +3016,11 @@ fn rectangularToPolar(l: f32, a: f32, b: f32) struct { f32, f32, f32 } {
     return .{ l, c, h };
 }
 
-pub fn DefineColorspace(comptime T: type) type {
-    if (!@hasDecl(T, "ChannelTypeMap")) {
-        @compileError("A Colorspace must define a ChannelTypeMap");
-    }
-    const ChannelTypeMap = T.ChannelTypeMap;
-
-    const fields: []const std.builtin.Type.StructField = std.meta.fields(T);
-    const a = fields[0].name;
-    const b = fields[1].name;
-    const c = fields[2].name;
-    const alpha = "alpha";
-    if (!@hasField(T, "alpha")) {
-        @compileError("A Colorspace must define an alpha field");
-    }
-
-    if (!@hasField(@TypeOf(ChannelTypeMap), a)) {
-        @compileError("A Colorspace must define a field for each channel, missing: " ++ a);
-    }
-    if (!@hasField(@TypeOf(ChannelTypeMap), b)) {
-        @compileError("A Colorspace must define a field for each channel, missing: " ++ b);
-    }
-    if (!@hasField(@TypeOf(ChannelTypeMap), c)) {
-        @compileError("A Colorspace must define a field for each channel, missing: " ++ c);
-    }
-
+pub fn ColorspaceConversions(comptime T: type) type {
     // e.g. T = LAB, so then: into_this_function_name = "intoLAB"
     const into_this_function_name = "into" ++ comptime bun.meta.typeName(T);
 
     return struct {
-        pub fn components(this: *const T) struct { f32, f32, f32, f32 } {
-            return .{
-                @field(this, a),
-                @field(this, b),
-                @field(this, c),
-                @field(this, alpha),
-            };
-        }
-
-        pub fn channels(_: *const T) struct { []const u8, []const u8, []const u8 } {
-            return .{ a, b, c };
-        }
-
-        pub fn types(_: *const T) struct { ChannelType, ChannelType, ChannelType } {
-            return .{
-                @field(ChannelTypeMap, a),
-                @field(ChannelTypeMap, b),
-                @field(ChannelTypeMap, c),
-            };
-        }
-
-        pub fn resolveMissing(this: *const T) T {
-            var result: T = this.*;
-            @field(result, a) = if (std.math.isNan(@field(this, a))) 0.0 else @field(this, a);
-            @field(result, b) = if (std.math.isNan(@field(this, b))) 0.0 else @field(this, b);
-            @field(result, c) = if (std.math.isNan(@field(this, c))) 0.0 else @field(this, c);
-            @field(result, alpha) = if (std.math.isNan(@field(this, alpha))) 0.0 else @field(this, alpha);
-            return result;
-        }
-
-        pub fn resolve(this: *const T) T {
-            var resolved = resolveMissing(this);
-            if (!resolved.inGamut()) {
-                resolved = mapGamut(T, resolved);
-            }
-            return resolved;
-        }
-
         pub fn fromLABColor(color: *const LABColor) T {
             return switch (color.*) {
                 .lab => |*v| {
@@ -2980,6 +3113,72 @@ pub fn DefineColorspace(comptime T: type) type {
 
         pub fn hash(this: *const T, hasher: *std.hash.Wyhash) void {
             return css.implementHash(T, this, hasher);
+        }
+    };
+}
+
+pub fn DefineColorspace(comptime T: type) type {
+    if (!@hasDecl(T, "ChannelTypeMap")) {
+        @compileError("A Colorspace must define a ChannelTypeMap");
+    }
+    const ChannelTypeMap = T.ChannelTypeMap;
+
+    const fields: []const std.builtin.Type.StructField = std.meta.fields(T);
+    const a = fields[0].name;
+    const b = fields[1].name;
+    const c = fields[2].name;
+    const alpha = "alpha";
+    if (!@hasField(T, "alpha")) {
+        @compileError("A Colorspace must define an alpha field");
+    }
+
+    if (!@hasField(@TypeOf(ChannelTypeMap), a)) {
+        @compileError("A Colorspace must define a field for each channel, missing: " ++ a);
+    }
+    if (!@hasField(@TypeOf(ChannelTypeMap), b)) {
+        @compileError("A Colorspace must define a field for each channel, missing: " ++ b);
+    }
+    if (!@hasField(@TypeOf(ChannelTypeMap), c)) {
+        @compileError("A Colorspace must define a field for each channel, missing: " ++ c);
+    }
+
+    return struct {
+        pub fn components(this: *const T) struct { f32, f32, f32, f32 } {
+            return .{
+                @field(this, a),
+                @field(this, b),
+                @field(this, c),
+                @field(this, alpha),
+            };
+        }
+
+        pub fn channels(_: *const T) struct { []const u8, []const u8, []const u8 } {
+            return .{ a, b, c };
+        }
+
+        pub fn types(_: *const T) struct { ChannelType, ChannelType, ChannelType } {
+            return .{
+                @field(ChannelTypeMap, a),
+                @field(ChannelTypeMap, b),
+                @field(ChannelTypeMap, c),
+            };
+        }
+
+        pub fn resolveMissing(this: *const T) T {
+            var result: T = this.*;
+            @field(result, a) = if (std.math.isNan(@field(this, a))) 0.0 else @field(this, a);
+            @field(result, b) = if (std.math.isNan(@field(this, b))) 0.0 else @field(this, b);
+            @field(result, c) = if (std.math.isNan(@field(this, c))) 0.0 else @field(this, c);
+            @field(result, alpha) = if (std.math.isNan(@field(this, alpha))) 0.0 else @field(this, alpha);
+            return result;
+        }
+
+        pub fn resolve(this: *const T) T {
+            var resolved = resolveMissing(this);
+            if (!resolved.inGamut()) {
+                resolved = mapGamut(T, resolved);
+            }
+            return resolved;
         }
     };
 }

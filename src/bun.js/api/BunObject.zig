@@ -3334,8 +3334,6 @@ pub fn serve(
         break :brk config;
     };
 
-    var exception_value: *JSC.JSValue = undefined;
-
     if (config.allow_hot) {
         if (globalObject.bunVM().hotMap()) |hot| {
             if (config.id.len == 0) {
@@ -3370,98 +3368,43 @@ pub fn serve(
         }
     }
 
-    // Listen happens on the next tick!
-    // This is so we can return a Server object
-    if (config.ssl_config != null) {
-        if (config.development) {
-            var server = JSC.API.DebugHTTPSServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!server.thisObject.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(server.thisObject);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
+    switch (config.ssl_config != null) {
+        inline else => |has_ssl_config| {
+            switch (config.development) {
+                inline else => |development| {
+                    const ServerType = comptime switch (development) {
+                        true => switch (has_ssl_config) {
+                            true => JSC.API.DebugHTTPSServer,
+                            false => JSC.API.DebugHTTPServer,
+                        },
+                        false => switch (has_ssl_config) {
+                            true => JSC.API.HTTPSServer,
+                            false => JSC.API.HTTPServer,
+                        },
+                    };
 
-            server.thisObject = obj;
+                    var server = ServerType.init(config, globalObject);
+                    if (globalObject.hasException()) {
+                        return .zero;
+                    }
+                    server.listen();
+                    if (globalObject.hasException()) {
+                        return .zero;
+                    }
+                    const obj = server.toJS(globalObject);
+                    obj.protect();
 
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
-            }
-            return obj;
-        } else {
-            var server = JSC.API.HTTPSServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!exception_value.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(exception_value.*);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
-            server.thisObject = obj;
+                    server.thisObject = obj;
 
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
+                    if (config.allow_hot) {
+                        if (globalObject.bunVM().hotMap()) |hot| {
+                            hot.insert(config.id, server);
+                        }
+                    }
+                    return obj;
+                },
             }
-            return obj;
-        }
-    } else {
-        if (config.development) {
-            var server = JSC.API.DebugHTTPServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!exception_value.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(exception_value.*);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
-            server.thisObject = obj;
-
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
-            }
-            return obj;
-        } else {
-            var server = JSC.API.HTTPServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!exception_value.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(exception_value.*);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
-
-            server.thisObject = obj;
-
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
-            }
-            return obj;
-        }
+        },
     }
 
     unreachable;

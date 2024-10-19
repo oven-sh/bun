@@ -406,84 +406,84 @@ const ServerAllConnectionsClosedTask = @import("./api/server.zig").ServerAllConn
 
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
-    FetchTasklet,
+    Access,
+    AnyTask,
+    AppendFile,
     AsyncGlobWalkTask,
     AsyncTransformTask,
-    ReadFileTask,
-    CopyFilePromiseTask,
-    WriteFileTask,
-    AnyTask,
-    ManagedTask,
-    ShellIOReaderAsyncDeinit,
-    ShellIOWriterAsyncDeinit,
-    napi_async_work,
-    ThreadSafeFunction,
-    CppTask,
-    HotReloadTask,
-    PollPendingModulesTask,
-    GetAddrInfoRequestTask,
-    FSWatchTask,
-    JSCDeferredWorkTask,
-    Stat,
-    Lstat,
-    Fstat,
-    Open,
-    ReadFile,
-    WriteFile,
-    CopyFile,
-    Read,
-    Write,
-    Truncate,
-    FTruncate,
-    Readdir,
-    ReaddirRecursive,
-    Close,
-    Rm,
-    Rmdir,
-    Chown,
-    FChown,
-    Utimes,
-    Lutimes,
+    bun.bake.DevServer.HotReloadTask,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
     Chmod,
-    Fchmod,
-    Link,
-    Symlink,
-    Readlink,
-    Realpath,
-    Mkdir,
-    Fsync,
-    Fdatasync,
-    Writev,
-    Readv,
-    Rename,
-    Access,
-    AppendFile,
-    Mkdtemp,
+    Chown,
+    Close,
+    CopyFile,
+    CopyFilePromiseTask,
+    CppTask,
     Exists,
+    Fchmod,
+    FChown,
+    Fdatasync,
+    FetchTasklet,
+    Fstat,
+    FSWatchTask,
+    Fsync,
+    FTruncate,
     Futimes,
+    GetAddrInfoRequestTask,
+    HotReloadTask,
+    JSCDeferredWorkTask,
     Lchmod,
     Lchown,
-    Unlink,
-    NativeZlib,
+    Link,
+    Lstat,
+    Lutimes,
+    ManagedTask,
+    Mkdir,
+    Mkdtemp,
+    napi_async_work,
     NativeBrotli,
-    ShellGlobTask,
-    ShellRmTask,
-    ShellRmDirTask,
-    ShellMvCheckTargetTask,
-    ShellMvBatchedTask,
-    ShellLsTask,
-    ShellMkdirTask,
-    ShellTouchTask,
-    ShellCpTask,
-    ShellCondExprStatTask,
-    ShellAsync,
-    ShellAsyncSubprocessDone,
-    TimerObject,
-    bun.shell.Interpreter.Builtin.Yes.YesTask,
+    NativeZlib,
+    Open,
+    PollPendingModulesTask,
     ProcessWaiterThreadTask,
+    Read,
+    Readdir,
+    ReaddirRecursive,
+    ReadFile,
+    ReadFileTask,
+    Readlink,
+    Readv,
+    Realpath,
+    Rename,
+    Rm,
+    Rmdir,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
-    bun.bake.DevServer.HotReloadTask,
+    ShellAsync,
+    ShellAsyncSubprocessDone,
+    ShellCondExprStatTask,
+    ShellCpTask,
+    ShellGlobTask,
+    ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
+    ShellLsTask,
+    ShellMkdirTask,
+    ShellMvBatchedTask,
+    ShellMvCheckTargetTask,
+    ShellRmDirTask,
+    ShellRmTask,
+    ShellTouchTask,
+    Stat,
+    Symlink,
+    ThreadSafeFunction,
+    TimerObject,
+    Truncate,
+    Unlink,
+    Utimes,
+    Write,
+    WriteFile,
+    WriteFileTask,
+    Writev,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -545,6 +545,7 @@ pub const GarbageCollectionController = struct {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+        actual.internal_loop_data.jsc_vm = vm.jsc;
 
         if (comptime Environment.isDebug) {
             if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
@@ -821,7 +822,10 @@ pub const EventLoop = struct {
         defer this.debug.exit();
 
         if (count == 1) {
-            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
+            const vm = this.virtual_machine;
+            const global = this.global;
+            const jsc = vm.jsc;
+            this.drainTasks(vm, global, jsc);
         }
 
         this.entered_event_loop_count -= 1;
@@ -926,6 +930,7 @@ pub const EventLoop = struct {
         }
 
         while (@field(this, queue_name).readItem()) |task| {
+            log("run {s}", .{@tagName(task.tag())});
             defer counter += 1;
             switch (task.tag()) {
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
@@ -1479,6 +1484,19 @@ pub const EventLoop = struct {
         this.virtual_machine.gc_controller.processGCTimer();
     }
 
+    pub fn drainTasks(this: *EventLoop, ctx: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, js_vm: *JSC.VM) void {
+        while (true) {
+            while (this.tickWithCount(ctx) > 0) : (global.handleRejectedPromises()) {
+                this.tickConcurrent();
+            } else {
+                this.drainMicrotasksWithGlobal(global, js_vm);
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
+            break;
+        }
+    }
+
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
         {
@@ -1496,16 +1514,7 @@ pub const EventLoop = struct {
             const global = ctx.global;
             const global_vm = ctx.jsc;
 
-            while (true) {
-                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
-                    this.tickConcurrent();
-                } else {
-                    this.drainMicrotasksWithGlobal(global, global_vm);
-                    this.tickConcurrent();
-                    if (this.tasks.count > 0) continue;
-                }
-                break;
-            }
+            this.drainTasks(ctx, global, global_vm);
 
             while (this.tickWithCount(ctx) > 0) {
                 this.tickConcurrent();

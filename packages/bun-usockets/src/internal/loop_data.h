@@ -44,6 +44,7 @@ struct us_internal_loop_data_t {
     char parent_tag;
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
+    void* jsc_vm;
 };
 
 #endif // LOOP_DATA_H

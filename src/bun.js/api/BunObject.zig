@@ -1221,9 +1221,10 @@ pub const Crypto = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn init(algorithm: EVP.Algorithm, key: []const u8) ?*HMAC {
+            const md = algorithm.md() orelse return null;
             var ctx: BoringSSL.HMAC_CTX = undefined;
             BoringSSL.HMAC_CTX_init(&ctx);
-            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), algorithm.md(), null) != 1) {
+            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), md, null) != 1) {
                 BoringSSL.HMAC_CTX_cleanup(&ctx);
                 return null;
             }
@@ -2714,7 +2715,7 @@ pub const Crypto = struct {
                                     BoringSSL.ERR_clear_error();
                                     globalThis.throwValue(instance);
                                 } else {
-                                    globalThis.throwTODO("HMAC is not supported for this algorithm");
+                                    globalThis.throwTODO("HMAC is not supported for this algorithm yet");
                                 }
                             }
                             return null;

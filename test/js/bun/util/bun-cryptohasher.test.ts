@@ -58,8 +58,18 @@ describe("HMAC", () => {
     });
   }
 
-  test("ripemd160 is not supported", () => {
-    expect(() => new Bun.CryptoHasher("ripemd160", "key")).toThrow();
+  const unsupported = [
+    ["sha3-224"],
+    ["sha3-256"],
+    ["sha3-384"],
+    ["sha3-512"],
+    ["shake128"],
+    ["shake256"],
+    ["ripemd160"],
+  ] as const;
+  test.each(unsupported)("%s is not supported", algorithm => {
+    expect(() => new Bun.CryptoHasher(algorithm, "key")).toThrow();
+    expect(() => new Bun.CryptoHasher(algorithm)).not.toThrow();
   });
 });
 

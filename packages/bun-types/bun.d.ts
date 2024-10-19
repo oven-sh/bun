@@ -3154,7 +3154,7 @@ declare module "bun" {
       | "rgb"
       /**
        * RGB color string with alpha
-       * rgba(255, 152, 0, 1)
+       * @example rgba(255, 152, 0, 1)
        */
       | "rgba",
   ): string | null;

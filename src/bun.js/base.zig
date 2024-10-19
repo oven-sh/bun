@@ -1204,7 +1204,11 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse brk: {
+                                if (arg == .undefined) {
+                                    break :brk null;
+                                }
+
                                 globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;

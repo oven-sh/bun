@@ -7189,13 +7189,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
                             app.domain(sni_servername);
 
-                            // Ensure the routes are set for that domain name.
-                            this.setRoutes();
-
                             if (throwSSLErrorIfNecessary(globalThis)) {
                                 this.deinit();
                                 return;
                             }
+
+                            // Ensure the routes are set for that domain name.
+                            this.setRoutes();
                         }
                     }
                 }

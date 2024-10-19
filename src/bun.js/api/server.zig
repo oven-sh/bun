@@ -1465,6 +1465,7 @@ pub const ServerConfig = struct {
                                 args.ssl_config = ssl_config;
                             } else {
                                 if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
+                                    defer ssl_config.deinit();
                                     JSC.throwInvalidArguments("SNI tls object must have a serverName", .{}, global, exception);
                                     return;
                                 }

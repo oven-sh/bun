@@ -76,7 +76,13 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
     // If we can pull out a ModuleNamespaceObject, let's do it.
     if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
       const namespace = Loader.getModuleNamespaceObject(esm!.module);
-      return (mod.exports = namespace);
+      return (mod.exports =
+        // https://github.com/oven-sh/bun/issues/14411
+        namespace.__esModule
+          ? namespace
+          : Object.create(namespace, {
+              __esModule: { value: true, writable: true, configurable: true },
+            }));
     }
   }
 

@@ -7142,13 +7142,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
                     if (server_name.len > 0) {
                         app.addServerNameWithOptions(server_name, ssl_options) catch {
-                            if (throwSSLErrorIfNecessary(globalThis)) {
-                                this.deinit();
-                                return;
-                            }
-
                             if (!globalThis.hasException()) {
-                                globalThis.throw("Failed to add serverName: {s}", .{server_name});
+                                if (!throwSSLErrorIfNecessary(globalThis)) {
+                                    globalThis.throw("Failed to add serverName: {s}", .{server_name});
+                                }
                             }
 
                             this.deinit();
@@ -7177,13 +7174,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         const sni_servername: [:0]const u8 = std.mem.span(sni_ssl_config.server_name);
                         if (sni_servername.len > 0) {
                             app.addServerNameWithOptions(sni_ssl_config.server_name, sni_ssl_config.asUSockets()) catch {
-                                if (throwSSLErrorIfNecessary(globalThis)) {
-                                    this.deinit();
-                                    return;
-                                }
-
                                 if (!globalThis.hasException()) {
-                                    globalThis.throw("Failed to add serverName: {s}", .{sni_servername});
+                                    if (!throwSSLErrorIfNecessary(globalThis)) {
+                                        globalThis.throw("Failed to add serverName: {s}", .{sni_servername});
+                                    }
                                 }
 
                                 this.deinit();

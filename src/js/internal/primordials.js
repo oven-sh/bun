@@ -89,7 +89,9 @@ export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
+  ArrayPrototypeReduce: Array.prototype.reduce,
   ArrayIsArray: Array.isArray,
+  Boolean,
   SafeArrayIterator: createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext),
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
@@ -135,7 +137,9 @@ export default {
   ObjectAssign: Object.assign,
   ObjectCreate: Object.create,
   ObjectDefineProperty: Object.defineProperty,
+  ObjectDefineProperties: Object.defineProperties,
   ObjectEntries: Object.entries,
+  ObjectFreeze: Object.freeze,
   ObjectGetOwnPropertyDescriptor: Object.getOwnPropertyDescriptor,
   ObjectGetOwnPropertyDescriptors: Object.getOwnPropertyDescriptors,
   ObjectGetOwnPropertyNames: Object.getOwnPropertyNames,
@@ -164,9 +168,41 @@ export default {
       }
     },
   ),
+  SafeWeakMap: makeSafe(
+    WeakMap,
+    class SafeWeakMap extends WeakMap {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
   SafeSet: makeSafe(
     Set,
     class SafeSet extends Set {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SafeWeakSet: makeSafe(
+    WeakSet,
+    class SafeWeakSet extends WeakSet {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SafeWeakRef: makeSafe(
+    WeakRef,
+    class SafeWeakRef extends WeakRef {
+      constructor(i) {
+        super(i);
+      }
+    },
+  ),
+  SafeFinalizationRegistry: makeSafe(
+    FinalizationRegistry,
+    class SafeFinalizationRegistry extends FinalizationRegistry {
       constructor(i) {
         super(i);
       }
@@ -178,6 +214,7 @@ export default {
   SetPrototypeEntries: uncurryThis(Set.prototype.entries),
   SetPrototypeValues: uncurryThis(Set.prototype.values),
   String,
+  Symbol,
   StringPrototypeCharCodeAt: uncurryThis(String.prototype.charCodeAt),
   StringPrototypeCodePointAt: uncurryThis(String.prototype.codePointAt),
   StringPrototypeEndsWith: uncurryThis(String.prototype.endsWith),

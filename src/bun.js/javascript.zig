@@ -3360,7 +3360,8 @@ pub const VirtualMachine = struct {
                 if (frame.source_url.hasPrefixComptime("bun:") or
                     frame.source_url.hasPrefixComptime("node:") or
                     frame.source_url.isEmpty() or
-                    frame.source_url.eqlComptime("native"))
+                    frame.source_url.eqlComptime("native") or
+                    (Environment.isDebug and frame.source_url.hasPrefixComptime("internal/")))
                 {
                     top_frame_is_builtin = true;
                     continue;

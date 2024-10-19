@@ -100,6 +100,11 @@
           "type": "string",
           "default": "**/*.{test,spec}.{js,ts,tsx,jsx}",
           "description": "Glob pattern to match test files (e.g., **/*.test.{js,ts,tsx,jsx})"
+        },
+        "bun.test.customFlag": {
+          "type": "string",
+          "default": "",
+          "description": "Custom flag added to the end of test command"
         }
       }
     },

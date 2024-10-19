@@ -75,7 +75,8 @@ export function registerTestCodeLens(context: vscode.ExtensionContext) {
   const codeLensProvider = new TestCodeLensProvider();
 
   // Get the user-defined file pattern from the settings, or use the default
-  // Setting is: bun.test.filePattern
+  // Setting is: 
+  // bun.test.filePattern
   const pattern = vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_FILE_PATTERN);
   const options = { scheme: "file", pattern };
 
@@ -102,10 +103,15 @@ let activeTerminal: vscode.Terminal | null = null;
  */
 export function registerTestRunner(context: vscode.ExtensionContext) {
 
+
+
   // Register the "Run Test" command
   const runTestCommand = vscode.commands.registerCommand(
     "extension.bun.runTest",
     async (fileName?: string, testName?: string, watchMode: boolean = false) => {
+
+      // Get custom flag
+      const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "");
       // When this command is called from the command palette, the fileName and testName arguments are not passed (commands in package.json)
       // so then fileName is taken from the active text editor and it run for the whole file.
       if (!fileName) {
@@ -124,7 +130,7 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
       activeTerminal.show();
       const watchFlag = watchMode ? "--watch" : "";
       const testNameIfExist = testName ? ` -t "${testName}"` : "";
-      activeTerminal.sendText(`bun test ${fileName} ${testNameIfExist} ${watchFlag}`);
+      activeTerminal.sendText(`bun test ${fileName} ${testNameIfExist} ${watchFlag} ${customFlag}`);
     },
   );
 

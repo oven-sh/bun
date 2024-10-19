@@ -189,7 +189,7 @@ describe("CryptoHasher", () => {
     describe(algorithm, () => {
       for (let encoding of ["hex", "base64", "buffer", undefined, "base64url"] as const) {
         describe(encoding || "default", () => {
-          test.only("instance", () => {
+          test("instance", () => {
             const hasher = new Bun.CryptoHasher(algorithm || undefined);
             hasher.update("hello");
             expect(hasher.digest(encoding)).toEqual(Bun.CryptoHasher.hash(algorithm, "hello", encoding));

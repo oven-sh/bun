@@ -7133,9 +7133,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     return;
                 };
 
-                this.setRoutes();
-
                 this.app = app;
+
+                this.setRoutes();
 
                 // add serverName to the SSL context using default ssl options
                 if (ssl_config.server_name) |server_name_ptr| {

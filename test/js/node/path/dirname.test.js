@@ -1,8 +1,7 @@
 import { describe, test } from "bun:test";
+import { isWindows } from "harness";
 import assert from "node:assert";
 import path from "node:path";
-
-const isWindows = process.platform === "win32";
 
 describe("path.dirname", () => {
   test("platform", () => {

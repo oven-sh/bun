@@ -1130,6 +1130,26 @@ $ bun build ./index.tsx --outdir ./out --footer="// built with love in SF"
 
 {% /codetabs %}
 
+### `drop`
+
+Remove function calls from a bundle. For example, `--drop=console` will remove all calls to `console.log`. Arguments to calls will also be removed, regardless of if those arguments may have side effects. Dropping `debugger` will remove all `debugger` statements.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  drop: ["console", "debugger", "anyIdentifier.or.propertyAccess"],
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=anyIdentifier.or.propertyAccess
+```
+
+{% /codetabs %}
+
 ### `experimentalCss`
 
 Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`.

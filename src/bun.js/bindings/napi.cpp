@@ -2172,11 +2172,90 @@ extern "C" napi_status napi_get_value_double(napi_env env, napi_value value,
 
     auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
 
+    // should never throw as we know it is a number
     *result = jsValue.toNumber(globalObject);
+    scope.assertNoException();
 
-    if (UNLIKELY(scope.exception())) {
-        scope.clearException();
-        return napi_generic_failure;
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_int32(napi_env env, napi_value value, int32_t* result)
+{
+    NAPI_PREMABLE
+
+    auto* globalObject = toJS(env);
+    JSC::JSValue jsValue = toJS(value);
+
+    if (UNLIKELY(result == nullptr || !globalObject)) {
+        return napi_invalid_arg;
+    }
+
+    if (UNLIKELY(!jsValue || !jsValue.isNumber())) {
+        return napi_number_expected;
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+
+    // should never throw as we know it is a number
+    *result = jsValue.toInt32(globalObject);
+    scope.assertNoException();
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_uint32(napi_env env, napi_value value, uint32_t* result)
+{
+    NAPI_PREMABLE
+
+    auto* globalObject = toJS(env);
+    JSC::JSValue jsValue = toJS(value);
+
+    if (UNLIKELY(result == nullptr || !globalObject)) {
+        return napi_invalid_arg;
+    }
+
+    if (UNLIKELY(!jsValue || !jsValue.isNumber())) {
+        return napi_number_expected;
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+
+    // should never throw as we know it is a number
+    *result = jsValue.toUInt32(globalObject);
+    scope.assertNoException();
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int64_t* result)
+{
+    NAPI_PREMABLE
+
+    auto* globalObject = toJS(env);
+    JSC::JSValue jsValue = toJS(value);
+
+    if (UNLIKELY(result == nullptr || !globalObject)) {
+        return napi_invalid_arg;
+    }
+
+    if (UNLIKELY(!jsValue || !jsValue.isNumber())) {
+        return napi_number_expected;
+    }
+
+    double js_number = jsValue.asNumber();
+    if (isfinite(js_number)) {
+        // upper is 2^63 exactly, not 2^63-1, as the latter can't be represented exactly
+        constexpr double lower = std::numeric_limits<int64_t>::min(), upper = 1ull << 63;
+        if (js_number >= upper) {
+            *result = std::numeric_limits<int64_t>::max();
+        } else if (js_number <= lower) {
+            *result = std::numeric_limits<int64_t>::min();
+        } else {
+            // safe
+            *result = static_cast<int64_t>(js_number);
+        }
+    } else {
+        *result = 0;
     }
 
     return napi_ok;

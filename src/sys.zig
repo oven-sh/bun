@@ -729,7 +729,6 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            assertIsValidWindowsPath(bun.OSPathChar, file_path);
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
             if (Maybe(void).errnoSys(
@@ -2478,6 +2477,16 @@ pub fn exists(path: []const u8) bool {
     }
 
     @compileError("TODO: existsOSPath");
+}
+
+pub fn existsZ(path: [:0]const u8) bool {
+    if (comptime Environment.isPosix) {
+        return system.access(path, 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        return getFileAttributes(path) != null;
+    }
 }
 
 pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {

@@ -41,12 +41,6 @@ pub const TokenList = struct {
 
     const This = @This();
 
-    pub fn deepClone(this: *const TokenList, allocator: Allocator) TokenList {
-        return .{
-            .v = css.deepClone(TokenOrValue, allocator, &this.v),
-        };
-    }
-
     pub fn deinit(this: *TokenList, allocator: Allocator) void {
         for (this.v.items) |*token_or_value| {
             token_or_value.deinit(allocator);
@@ -603,6 +597,20 @@ pub const TokenList = struct {
 
         return .{ .result = {} };
     }
+
+    pub fn eql(lhs: *const TokenList, rhs: *const TokenList) bool {
+        return css.generic.eqlList(TokenOrValue, &lhs.v, &rhs.v);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const TokenList, allocator: Allocator) TokenList {
+        return .{
+            .v = css.deepClone(TokenOrValue, allocator, &this.v),
+        };
+    }
 };
 pub const TokenListFns = TokenList;
 
@@ -621,6 +629,10 @@ pub const UnresolvedColor = union(enum) {
         b: f32,
         /// The unresolved alpha component.
         alpha: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+        pub fn __generateHash() void {}
     },
     /// An hsl() color.
     HSL: struct {
@@ -632,6 +644,10 @@ pub const UnresolvedColor = union(enum) {
         l: f32,
         /// The unresolved alpha component.
         alpha: TokenList,
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+        pub fn __generateHash() void {}
     },
     /// The light-dark() function.
     light_dark: struct {
@@ -639,8 +655,22 @@ pub const UnresolvedColor = union(enum) {
         light: TokenList,
         /// The dark value.
         dark: TokenList,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn __generateHash() void {}
     },
     const This = @This();
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn deepClone(this: *const This, allocator: Allocator) This {
         return switch (this.*) {
@@ -893,6 +923,14 @@ pub const Variable = struct {
 
     const This = @This();
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn deepClone(this: *const Variable, allocator: Allocator) Variable {
         return .{
             .name = this.name,
@@ -952,6 +990,14 @@ pub const EnvironmentVariable = struct {
     indices: ArrayList(CSSInteger) = ArrayList(CSSInteger){},
     /// A fallback value in case the variable is not defined.
     fallback: ?TokenList,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn deepClone(this: *const EnvironmentVariable, allocator: Allocator) EnvironmentVariable {
         return .{
@@ -1047,6 +1093,13 @@ pub const EnvironmentVariableName = union(enum) {
     /// An unknown environment variable.
     unknown: CustomIdent,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
     pub fn parse(input: *css.Parser) Result(EnvironmentVariableName) {
         if (input.tryParse(UAEnvironmentVariable.parse, .{}).asValue()) |ua| {
             return .{ .result = .{ .ua = ua } };
@@ -1101,6 +1154,10 @@ pub const UAEnvironmentVariable = enum {
     @"viewport-segment-right",
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A custom CSS function.
@@ -1111,6 +1168,14 @@ pub const Function = struct {
     arguments: TokenList,
 
     const This = @This();
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn deepClone(this: *const Function, allocator: Allocator) Function {
         return .{
@@ -1164,6 +1229,14 @@ pub const TokenOrValue = union(enum) {
     dashed_ident: DashedIdent,
     /// An animation name.
     animation_name: AnimationName,
+
+    pub fn eql(lhs: *const TokenOrValue, rhs: *const TokenOrValue) bool {
+        return css.implementEql(TokenOrValue, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 
     pub fn deepClone(this: *const TokenOrValue, allocator: Allocator) TokenOrValue {
         return switch (this.*) {
@@ -1233,6 +1306,10 @@ pub const UnparsedProperty = struct {
 
         return .{ .result = .{ .property_id = property_id, .value = value } };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A CSS custom property, representing any unknown property.
@@ -1273,6 +1350,14 @@ pub const CustomProperty = struct {
             .value = value,
         } };
     }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A CSS custom property name.
@@ -1299,6 +1384,14 @@ pub const CustomPropertyName = union(enum) {
             .custom => |custom| return custom.v,
             .unknown => |unknown| return unknown.v,
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

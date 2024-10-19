@@ -175,7 +175,6 @@ const Socket = (function (InternalSocket) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
-              self.emit("error", verifyError);
               self.destroy(verifyError);
               return;
             }
@@ -237,7 +236,6 @@ const Socket = (function (InternalSocket) {
         const chunk = self.#writeChunk;
         const written = socket.write(chunk);
 
-        self.bytesWritten += written;
         if (written < chunk.length) {
           self.#writeChunk = chunk.slice(written);
         } else {
@@ -295,9 +293,9 @@ const Socket = (function (InternalSocket) {
           this.pauseOnConnect = pauseOnConnect;
           if (isTLS) {
             // add secureConnection event handler
-            self.once("secureConnection", () => connectionListener(_socket));
+            self.once("secureConnection", () => connectionListener.$call(self, _socket));
           } else {
-            connectionListener(_socket);
+            connectionListener.$call(self, _socket);
           }
         }
         self.emit("connection", _socket);
@@ -351,7 +349,6 @@ const Socket = (function (InternalSocket) {
     };
 
     bytesRead = 0;
-    bytesWritten = 0;
     #closed = false;
     #ended = false;
     #final_callback = null;
@@ -420,6 +417,9 @@ const Socket = (function (InternalSocket) {
       this.once("connect", () => this.emit("ready"));
     }
 
+    get bytesWritten() {
+      return this[bunSocketInternal]?.bytesWritten || 0;
+    }
     address() {
       return {
         address: this.localAddress,
@@ -805,6 +805,7 @@ const Socket = (function (InternalSocket) {
     _write(chunk, encoding, callback) {
       if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
       var written = this[bunSocketInternal]?.write(chunk);
+
       if (written == chunk.length) {
         callback();
       } else if (this.#writeCallback) {
@@ -879,7 +880,7 @@ class Server extends EventEmitter {
     if (typeof callback === "function") {
       if (!this[bunSocketInternal]) {
         this.once("close", function close() {
-          callback(new ERR_SERVER_NOT_RUNNING());
+          callback(ERR_SERVER_NOT_RUNNING());
         });
       } else {
         this.once("close", callback);

@@ -81,7 +81,7 @@ static const WTF::String toString(ZigString str)
         return WTF::String();
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
-        return WTF::String::fromUTF8(std::span { untag(str.ptr), str.len });
+        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {

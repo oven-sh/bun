@@ -3064,6 +3064,7 @@ pub const Crypto = struct {
     fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
         return struct {
             hashing: Hasher = Hasher{},
+            digested: bool = false,
 
             const ThisHasher = @This();
 
@@ -3185,6 +3186,10 @@ pub const Crypto = struct {
             }
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+                if (this.digested) {
+                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to update", .{}).throw();
+                    return .zero;
+                }
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
@@ -3206,6 +3211,10 @@ pub const Crypto = struct {
                 globalThis: *JSGlobalObject,
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
+                if (this.digested) {
+                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
+                    return .zero;
+                }
                 if (output) |*string_or_buffer| {
                     switch (string_or_buffer.*) {
                         inline else => |*str| {
@@ -3244,6 +3253,7 @@ pub const Crypto = struct {
                 }
 
                 this.hashing.final(output_digest_slice);
+                this.digested = true;
 
                 if (output) |output_buf| {
                     return output_buf.value;
@@ -3267,6 +3277,7 @@ pub const Crypto = struct {
                 const output_digest_slice: *Hasher.Digest = &output_digest_buf;
 
                 this.hashing.final(output_digest_slice);
+                this.digested = true;
 
                 return encoding.encodeWithSize(globalThis, Hasher.digest, output_digest_slice);
             }

@@ -84,6 +84,28 @@ describe("Hash is consistent", () => {
 
   const inputs = [...sourceInputs, ...sourceInputs.map(x => new Blob([x]))];
 
+  for (let algorithm of [
+    Bun.SHA1,
+    Bun.SHA224,
+    Bun.SHA256,
+    Bun.SHA384,
+    Bun.SHA512,
+    Bun.SHA512_256,
+    Bun.MD4,
+    Bun.MD5,
+  ] as const) {
+    test(`second digest should throw an error ${algorithm.name}`, () => {
+      const hasher = new algorithm().update("hello");
+      hasher.digest();
+      expect(() => hasher.digest()).toThrow(
+        `${algorithm.name} hasher already digested, create a new instance to digest again`,
+      );
+      expect(() => hasher.update("world")).toThrow(
+        `${algorithm.name} hasher already digested, create a new instance to update`,
+      );
+    });
+  }
+
   for (let algorithm of ["sha1", "sha256", "sha512", "md5"] as const) {
     describe(algorithm, () => {
       const Class = globalThis.Bun[algorithm.toUpperCase() as "SHA1" | "SHA256" | "SHA512" | "MD5"];

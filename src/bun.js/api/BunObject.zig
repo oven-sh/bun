@@ -3186,6 +3186,10 @@ pub const Crypto = struct {
             }
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+                if (this.digested) {
+                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to update", .{}).throw();
+                    return .zero;
+                }
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
@@ -3208,7 +3212,7 @@ pub const Crypto = struct {
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
                 if (this.digested) {
-                    globalThis.ERR_INVALID_STATE(name ++ " already digested, create a new " ++ name ++ " hasher to digest again", .{}).throw();
+                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
                     return .zero;
                 }
                 if (output) |*string_or_buffer| {

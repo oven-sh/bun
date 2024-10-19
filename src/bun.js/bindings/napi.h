@@ -223,13 +223,13 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    CFFIFunction constructor()
+    napi_callback constructor()
     {
         return m_constructor;
     }
 
     void* dataPtr = nullptr;
-    CFFIFunction m_constructor = nullptr;
+    napi_callback m_constructor = nullptr;
     NapiRef* napiRef = nullptr;
 
 private:

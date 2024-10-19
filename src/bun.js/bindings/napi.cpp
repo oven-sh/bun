@@ -63,6 +63,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
@@ -454,32 +455,9 @@ public:
         return m_args.at(0);
     }
 
-    static constexpr uintptr_t NAPICallFramePtrTag = static_cast<uint64_t>(1) << 63;
-
-    static bool isNAPICallFramePtr(uintptr_t ptr)
+    napi_callback_info toNapi()
     {
-        return ptr & NAPICallFramePtrTag;
-    }
-
-    static uintptr_t tagNAPICallFramePtr(uintptr_t ptr)
-    {
-        return ptr | NAPICallFramePtrTag;
-    }
-
-    static napi_callback_info toNapiCallbackInfo(NAPICallFrame& frame)
-    {
-        return reinterpret_cast<napi_callback_info>(tagNAPICallFramePtr(reinterpret_cast<uintptr_t>(&frame)));
-    }
-
-    static std::optional<NAPICallFrame*> get(JSC::CallFrame* callFrame)
-    {
-        uintptr_t ptr = reinterpret_cast<uintptr_t>(callFrame);
-        if (!isNAPICallFramePtr(ptr)) {
-            return std::nullopt;
-        }
-
-        ptr &= ~NAPICallFramePtrTag;
-        return { reinterpret_cast<NAPICallFrame*>(ptr) };
+        return reinterpret_cast<napi_callback_info>(this);
     }
 
     ALWAYS_INLINE const JSC::ArgList& args() const
@@ -492,40 +470,40 @@ public:
         return m_dataPtr;
     }
 
-    static void extract(NAPICallFrame& callframe, size_t* argc, // [in-out] Specifies the size of the provided argv array
-                                                                // and receives the actual count of args.
+    void extract(size_t* argc, // [in-out] Specifies the size of the provided argv array
+                               // and receives the actual count of args.
         napi_value* argv, // [out] Array of values
         napi_value* this_arg, // [out] Receives the JS 'this' arg for the call
         void** data, Zig::GlobalObject* globalObject)
     {
         if (this_arg != nullptr) {
-            *this_arg = toNapi(callframe.thisValue(), globalObject);
+            *this_arg = ::toNapi(thisValue(), globalObject);
         }
 
         if (data != nullptr) {
-            *data = callframe.dataPtr();
+            *data = dataPtr();
         }
 
         size_t maxArgc = 0;
         if (argc != nullptr) {
             maxArgc = *argc;
-            *argc = callframe.args().size() - 1;
+            *argc = args().size() - 1;
         }
 
         if (argv != nullptr) {
-            size_t realArgCount = callframe.args().size() - 1;
+            size_t realArgCount = args().size() - 1;
 
             size_t overflow = maxArgc > realArgCount ? maxArgc - realArgCount : 0;
             realArgCount = realArgCount < maxArgc ? realArgCount : maxArgc;
 
             if (realArgCount > 0) {
-                memcpy(argv, callframe.args().data() + 1, sizeof(napi_value) * realArgCount);
+                memcpy(argv, args().data() + 1, sizeof(napi_value) * realArgCount);
                 argv += realArgCount;
             }
 
             if (overflow > 0) {
                 while (overflow--) {
-                    *argv = toNapi(jsUndefined(), globalObject);
+                    *argv = ::toNapi(jsUndefined(), globalObject);
                     argv++;
                 }
             }
@@ -565,7 +543,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
-        auto result = callback(env, NAPICallFrame::toNapiCallbackInfo(frame));
+        auto result = callback(env, frame.toNapi());
 
         RELEASE_AND_RETURN(scope, JSValue::encode(toJS(result)));
     }
@@ -1056,14 +1034,25 @@ extern "C" void napi_module_register(napi_module* mod)
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
+void finalizeRefInsideExternalForNapiWrap(napi_env env, void* opaque_ref, void* hint)
+{
+    auto* ref = reinterpret_cast<NapiRef*>(opaque_ref);
+    ref->finalizer.call(toJS(env), ref->data);
+    delete ref;
+}
+
 // Returns a pointer to the NapiRef pointer used for a value, or nullptr if the value cannot have an
 // associated ref
 // Possible cases:
 // - returns nullptr: the value cannot be wrapped
 // - returns a pointer to nullptr: the value can be wrapped, but has not yet been wrapped
 // - returns a pointer to non-null: the value has been wrapped
-NapiRef** getRefToWrapValue(Zig::GlobalObject* globalObject, JSValue value)
+NapiRef** getRefToWrapValue(Zig::GlobalObject* globalObject, JSValue value, Bun::NapiExternal** new_external_ptr)
 {
+    if (new_external_ptr) {
+        *new_external_ptr = nullptr;
+    }
+
     if (!value.isCell()) {
         return nullptr;
     } else if (auto* proto = jsDynamicCast<NapiPrototype*>(value)) {
@@ -1071,13 +1060,17 @@ NapiRef** getRefToWrapValue(Zig::GlobalObject* globalObject, JSValue value)
     } else if (auto* class_ = jsDynamicCast<NapiClass*>(value)) {
         return &class_->napiRef;
     } else {
+        // TODO this probably leaks in napi_unwrap on an object that isn't wrapped
         if (auto* found_external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()))) {
             // object has already been wrapped, so return the place where the ref is stored in that wrapping
             return reinterpret_cast<NapiRef**>(&found_external->m_value);
         } else {
-            // no finalizer, because the addon needs to handle cleanup of the ref
+            // no finalizer, because napi_wrap will add it
             auto* new_external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(),
                 nullptr, nullptr, nullptr);
+            if (new_external_ptr) {
+                *new_external_ptr = new_external;
+            }
             // associate the external value with the object
             globalObject->napiWraps()->set(globalObject->vm(), value.asCell(), new_external);
             // return a pointer to where the external stores the ref
@@ -1103,8 +1096,13 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto* globalObject = toJS(env);
     JSValue value = toJS(js_object);
-    NapiRef** refPtr = getRefToWrapValue(globalObject, value);
+    Bun::NapiExternal* new_external;
+    NapiRef** refPtr = getRefToWrapValue(globalObject, value, &new_external);
     NAPI_RETURN_EARLY_IF_FALSE(env, refPtr, napi_object_expected);
+
+    if (new_external) {
+        new_external->finalizer = reinterpret_cast<void*>(finalizeRefInsideExternalForNapiWrap);
+    }
 
     // Calling napi_wrap() a second time on an object will return an error.
     // To associate another native instance with the object, use
@@ -1138,7 +1136,7 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 
     JSValue value = toJS(js_object);
     Zig::GlobalObject* globalObject = toJS(env);
-    NapiRef** refPtr = getRefToWrapValue(globalObject, value);
+    NapiRef** refPtr = getRefToWrapValue(globalObject, value, nullptr);
     NAPI_RETURN_EARLY_IF_FALSE(env, refPtr, napi_object_expected);
 
     if (*refPtr == nullptr) {
@@ -1147,12 +1145,12 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     }
 
     auto* ref = *refPtr;
-    *refPtr = nullptr;
 
     if (result) {
         *result = ref->data;
     }
-    delete ref;
+
+    // don't delete the ref
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1165,8 +1163,9 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     NAPI_CHECK_ARG(env, result);
 
     JSValue value = toJS(js_object);
-    NapiRef** refPtr = getRefToWrapValue(value);
-    NAPI_RETURN_EARLY_IF_FALSE(env, refPtr, napi_object_expected);
+    Zig::GlobalObject* globalObject = toJS(env);
+    NapiRef** refPtr = getRefToWrapValue(globalObject, value, nullptr);
+    NAPI_RETURN_EARLY_IF_FALSE(env, refPtr && *refPtr, napi_invalid_arg);
     NapiRef* ref = *refPtr;
 
     *result = ref ? ref->data : nullptr;
@@ -1211,72 +1210,10 @@ extern "C" napi_status napi_get_cb_info(
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, cbinfo);
 
-    JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
+    auto* callFrame = reinterpret_cast<NAPICallFrame*>(cbinfo);
     Zig::GlobalObject* globalObject = toJS(env);
 
-    if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        NAPICallFrame::extract(*frame, argc, argv, this_arg, data, globalObject);
-        NAPI_RETURN_SUCCESS(env);
-    }
-
-    auto inputArgsCount = argc == nullptr ? 0 : *argc;
-
-    // napi expects arguments to be copied into the argv array.
-    if (inputArgsCount > 0) {
-        auto outputArgsCount = callFrame->argumentCount();
-        auto argsToCopy = inputArgsCount < outputArgsCount ? inputArgsCount : outputArgsCount;
-        *argc = argsToCopy;
-
-        memcpy(argv, callFrame->addressOfArgumentsStart(), argsToCopy * sizeof(JSValue));
-
-        for (size_t i = outputArgsCount; i < inputArgsCount; i++) {
-            argv[i] = toNapi(JSC::jsUndefined(), globalObject);
-        }
-    }
-
-    JSValue thisValue = callFrame->thisValue();
-
-    if (this_arg != nullptr) {
-        *this_arg = toNapi(thisValue, globalObject);
-    }
-
-    if (data != nullptr) {
-        JSValue callee = JSValue(callFrame->jsCallee());
-
-        if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(callee)) {
-            *data = ffiFunction->dataPtr;
-        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(callee)) {
-            NapiRef* ref = proto->napiRef;
-            if (ref) {
-                *data = ref->data;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(callee)) {
-            void* local = proto->dataPtr;
-            if (!local) {
-                NapiRef* ref = nullptr;
-                if (ref) {
-                    *data = ref->data;
-                }
-            } else {
-                *data = local;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(thisValue)) {
-            NapiRef* ref = proto->napiRef;
-            if (ref) {
-                *data = ref->data;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(thisValue)) {
-            void* local = proto->dataPtr;
-            if (local) {
-                *data = local;
-            }
-        } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
-            *data = proto->value();
-        } else {
-            *data = nullptr;
-        }
-    }
-
+    callFrame->extract(argc, argv, this_arg, data, globalObject);
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -1751,15 +1688,9 @@ extern "C" napi_status napi_get_new_target(napi_env env,
     NAPI_CHECK_ARG(env, cbinfo);
     NAPI_CHECK_ARG(env, result);
 
-    CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
+    NAPICallFrame* callFrame = reinterpret_cast<NAPICallFrame*>(cbinfo);
 
-    if (NAPICallFrame* frame = NAPICallFrame::get(callFrame).value_or(nullptr)) {
-        *result = toNapi(frame->newTarget, toJS(env));
-        NAPI_RETURN_SUCCESS(env);
-    }
-
-    JSValue newTarget = callFrame->newTarget();
-    *result = toNapi(newTarget, toJS(env));
+    *result = toNapi(callFrame->newTarget, toJS(env));
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -1838,7 +1769,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     frame.newTarget = newTarget;
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
-    napi->constructor()(globalObject, reinterpret_cast<JSC::CallFrame*>(NAPICallFrame::toNapiCallbackInfo(frame)));
+    napi->constructor()(toNapi(globalObject), frame.toNapi());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(frame.thisValue()));
 }
@@ -1865,7 +1796,7 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned le
 {
     Base::finishCreation(vm, executable, length, name);
     ASSERT(inherits(info()));
-    this->m_constructor = reinterpret_cast<CFFIFunction>(constructor);
+    this->m_constructor = constructor;
     auto globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);

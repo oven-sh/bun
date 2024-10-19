@@ -1635,6 +1635,8 @@ pub const Api = struct {
         /// define
         define: ?StringMap = null,
 
+        drop: []const []const u8 = &.{},
+
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,
 
@@ -1670,12 +1672,6 @@ pub const Api = struct {
 
         /// extension_order
         extension_order: []const []const u8,
-
-        /// framework
-        framework: ?FrameworkConfig = null,
-
-        /// router
-        router: ?RouteConfig = null,
 
         /// no_summary
         no_summary: ?bool = null,
@@ -1755,9 +1751,7 @@ pub const Api = struct {
                     15 => {
                         this.target = try reader.readValue(Target);
                     },
-                    16 => {
-                        this.serve = try reader.readValue(bool);
-                    },
+                    16 => {},
                     17 => {
                         this.env_files = try reader.readArray([]const u8);
                     },
@@ -2981,6 +2975,13 @@ pub const Api = struct {
 
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
+
+        cafile: ?[]const u8 = null,
+
+        ca: ?union(enum) {
+            str: []const u8,
+            list: []const []const u8,
+        } = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

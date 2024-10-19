@@ -8,7 +8,7 @@
 // first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
 // in the promise reaction) and then just before we call .then, we restore it.
 //
-// This means context tracking is *kind-of* manual. If we recieve a callback in native code
+// This means context tracking is *kind-of* manual. If we receive a callback in native code
 // - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
@@ -136,7 +136,7 @@ class AsyncLocalStorage {
     return this.run(undefined, cb, ...args);
   }
 
-  // This function is literred with $asserts to ensure that everything that
+  // This function is litered with $asserts to ensure that everything that
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
@@ -303,9 +303,9 @@ class AsyncResource {
 
 // The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.
 
-function createWarning(message) {
+function createWarning(message, isCreateHook?: boolean) {
   let warned = false;
-  var wrapped = function () {
+  var wrapped = function (arg1?) {
     if (warned) return;
 
     const known_supported_modules = [
@@ -315,6 +315,19 @@ function createWarning(message) {
     ];
     const e = new Error().stack!;
     if (known_supported_modules.some(m => e.includes(m))) return;
+    if (isCreateHook && arg1) {
+      // this block is to specifically filter out react-server, which is often
+      // times bundled into a framework or application. Their use defines three
+      // handlers which are all TODO stubs. for more info see this comment:
+      // https://github.com/oven-sh/bun/issues/13866#issuecomment-2397896065
+      if (typeof arg1 === 'object') {
+        const { init, promiseResolve, destroy } = arg1;
+        if (init && promiseResolve && destroy) {
+          if (isEmptyFunction(init) && isEmptyFunction(destroy))
+            return;
+        }
+      }
+    }
 
     warned = true;
     console.warn("[bun] Warning:", message);
@@ -322,13 +335,21 @@ function createWarning(message) {
   return wrapped;
 }
 
+function isEmptyFunction(f: Function) {
+  let str = f.toString();
+  if(!str.startsWith('function()'))return false;
+  str = str.slice('function()'.length).trim();
+  return /^{\s*}$/.test(str);
+}
+
 const createHookNotImpl = createWarning(
   "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+  true,
 );
 
 function createHook(callbacks) {
   return {
-    enable: createHookNotImpl,
+    enable: () => createHookNotImpl(callbacks),
     disable: createHookNotImpl,
   };
 }

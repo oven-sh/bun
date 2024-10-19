@@ -214,6 +214,7 @@ pub const WebWorker = struct {
     pub fn startWithErrorHandling(
         this: *WebWorker,
     ) void {
+        bun.Analytics.Features.workers_spawned += 1;
         start(this) catch |err| {
             Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
         };
@@ -248,11 +249,6 @@ pub const WebWorker = struct {
 
         var b = &vm.bundler;
 
-        b.configureRouter(false) catch {
-            this.flushLogs();
-            this.exitAndDeinit();
-            return;
-        };
         b.configureDefines() catch {
             this.flushLogs();
             this.exitAndDeinit();
@@ -335,7 +331,7 @@ pub const WebWorker = struct {
             bun.outOfMemory();
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
+        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
         if (vm.worker) |worker_| {
             _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -366,7 +362,7 @@ pub const WebWorker = struct {
             return;
         };
 
-        if (promise.status(vm.global.vm()) == .Rejected) {
+        if (promise.status(vm.global.vm()) == .rejected) {
             const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
             if (!handled) {
@@ -456,6 +452,7 @@ pub const WebWorker = struct {
     pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
         this.setStatus(.terminated);
+        bun.Analytics.Features.workers_terminated += 1;
 
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
         const cpp_worker = this.cpp_worker;

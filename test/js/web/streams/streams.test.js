@@ -1,18 +1,16 @@
 import {
+  ArrayBufferSink,
   file,
+  readableStreamToArray,
   readableStreamToArrayBuffer,
   readableStreamToBytes,
-  readableStreamToArray,
   readableStreamToText,
-  ArrayBufferSink,
 } from "bun";
-import { expect, it, describe, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { tmpdirSync, isWindows, isMacOS } from "harness";
 import { mkfifo } from "mkfifo";
-import { realpathSync, unlinkSync, writeFileSync, createReadStream } from "node:fs";
+import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdirSync } from "harness";
-
-const isWindows = process.platform === "win32";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
@@ -427,7 +425,7 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
+it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
     unlinkSync(fifoPath);

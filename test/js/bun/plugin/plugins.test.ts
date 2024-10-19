@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { resolve, dirname } from "path";
+import { resolve } from "path";
 
 declare global {
   var failingObject: any;

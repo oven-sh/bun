@@ -74,7 +74,13 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
     while (parent.len > 0 and isSepAny(parent[parent.len - 1])) {
         parent = parent[0 .. parent.len - 1];
     }
-    if (std.mem.indexOf(u8, child, parent) != 0) return .unrelated;
+
+    const contains = if (comptime !bun.Environment.isLinux)
+        strings.containsCaseInsensitiveASCII
+    else
+        strings.contains;
+    if (!contains(child, parent)) return .unrelated;
+
     if (child.len == parent.len) return .equal;
     if (isSepAny(child[parent.len])) return .parent;
     return .unrelated;
@@ -681,7 +687,7 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
     {
         if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
             if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
-                return path[0 .. idx + idx_second + 4];
+                return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator
             }
             return path[0..];
         }
@@ -1141,6 +1147,12 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
     return normalizeBufT(u8, str, buf, _platform);
 }
 
+pub fn normalizeBufZ(str: []const u8, buf: []u8, comptime _platform: Platform) [:0]u8 {
+    const norm = normalizeBufT(u8, str, buf, _platform);
+    buf[norm.len] = 0;
+    return buf[0..norm.len :0];
+}
+
 pub fn normalizeBufT(comptime T: type, str: []const T, buf: []T, comptime _platform: Platform) []T {
     if (str.len == 0) {
         buf[0] = '.';
@@ -1226,9 +1238,7 @@ pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, p
 }
 
 pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
-    const parts = [_][]const u8{
-        part,
-    };
+    const parts = [_][]const u8{part};
     const slice = joinAbsString(_cwd, &parts, _platform);
     return slice;
 }

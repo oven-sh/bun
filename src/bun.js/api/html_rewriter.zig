@@ -710,7 +710,7 @@ pub const HTMLRewriter = struct {
 
     //     pub fn done(this: *StreamOutputSink) void {
     //         var prev_value = this.response.body.value;
-    //         var bytes = this.bytes.toOwnedSliceLeaky();
+    //         var bytes = this.bytes.slice();
     //         this.response.body.value = .{
     //             .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
     //         };
@@ -880,14 +880,14 @@ fn HandlerCallback(
             @field(zig_element, field_name) = value;
             defer @field(zig_element, field_name) = null;
 
-            var result = @field(this, callback_name).?.call(
+            const result = @field(this, callback_name).?.call(
                 this.global,
                 if (comptime @hasField(HandlerType, "thisObject"))
                     @field(this, "thisObject")
                 else
                     JSValue.zero,
                 &.{zig_element.toJS(this.global)},
-            );
+            ) catch |err| this.global.takeException(err);
 
             if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {
@@ -896,7 +896,7 @@ fn HandlerCallback(
 
                 if (result.asAnyPromise()) |promise| {
                     this.global.bunVM().waitForPromise(promise);
-                    const fail = promise.status(this.global.vm()) == .Rejected;
+                    const fail = promise.status(this.global.vm()) == .rejected;
                     if (fail) {
                         _ = this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue(this.global));
                     }

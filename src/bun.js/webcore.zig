@@ -403,7 +403,7 @@ pub const Crypto = struct {
                 return .zero;
             }
 
-            if (options_value.getTruthy(globalThis, "cost") orelse options_value.get(globalThis, "N")) |N_value| {
+            if (options_value.getTruthy(globalThis, "cost") orelse options_value.getTruthy(globalThis, "N")) |N_value| {
                 if (cost != null) return throwInvalidParameter(globalThis);
                 const N_int = N_value.to(i64);
                 if (N_int < 0 or !N_value.isNumber()) {
@@ -418,7 +418,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.get(globalThis, "r")) |r_value| {
+            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.getTruthy(globalThis, "r")) |r_value| {
                 if (blockSize != null) return throwInvalidParameter(globalThis);
                 const r_int = r_value.to(i64);
                 if (r_int < 0 or !r_value.isNumber()) {
@@ -433,7 +433,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.get(globalThis, "p")) |p_value| {
+            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.getTruthy(globalThis, "p")) |p_value| {
                 if (parallelization != null) return throwInvalidParameter(globalThis);
                 const p_int = p_value.to(i64);
                 if (p_int < 0 or !p_value.isNumber()) {
@@ -538,25 +538,13 @@ pub const Crypto = struct {
     }
 
     fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const err = globalThis.createErrorInstanceWithCode(
-            .ERR_CRYPTO_SCRYPT_INVALID_PARAMETER,
-            "Invalid scrypt parameters",
-            .{},
-        );
-        globalThis.throwValue(err);
+        globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
         return .zero;
     }
 
     fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
-        const err = switch (error_type) {
-            .RangeError => globalThis.createRangeErrorInstanceWithCode(
-                .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
-                message,
-                fmt,
-            ),
-            else => @compileError("Error type not added!"),
-        };
-        globalThis.throwValue(err);
+        if (error_type != .RangeError) @compileError("Error type not added!");
+        globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
         BoringSSL.ERR_clear_error();
         return .zero;
     }

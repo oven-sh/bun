@@ -368,10 +368,19 @@ pub const Bin = extern struct {
 
             bun.Analytics.Features.binlinks += 1;
 
-            if (comptime Environment.isWindows)
-                this.createWindowsShim(abs_target, abs_dest, global)
-            else
-                this.createSymlink(abs_target, abs_dest, global);
+            if (comptime !Environment.isWindows)
+                this.createSymlink(abs_target, abs_dest, global)
+            else {
+                const target = bun.sys.openat(bun.invalid_fd, abs_target, bun.O.RDONLY, 0).unwrap() catch |err| {
+                    if (err != error.EISDIR) {
+                        // ignore directories, creating a shim for one won't do anything
+                        this.err = err;
+                    }
+                    return;
+                };
+                defer _ = bun.sys.close(target);
+                this.createWindowsShim(target, abs_target, abs_dest, global);
+            }
 
             if (this.err != null) {
                 // cleanup on error just in case
@@ -401,7 +410,7 @@ pub const Bin = extern struct {
             }
         }
 
-        fn createWindowsShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
+        fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
             var shim_buf: [65536]u8 = undefined;
@@ -435,13 +444,7 @@ pub const Bin = extern struct {
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
-                    const target = bun.openFileZ(abs_target, .{ .mode = .read_only }) catch |err| {
-                        // it should exist, this error is real
-                        this.err = err;
-                        return;
-                    };
-                    defer target.close();
-                    const reader = target.reader();
+                    const reader = target.asFile().reader();
                     const read = reader.read(&read_in_buf) catch break :contents null;
                     if (read == 0) break :contents null;
                     break :contents read_in_buf[0..read];
@@ -660,6 +663,11 @@ pub const Bin = extern struct {
                     const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
+                        if (err == error.ENOENT) {
+                            // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
+                            // avoid erroring when the directory does not exist
+                            return;
+                        }
                         this.err = err;
                         return;
                     };

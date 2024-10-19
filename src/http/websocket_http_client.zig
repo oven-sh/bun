@@ -399,9 +399,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (handshake_success) {
                 // handshake completed but we may have ssl errors
-                if(reject_unauthorized) {
-                   // only reject the connection if reject_unauthorized == true
-                    if(ssl_error.error_no != 0){
+                if (reject_unauthorized) {
+                    // only reject the connection if reject_unauthorized == true
+                    if (ssl_error.error_no != 0) {
                         this.fail(ErrorCode.tls_handshake_failed);
                         return;
                     }
@@ -415,10 +415,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             } else {
                 // if we are here is because server rejected us, and the error_no is the cause of this
-                // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS    
+                // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
                 this.fail(ErrorCode.tls_handshake_failed);
             }
-            
         }
 
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
@@ -518,7 +517,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            for (response.headers) |header| {
+            for (response.headers.list) |header| {
                 switch (header.name.len) {
                     "Connection".len => {
                         if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection", false)) {

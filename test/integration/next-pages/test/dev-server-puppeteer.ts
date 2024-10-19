@@ -1,7 +1,7 @@
-import { ConsoleMessage, Page, launch } from "puppeteer";
 import assert from "assert";
 import { copyFileSync } from "fs";
 import { join } from "path";
+import { ConsoleMessage, Page, launch } from "puppeteer";
 
 const root = join(import.meta.dir, "../");
 
@@ -35,6 +35,17 @@ const b = await launch({
     // "--enable-logging=stderr",
     // "--v=1",
   ],
+});
+
+process.on("beforeExit", async reason => {
+  await b?.close?.();
+});
+
+process.once("SIGTERM", () => {
+  b?.close?.();
+  setTimeout(() => {
+    process.exit(0);
+  }, 100);
 });
 
 async function main() {

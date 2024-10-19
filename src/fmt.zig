@@ -7,8 +7,211 @@ const js_lexer = bun.js_lexer;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const fmt = std.fmt;
 const Environment = bun.Environment;
+const sha = bun.sha;
 
 pub usingnamespace std.fmt;
+
+pub fn Table(
+    comptime column_color: []const u8,
+    comptime column_left_pad: usize,
+    comptime column_right_pad: usize,
+    comptime enable_ansi_colors: bool,
+) type {
+    return struct {
+        column_names: []const []const u8,
+        column_inside_lengths: []const usize,
+
+        pub fn topLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┌" else "|";
+        }
+        pub fn topRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┐" else "|";
+        }
+        pub fn topColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┬" else "-";
+        }
+
+        pub fn bottomLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "└" else "|";
+        }
+        pub fn bottomRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┘" else "|";
+        }
+        pub fn bottomColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┴" else "-";
+        }
+
+        pub fn middleLeftSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "├" else "|";
+        }
+        pub fn middleRightSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┤" else "|";
+        }
+        pub fn middleColumnSep(_: *const @This()) string {
+            return if (enable_ansi_colors) "┼" else "|";
+        }
+
+        pub fn horizontalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "─" else "-";
+        }
+        pub fn verticalEdge(_: *const @This()) string {
+            return if (enable_ansi_colors) "│" else "|";
+        }
+
+        pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
+            return .{
+                .column_names = column_names_,
+                .column_inside_lengths = column_inside_lengths_,
+            };
+        }
+
+        pub fn printTopLineSeparator(this: *const @This()) void {
+            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
+        }
+
+        pub fn printBottomLineSeparator(this: *const @This()) void {
+            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
+        }
+
+        pub fn printLineSeparator(this: *const @This()) void {
+            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
+        }
+
+        pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                if (i == 0) {
+                    Output.pretty("{s}", .{left_edge_separator});
+                } else {
+                    Output.pretty("{s}", .{column_separator});
+                }
+
+                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
+
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("{s}\n", .{right_edge_separator});
+                }
+            }
+        }
+
+        pub fn printColumnNames(this: *const @This()) void {
+            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
+                Output.pretty("{s}", .{this.verticalEdge()});
+                for (0..column_left_pad) |_| Output.pretty(" ", .{});
+                Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
+                for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
+                if (i == this.column_inside_lengths.len - 1) {
+                    Output.pretty("{s}\n", .{this.verticalEdge()});
+                }
+            }
+        }
+    };
+}
+
+pub const RedactedNpmUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (i < this.url.len) {
+            if (strings.startsWithUUID(this.url[i..])) {
+                try writer.writeAll("***");
+                i += 36;
+                continue;
+            }
+
+            const npm_secret_len = strings.startsWithNpmSecret(this.url[i..]);
+            if (npm_secret_len > 0) {
+                try writer.writeAll("***");
+                i += npm_secret_len;
+                continue;
+            }
+
+            // TODO: redact password from `https://username:password@registry.com/`
+
+            try writer.writeByte(this.url[i]);
+            i += 1;
+        }
+    }
+};
+
+pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
+    return .{
+        .url = str,
+    };
+}
+
+// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-package-arg/lib/npa.js#L163
+pub const DependencyUrlFormatter = struct {
+    url: string,
+
+    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = this.url;
+        while (strings.indexOfChar(remain, '/')) |slash| {
+            try writer.writeAll(remain[0..slash]);
+            try writer.writeAll("%2f");
+            remain = remain[slash + 1 ..];
+        }
+        try writer.writeAll(remain);
+    }
+};
+
+pub fn dependencyUrl(url: string) DependencyUrlFormatter {
+    return .{
+        .url = url,
+    };
+}
+
+const IntegrityFormatStyle = enum {
+    short,
+    full,
+};
+
+pub fn IntegrityFormatter(comptime style: IntegrityFormatStyle) type {
+    return struct {
+        bytes: [sha.SHA512.digest]u8,
+
+        pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
+            const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
+
+            const encoded = buf[0..count];
+
+            if (comptime style == .short)
+                try writer.print("sha512-{s}[...]{s}", .{ encoded[0..13], encoded[encoded.len - 15 ..] })
+            else
+                try writer.print("sha512-{s}", .{encoded});
+        }
+    };
+}
+
+pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime style: IntegrityFormatStyle) IntegrityFormatter(style) {
+    return .{ .bytes = bytes };
+}
+
+const JSONFormatter = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
+    }
+};
+
+const JSONFormatterUTF8 = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+    }
+};
+
+/// Expects latin1
+pub fn formatJSONString(text: []const u8) JSONFormatter {
+    return .{ .input = text };
+}
+
+pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
+    return .{ .input = text };
+}
 
 const SharedTempBuffer = [32 * 1024]u8;
 fn getSharedBuffer() []u8 {
@@ -96,6 +299,25 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
 pub inline fn utf16(slice_: []const u16) FormatUTF16 {
     return FormatUTF16{ .buf = slice_ };
 }
+
+/// Debug, this does not handle invalid utf32
+pub inline fn debugUtf32PathFormatter(path: []const u32) DebugUTF32PathFormatter {
+    return DebugUTF32PathFormatter{ .path = path };
+}
+
+pub const DebugUTF32PathFormatter = struct {
+    path: []const u32,
+    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        var path_buf: bun.PathBuffer = undefined;
+        const result = bun.simdutf.convert.utf32.to.utf8.with_errors.le(this.path, &path_buf);
+        const converted = if (result.isSuccessful())
+            path_buf[0..result.count]
+        else
+            "Invalid UTF32!";
+
+        try writer.writeAll(converted);
+    }
+};
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
@@ -986,17 +1208,30 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+    opts: Options,
+
+    pub const Options = struct {
+        space_between_number_and_unit: bool = true,
+    };
 
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
         if (value == 0) {
-            return writer.writeAll("0 KB");
+            if (self.opts.space_between_number_and_unit) {
+                return writer.writeAll("0 KB");
+            } else {
+                return writer.writeAll("0KB");
+            }
         }
 
         if (value < 512) {
             try fmt.formatInt(self.value, 10, .lower, opts, writer);
-            return writer.writeAll(" bytes");
+            if (self.opts.space_between_number_and_unit) {
+                return writer.writeAll(" bytes");
+            } else {
+                return writer.writeByte('B');
+            }
         }
 
         const mags_si = " KMGTPEZY";
@@ -1006,21 +1241,31 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            if (self.opts.space_between_number_and_unit) {
+                try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            } else {
+                try writer.print("{d:.2}KB", .{new_value / 1000.0});
+            }
             return;
         }
         const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
         try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
-        try writer.writeAll(&.{ ' ', suffix, 'B' });
+        if (self.opts.space_between_number_and_unit) {
+            try writer.writeAll(&.{ ' ', suffix, 'B' });
+        } else {
+            try writer.writeAll(&.{ suffix, 'B' });
+        }
     }
 };
 
-pub fn size(value: anytype) SizeFormatter {
-    return switch (@TypeOf(value)) {
-        f64, f32, f128 => SizeFormatter{
-            .value = @as(u64, @intFromFloat(value)),
+pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+    return .{
+        .value = switch (@TypeOf(value)) {
+            f64, f32, f128 => @intFromFloat(value),
+            i64, isize => @intCast(value),
+            else => value,
         },
-        else => SizeFormatter{ .value = value },
+        .opts = opts,
     };
 }
 
@@ -1183,7 +1428,7 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
 }
 
 /// Uses WebKit's double formatter
-pub fn fmtDouble(number: f64) FormatDouble {
+pub fn double(number: f64) FormatDouble {
     return .{ .number = number };
 }
 
@@ -1297,3 +1542,91 @@ pub const fmt_js_test_bindings = struct {
         return str.toJS(globalThis);
     }
 };
+
+fn NewOutOfRangeFormatter(comptime T: type) type {
+    return struct {
+        value: T,
+        min: i64 = std.math.maxInt(i64),
+        max: i64 = std.math.maxInt(i64),
+        field_name: []const u8,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            try writer.writeAll("The value of \"");
+            try writer.writeAll(self.field_name);
+            try writer.writeAll("\" ");
+            const min = self.min;
+            const max = self.max;
+
+            if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
+                try std.fmt.format(writer, "must be >= {d} and <= {d}.", .{ min, max });
+            } else if (min != std.math.maxInt(i64)) {
+                try std.fmt.format(writer, "must be >= {d}.", .{min});
+            } else if (max != std.math.maxInt(i64)) {
+                try std.fmt.format(writer, "must be <= {d}.", .{max});
+            } else {
+                try writer.writeAll("must be within the range of values for type ");
+                try writer.writeAll(comptime @typeName(T));
+                try writer.writeAll(".");
+            }
+
+            if (comptime T == f64 or T == f32) {
+                try std.fmt.format(writer, " Received: {}", .{double(self.value)});
+            } else if (comptime T == []const u8) {
+                try std.fmt.format(writer, " Received: {s}", .{self.value});
+            } else {
+                try std.fmt.format(writer, " Received: {d}", .{self.value});
+            }
+        }
+    };
+}
+
+const DoubleOutOfRangeFormatter = NewOutOfRangeFormatter(f64);
+const IntOutOfRangeFormatter = NewOutOfRangeFormatter(i64);
+const StringOutOfRangeFormatter = NewOutOfRangeFormatter([]const u8);
+
+fn OutOfRangeFormatter(comptime T: type) type {
+    if (T == f64 or T == f32) {
+        return DoubleOutOfRangeFormatter;
+    } else if (T == []const u8) {
+        return StringOutOfRangeFormatter;
+    }
+
+    return IntOutOfRangeFormatter;
+}
+
+pub const OutOfRangeOptions = struct {
+    min: i64 = std.math.maxInt(i64),
+    max: i64 = std.math.maxInt(i64),
+    field_name: []const u8,
+};
+
+pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
+    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
+}
+
+/// esbuild has an 8 character truncation of a base32 encoded bytes. this
+/// is not exactly that, but it will appear as such. the character list
+/// chosen omits similar characters in the unlikely case someone is
+/// trying to memorize a hash.
+///
+/// this hash is used primarily for the hashes in bundler chunk file names. the
+/// output is all lowercase to avoid issues with case-insensitive filesystems.
+pub fn truncatedHash32(int: u64) std.fmt.Formatter(truncatedHash32Impl) {
+    return .{ .data = int };
+}
+
+fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    comptime bun.assert(fmt_str.len == 0);
+    const in_bytes = std.mem.asBytes(&int);
+    const chars = "0123456789abcdefghjkmnpqrstvwxyz";
+    try writer.writeAll(&.{
+        chars[in_bytes[0] & 31],
+        chars[in_bytes[1] & 31],
+        chars[in_bytes[2] & 31],
+        chars[in_bytes[3] & 31],
+        chars[in_bytes[4] & 31],
+        chars[in_bytes[5] & 31],
+        chars[in_bytes[6] & 31],
+        chars[in_bytes[7] & 31],
+    });
+}

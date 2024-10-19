@@ -18,7 +18,7 @@ const logger = bun.logger;
 
 const js_parser = bun.js_parser;
 const Expr = @import("../js_ast.zig").Expr;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
@@ -841,15 +841,19 @@ pub fn isRootDependency(this: *const Lockfile, manager: *PackageManager, id: Dep
 /// Is this a direct dependency of any workspace (including workspace root)?
 /// TODO make this faster by caching the workspace package ids
 pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
+    return getWorkspacePkgIfWorkspaceDep(this, id) != invalid_package_id;
+}
+
+pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) PackageID {
     const packages = this.packages.slice();
     const resolutions = packages.items(.resolution);
     const dependencies_lists = packages.items(.dependencies);
-    for (resolutions, dependencies_lists) |resolution, dependencies| {
+    for (resolutions, dependencies_lists, 0..) |resolution, dependencies, pkg_id| {
         if (resolution.tag != .workspace and resolution.tag != .root) continue;
-        if (dependencies.contains(id)) return true;
+        if (dependencies.contains(id)) return @intCast(pkg_id);
     }
 
-    return false;
+    return invalid_package_id;
 }
 
 /// Does this tree id belong to a workspace (including workspace root)?
@@ -1296,6 +1300,7 @@ pub const Printer = struct {
 
             const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
+            loader.quiet = true;
             break :brk loader;
         };
 
@@ -3093,7 +3098,7 @@ pub const Package = extern struct {
                 };
 
                 initializeStore();
-                break :brk try json_parser.ParsePackageJSONUTF8(
+                break :brk try JSON.parsePackageJSONUTF8(
                     &json_src,
                     log,
                     allocator,
@@ -3940,7 +3945,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+        const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -4333,7 +4338,7 @@ pub const Package = extern struct {
         }).unwrap();
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
-        const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
+        const name = try name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
 
         var entry = WorkspaceEntry{
             .name = name,
@@ -4341,7 +4346,7 @@ pub const Package = extern struct {
         };
         debug("processWorkspaceName({s}) = {s}", .{ abs_package_json_path, entry.name });
         if (workspace_json.root.get("version")) |version_expr| {
-            if (version_expr.asStringCloned(allocator)) |version| {
+            if (try version_expr.asStringCloned(allocator)) |version| {
                 entry.version = version;
             }
         }
@@ -4371,7 +4376,7 @@ pub const Package = extern struct {
 
         for (arr.slice()) |item| {
             // TODO: when does this get deallocated?
-            const input_path = item.asStringZ(allocator) orelse {
+            const input_path = try item.asStringZ(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
                     \\  <r><green>"workspaces"<r>: [
@@ -5045,7 +5050,7 @@ pub const Package = extern struct {
                     const value = prop.value.?;
                     if (key.isString() and value.isString()) {
                         var sfb = std.heap.stackFallback(1024, allocator);
-                        const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                        const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
                         const patch_path = string_builder.append(String, value.asString(allocator).?);
                         lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
                     }

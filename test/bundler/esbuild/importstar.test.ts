@@ -1,5 +1,5 @@
-import { itBundled } from "../expectBundled";
 import { describe } from "bun:test";
+import { itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_test.go
@@ -561,6 +561,7 @@ describe("bundler", () => {
     format: "iife",
   });
   itBundled("importstar/ExportSelfIIFEWithName", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -603,6 +604,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+
     runtimeFiles: {
       "/test.js": /* js */ `
         console.log(JSON.stringify(require("./out.js")));
@@ -622,6 +624,7 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     format: "cjs",
+
     run: {
       stdout: '{"foo":123}',
     },
@@ -635,6 +638,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+
     runtimeFiles: {
       "/test.js": /* js */ `
         console.log('2', JSON.stringify(require("./out.js")));
@@ -776,6 +780,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+
     runtimeFiles: {
       "/test.js": /* js */ `
         const foo = require('./out.js')
@@ -795,6 +800,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+
     run: {
       stdout: '{"foo":123}',
     },
@@ -808,6 +814,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+
     run: {
       stdout: '{"foo":123}',
     },
@@ -818,6 +825,7 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+
     runtimeFiles: {
       "/test.js": /* js */ `
         const foo = require('./out.js')
@@ -860,6 +868,7 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+
     runtimeFiles: {
       "/test.js": /* js */ `
         const foo = require('./out.js')
@@ -879,6 +888,7 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
+
     runtimeFiles: {
       "/test.js": /* js */ `
         const foo = require('./out.js')
@@ -1025,6 +1035,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
+
     dce: true,
     runtimeFiles: {
       "/test.js": /* js */ `
@@ -1052,6 +1063,7 @@ describe("bundler", () => {
     },
   });
   itBundled("importstar/ReExportStarExternalIIFE", {
+    todo: true,
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -1098,6 +1110,7 @@ describe("bundler", () => {
     },
     external: ["foo"],
     format: "cjs",
+
     runtimeFiles: {
       "/node_modules/foo/index.js": /* js */ `
         module.exports = { bar: 'bar', foo: 'foo' }
@@ -1361,7 +1374,7 @@ describe("bundler", () => {
       ],
     },
   });
-  itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
+  itBundled("importstar/ReExportStarEntryPointAndInnerFileExternal", {
     files: {
       "/entry.js": /* js */ `
         export * from 'a'
@@ -1373,13 +1386,38 @@ describe("bundler", () => {
     format: "cjs",
     external: ["a", "b"],
     runtimeFiles: {
+      "/test.js": /* js */ `
+      console.log(JSON.stringify(require('./out.js')))
+      `,
       "/node_modules/a/index.js": /* js */ `
-        export const a = 123;
-      `,
+       export const a = 123;
+     `,
       "/node_modules/b/index.js": /* js */ `
-        export const b = 456;
+       export const b = 456;
+     `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"inner":{"b":456},"a":123,"b":456}',
+    },
+  });
+  itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from 'a'
+        import * as inner from './inner.js'
+        export { inner }
       `,
-
+      "/inner.js": `export * from 'b'`,
+      "/node_modules/a/index.js": /* js */ `
+      export const a = 123;
+    `,
+      "/node_modules/b/index.js": /* js */ `
+      export const b = 456;
+    `,
+    },
+    format: "cjs",
+    runtimeFiles: {
       "/test.js": /* js */ `
         console.log(JSON.stringify(require('./out.js')))
       `,

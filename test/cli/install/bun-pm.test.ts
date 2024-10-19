@@ -1,7 +1,8 @@
-import { hash, spawn } from "bun";
+import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, tmpdirSync } from "harness";
-import { mkdir, writeFile, exists } from "fs/promises";
+import { cpSync } from "node:fs";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -15,7 +16,6 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
-import { cpSync } from "node:fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);

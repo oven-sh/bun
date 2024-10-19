@@ -62,6 +62,7 @@ pub const Request = struct {
     weak_ptr_data: bun.WeakPtrData = .{},
     // We must report a consistent value for this
     reported_estimated_size: usize = 0,
+    internal_event_callback: InternalJSEventCallback = .{},
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -84,11 +85,68 @@ pub const Request = struct {
         return this.request_context.getRequest();
     }
 
+    pub export fn Request__setInternalEventCallback(
+        this: *Request,
+        callback: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) void {
+        this.internal_event_callback = InternalJSEventCallback.init(callback, globalThis);
+        // we always have the abort event but we need to enable the timeout event as well in case of `node:http`.Server.setTimeout is set
+        this.request_context.enableTimeoutEvents();
+    }
+
+    pub export fn Request__setTimeout(
+        this: *Request,
+        seconds: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) void {
+        if (!seconds.isNumber()) {
+            globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
+            return;
+        }
+
+        this.setTimeout(seconds.to(c_uint));
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             _ = Request__getUWSRequest;
+            _ = Request__setInternalEventCallback;
+            _ = Request__setTimeout;
         }
     }
+
+    pub const InternalJSEventCallback = struct {
+        function: JSC.Strong = .{},
+
+        pub const EventType = enum(u8) {
+            timeout = 0,
+            abort = 1,
+        };
+        pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSEventCallback {
+            return InternalJSEventCallback{
+                .function = JSC.Strong.create(function, globalThis),
+            };
+        }
+
+        pub fn hasCallback(this: *InternalJSEventCallback) bool {
+            return this.function.has();
+        }
+
+        pub fn trigger(this: *InternalJSEventCallback, eventType: EventType, globalThis: *JSC.JSGlobalObject) bool {
+            if (this.function.get()) |callback| {
+                _ = callback.call(globalThis, JSC.JSValue.jsUndefined(), &.{JSC.JSValue.jsNumber(
+                    @intFromEnum(eventType),
+                )}) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
+                return true;
+            }
+            return false;
+        }
+
+        pub fn deinit(this: *InternalJSEventCallback) void {
+            this.function.deinit();
+        }
+    };
 
     pub fn init(
         url: bun.String,
@@ -149,7 +207,7 @@ pub const Request = struct {
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size())});
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size(), .{})});
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -290,6 +348,7 @@ pub const Request = struct {
             signal.unref();
             this.signal = null;
         }
+        this.internal_event_callback.deinit();
     }
 
     pub fn finalize(this: *Request) void {
@@ -744,8 +803,9 @@ pub const Request = struct {
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) JSC.JSValue {
+        const this_value = callframe.this();
         var cloned = this.clone(getAllocator(globalThis), globalThis);
 
         if (globalThis.hasException()) {
@@ -753,7 +813,24 @@ pub const Request = struct {
             return .zero;
         }
 
-        return cloned.toJS(globalThis);
+        const js_wrapper = cloned.toJS(globalThis);
+        if (js_wrapper != .zero) {
+            if (cloned.body.value == .Locked) {
+                if (cloned.body.value.Locked.readable.get()) |readable| {
+                    // If we are teed, then we need to update the cached .body
+                    // value to point to the new readable stream
+                    // We must do this on both the original and cloned request
+                    // but especially the original request since it will have a stale .body value now.
+                    Request.bodySetCached(js_wrapper, globalThis, readable.value);
+
+                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                        Request.bodySetCached(this_value, globalThis, other_readable.value);
+                    }
+                }
+            }
+        }
+
+        return js_wrapper;
     }
 
     // Returns if the request has headers already cached/set.
@@ -888,5 +965,12 @@ pub const Request = struct {
         const req = Request.new(undefined);
         this.cloneInto(req, allocator, globalThis, false);
         return req;
+    }
+
+    pub fn setTimeout(
+        this: *Request,
+        seconds: c_uint,
+    ) void {
+        _ = this.request_context.setTimeout(seconds);
     }
 };

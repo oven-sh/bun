@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { isWindows } from "harness";
 import { WriteStream } from "node:tty";
 

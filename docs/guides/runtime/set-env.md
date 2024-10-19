@@ -34,4 +34,4 @@ $ FOO=helloworld bun run dev
 
 ---
 
-See [Docs > Runtime > Environment variables](/docs/runtime/env) for more information on using environment variables with Bun.
+See [Docs > Runtime > Environment variables](https://bun.sh/docs/runtime/env) for more information on using environment variables with Bun.

@@ -1,4 +1,4 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
@@ -147,7 +147,6 @@ it("utf16 property name", () => {
         笑: "😀",
       },
     ],
-    null,
     2,
   );
   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);

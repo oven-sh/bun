@@ -48,7 +48,7 @@ JSC::JSValue PerformanceMeasure::detail(JSC::JSGlobalObject& globalObject)
     if (!m_serializedDetail) {
         return JSC::jsNull();
     }
-    
+
     return m_serializedDetail->deserialize(globalObject, &globalObject);
 }
 

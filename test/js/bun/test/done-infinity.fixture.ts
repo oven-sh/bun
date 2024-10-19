@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("asynchronously failing test with a done callback does not hang", async done => {
   await Bun.sleep(42);

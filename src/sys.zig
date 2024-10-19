@@ -604,8 +604,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
         const dec = bun.FDImpl.decode(fd);
         if (dec.kind == .system) {
             const uvfd = bun.toLibUVOwnedFD(fd) catch return .{ .err = Error.fromCode(.MFILE, .uv_open_osfhandle) };
-            defer _ = bun.sys.close(uvfd);
-            return sys_uv.fstat(fd);
+            return sys_uv.fstat(uvfd);
         } else return sys_uv.fstat(fd);
     }
 
@@ -657,7 +656,16 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
 }
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
-    if (Environment.isWindows) @compileError("Use fstat on Windows");
+    if (Environment.isWindows) {
+        return switch (openatWindowsA(fd, path, 0)) {
+            .result => |file| {
+                // :(
+                defer _ = close(file);
+                return fstat(file);
+            },
+            .err => |err| Maybe(bun.Stat){ .err = err },
+        };
+    }
     var stat_ = mem.zeroes(bun.Stat);
     if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
@@ -721,7 +729,6 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            assertIsValidWindowsPath(bun.OSPathChar, file_path);
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
             if (Maybe(void).errnoSys(
@@ -1634,11 +1641,11 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         .mac => {
             const rc = system.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
-            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
-
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
+            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
@@ -2472,6 +2479,16 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
+pub fn existsZ(path: [:0]const u8) bool {
+    if (comptime Environment.isPosix) {
+        return system.access(path, 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        return getFileAttributes(path) != null;
+    }
+}
+
 pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
     const dir_fd = bun.toFD(dir_);
@@ -3001,6 +3018,10 @@ pub const File = struct {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
+    }
+
+    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 
     pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {

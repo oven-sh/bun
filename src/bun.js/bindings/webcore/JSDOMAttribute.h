@@ -76,7 +76,7 @@ public:
     {
         return setter(lexicalGlobalObject, JSC::JSValue::decode(encodedValue));
     }
-    
+
     template<Getter getter, CastedThisErrorBehavior shouldThrow = CastedThisErrorBehavior::Throw>
     static JSC::EncodedJSValue get(JSC::JSGlobalObject& lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName)
     {

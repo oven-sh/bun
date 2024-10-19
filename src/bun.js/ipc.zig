@@ -30,9 +30,8 @@ pub const Mode = enum {
         .{ "json", .json },
     });
 
-    pub fn fromString(s: []const u8) ?Mode {
-        return Map.get(s);
-    }
+    pub const fromJS = Map.fromJS;
+    pub const fromString = Map.get;
 };
 
 pub const DecodedIPCMessage = union(enum) {
@@ -454,7 +453,7 @@ const NamedPipeIPCData = struct {
         source.pipe.unref();
         this.writer.source = null;
 
-        if(this.is_server) {
+        if (this.is_server) {
             source.pipe.data = source.pipe;
             source.pipe.close(onServerPipeClose);
             this.onPipeClose();
@@ -576,7 +575,7 @@ const NamedPipeIPCData = struct {
         if (this.disconnected) {
             _ = this.writer.flush();
             this.writer.end();
-            if(this.writer.getStream()) |stream| {
+            if (this.writer.getStream()) |stream| {
                 stream.readStop();
             }
             if (!this.writer.hasPendingData()) {

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import path from "path";
-import type { Field, ClassDefinition } from "./class-definitions";
-import { writeIfNotChanged, camelCase, pascalCase } from "./helpers";
+import type { ClassDefinition, Field } from "./class-definitions";
+import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};
@@ -361,6 +361,12 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
 `;
   }
 
+  if (obj.wantsThis) {
+    externs += `
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${classSymbolName(typeName, "_setThis")}(JSC::JSGlobalObject*, void*, JSC::EncodedJSValue); 
+`;
+  }
+
   if (obj.structuredClone) {
     externs +=
       `extern JSC_CALLCONV void JSC_HOST_CALL_ATTRIBUTES ${symbolName(
@@ -618,7 +624,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     auto* constructor = globalObject->${className(typeName)}Constructor();
     Structure* structure = globalObject->${className(typeName)}Structure();
     if (UNLIKELY(constructor != newTarget)) {
-      auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+      auto* functionGlobalObject = defaultGlobalObject(
         // ShadowRealm functions belong to a different global object.
         getFunctionRealm(globalObject, newTarget)
       );
@@ -645,7 +651,15 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
       : ""
   }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+    auto value = JSValue::encode(instance);
+${
+  obj.wantsThis
+    ? `
+    ${classSymbolName(typeName, "_setThis")}(globalObject, ptr, value);
+`
+    : ""
+}
+    RELEASE_AND_RETURN(scope, value);
 }
 
 void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
@@ -1606,6 +1620,7 @@ function generateZig(
     construct,
     finalize,
     noConstructor = false,
+    wantsThis = false,
     overridesToJS = false,
     estimatedSize,
     call = false,
@@ -1714,6 +1729,16 @@ const JavaScriptCoreBindings = struct {
         pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*${typeName} {
           if (comptime Environment.enable_logs) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.constructor, .{globalObject, callFrame});
+        }
+      `;
+    }
+
+    if (construct && !noConstructor && wantsThis) {
+      exports.set("_setThis", classSymbolName(typeName, "_setThis"));
+      output += `
+        pub fn ${classSymbolName(typeName, "_setThis")}(globalObject: *JSC.JSGlobalObject, ptr: *anyopaque, this: JSC.JSValue) callconv(JSC.conv) void {
+          const real: *${typeName} = @ptrCast(@alignCast(ptr));
+          real.this_value.set(globalObject, this);
         }
       `;
     }

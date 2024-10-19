@@ -15,25 +15,24 @@ const validators = @import("./util/validators.zig");
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
 
-
     //min, max
     if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
     if (!arguments[1].isNumber()) return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", arguments[1]);
     const min = arguments[0].to(i64);
     const max = arguments[1].to(i64);
-    
-    if(min > validators.NUMBER__MAX_SAFE_INTEGER or min < validators.NUMBER__MIN_SAFE_INTEGER) {
-      return globalThis.throwInvalidArgumentRangeValue("min", "It must be a safe integer type number", min);
+
+    if (min > JSC.MAX_SAFE_INTEGER or min < JSC.MIN_SAFE_INTEGER) {
+        return globalThis.throwInvalidArgumentRangeValue("min", "It must be a safe integer type number", min);
     }
-    if(max > validators.NUMBER__MAX_SAFE_INTEGER) {
-      return globalThis.throwInvalidArgumentRangeValue("max", "It must be a safe integer type number", max);
+    if (max > JSC.MAX_SAFE_INTEGER) {
+        return globalThis.throwInvalidArgumentRangeValue("max", "It must be a safe integer type number", max);
     }
-    if(min >= max) {
-      return globalThis.throwInvalidArgumentRangeValue("max", "should be greater than min", max);
+    if (min >= max) {
+        return globalThis.throwInvalidArgumentRangeValue("max", "should be greater than min", max);
     }
     const diff = max - min;
-    if(diff > 281474976710655) {
-      return globalThis.throwInvalidArgumentRangeValue("max - min", "It must be <= 281474976710655", diff);
+    if (diff > 281474976710655) {
+        return globalThis.throwInvalidArgumentRangeValue("max - min", "It must be <= 281474976710655", diff);
     }
 
     return JSC.JSValue.jsNumberFromInt64(std.crypto.random.intRangeLessThan(i64, min, max));

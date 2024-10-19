@@ -10,4 +10,4 @@ public:
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 };
 
-}
+} // namespace v8

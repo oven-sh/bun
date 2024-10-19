@@ -221,7 +221,7 @@ pub const Expect = struct {
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
-                        .Fulfilled => switch (resolution) {
+                        .fulfilled => switch (resolution) {
                             .resolves => {},
                             .rejects => {
                                 if (!silent) {
@@ -233,7 +233,7 @@ pub const Expect = struct {
                             },
                             .none => unreachable,
                         },
-                        .Rejected => switch (resolution) {
+                        .rejected => switch (resolution) {
                             .rejects => {},
                             .resolves => {
                                 if (!silent) {
@@ -245,7 +245,7 @@ pub const Expect = struct {
                             },
                             .none => unreachable,
                         },
-                        .Pending => unreachable,
+                        .pending => unreachable,
                     }
 
                     newValue.ensureStillAlive();
@@ -2316,6 +2316,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
 
+        var return_value_from_function: JSValue = .zero;
         const result_: ?JSValue = brk: {
             if (!value.jsType().isFunction()) {
                 if (this.flags.promise != .none) {
@@ -2336,43 +2337,39 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_fucntion: JSValue = value.call(globalThis, .undefined, &.{});
+            return_value_from_function = value.call(globalThis, .undefined, &.{}) catch |err| globalThis.takeException(err);
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
 
             if (return_value == .zero) {
-                return_value = return_value_from_fucntion;
+                return_value = return_value_from_function;
             }
 
             if (return_value.asAnyPromise()) |promise| {
                 vm.waitForPromise(promise);
                 scope.apply(vm);
-                const promise_result = promise.result(globalThis.vm());
-
-                switch (promise.status(globalThis.vm())) {
-                    .Fulfilled => {
+                switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
+                    .fulfilled => {
                         break :brk null;
                     },
-                    .Rejected => {
-                        promise.setHandled(globalThis.vm());
-
+                    .rejected => |rejected| {
                         // since we know for sure it rejected, we should always return the error
-                        break :brk promise_result.toError() orelse promise_result;
+                        break :brk rejected.toError() orelse rejected;
                     },
-                    .Pending => unreachable,
+                    .pending => unreachable,
                 }
             }
 
-            if (return_value != return_value_from_fucntion) {
-                if (return_value_from_fucntion.asAnyPromise()) |existing| {
+            if (return_value != return_value_from_function) {
+                if (return_value_from_function.asAnyPromise()) |existing| {
                     existing.setHandled(globalThis.vm());
                 }
             }
 
             scope.apply(vm);
 
-            break :brk return_value.toError() orelse return_value_from_fucntion.toError();
+            break :brk return_value.toError() orelse return_value_from_function.toError();
         };
 
         const did_throw = result_ != null;
@@ -2441,7 +2438,7 @@ pub const Expect = struct {
                 if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
-                    const matches = test_fn.call(globalThis, expected_value, &.{received_message});
+                    const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
                     if (!matches.toBooleanSlow(globalThis)) return .undefined;
                 }
 
@@ -2526,7 +2523,7 @@ pub const Expect = struct {
                 if (_received_message) |received_message| {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (expected_value.get(globalThis, "test")) |test_fn| {
-                        const matches = test_fn.call(globalThis, expected_value, &.{received_message});
+                        const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
                         if (matches.toBooleanSlow(globalThis)) return .undefined;
                     }
                 }
@@ -2631,12 +2628,13 @@ pub const Expect = struct {
         }
 
         // did not throw
+        const result = return_value_from_function;
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received_line = "Received function did not throw\n";
+        const received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n";
 
         if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const signature = comptime getSignature("toThrow", "", false);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{});
+            this.throw(globalThis, signature, "\n\n" ++ received_line, .{result.toFmt(&formatter)});
             return .zero;
         }
 
@@ -2644,29 +2642,28 @@ pub const Expect = struct {
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         if (expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_message.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
         var expected_class = ZigString.Empty;
         expected_value.getClassName(globalThis, &expected_class);
-        this.throw(globalThis, signature, expected_fmt, .{expected_class});
+        this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
         return .zero;
     }
-
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
@@ -2761,7 +2758,7 @@ pub const Expect = struct {
             };
             defer pretty_value.deinit();
 
-            if (strings.eqlLong(pretty_value.toOwnedSliceLeaky(), saved_value, true)) {
+            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             }
@@ -2770,7 +2767,7 @@ pub const Expect = struct {
             const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
-                .received_string = pretty_value.toOwnedSliceLeaky(),
+                .received_string = pretty_value.slice(),
                 .expected_string = saved_value,
                 .globalThis = globalThis,
             };
@@ -3801,18 +3798,12 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const result = predicate.call(globalThis, .undefined, &.{value});
-
-        if (result.toError()) |err| {
-            var errors: [1]*anyopaque = undefined;
-            var _err = errors[0..errors.len];
-
-            _err[0] = err.asVoid();
-
+        const result = predicate.call(globalThis, .undefined, &.{value}) catch |e| {
+            const err = globalThis.takeException(e);
             const fmt = ZigString.init("toSatisfy() predicate threw an exception");
-            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(_err.ptr, _err.len, &fmt));
+            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(&.{err}, &fmt));
             return .zero;
-        }
+        };
 
         const not = this.flags.not;
         const pass = (result.isBoolean() and result.toBoolean()) != not;
@@ -4655,7 +4646,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), ZigString.init("InvalidMatcherError").toJS(globalThis));
+        err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
         globalThis.throwValue(err);
     }
 
@@ -4673,7 +4664,7 @@ pub const Expect = struct {
         matcher_context_jsvalue.ensureStillAlive();
 
         // call the custom matcher implementation
-        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args);
+        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args) catch |err| globalThis.takeException(err);
         assert(!result.isEmpty());
         if (result.toError()) |err| {
             globalThis.throwValue(err);
@@ -4690,9 +4681,9 @@ pub const Expect = struct {
             result.ensureStillAlive();
             assert(!result.isEmpty());
             switch (promise.status(vm)) {
-                .Pending => unreachable,
-                .Fulfilled => {},
-                .Rejected => {
+                .pending => unreachable,
+                .fulfilled => {},
+                .rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     JSC.VirtualMachine.get().runErrorHandler(result, null);
                     globalThis.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
@@ -4744,7 +4735,8 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
 
-            var message_result = message.callWithGlobalThis(globalThis, &[_]JSValue{});
+            const message_result = message.callWithGlobalThis(globalThis, &.{}) catch |err|
+                globalThis.takeException(err);
             assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalThis.throwValue(err);
@@ -5426,15 +5418,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     args.appendAssumeCapacity(arg);
                 }
 
-                var result = matcher_fn.call(globalThis, thisValue, args.items);
-                if (result.toError()) |err| {
+                const result = matcher_fn.call(globalThis, thisValue, args.items) catch |err| {
                     if (dontThrow) {
+                        globalThis.clearException();
                         return false;
-                    } else {
-                        globalThis.throwValue(globalThis, err);
-                        return error.JSError;
                     }
-                }
+                    return err;
+                };
                 try writer.print("{}", .{result.toBunString(globalThis)});
             }
         }
@@ -5454,7 +5444,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             return .zero;
         };
         if (printed) {
-            return bun.String.init(mutable_string.toOwnedSliceLeaky()).toJS();
+            return bun.String.init(mutable_string.slice()).toJS();
         }
         return ExpectMatcherUtils.printValue(globalThis, this, null);
     }

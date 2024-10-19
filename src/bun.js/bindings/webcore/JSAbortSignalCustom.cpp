@@ -42,11 +42,31 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     if (abortSignal.aborted())
         return false;
 
-    if (abortSignal.isFollowingSignal())
+    if (abortSignal.isFollowingSignal()) {
+        if (UNLIKELY(reason))
+            *reason = "Is Following Signal"_s;
         return true;
+    }
 
-    if (abortSignal.hasAbortEventListener() && abortSignal.hasActiveTimeoutTimer())
-        return true;
+    if (abortSignal.hasAbortEventListener()) {
+        if (abortSignal.hasActiveTimeoutTimer()) {
+            if (UNLIKELY(reason))
+                *reason = "Has Timeout And Abort Event Listener"_s;
+            return true;
+        }
+        if (!abortSignal.sourceSignals().isEmptyIgnoringNullReferences()) {
+            if (UNLIKELY(reason))
+                *reason = "Has Source Signals And Abort Event Listener"_s;
+            return true;
+        }
+
+        // https://github.com/oven-sh/bun/issues/4517
+        if (abortSignal.hasPendingActivity()) {
+            if (UNLIKELY(reason))
+                *reason = "Has Pending Activity"_s;
+            return true;
+        }
+    }
 
     return visitor.containsOpaqueRoot(&abortSignal);
 }
@@ -54,6 +74,7 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 template<typename Visitor>
 void JSAbortSignal::visitAdditionalChildren(Visitor& visitor)
 {
+    wrapped().reason().visit(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSAbortSignal);

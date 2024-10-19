@@ -1460,29 +1460,32 @@ pub const ServerConfig = struct {
                         return;
                     }
                     while (value_iter.next()) |item| {
-                        if (SSLConfig.inJS(vm, global, item, exception)) |ssl_config| {
-                            if (args.ssl_config == null) {
-                                args.ssl_config = ssl_config;
-                            } else {
-                                if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
-                                    defer ssl_config.deinit();
-                                    JSC.throwInvalidArguments("SNI tls object must have a serverName", .{}, global, exception);
-                                    return;
-                                }
-                                if (args.sni == null) {
-                                    args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
-                                }
-
-                                args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                        var ssl_config = SSLConfig.inJS(vm, global, item, exception) orelse {
+                            if (exception.* != null) {
+                                return;
                             }
-                        }
 
-                        if (exception.* != null) {
-                            return;
-                        }
+                            if (global.hasException()) {
+                                return;
+                            }
 
-                        if (global.hasException()) {
-                            return;
+                            // Backwards-compatibility; we ignored empty tls objects.
+                            continue;
+                        };
+
+                        if (args.ssl_config == null) {
+                            args.ssl_config = ssl_config;
+                        } else {
+                            if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
+                                defer ssl_config.deinit();
+                                JSC.throwInvalidArguments("SNI tls object must have a serverName", .{}, global, exception);
+                                return;
+                            }
+                            if (args.sni == null) {
+                                args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
+                            }
+
+                            args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
                         }
                     }
                 } else {

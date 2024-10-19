@@ -414,14 +414,14 @@ const ProxyTunnel = struct {
         }
     }
 
-    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
+    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: *const JSC.API.ServerConfig.SSLConfig) void {
         const proxy_tunnel = ProxyTunnel.new(.{});
 
-        var custom_options = ssl_options;
+        var custom_options = ssl_options.*;
         // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
         custom_options.reject_unauthorized = 0;
         custom_options.request_cert = 1;
-        proxy_tunnel.wrapper = SSLWrapper(*HTTPClient).init(custom_options, true, .{
+        proxy_tunnel.wrapper = SSLWrapper(*HTTPClient).init(&custom_options, true, .{
             .onOpen = ProxyTunnel.onOpen,
             .onData = ProxyTunnel.onData,
             .onHandshake = ProxyTunnel.onHandshake,
@@ -3215,7 +3215,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else JSC.API.ServerConfig.SSLConfig.zero;
+    const ssl_options = if (this.tls_props != null) this.tls_props.? else &JSC.API.ServerConfig.SSLConfig.zero;
     ProxyTunnel.start(this, is_ssl, socket, ssl_options);
 }
 

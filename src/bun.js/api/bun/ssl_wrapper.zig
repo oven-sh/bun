@@ -93,7 +93,7 @@ pub fn SSLWrapper(comptime T: type) type {
             };
         }
 
-        pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
+        pub fn init(ssl_options: *const JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
             BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);

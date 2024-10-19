@@ -628,7 +628,7 @@ pub const Listener = struct {
 
                     this.listener = .{
                         // we need to add support for the backlog parameter on listen here we use the default value of nodejs
-                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, ssl, this) catch {
+                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, &ssl, this) catch {
                             exception.* = JSC.toInvalidArguments("Failed to listen at {s}", .{pipe_name}, globalObject).asObjectRef();
                             this.deinit();
                             return .zero;
@@ -644,7 +644,7 @@ pub const Listener = struct {
             }
         }
         const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
-            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+            JSC.API.ServerConfig.SSLConfig.asUSockets(&ssl.?)
         else
             .{};
 
@@ -1179,7 +1179,7 @@ pub const Listener = struct {
         }
 
         const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
-            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+            JSC.API.ServerConfig.SSLConfig.asUSockets(&ssl.?)
         else
             .{};
 
@@ -3617,25 +3617,31 @@ pub const DuplexUpgradeContext = struct {
     fn runEvent(this: *DuplexUpgradeContext) void {
         switch (this.task_event) {
             .StartTLS => {
-                if (this.ssl_config) |config| {
-                    this.upgrade.startTLS(config, true) catch |err| {
-                        switch (err) {
-                            error.OutOfMemory => {
-                                bun.outOfMemory();
-                            },
-                            else => {
-                                const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
-                                if (this.tls) |tls| {
-                                    tls.handleConnectError(errno);
-                                }
-                            },
-                        }
-                    };
-                    this.ssl_config.?.deinit();
-                    this.ssl_config = null;
-                }
+                const tls = this.tls.?;
+                defer tls.deref();
+                var config = this.ssl_config orelse return;
+                defer config.deinit();
+                this.ssl_config = null;
+
+                this.upgrade.startTLS(&config, true) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => {
+                            bun.outOfMemory();
+                        },
+                        else => {
+                            const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
+                            tls.handleConnectError(errno);
+                        },
+                    }
+                };
             },
             .Close => {
+                defer {
+                    if (this.tls) |tls| {
+                        tls.deref();
+                    }
+                }
+
                 this.upgrade.close();
             },
         }
@@ -3643,15 +3649,27 @@ pub const DuplexUpgradeContext = struct {
 
     fn deinitInNextTick(this: *DuplexUpgradeContext) void {
         this.task_event = .Close;
-        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
+        if (this.tls) |tls| {
+            tls.ref();
+        }
+        this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
     fn startTLS(this: *DuplexUpgradeContext) void {
         this.task_event = .StartTLS;
+        if (this.tls) |tls| {
+            tls.ref();
+        }
+
         this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *DuplexUpgradeContext) void {
+        if (this.ssl_config) |*config| {
+            config.deinit();
+            this.ssl_config = null;
+        }
+
         if (this.tls) |tls| {
             this.tls = null;
             tls.deref();
@@ -3702,7 +3720,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         this.uvPipe.close(onPipeClosed);
     }
 
-    pub fn listen(globalThis: *JSC.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?JSC.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
+    pub fn listen(globalThis: *JSC.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?*const JSC.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
         const this = WindowsNamedPipeListeningContext.new(.{
             .globalThis = globalThis,
             .vm = globalThis.bunVM(),

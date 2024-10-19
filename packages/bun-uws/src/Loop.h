@@ -53,15 +53,6 @@ private:
         for (auto &p : loopData->preHandlers) {
             p.second((Loop *) loop);
         }
-
-        void *corkedSocket = loopData->getCorkedSocket();
-        if (corkedSocket) {
-            if (loopData->isCorkedSSL()) {
-                ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
-            } else {
-                ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
-            }
-        }
     }
 
     static void postCb(us_loop_t *loop) {

@@ -414,7 +414,7 @@ pub const UpgradedDuplex = struct {
         return array;
     }
 
-    pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+    pub fn startTLS(this: *UpgradedDuplex, ssl_options: *const JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
         this.wrapper = try WrapperType.init(ssl_options, is_client, .{
             .ctx = this,
             .onOpen = UpgradedDuplex.onOpen,
@@ -525,25 +525,26 @@ pub const UpgradedDuplex = struct {
         }
 
         this.origin.deinit();
-        if (this.onDataCallback.get()) |callback| {
+        if (this.onDataCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onDataCallback.deinit();
         }
-        if (this.onEndCallback.get()) |callback| {
+        if (this.onEndCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onEndCallback.deinit();
         }
-        if (this.onWritableCallback.get()) |callback| {
+        if (this.onWritableCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onWritableCallback.deinit();
         }
-        if (this.onCloseCallback.get()) |callback| {
+        if (this.onCloseCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onCloseCallback.deinit();
         }
         var ssl_error = this.ssl_error;
         ssl_error.deinit();
         this.ssl_error = .{};
+
+        this.onDataCallback.deinit();
+        this.onEndCallback.deinit();
+        this.onWritableCallback.deinit();
+        this.onCloseCallback.deinit();
     }
 };
 

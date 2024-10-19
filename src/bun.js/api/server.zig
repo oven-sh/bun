@@ -584,7 +584,7 @@ pub const ServerConfig = struct {
 
         const log = Output.scoped(.SSLConfig, false);
 
-        pub fn asUSockets(this: SSLConfig) uws.us_bun_socket_context_options_t {
+        pub fn asUSockets(this: *const SSLConfig) uws.us_bun_socket_context_options_t {
             var ctx_opts: uws.us_bun_socket_context_options_t = .{};
 
             if (this.key_file_name != null)

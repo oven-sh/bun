@@ -105,6 +105,11 @@
           "type": "string",
           "default": "",
           "description": "Custom flag added to the end of test command"
+        },
+        "bun.test.customScript": {
+          "type": "string",
+          "default": "",
+          "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
         }
       }
     },

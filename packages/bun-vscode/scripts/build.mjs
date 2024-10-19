@@ -1,9 +1,6 @@
 import { buildSync } from "esbuild";
 import { execSync } from "node:child_process";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
-
-process.chdir(dirname(import.meta.dirname));
 
 buildSync({
   entryPoints: ["src/extension.ts", "src/web-extension.ts"],

@@ -111,7 +111,9 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
     async (fileName?: string, testName?: string, watchMode: boolean = false) => {
 
       // Get custom flag
-      const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "");
+      const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "").trim();
+      const customScriptSetting = vscode.workspace.getConfiguration("bun.test").get("customScript", "bun test").trim();
+      const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
       // When this command is called from the command palette, the fileName and testName arguments are not passed (commands in package.json)
       // so then fileName is taken from the active text editor and it run for the whole file.
       if (!fileName) {
@@ -128,9 +130,25 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
 
       activeTerminal = vscode.window.createTerminal("Bun Test Runner");
       activeTerminal.show();
-      const watchFlag = watchMode ? "--watch" : "";
-      const testNameIfExist = testName ? ` -t "${testName}"` : "";
-      activeTerminal.sendText(`bun test ${fileName} ${testNameIfExist} ${watchFlag} ${customFlag}`);
+      let command = customScript;
+      if (fileName.length) {
+          command += ` ${fileName}`;
+      } 
+      if (testName.length) {
+        if (customScriptSetting.length) {
+          // escape the quotes in the test name
+          command += ` -t \\"${testName}\\"`;
+        } else {
+          command += ` -t "${testName}"`;
+        }
+      }
+      if (watchMode) {
+          command += ` --watch`;
+      }
+      if (customFlag.length) {
+          command += ` ${customFlag}`;
+      }
+      activeTerminal.sendText(command);
     },
   );
 

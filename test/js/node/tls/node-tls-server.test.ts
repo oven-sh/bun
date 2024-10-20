@@ -664,7 +664,7 @@ it("tls.rootCertificates should exists", () => {
   expect(typeof rootCertificates[0]).toBe("string");
 });
 
-it("connectionListener should emit the right amount of times", async () => {
+it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
   let count = 0;
   const promises = [];
   const server: Server = createServer(

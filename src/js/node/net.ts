@@ -84,6 +84,10 @@ function closeNT(callback, err) {
   callback(err);
 }
 
+function detachAfterFinish() {
+  this[bunSocketInternal] = null;
+}
+
 var SocketClass;
 const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
@@ -684,14 +688,23 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
-      const socket = this[bunSocketInternal];
-      if (socket) {
-        this[bunSocketInternal] = null;
-        // we still have a socket, call end before destroy
-        process.nextTick(endNT, socket, callback, err);
-        return;
+      const { ending } = this._writableState;
+      // lets make sure that the writable side is closed
+      if (!ending) {
+        // at this state destroyed will be true but we need to close the writable side
+        this._writableState.destroyed = false;
+        this.end();
+        // we now restore the destroyed flag
+        this._writableState.destroyed = true;
       }
-      // no socket, just destroy
+
+      if (this.writableFinished) {
+        // closed we can detach the socket
+        this[bunSocketInternal] = null;
+      } else {
+        // lets wait for the finish event before detaching the socket
+        this.once("finish", detachAfterFinish);
+      }
       process.nextTick(closeNT, callback, err);
     }
 
@@ -705,7 +718,6 @@ const Socket = (function (InternalSocket) {
         this.#final_callback = callback;
       } else {
         // emit FIN not allowing half open
-        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }

@@ -667,10 +667,17 @@ it("tls.rootCertificates should exists", () => {
 it("connectionListener should emit the right amount of times", async () => {
   let count = 0;
   const promises = [];
-  const server: Server = createServer(COMMON_CERT, socket => {
-    count++;
-    socket.end();
-  });
+  const server: Server = createServer(
+    {
+      ...COMMON_CERT,
+      ALPNProtocols: ["bun"],
+    },
+    socket => {
+      count++;
+      expect(socket.alpnProtocol).toBe("bun");
+      socket.end();
+    },
+  );
   server.setMaxListeners(100);
 
   server.listen(0);
@@ -683,6 +690,7 @@ it("connectionListener should emit the right amount of times", async () => {
         ca: COMMON_CERT.cert,
         rejectUnauthorized: false,
         port: server.address().port,
+        ALPNProtocols: ["bun"],
       },
       () => {
         socket.on("close", resolve);

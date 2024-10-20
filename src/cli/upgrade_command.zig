@@ -54,6 +54,7 @@ pub const Version = struct {
     tag: string,
     buf: MutableString,
     size: u32 = 0,
+    latest: bool,
 
     pub fn name(this: Version) ?string {
         if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
@@ -140,7 +141,7 @@ pub const UpgradeCheckerThread = struct {
             js_ast.Stmt.Data.Store.deinit();
         }
 
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
+        var version = (try UpgradeCommand.getVersion(default_allocator, env_loader, null, null, false, true, true)) orelse return;
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
@@ -169,14 +170,16 @@ pub const UpgradeCommand = struct {
     var unzip_path_buf: bun.PathBuffer = undefined;
     var tmpdir_path_buf: bun.PathBuffer = undefined;
 
-    pub fn getLatestVersion(
+    pub fn getVersion(
         allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
         refresher: ?*Progress,
         progress: ?*Progress.Node,
         use_profile: bool,
         comptime silent: bool,
+        latest: bool,
     ) !?Version {
+        const toVersion: string = if (latest) "latest" else bun.argv[2];
         var headers_buf: string = default_github_headers;
         // gonna have to free memory myself like a goddamn caveman due to a thread safety issue with ArenaAllocator
         defer {
@@ -200,13 +203,21 @@ pub const UpgradeCommand = struct {
                 github_api_domain = api_domain;
             }
         }
-
-        const api_url = URL.parse(
+        const api_url = if (latest) URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
                 "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
                 .{
                     github_api_domain,
+                },
+            ),
+        ) else URL.parse(
+            try std.fmt.bufPrint(
+                &github_repository_url_buf,
+                "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases/tags/bun-v{s}",
+                .{
+                    github_api_domain,
+                    toVersion,
                 },
             ),
         );
@@ -254,7 +265,13 @@ pub const UpgradeCommand = struct {
         const response = try async_http.sendSync();
 
         switch (response.status_code) {
-            404 => return error.HTTP404,
+            404 => {
+                Output.prettyErrorln(
+                    \\<r><red>error:<r> 404 Not Found. You may have specified a wrong version of Bun.
+                , .{});
+
+                return error.HTTP404;
+            },
             403 => return error.HTTPForbidden,
             429 => return error.HTTPTooManyRequests,
             499...599 => return error.GitHubIsDown,
@@ -296,7 +313,7 @@ pub const UpgradeCommand = struct {
             return null;
         }
 
-        var version = Version{ .zip_url = "", .tag = "", .buf = metadata_body, .size = 0 };
+        var version = Version{ .zip_url = "", .tag = "", .buf = metadata_body, .size = 0, .latest = strings.contains(toVersion, "latest") };
 
         if (expr.data != .e_object) {
             if (!silent) {
@@ -403,18 +420,17 @@ pub const UpgradeCommand = struct {
 
         const args = bun.argv;
         if (args.len > 2) {
-            for (args[2..]) |arg| {
-                if (!strings.contains(arg, "--")) {
-                    Output.prettyError(
-                        \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
-                        \\<blue>note<r><d>:<r> Use `bun update
-                    , .{});
-                    for (args[2..]) |arg_err| {
-                        Output.prettyError(" {s}", .{arg_err});
-                    }
-                    Output.prettyErrorln("` instead.", .{});
-                    Global.exit(1);
-                }
+            if ((strings.contains(args[2], "--") and !strings.contains(args[2], "--profile")) or (args.len == 4 and strings.contains(args[3], "--") and !strings.contains(args[3], "--profile"))) {
+                Output.prettyErrorln(
+                    \\<r><red>error<r><d>:<r> `bun upgrade` only accepts `--profile` as an option.
+                , .{});
+                Global.exit(1);
+            } else if (args.len > 3) {
+                Output.prettyErrorln(
+                    \\<r><red>error<r><d>:<r> Invalid number of arguments.
+                    \\<blue>note<r><d>:<r> Run `bun upgrade` with `\<version\>`, `stable`,  `canary`, or no argument for latest version.
+                , .{});
+                Global.exit(1);
             }
         }
 
@@ -443,14 +459,16 @@ pub const UpgradeCommand = struct {
         };
         env_loader.loadProcess();
 
+        const is_version_specified = bun.argv.len > 2 and !strings.contains(bun.argv[2], "stable") and !strings.contains(bun.argv[2], "canary");
+
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
-            if (default_use_canary and strings.containsAny(bun.argv, "--stable"))
+            if (default_use_canary and strings.containsAny(bun.argv, "stable"))
                 break :brk false;
 
             break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-                strings.containsAny(bun.argv, "--canary") or default_use_canary;
+                strings.containsAny(bun.argv, "canary") or default_use_canary;
         };
 
         const use_profile = strings.containsAny(bun.argv, "--profile");
@@ -459,7 +477,14 @@ pub const UpgradeCommand = struct {
             var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
-            const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
+            const version = brk: {
+                // Use specific version
+                if (is_version_specified) {
+                    break :brk (try getVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false, false)) orelse return;
+                } else {
+                    break :brk (try getVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false, true)) orelse return;
+                }
+            };
 
             progress.end();
             refresher.refresh();
@@ -485,7 +510,11 @@ pub const UpgradeCommand = struct {
             }
 
             if (!Environment.is_canary) {
-                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>v{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                if (version.latest) {
+                    Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>v{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                } else {
+                    Output.prettyErrorln("<r>Installing <b>Bun <cyan>v{s}<r><r>... You're on <blue>v{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                }
             } else {
                 Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
             }
@@ -497,6 +526,7 @@ pub const UpgradeCommand = struct {
             .zip_url = "https://github.com/oven-sh/bun/releases/download/canary/" ++ Version.zip_filename,
             .size = 0,
             .buf = MutableString.initEmpty(bun.default_allocator),
+            .latest = true,
         };
 
         const zip_url = URL.parse(version.zip_url);
@@ -541,6 +571,10 @@ pub const UpgradeCommand = struct {
                         });
                         Global.exit(1);
                     }
+
+                    Output.prettyErrorln(
+                        \\<r><red>error:<r> 404 Not Found. You may have specified a wrong version of Bun.
+                    , .{});
 
                     return error.HTTP404;
                 },
@@ -817,7 +851,7 @@ pub const UpgradeCommand = struct {
                         Output.prettyErrorln(
                             \\<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun
                             \\
-                            \\To downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>
+                            \\To downgrade to the latest stable release, run <b><cyan>bun upgrade stable<r>
                             \\
                         ,
                             .{},

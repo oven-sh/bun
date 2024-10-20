@@ -61,21 +61,22 @@ const Walker = @import("../walker_skippable.zig");
 
 const anyhow = bun.anyhow;
 
-pub const bun_hash_tag = ".bun-tag-";
-pub const max_hex_hash_len: comptime_int = brk: {
-    var buf: [128]u8 = undefined;
-    break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;
-};
-pub const max_buntag_hash_buf_len: comptime_int = max_hex_hash_len + bun_hash_tag.len + 1;
-pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
+pub const BunTagFile = struct {
+    const bun_hash_tag = ".bun-tag-";
+    const max_hex_hash_len: comptime_int = brk: {
+        var buf: [128]u8 = undefined;
+        break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;
+    };
+    pub const Buffer = [max_hex_hash_len * 2]u8;
 
-pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
-    @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
-    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
-    buf[bun_hash_tag.len + digits.len] = 0;
-    const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
-    return bunhashtag;
-}
+    pub fn path(buf: *Buffer, patch_hash: u64) [:0]u8 {
+        @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
+        const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
+        buf[bun_hash_tag.len + digits.len] = 0;
+        const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
+        return bunhashtag;
+    }
+};
 
 pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
@@ -11598,7 +11599,7 @@ pub const PackageManager = struct {
                 Global.crash();
             });
 
-            var bunpatchtagbuf: BuntagHashBuf = undefined;
+            var bunpatchtagbuf: BunTagFile.Buffer = undefined;
             // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
             // we need to rename this out and back too.
             const bun_patch_tag: ?[:0]const u8 = has_bun_patch_tag: {
@@ -11606,7 +11607,7 @@ pub const PackageManager = struct {
                 const patch_tag = patch_tag: {
                     if (lockfile.patched_dependencies.get(name_and_version_hash)) |patchdep| {
                         if (patchdep.patchfileHash()) |hash| {
-                            break :patch_tag buntaghashbuf_make(&bunpatchtagbuf, hash);
+                            break :patch_tag BunTagFile.path(&bunpatchtagbuf, hash);
                         }
                     }
                     break :has_bun_patch_tag null;
@@ -14048,21 +14049,28 @@ pub const PackageManager = struct {
 
                         const all_name_hashes: []PackageNameHash = brk: {
                             if (!manager.summary.overrides_changed) break :brk &.{};
-                            const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
+                            const original_keys = manager.lockfile.overrides.map.keys();
+                            const new_keys = lockfile.overrides.map.keys();
+                            const hashes_len = original_keys.len + new_keys.len;
                             if (hashes_len == 0) break :brk &.{};
                             var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, hashes_len);
-                            @memcpy(all_name_hashes[0..manager.lockfile.overrides.map.entries.len], manager.lockfile.overrides.map.keys());
-                            @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len..], lockfile.overrides.map.keys());
-                            var i = manager.lockfile.overrides.map.entries.len;
-                            while (i < all_name_hashes.len) {
-                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..i], all_name_hashes[i]) != null) {
-                                    all_name_hashes[i] = all_name_hashes[all_name_hashes.len - 1];
-                                    all_name_hashes.len -= 1;
-                                } else {
-                                    i += 1;
+                            var outlen: usize = 0;
+
+                            for (original_keys) |key| {
+                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..outlen], key) == null) {
+                                    all_name_hashes[outlen] = key;
+                                    outlen += 1;
                                 }
                             }
-                            break :brk all_name_hashes;
+
+                            for (new_keys) |key| {
+                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..outlen], key) == null) {
+                                    all_name_hashes[outlen] = key;
+                                    outlen += 1;
+                                }
+                            }
+
+                            break :brk all_name_hashes[0..outlen];
                         };
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);

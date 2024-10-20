@@ -3274,9 +3274,9 @@ class Http2SecureServer extends tls.Server {
     //TODO: add 'http/1.1' on ALPNProtocols list after allowHTTP1 support
     if (typeof options === "function") {
       onRequestHandler = options;
-      options = { ALPNProtocols: ["h2", "H2"] };
+      options = { ALPNProtocols: ["h2"] };
     } else if (options == null || typeof options == "object") {
-      options = { ...options, ALPNProtocols: ["h2", "H2"] };
+      options = { ...options, ALPNProtocols: ["h2"] };
     } else {
       throw $ERR_INVALID_ARG_TYPE("options must be an object");
     }

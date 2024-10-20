@@ -628,6 +628,16 @@ pub const BundleV2 = struct {
                                     .{ import_record.kind.errorLabel(), path_to_use },
                                     import_record.kind,
                                 ) catch unreachable;
+                            } else if ((target == .browser or target == .node) and options.ExternalModules.isBunBuiltin(path_to_use)) {
+                                addError(
+                                    log,
+                                    source,
+                                    import_record.range,
+                                    this.graph.allocator,
+                                    "{s} build cannot {s} Bun module: \"{s}\". To use Bun builtins, set target to 'bun' or feature-detect the Bun global at runtime.",
+                                    .{ if (target == .browser) "Browser" else "Node", import_record.kind.errorLabel(), path_to_use },
+                                    import_record.kind,
+                                ) catch unreachable;
                             } else {
                                 addError(
                                     log,
@@ -2363,6 +2373,16 @@ pub const BundleV2 = struct {
                                         this.graph.allocator,
                                         "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                         .{ import_record.kind.errorLabel(), import_record.path.text },
+                                        import_record.kind,
+                                    ) catch @panic("unexpected log error");
+                                } else if ((ast.target == .browser or ast.target == .node) and options.ExternalModules.isBunBuiltin(import_record.path.text)) {
+                                    addError(
+                                        this.bundler.log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "{s} build cannot {s} Bun builtin: \"{s}\". To use Bun builtins, set target to 'bun' or feature-detect the Bun global at runtime.",
+                                        .{ if (ast.target == .browser) "Browser" else "Node", import_record.kind.errorLabel(), import_record.path.text },
                                         import_record.kind,
                                     ) catch @panic("unexpected log error");
                                 } else {

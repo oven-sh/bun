@@ -164,7 +164,7 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
 
         self.emit("secure", self);
-
+        self.alpnProtocol = socket.alpnProtocol;
         const { checkServerIdentity } = self[bunTLSConnectOptions];
         if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
           const cert = self.getPeerCertificate(true);
@@ -291,10 +291,7 @@ const Socket = (function (InternalSocket) {
 
         if (typeof connectionListener == "function") {
           this.pauseOnConnect = pauseOnConnect;
-          if (isTLS) {
-            // add secureConnection event handler
-            self.once("secureConnection", () => connectionListener.$call(self, _socket));
-          } else {
+          if (!isTLS) {
             connectionListener.$call(self, _socket);
           }
         }
@@ -312,6 +309,7 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
         self.servername = socket.getServername();
         const server = self.server;
+        self.alpnProtocol = socket.alpnProtocol;
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
@@ -329,7 +327,8 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        self.server.emit("secureConnection", self);
+        server[bunSocketServerOptions]?.connectionListener?.$call(server, self);
+        server.emit("secureConnection", self);
         // after secureConnection event we emmit secure and secureConnect
         self.emit("secure", self);
         self.emit("secureConnect", verifyError);

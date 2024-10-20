@@ -1295,17 +1295,15 @@ fn selectALPNCallback(
         if (protos.len == 0) {
             return BoringSSL.SSL_TLSEXT_ERR_NOACK;
         }
-
         const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @as(c_uint, @intCast(protos.len)), in, inlen);
-
+        const log = Output.scoped(.Socket, false);
+        log("alpnProtocol {s} status {}", .{in[0..inlen], status});
         // Previous versions of Node.js returned SSL_TLSEXT_ERR_NOACK if no protocol
         // match was found. This would neither cause a fatal alert nor would it result
         // in a useful ALPN response as part of the Server Hello message.
         // We now return SSL_TLSEXT_ERR_ALERT_FATAL in that case as per Section 3.2
         // of RFC 7301, which causes a fatal no_application_protocol alert.
-        const expected = if (comptime BoringSSL.OPENSSL_NPN_NEGOTIATED == 1) BoringSSL.SSL_TLSEXT_ERR_OK else BoringSSL.SSL_TLSEXT_ERR_ALERT_FATAL;
-
-        return if (status == expected) 1 else 0;
+        return if(status == BoringSSL.OPENSSL_NPN_NEGOTIATED) BoringSSL.SSL_TLSEXT_ERR_OK else BoringSSL.SSL_TLSEXT_ERR_ALERT_FATAL;
     } else {
         return BoringSSL.SSL_TLSEXT_ERR_NOACK;
     }
@@ -2585,6 +2583,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_proto, &alpn_proto_len);
             if (alpn_proto == null or alpn_proto_len == 0) {
+                log("no alpnProtocol", .{});
                 return JSValue.jsBoolean(false);
             }
 

@@ -1080,29 +1080,28 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             bun.debugAssert(!this.patch.isNull());
 
             // hash from the .patch file, to be checked against bun tag
-            const patchfile_contents_hash = this.patch.patch_contents_hash;
-            var buf: BuntagHashBuf = undefined;
-            const bunhashtag = buntaghashbuf_make(&buf, patchfile_contents_hash);
+            var patch_buf: BunTagFile.Buffer = undefined;
+            const tag_filename = BunTagFile.path(&patch_buf, this.patch.patch_contents_hash);
 
-            const patch_tag_path = bun.path.joinZ(&[_][]const u8{
-                this.destination_dir_subpath,
-                bunhashtag,
-            }, .posix);
+            if (comptime bun.Environment.isPosix) {
+                const patch_tag_path = bun.path.joinZ(
+                    &[_][]const u8{
+                        this.node_modules.path.items,
+                        this.destination_dir_subpath,
+                        tag_filename,
+                    },
+                    .auto,
+                );
+
+                return bun.sys.existsAt(bun.toFD(root_node_modules_dir.fd), patch_tag_path);
+            }
 
             var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
             defer {
-                if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+                destination_dir.close();
             }
 
-            if (comptime bun.Environment.isPosix) {
-                _ = bun.sys.fstatat(bun.toFD(destination_dir.fd), patch_tag_path).unwrap() catch return false;
-            } else {
-                switch (bun.sys.openat(bun.toFD(destination_dir.fd), patch_tag_path, bun.O.RDONLY, 0)) {
-                    .err => return false,
-                    .result => |fd| _ = bun.sys.close(fd),
-                }
-            }
-            return true;
+            return bun.sys.existsAt(bun.toFD(destination_dir.fd), tag_filename);
         }
 
         // 1. verify that .bun-tag exists (was it installed from bun?)

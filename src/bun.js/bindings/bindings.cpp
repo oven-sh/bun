@@ -5147,7 +5147,7 @@ restart:
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol)
+                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -5244,7 +5244,7 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol)
+                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;
                 }
 

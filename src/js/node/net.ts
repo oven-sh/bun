@@ -331,7 +331,10 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        server[bunSocketServerOptions]?.connectionListener?.$call(server, self);
+        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+        if (typeof connectionListener == "function") {
+          connectionListener.$call(server, self);
+        }
         server.emit("secureConnection", self);
         // after secureConnection event we emmit secure and secureConnect
         self.emit("secure", self);

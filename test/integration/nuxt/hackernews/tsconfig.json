@@ -1,0 +1,4 @@
+{
+  "extends": "./.nuxt/tsconfig.json",
+  "include": ["../../../../packages/bun-types/dist/types.d.ts"]
+}

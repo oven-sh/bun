@@ -31,13 +31,7 @@ pub const PreparePatchPackageInstall = bun.install.PreparePatchPackageInstall;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 
-pub const bun_hash_tag = bun.install.bun_hash_tag;
-pub const max_hex_hash_len: comptime_int = brk: {
-    var buf: [128]u8 = undefined;
-    break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;
-};
-pub const max_buntag_hash_buf_len: comptime_int = max_hex_hash_len + bun_hash_tag.len + 1;
-pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
+const BunTagFile = bun.install.BunTagFile;
 
 pub const PatchTask = struct {
     manager: *PackageManager,
@@ -354,20 +348,17 @@ pub const PatchTask = struct {
         }
 
         // 5. Add bun tag
-        const bun_tag_prefix = bun_hash_tag;
-        var buntagbuf: BuntagHashBuf = undefined;
-        @memcpy(buntagbuf[0..bun_tag_prefix.len], bun_tag_prefix);
-        const hashlen = (std.fmt.bufPrint(buntagbuf[bun_tag_prefix.len..], "{x}", .{this.callback.apply.patch_hash}) catch unreachable).len;
-        buntagbuf[bun_tag_prefix.len + hashlen] = 0;
+        var buntagbuf: BunTagFile.Buffer = undefined;
+        const bun_tag_hash = BunTagFile.path(&buntagbuf, this.callback.apply.patch_hash);
         const buntagfd = switch (bun.sys.openat(
             bun.toFD(patch_pkg_dir.fd),
-            buntagbuf[0 .. bun_tag_prefix.len + hashlen :0],
+            bun_tag_hash,
             bun.O.RDWR | bun.O.CREAT,
             0o666,
         )) {
             .result => |fd| fd,
             .err => |e| {
-                return try log.addErrorFmtNoLoc(this.manager.allocator, "failed adding bun tag: {}", .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])});
+                return try log.addErrorFmtNoLoc(this.manager.allocator, "failed adding bun tag: {}", .{e.withPath(bun_tag_hash)});
             },
         };
         _ = bun.sys.close(buntagfd);

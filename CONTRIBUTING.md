@@ -30,7 +30,7 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+$ sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
 ```
 
 {% /codetabs %}

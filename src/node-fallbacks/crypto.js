@@ -1,3 +1,9 @@
+/**
+ * Browser polyfill for the `"crypto"` module.
+ *
+ * Imported on usage in `bun build --target=browser`
+ */
+
 export * from "crypto-browserify";
 import * as cryptoBrowserify from "crypto-browserify";
 

@@ -7,23 +7,23 @@
 // - It cannot use Bun APIs, since it is run using Node.js.
 // - It does not import dependencies, so it's faster to start.
 
+import { spawn, spawnSync } from "node:child_process";
 import {
-  constants as fs,
-  readFileSync,
-  mkdtempSync,
-  existsSync,
-  statSync,
-  mkdirSync,
   accessSync,
   appendFileSync,
+  existsSync,
+  constants as fs,
+  mkdirSync,
+  mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
+  statSync,
 } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
-import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative, sep } from "node:path";
-import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { normalize as normalizeWindows } from "node:path/win32";
 import { parseArgs } from "node:util";
 
 const spawnTimeout = 5_000;
@@ -222,7 +222,11 @@ async function runTests() {
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
+
+      // Make it an absolute path so that the test directory is not scanned, which reduces the load on the filesystem
+      const abs = resolve("test", testPath);
+
+      await runTest(title, async () => spawnBunTest(execPath, abs, join("test", testPath)));
     }
   }
 
@@ -536,12 +540,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @param {string} testPath
  * @returns {Promise<TestResult>}
  */
-async function spawnBunTest(execPath, testPath) {
+async function spawnBunTest(execPath, absoluteTestPath, testPath) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
   const isReallyTest = isTestStrict(testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
+    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, absoluteTestPath] : [absoluteTestPath],
     cwd: cwd,
     timeout: isReallyTest ? timeout : 30_000,
     env: {
@@ -1270,6 +1274,10 @@ function getBuildLabel() {
  * @returns {string | undefined}
  */
 function getFileUrl(file, line) {
+  if (isAbsolute(filePath) && filePath.includes(cwd)) {
+    file = relative(cwd, filePath);
+  }
+
   const filePath = file.replace(/\\/g, "/");
 
   let url;

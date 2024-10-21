@@ -361,8 +361,11 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
 
 napi_value constructor(napi_env env, napi_callback_info info) {
   napi_value this_value;
-  assert(napi_get_cb_info(env, info, nullptr, nullptr, &this_value, nullptr) ==
+  void *data;
+  assert(napi_get_cb_info(env, info, nullptr, nullptr, &this_value, &data) ==
          napi_ok);
+  printf("in constructor, data = \"%s\"\n",
+         reinterpret_cast<const char *>(data));
   napi_value property_value;
   assert(napi_create_string_utf8(env, "meow", NAPI_AUTO_LENGTH,
                                  &property_value) == napi_ok);
@@ -373,11 +376,43 @@ napi_value constructor(napi_env env, napi_callback_info info) {
   return undefined;
 }
 
+napi_value getData_callback(napi_env env, napi_callback_info info) {
+  void *data;
+
+  assert(napi_get_cb_info(env, info, nullptr, nullptr, nullptr, &data) ==
+         napi_ok);
+  const char *str_data = reinterpret_cast<const char *>(data);
+
+  napi_value ret;
+  assert(napi_create_string_utf8(env, str_data, NAPI_AUTO_LENGTH, &ret) ==
+         napi_ok);
+  return ret;
+}
+
 napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
+  static char constructor_data[] = "constructor data";
+  static char method_data[] = "method data";
+  static char wrap_data[] = "wrap data";
+
   napi_env env = info.Env();
   napi_value napi_class;
+
+  const napi_property_descriptor properties[] = {{
+      .utf8name = "getData",
+      .name = nullptr,
+      .method = getData_callback,
+      .getter = nullptr,
+      .setter = nullptr,
+      .value = nullptr,
+      .attributes = napi_default_method,
+      .data = reinterpret_cast<void *>(method_data),
+  }};
+
   assert(napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,
-                           nullptr, 0, nullptr, &napi_class) == napi_ok);
+                           reinterpret_cast<void *>(constructor_data), 1,
+                           properties, &napi_class) == napi_ok);
+  assert(napi_wrap(env, napi_class, reinterpret_cast<void *>(wrap_data),
+                   nullptr, nullptr, nullptr) == napi_ok);
   return napi_class;
 }
 
@@ -954,6 +989,138 @@ napi_value make_empty_array(const Napi::CallbackInfo &info) {
   return array;
 }
 
+static napi_ref ref_to_wrapped_object = nullptr;
+
+void delete_the_ref(napi_env env, void *_data, void *_hint) {
+  printf("delete_the_ref\n");
+  assert(ref_to_wrapped_object);
+  napi_delete_reference(env, ref_to_wrapped_object);
+  ref_to_wrapped_object = nullptr;
+}
+
+void finalize_for_create_wrap(napi_env env, void *opaque_data,
+                              void *opaque_hint) {
+  int *data = reinterpret_cast<int *>(opaque_data);
+  int *hint = reinterpret_cast<int *>(opaque_hint);
+  printf("finalize_for_create_wrap, data = %d, hint = %d\n", *data, *hint);
+  delete data;
+  delete hint;
+  if (ref_to_wrapped_object) {
+    // node_api_post_finalizer(env, delete_the_ref, nullptr, nullptr);
+  }
+}
+
+// create_wrap(js_object: object, ask_for_ref: boolean, strong: boolean): object
+napi_value create_wrap(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value js_object = info[0];
+
+  napi_value js_ask_for_ref = info[1];
+  bool ask_for_ref;
+  assert(napi_get_value_bool(env, js_ask_for_ref, &ask_for_ref) == napi_ok);
+  napi_value js_strong = info[2];
+  bool strong;
+  assert(napi_get_value_bool(env, js_strong, &strong) == napi_ok);
+
+  // wrap it
+  int *wrap_data = new int(42);
+  int *wrap_hint = new int(123);
+
+  assert(napi_wrap(env, js_object, wrap_data, finalize_for_create_wrap,
+                   wrap_hint,
+                   ask_for_ref ? &ref_to_wrapped_object : nullptr) == napi_ok);
+  if (ask_for_ref && strong) {
+    uint32_t new_refcount;
+    assert(napi_reference_ref(env, ref_to_wrapped_object, &new_refcount) ==
+           napi_ok);
+    assert(new_refcount == 1);
+  }
+
+  if (!ask_for_ref) {
+    ref_to_wrapped_object = nullptr;
+  }
+
+  return js_object;
+}
+
+// get_wrap_data(js_object: object): number
+napi_value get_wrap_data(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value js_object = info[0];
+
+  void *wrapped_data;
+  assert(napi_unwrap(env, js_object, &wrapped_data) == napi_ok);
+
+  napi_value js_number;
+  assert(napi_create_int32(env, *reinterpret_cast<int *>(wrapped_data),
+                           &js_number) == napi_ok);
+  return js_number;
+}
+
+// get_object_from_ref(): object
+napi_value get_object_from_ref(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value wrapped_object;
+  assert(napi_get_reference_value(env, ref_to_wrapped_object,
+                                  &wrapped_object) == napi_ok);
+
+  return wrapped_object;
+}
+
+// get_wrap_data_from_ref(): number|undefined
+napi_value get_wrap_data_from_ref(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value wrapped_object;
+  assert(napi_get_reference_value(env, ref_to_wrapped_object,
+                                  &wrapped_object) == napi_ok);
+
+  void *wrapped_data;
+  napi_status status = napi_unwrap(env, wrapped_object, &wrapped_data);
+  if (status == napi_ok) {
+    napi_value js_number;
+    assert(napi_create_int32(env, *reinterpret_cast<int *>(wrapped_data),
+                             &js_number) == napi_ok);
+    return js_number;
+  } else if (status == napi_invalid_arg) {
+    // no longer wrapped
+    napi_value undefined;
+    assert(napi_get_undefined(env, &undefined) == napi_ok);
+    return undefined;
+  } else {
+    assert(false && "unreachable");
+    return nullptr;
+  }
+}
+
+// remove_wrap_data(js_object: object): undefined
+napi_value remove_wrap(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value js_object = info[0];
+
+  void *wrap_data;
+  assert(napi_remove_wrap(env, js_object, &wrap_data) == napi_ok);
+
+  napi_value undefined;
+  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  return undefined;
+}
+
+// unref_wrapped_value(): undefined
+napi_value unref_wrapped_value(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t new_refcount;
+  assert(napi_reference_unref(env, ref_to_wrapped_object, &new_refcount) ==
+         napi_ok);
+  // should never have been set higher than 1
+  assert(new_refcount == 0);
+
+  napi_value undefined;
+  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  return undefined;
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1017,6 +1184,15 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("throw_error", Napi::Function::New(env, throw_error));
   exports.Set("create_and_throw_error",
               Napi::Function::New(env, create_and_throw_error));
+  exports.Set("create_wrap", Napi::Function::New(env, create_wrap));
+  exports.Set("unref_wrapped_value",
+              Napi::Function::New(env, unref_wrapped_value));
+  exports.Set("get_wrap_data", Napi::Function::New(env, get_wrap_data));
+  exports.Set("remove_wrap", Napi::Function::New(env, remove_wrap));
+  exports.Set("get_wrap_data_from_ref",
+              Napi::Function::New(env, get_wrap_data_from_ref));
+  exports.Set("get_object_from_ref",
+              Napi::Function::New(env, get_object_from_ref));
 
   return exports;
 }

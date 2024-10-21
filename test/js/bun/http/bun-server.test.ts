@@ -551,7 +551,6 @@ test("should be able to await server.stop()", async () => {
 });
 
 test("should be able to await server.stop(true) with keep alive", async () => {
-  const { promise, resolve } = Promise.withResolvers();
   const ready = Promise.withResolvers();
   const received = Promise.withResolvers();
   using server = Bun.serve({
@@ -565,8 +564,11 @@ test("should be able to await server.stop(true) with keep alive", async () => {
     },
   });
 
-  // Start the request
-  const responsePromise = fetch(server.url);
+  var didRequestFail = false;
+  // Send a request
+  const responsePromise = fetch(server.url)
+    .then(r => r.text())
+    .catch(() => (didRequestFail = true));
   // Wait for the server to receive it.
   await received.promise;
   // Stop listening for new connections
@@ -574,13 +576,16 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   // Continue the request
   ready.resolve();
 
+  if (didRequestFail) {
+    throw new Error("Request failed too early.");
+  }
+
   // Wait for the server to stop
   await stopped;
 
   // It should fail before the server responds
-  expect(async () => {
-    await (await responsePromise).text();
-  }).toThrow();
+  await responsePromise;
+  expect(didRequestFail).toBe(true);
 
   // Ensure the server is completely stopped
   expect(async () => await fetch(server.url)).toThrow();

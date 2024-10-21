@@ -861,7 +861,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;
 
-        if (ssl_options) |tls| {
+        if (ssl_options) |*tls| {
             this.flags.is_ssl = true;
             this.wrapper = WrapperType.init(tls, true, .{
                 .ctx = this,

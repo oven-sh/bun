@@ -22,7 +22,7 @@ inline void generateNativeModule_AbortControllerModule(
 
     const auto controllerIdent = Identifier::fromString(vm, "AbortController"_s);
     const auto signalIdent = Identifier::fromString(vm, "AbortSignal"_s);
-    const Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
+    const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(abortController);

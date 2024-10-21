@@ -21,7 +21,6 @@ namespace WebCore {
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
     macro(AbortSignal) \

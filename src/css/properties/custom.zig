@@ -40,7 +40,7 @@ const ArrayList = std.ArrayListUnmanaged;
 
 /// PERF: nullable optimization
 pub const TokenList = struct {
-    v: std.ArrayListUnmanaged(TokenOrValue),
+    v: std.ArrayListUnmanaged(TokenOrValue) = .{},
 
     const This = @This();
 
@@ -617,14 +617,15 @@ pub const TokenList = struct {
         return tokens;
     }
 
-    pub fn getFallbacks(this: *const TokenList, allocator: Allocator, targets: css.targets.Targets) css.SmallList(struct { SupportsCondition, TokenList }, 2) {
+    pub const Fallbacks = struct { SupportsCondition, TokenList };
+    pub fn getFallbacks(this: *const TokenList, allocator: Allocator, targets: css.targets.Targets) css.SmallList(Fallbacks, 2) {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
         var fallbacks = this.getNecessaryFallbacks(targets);
         const lowest_fallback = fallbacks.lowest();
         fallbacks.remove(lowest_fallback);
 
-        var res = css.SmallList(struct { SupportsCondition, @This() }, 2){};
+        var res = css.SmallList(Fallbacks, 2){};
         if (fallbacks.contains(ColorFallbackKind.P3)) {
             res.appendAssumeCapacity(.{
                 ColorFallbackKind.P3.supportsCondition(),
@@ -658,6 +659,7 @@ pub const TokenList = struct {
                             fallback.* = fallback.getFallback(allocator, lowest_fallback);
                         }
                     },
+                    else => {},
                 }
             }
         }

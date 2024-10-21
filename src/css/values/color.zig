@@ -97,6 +97,24 @@ pub const CssColor = union(enum) {
 
     pub const jsFunctionColor = @import("./color_js.zig").jsFunctionColor;
 
+    pub fn isCompatible(this: *const CssColor, browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .current_color, .rgba, .float => true,
+            .lab => |lab| switch (lab.*) {
+                .lab, .lch => css.Feature.isCompatible(.lab_colors, browsers),
+                .oklab, .oklch => css.Feature.isCompatible(.oklab_colors, browsers),
+            },
+            .predefined => |predefined| switch (predefined.*) {
+                .display_p3 => css.Feature.isCompatible(.p3_colors, browsers),
+                else => css.Feature.isCompatible(.color_function, browsers),
+            },
+            .light_dark => |light_dark| css.Feature.isCompatible(.light_dark, browsers) and
+                light_dark.light.isCompatible(browsers) and
+                light_dark.dark.isCompatible(browsers),
+            .system => |system| system.isCompatible(browsers),
+        };
+    }
+
     pub fn toCss(
         this: *const This,
         comptime W: type,
@@ -468,10 +486,10 @@ pub const CssColor = union(enum) {
     pub fn getFallback(this: *const @This(), allocator: Allocator, kind: ColorFallbackKind) CssColor {
         if (this.* == .rgba) return this.deepClone(allocator);
 
-        return switch (kind) {
-            ColorFallbackKind.RGB => this.toRgb(allocator).?,
-            ColorFallbackKind.P3 => this.toP3(allocator).?,
-            ColorFallbackKind.LAB => this.toLAB(allocator).?,
+        return switch (kind.asBits()) {
+            ColorFallbackKind.RGB.asBits() => this.toRGB(allocator).?,
+            ColorFallbackKind.P3.asBits() => this.toP3(allocator).?,
+            ColorFallbackKind.LAB.asBits() => this.toLAB(allocator).?,
             else => bun.unreachablePanic("Expected RGBA, P3, LAB fallback. This is a bug in Bun.", .{}),
         };
     }
@@ -482,15 +500,15 @@ pub const CssColor = union(enum) {
         var res = css.SmallList(CssColor, 2){};
 
         if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) {
-            res.appendAssumeCapacity(this.toRGB(allocator));
+            res.appendAssumeCapacity(this.toRGB(allocator).?);
         }
 
         if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
-            res.appendAssumeCapacity(this.toP3(allocator));
+            res.appendAssumeCapacity(this.toP3(allocator).?);
         }
 
         if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
-            this.* = this.toLAB(allocator);
+            this.* = this.toLAB(allocator).?;
         }
 
         return res;
@@ -529,7 +547,7 @@ pub const CssColor = union(enum) {
 
         if (fallbacks.contains(.{ .oklab = true })) {
             if (!targets.shouldCompileSame(.oklab_colors)) {
-                fallbacks = fallbacks.remove(ColorFallbackKind.andBelow(.{ .lab = true }));
+                fallbacks.remove(ColorFallbackKind.andBelow(.{ .lab = true }));
             }
         }
 
@@ -539,19 +557,19 @@ pub const CssColor = union(enum) {
             } else if (targets.browsers != null and css.compat.Feature.isPartiallyCompatible(&css.compat.Feature.lab_colors, targets.browsers.?)) {
                 // We don't need P3 if Lab is supported by some of our targets.
                 // No browser implements Lab but not P3.
-                fallbacks = fallbacks.remove(.{ .p3 = true });
+                fallbacks.remove(.{ .p3 = true });
             }
         }
 
         if (fallbacks.contains(.{ .p3 = true })) {
             if (!targets.shouldCompileSame(.p3_colors)) {
-                fallbacks = fallbacks.remove(.{ .rgb = true });
-            } else if (fallbacks.highest() != ColorFallbackKind{ .p3 = true } and
+                fallbacks.remove(.{ .rgb = true });
+            } else if (fallbacks.highest().asBits() != ColorFallbackKind.asBits(.{ .p3 = true }) and
                 (targets.browsers == null or !css.compat.Feature.isPartiallyCompatible(&css.compat.Feature.p3_colors, targets.browsers.?)))
             {
                 // Remove P3 if it isn't supported by any targets, and wasn't the
                 // original authored color.
-                fallbacks = fallbacks.remove(.{ .p3 = true });
+                fallbacks.remove(.{ .p3 = true });
             }
         }
 
@@ -602,7 +620,7 @@ pub const CssColor = union(enum) {
                     },
                 };
             },
-            else => return .{ .predefined = .{ .display_p3 = P3.tryFromCssColor(this) orelse return null } },
+            else => return .{ .predefined = bun.create(allocator, PredefinedColor, .{ .display_p3 = P3.tryFromCssColor(this) orelse return null }) },
         };
     }
 
@@ -1308,111 +1326,6 @@ pub fn parseNumberOrPercentage(input: *css.Parser, parser: *const ComponentParse
     };
 }
 
-pub fn parseeColorFunction(location: css.SourceLocation, function: []const u8, input: *css.Parser) Result(CssColor) {
-    var parser = ComponentParser.new(true);
-
-    // css.todo_stuff.match_ignore_ascii_case;
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lab")) {
-        return .{ .result = parseLab(LAB, input, &parser, LABColor.newLAB, .{}) };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklab")) {
-        return .{ .result = parseLab(OKLAB, input, &parser, LABColor.newOKLAB, .{}) };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "lch")) {
-        return .{ .result = parseLch(LCH, input, &parser, LABColor.newLCH, .{}) };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "oklch")) {
-        return .{ .result = parseLch(OKLCH, input, &parser, LABColor.newOKLCH, .{}) };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color")) {
-        const predefined = switch (parsePredefined(input, &parser)) {
-            .result => |vv| vv,
-            .err => |e| return .{ .err = e },
-        };
-        return .{ .result = predefined };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsl") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hsla"))
-    {
-        const Fn = struct {
-            pub fn parsefn(allocator: Allocator, h: f32, s: f32, l: f32, a: f32) CssColor {
-                const hsl = HSL{ .h = h, .s = s, .l = l, .alpha = a };
-
-                if (!std.math.isNan(h) and !std.math.isNan(s) and !std.math.isNan(l) and !std.math.isNan(a)) {
-                    return .{ .rgba = hsl.intoRgba() };
-                }
-
-                return .{
-                    .float = bun.create(
-                        allocator,
-                        FloatColor,
-                        .{ .hsl = hsl },
-                    ),
-                };
-            }
-        };
-        return parseHslHwb(HSL, input, &parser, true, Fn.parsefn);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "hwb")) {
-        const Fn = struct {
-            pub fn parsefn(allocator: Allocator, h: f32, w: f32, b: f32, a: f32) CssColor {
-                const hwb = HWB{ .h = h, .w = w, .b = b, .alpha = a };
-                if (!std.math.isNan(h) and !std.math.isNan(w) and !std.math.isNan(b) and !std.math.isNan(a)) {
-                    return .{ .rgba = hwb.intoRGBA() };
-                } else {
-                    return .{ .float = bun.create(allocator, FloatColor, .{ .hwb = hwb }) };
-                }
-            }
-        };
-        return parseHslHwb(HWB, input, &parser, true, Fn.parsefn);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgb") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "rgba"))
-    {
-        return parseRgb(input, &parser);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "color-mix")) {
-        return input.parseNestedBlock(CssColor, void, css.voidWrap(CssColor, parseColorMix));
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(function, "light-dark")) {
-        const Fn = struct {
-            pub fn parsefn(_: void, i: *css.Parser) Result(CssColor) {
-                const first_color = switch (CssColor.parse(i)) {
-                    .result => |vv| vv,
-                    .err => |e| return .{ .err = e },
-                };
-                const light = switch (first_color) {
-                    .light_dark => |c| c.light,
-                    else => |light| bun.create(
-                        i.allocator(),
-                        CssColor,
-                        light,
-                    ),
-                };
-
-                if (i.expectComma().asErr()) |e| return .{ .err = e };
-
-                const second_color = switch (CssColor.parse(i)) {
-                    .result => |vv| vv,
-                    .err => |e| return .{ .err = e },
-                };
-                const dark = switch (second_color) {
-                    .light_dark => |c| c.dark,
-                    else => |dark| bun.create(
-                        i.allocator(),
-                        CssColor,
-                        dark,
-                    ),
-                };
-                return .{
-                    .result = .{
-                        .light_dark = .{
-                            .light = light,
-                            .dark = dark,
-                        },
-                    },
-                };
-            }
-        };
-        return input.parseNestedBlock(CssColor, {}, Fn.parsefn);
-    } else {
-        return .{ .err = location.newUnexpectedTokenError(.{
-            .ident = function,
-        }) };
-    }
-}
-
 // Copied from an older version of cssparser.
 /// A color with red, green, blue, and alpha components, in a byte each.
 pub const RGBA = struct {
@@ -1676,6 +1589,13 @@ pub const SystemColor = enum {
     windowframe,
     /// Text in windows. Same as CanvasText.
     windowtext,
+
+    pub fn isCompatible(this: SystemColor, browsers: css.targets.Browsers) bool {
+        return switch (this) {
+            .accentcolor, .accentcolortext => css.Feature.isCompatible(.accent_system_color, browsers),
+            else => true,
+        };
+    }
 
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
@@ -2798,8 +2718,8 @@ pub const ColorFallbackKind = packed struct(u8) {
         // This finds the highest set bit.
         if (this.isEmpty()) return ColorFallbackKind.empty();
 
-        const zeroes: u8 = 7 - this.leadingZeroes();
-        return ColorFallbackKind.fromBitsTruncate(1 << zeroes);
+        const zeroes: u3 = @intCast(@as(u4, 7) - this.leadingZeroes());
+        return ColorFallbackKind.fromBitsTruncate(@as(u8, 1) << zeroes);
     }
 
     pub fn andBelow(this: @This()) ColorFallbackKind {
@@ -2809,10 +2729,10 @@ pub const ColorFallbackKind = packed struct(u8) {
     }
 
     pub fn supportsCondition(this: @This()) css.SupportsCondition {
-        const s = switch (this) {
-            @This().P3 => "color(display-p3 0 0 0)",
-            @This().LAB => "lab(0% 0 0)",
-            else => bun.unreachablePanic("Expected P3 or LAB. THis is a bug", .{}),
+        const s = switch (this.asBits()) {
+            ColorFallbackKind.P3.asBits() => "color(display-p3 0 0 0)",
+            ColorFallbackKind.LAB.asBits() => "lab(0% 0 0)",
+            else => bun.unreachablePanic("Expected P3 or LAB. This is a bug in Bun.", .{}),
         };
 
         return css.SupportsCondition{

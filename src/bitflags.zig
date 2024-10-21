@@ -3,6 +3,8 @@ const std = @import("std");
 pub fn Bitflags(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     const IntType = tyinfo.Struct.backing_integer.?;
+    const IntTypeInfo = @typeInfo(IntType);
+    const IntRepresentingNumOfBits = std.math.IntFittingRange(0, IntTypeInfo.Int.bits);
 
     return struct {
         pub inline fn empty() T {
@@ -51,7 +53,7 @@ pub fn Bitflags(comptime T: type) type {
             return @as(IntType, @bitCast(lhs)) & @as(IntType, @bitCast(rhs)) != 0;
         }
 
-        pub inline fn leadingZeroes(this: T) IntType {
+        pub inline fn leadingZeroes(this: T) IntRepresentingNumOfBits {
             return @clz(asBits(this));
         }
 

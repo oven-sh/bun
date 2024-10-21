@@ -114,6 +114,9 @@ pub const ImportConditions = css_rules.import.ImportConditions;
 
 pub const compat = @import("./compat.zig");
 
+pub const Features = targets.Features;
+pub const Feature = compat.Feature;
+
 pub const fmtPrinterError = errors_.fmtPrinterError;
 
 pub const PrintErr = error{

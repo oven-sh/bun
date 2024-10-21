@@ -119,14 +119,14 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             return this.data.inlined[0..this.capacity];
         }
 
-        fn getFallbacksReturnType(comptime Type: type, comptime InlineSize: comptime_int) type {
-            // Implements ImageFallback interface
-            if (@hasDecl(Type, "getImage") and InlineSize == 1) {
-                return bun.BabyList(SmallList(Type, 1));
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            for (this.slice()) |*v| {
+                if (!v.isCompatible(browsers)) return false;
             }
-            @compileError("Unhandled.");
+            return true;
         }
 
+        /// For this function to be called the T here must implement the ImageFallback interface
         pub fn getFallbacks(this: *@This(), allocator: Allocator, targets: css.targets.Targets) getFallbacksReturnType(T, N) {
             // Implements ImageFallback interface
             if (@hasDecl(T, "getImage") and N == 1) {
@@ -143,11 +143,9 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                 // Get RGB fallbacks if needed.
                 const rgb: ?SmallList(T, 1) = if (fallbacks.contains(ColorFallbackKind{ .rgb = true })) brk: {
                     var shallow_clone = this.shallowClone(allocator);
-                    shallow_clone.map(struct {
-                        pub fn mapFn(item: *T) void {
-                            item.* = item.getFallback(ColorFallbackKind{ .rgb = true });
-                        }
-                    }.mapFn);
+                    for (shallow_clone.slice_mut(), this.slice_mut()) |*out, *in| {
+                        out.* = in.getFallback(allocator, ColorFallbackKind{ .rgb = true });
+                    }
                     break :brk shallow_clone;
                 } else null;
 
@@ -171,25 +169,21 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                 }
 
                 const prefix = struct {
-                    pub inline fn helper(comptime prefix: []const u8, pfs: *css.VendorPrefix, pfi: *const SmallList(T, 1), r: *bun.BabyList(@This()), alloc: Allocator) void {
+                    pub inline fn helper(comptime prefix: []const u8, pfs: *css.VendorPrefix, pfi: *const SmallList(T, 1), r: *bun.BabyList(This), alloc: Allocator) void {
                         if (pfs.contains(css.VendorPrefix.fromName(prefix))) {
-                            var images = pfi.shallowClone(alloc);
-                            images.map(struct {
-                                pub fn mapfn(item: *T) void {
-                                    const image = item.getImage().getPrefixed(css.VendorPrefix.fromName(prefix));
-                                    const old = item.*;
-                                    item.* = item.with_image(image);
-                                    defer old.deinit(alloc);
-                                }
-                            }.mapfn);
-                            r.push(allocator, images);
+                            var images = SmallList(T, 1).initCapacity(alloc, pfi.len());
+                            for (images.slice_mut(), pfi.slice()) |*out, *in| {
+                                const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
+                                out.* = in.withImage(alloc, image);
+                            }
+                            r.push(alloc, images) catch bun.outOfMemory();
                         }
                     }
                 }.helper;
 
-                prefix("webkit", &prefixes, &prefix_images, &res, allocator);
-                prefix("moz", &prefixes, &prefix_images, &res, allocator);
-                prefix("o", &prefixes, &prefix_images, &res, allocator);
+                prefix("webkit", &prefixes, prefix_images, &res, allocator);
+                prefix("moz", &prefixes, prefix_images, &res, allocator);
+                prefix("o", &prefixes, prefix_images, &res, allocator);
 
                 if (prefixes.contains(css.VendorPrefix{ .none = true })) {
                     if (rgb) |r| {
@@ -198,34 +192,41 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
                     if (fallbacks.contains(ColorFallbackKind{ .p3 = true })) {
                         var p3_images = this.shallowClone(allocator);
-                        p3_images.map(struct {
-                            pub fn mapfn(item: *T) void {
-                                item.* = item.getFallback(ColorFallbackKind{ .p3 = true });
-                            }
-                        }.mapfn);
+                        for (p3_images.slice_mut(), this.slice_mut()) |*out, *in| {
+                            out.* = in.getFallback(allocator, ColorFallbackKind{ .p3 = true });
+                        }
                     }
 
                     // Convert to lab if needed (e.g. if oklab is not supported but lab is).
                     if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
                         for (this.slice_mut()) |*item| {
-                            const old = item.*;
-                            item.* = item.getFallback(ColorFallbackKind{ .lab = true });
+                            var old = item.*;
+                            item.* = item.getFallback(allocator, ColorFallbackKind{ .lab = true });
                             old.deinit(allocator);
                         }
                     }
                 } else if (res.popOrNull()) |the_last| {
-                    const old = this.*;
+                    var old = this.*;
                     // Prefixed property with no unprefixed version.
                     // Replace self with the last prefixed version so that it doesn't
                     // get duplicated when the caller pushes the original value.
                     this.* = the_last;
                     old.deinit(allocator);
                 }
-                return;
+                return res;
             }
             @compileError("Dunno what to do here.");
         }
 
+        fn getFallbacksReturnType(comptime Type: type, comptime InlineSize: comptime_int) type {
+            // Implements ImageFallback interface
+            if (@hasDecl(Type, "getImage") and InlineSize == 1) {
+                return bun.BabyList(SmallList(Type, 1));
+            }
+            @compileError("Unhandled.");
+        }
+
+        // TODO: remove this stupid function
         pub fn map(this: *@This(), comptime func: anytype) void {
             for (this.slice_mut()) |*item| {
                 func(item);

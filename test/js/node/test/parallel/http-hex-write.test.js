@@ -1,5 +1,5 @@
-//#FILE: test-http-client-timeout-event.js
-//#SHA1: b4aeb9d5d97b5ffa46c8c281fbc04d052857b08f
+//#FILE: test-http-hex-write.js
+//#SHA1: 77a5322a8fe08e8505f39d42614167d223c9fbb0
 //-----------------
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25,40 +25,36 @@
 "use strict";
 const http = require("http");
 
-const options = {
-  method: "GET",
-  port: undefined,
-  host: "127.0.0.1",
-  path: "/",
-};
+const expectedResponse = "hex\nutf8\n";
 
-test("http client timeout event", async () => {
-  const server = http.createServer();
+test("HTTP server writes hex and utf8", async () => {
+  const server = http.createServer((req, res) => {
+    res.setHeader("content-length", expectedResponse.length);
+    res.write("6865780a", "hex");
+    res.write("utf8\n");
+    res.end();
+    server.close();
+  });
 
   await new Promise(resolve => {
-    server.listen(0, options.host, () => {
-      options.port = server.address().port;
-      const req = http.request(options);
-
-      req.on("error", () => {
-        // This space is intentionally left blank
-      });
-
-      req.on("close", () => {
-        expect(req.destroyed).toBe(true);
-        server.close(resolve);
-      });
-
-      req.setTimeout(1);
-      req.on("timeout", () => {
-        req.end(() => {
-          setTimeout(() => {
-            req.destroy();
-          }, 100);
-        });
-      });
+    server.listen(0, () => {
+      const port = server.address().port;
+      http
+        .request({ port })
+        .on("response", res => {
+          let data = "";
+          res.setEncoding("ascii");
+          res.on("data", chunk => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            expect(data).toBe(expectedResponse);
+            resolve();
+          });
+        })
+        .end();
     });
   });
 });
 
-//<#END_FILE: test-http-client-timeout-event.js
+//<#END_FILE: test-http-hex-write.js

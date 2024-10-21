@@ -8,6 +8,7 @@ const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+const { kDeprecatedReplySymbol } = require("internal/http");
 const encoder = new TextEncoder();
 const eventIds = {
   open: 1,
@@ -1238,7 +1239,7 @@ class WebSocketServer extends EventEmitter {
         data: ws[kBunInternals],
       })
     ) {
-      response._reply(undefined);
+      response[kDeprecatedReplySymbol](undefined);
       if (this.clients) {
         this.clients.add(ws);
         ws.on("close", () => {

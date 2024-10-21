@@ -25,63 +25,66 @@
 "use strict";
 const http = require("http");
 
-const expectedServer = "Request Body from Client";
-let resultServer = "";
-const expectedClient = "Response Body from Server";
-let resultClient = "";
+for (let expectedServer of [
+  Buffer.alloc(1024 * 258, "Request Body from Client\n").toString(),
+  "Request Body from Client\n",
+]) {
+  let resultServer = "";
+  const expectedClient = "Response Body from Server";
+  let resultClient = "";
 
-test("HTTP pause and resume", async () => {
-  const server = http.createServer((req, res) => {
-    console.error("pause server request");
-    req.pause();
-    setTimeout(() => {
-      console.error("resume server request");
-      req.resume();
-      req.setEncoding("utf8");
-      req.on("data", chunk => {
-        resultServer += chunk;
-      });
-      req.on("end", () => {
-        console.error(resultServer);
-        res.writeHead(200);
-        res.end(expectedClient);
-      });
-    }, 100);
-  });
-
-  await new Promise(resolve => {
-    server.listen(0, function () {
-      // Anonymous function rather than arrow function to test `this` value.
-      expect(this).toBe(server);
-      const req = http.request(
-        {
-          port: this.address().port,
-          path: "/",
-          method: "POST",
-        },
-        res => {
-          console.error("pause client response");
-          res.pause();
-          setTimeout(() => {
-            console.error("resume client response");
-            res.resume();
-            res.on("data", chunk => {
-              resultClient += chunk;
-            });
-            res.on("end", () => {
-              console.error(resultClient);
-              server.close();
-              resolve();
-            });
-          }, 100);
-        },
-      );
-      req.end(expectedServer);
+  test(`HTTP pause and resume (${expectedServer.length})`, async () => {
+    const server = http.createServer((req, res) => {
+      console.error("pause server request");
+      req.pause();
+      setTimeout(() => {
+        console.error("resume server request");
+        req.resume();
+        req.setEncoding("utf8");
+        req.on("data", chunk => {
+          resultServer += chunk;
+        });
+        req.on("end", () => {
+          res.writeHead(200);
+          res.end(expectedClient);
+        });
+      }, 100);
     });
+
+    await new Promise(resolve => {
+      server.listen(0, "127.0.0.1", function () {
+        // Anonymous function rather than arrow function to test `this` value.
+        expect(this).toBe(server);
+
+        http
+          .request(
+            {
+              method: "POST",
+              port: server.address().port,
+            },
+            res => {
+              console.error("pause client response");
+              res.pause();
+              setTimeout(() => {
+                console.error("resume client response");
+                res.resume();
+                res.on("data", chunk => {
+                  resultClient += chunk;
+                });
+                res.on("end", () => {
+                  console.error(resultClient);
+                  server.close();
+                  resolve();
+                });
+              });
+            },
+          )
+          .end(expectedServer);
+      });
+    });
+
+    expect(resultServer).toBe(expectedServer);
+    expect(resultClient).toBe(expectedClient);
   });
-
-  expect(resultServer).toBe(expectedServer);
-  expect(resultClient).toBe(expectedClient);
-});
-
+}
 //<#END_FILE: test-http-pause.js

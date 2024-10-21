@@ -799,6 +799,17 @@ describe("process.exitCode", () => {
     ]).toRunInlineFixture();
   });
 
+  it("setter process.title", () => {
+    expect([
+      `
+      process.title = "node";
+      console.log(process.title);
+    `,
+      "node",
+      0,
+    ]).toRunInlineFixture();
+  });
+
   it("exit", () => {
     expect([
       `

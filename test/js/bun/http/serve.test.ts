@@ -1951,7 +1951,7 @@ it("we should always send date", async () => {
 it("should allow use of custom timeout", async () => {
   using server = Bun.serve({
     port: 0,
-    idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+    idleTimeout: 7, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
     async fetch(req) {
       const url = new URL(req.url);
       return new Response(
@@ -1973,12 +1973,21 @@ it("should allow use of custom timeout", async () => {
     },
   });
   async function testTimeout(pathname: string, success: boolean) {
-    const res = await fetch(new URL(pathname, server.url.origin));
-    expect(res.status).toBe(200);
+    const promise = fetch(new URL(pathname, server.url.origin)).then(r => {
+      expect(r.status).toBe(200);
+      return r.text();
+    });
+
     if (success) {
-      expect(res.text()).resolves.toBe("Hello, World!");
+      return expect(await promise).toBe("Hello, World!");
     } else {
-      expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+      return promise
+        .then(() => {
+          throw new Error("Expected timeout");
+        })
+        .catch(err => {
+          expect(err.message).toContain("The socket connection was closed unexpectedly.");
+        });
     }
   }
   await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);

@@ -149,7 +149,7 @@ describe("Server", () => {
       port: 0,
     });
 
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
+    const response = await fetch(server.url);
     expect(await response.text()).toBe("Hello");
   });
 
@@ -199,7 +199,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(server.url, { signal: abortController.signal });
       } catch (err: any) {
         expect(err).toBeDefined();
         expect(err?.name).toBe("AbortError");
@@ -229,7 +229,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(server.url, { signal: abortController.signal });
       } catch {
         fetchAborted = true;
       }
@@ -255,6 +255,7 @@ describe("Server", () => {
               type: "direct",
               async pull(controller) {
                 abortController.abort();
+                await Bun.sleep(0);
 
                 const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
                 controller.write(buffer);
@@ -278,7 +279,7 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+        await fetch(server.url, { signal: abortController.signal }).then(r => r.text());
       } catch {}
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
@@ -331,6 +332,7 @@ describe("Server", () => {
             new ReadableStream({
               async pull(controller) {
                 abortController.abort();
+                await Bun.sleep(0);
 
                 const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
                 controller.enqueue(buffer);
@@ -353,8 +355,11 @@ describe("Server", () => {
       });
 
       try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+        await fetch(server.url, { signal: abortController.signal }).then(r => r.text());
+        expect.unreachable();
+      } catch (err: any) {
+        expect(err.message).toContain("The operation was aborted");
+      }
       await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
     }

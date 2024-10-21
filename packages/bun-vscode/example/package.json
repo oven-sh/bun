@@ -10,6 +10,7 @@
   "scripts": {
     "run": "node hello.js",
     "start": "hello.js",
+    "test":"bun test",
     "start:bun": "bun hello.js",
     "start:bun:quotes": "bun run hello.js"
   },

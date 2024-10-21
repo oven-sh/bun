@@ -2031,6 +2031,41 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("edgecase/NoOutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: false,
+    backend: "api",
+    onAfterApiBundle: build => {
+      expect(build.success).toEqual(true);
+      expect(build.outputs).toBeArrayOfSize(2);
+    },
+  });
+
+  itBundled("edgecase/OutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: true,
+    bundleErrors: {
+      "<bun>": ["cannot write multiple output files without an output directory"],
+    },
+    run: true,
+  });
+
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node

@@ -11739,8 +11739,9 @@ pub const LinkerContext = struct {
         ) catch unreachable;
 
         const root_path = c.resolver.opts.output_dir;
+        const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache or (has_css_chunk and has_js_chunk);
 
-        if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache or (has_css_chunk and has_js_chunk)) and !c.resolver.opts.compile) {
+        if (!c.resolver.opts.compile and more_than_one_output and (c.resolver.opts.outfile or c.resolver.opts.output_to_stdout)) {
             try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
             return error.MultipleOutputFilesWithoutOutputDir;
         }

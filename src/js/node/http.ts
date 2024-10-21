@@ -43,7 +43,6 @@ const firstWriteSymbol = Symbol("firstWrite");
 const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kClearTimeout = Symbol("kClearTimeout");
-const kDeprecatedReplySymbol = Symbol("deprecatedReply");
 const kfakeSocket = Symbol("kfakeSocket");
 const kHandle = Symbol("handle");
 const kRealListen = Symbol("kRealListen");
@@ -64,6 +63,8 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kRequest = Symbol("request");
 
 const kEmptyObject = Object.freeze(Object.create(null));
+
+const { kDeprecatedReplySymbol } = require("internal/http");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");
@@ -699,7 +700,9 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
   }
 }
 
-Server.prototype = {
+const ServerPrototype = {
+  constructor: Server,
+  __proto__: EventEmitter.prototype,
   ref() {
     this._unref = false;
     this[serverSymbol]?.ref?.();
@@ -987,13 +990,11 @@ Server.prototype = {
             pendingError = err;
             if (rejectFunction) rejectFunction(err);
           };
-
           var reply = function (resp) {
             if (pendingResponse) return;
             pendingResponse = resp;
             if (resolveFunction) resolveFunction(resp);
           };
-
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
           const http_req = new RequestClass(req, {
@@ -1003,16 +1004,12 @@ Server.prototype = {
           isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
           const upgrade = http_req.headers.upgrade;
-
           const http_res = new ResponseClass(http_req, { [kDeprecatedReplySymbol]: reply });
-
           http_req.socket[kInternalSocketData] = [server, http_res, req];
           server.emit("connection", http_req.socket);
-
           const rejectFn = err => reject(err);
           http_req.once("error", rejectFn);
           http_res.once("error", rejectFn);
-
           if (upgrade) {
             server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
           } else {
@@ -1054,10 +1051,8 @@ Server.prototype = {
     }
     return this;
   },
-
-  constructor: Server,
 };
-$setPrototypeDirect.$call(Server.prototype, EventEmitter.prototype);
+Server.prototype = ServerPrototype;
 $setPrototypeDirect.$call(Server, EventEmitter);
 
 function assignHeadersSlow(object, req) {
@@ -1238,6 +1233,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
       // Node defaults url and method to null.
       this.url = "";
       this.method = null;
+      this.rawHeaders = [];
     }
 
     this[noBodySymbol] =

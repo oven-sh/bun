@@ -1863,7 +1863,7 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     args.fill(vm, argc, [&](auto* slot) {
         memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });
-    NAPICallFrame frame(JSC::ArgList(args), nullptr);
+    NAPICallFrame frame(JSC::ArgList(args), napi->dataPtr);
     frame.newTarget = newTarget;
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 

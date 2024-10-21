@@ -221,6 +221,7 @@ const Socket = (function (InternalSocket) {
       if (finalCallback) {
         self.#final_callback = null;
         finalCallback();
+        self.data = null;
         return;
       }
       if (!self.#ended) {
@@ -230,6 +231,7 @@ const Socket = (function (InternalSocket) {
         }
         queue.push(null);
       }
+      self.data = null;
     }
 
     static #Drain(socket) {
@@ -253,9 +255,11 @@ const Socket = (function (InternalSocket) {
     static [bunSocketServerHandlers] = {
       data: Socket.#Handlers.data,
       close(socket) {
+        const data = this.data;
+        if (!data) return;
         Socket.#Handlers.close(socket);
-        this.data.server[bunSocketServerConnections]--;
-        this.data.server._emitCloseIfDrained();
+        data.server[bunSocketServerConnections]--;
+        data.server._emitCloseIfDrained();
       },
       end(socket) {
         Socket.#Handlers.end(socket);
@@ -344,9 +348,11 @@ const Socket = (function (InternalSocket) {
         }
       },
       error(socket, error) {
+        const data = this.data;
+        if (!data) return;
         Socket.#Handlers.error(socket, error);
-        this.data.emit("error", error);
-        this.data.server.emit("clientError", error, this.data);
+        data.emit("error", error);
+        data.server.emit("clientError", error, data);
       },
       timeout: Socket.#Handlers.timeout,
       connectError: Socket.#Handlers.connectError,
@@ -814,6 +820,29 @@ const Socket = (function (InternalSocket) {
 
       if (this.writableFinished) this.destroy();
       else this.once("finish", this.destroy);
+    }
+
+    //TODO: migrate to native
+    _writev(data, callback) {
+      const allBuffers = data.allBuffers;
+      let chunks;
+      chunks = data;
+      if (allBuffers) {
+        for (let i = 0; i < data.length; i++) {
+          data[i] = data[i].chunk;
+        }
+      } else {
+        for (let i = 0; i < data.length; i++) {
+          const { chunk, encoding } = data[i];
+          if (typeof chunk === "string") {
+            data[i] = Buffer.from(chunk, encoding);
+          } else {
+            data[i] = chunk;
+          }
+        }
+      }
+      const chunk = Buffer.concat(chunks || []);
+      return this._write(chunk, "buffer", callback);
     }
 
     _write(chunk, encoding, callback) {

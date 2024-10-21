@@ -308,6 +308,16 @@ pub const InitCommand = struct {
                 }
             }
 
+            const needs_bun_engine_field = brk: {
+                if (fields.object.get("engines")) |engines| {
+                    if (engines.hasAnyPropertyNamed(&.{"bun"})) {
+                        break :brk false;
+                    }
+                }
+
+                break :brk true;
+            };
+
             const needs_dev_dependencies = brk: {
                 if (fields.object.get("devDependencies")) |deps| {
                     if (deps.hasAnyPropertyNamed(&.{"bun-types"})) {
@@ -333,6 +343,13 @@ pub const InitCommand = struct {
 
                 break :brk true;
             };
+
+            if (needs_bun_engine_field) {
+                var engines = fields.object.get("engines") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                try engines.data.e_object.putString(alloc, "bun", "*");
+                // try engines.data.e_object.putString(alloc, "bun", "^" ++ Global.package_json_version);
+                try fields.object.put(alloc, "engines", engines);
+            }
 
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);

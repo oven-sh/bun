@@ -124,6 +124,14 @@ export default [
         fn: "doPause",
         length: 0,
       },
+      drainRequestBody: {
+        fn: "drainRequestBody",
+        length: 0,
+      },
+      dumpRequestBody: {
+        fn: "dumpRequestBody",
+        length: 0,
+      },
       resume: {
         fn: "doResume",
         length: 0,

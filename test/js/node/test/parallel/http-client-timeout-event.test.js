@@ -46,8 +46,7 @@ test("http client timeout event", async () => {
 
       req.on("close", () => {
         expect(req.destroyed).toBe(true);
-        server.close();
-        resolve();
+        server.close(resolve);
       });
 
       req.setTimeout(1);

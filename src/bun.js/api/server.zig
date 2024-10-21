@@ -1444,7 +1444,7 @@ pub const ServerConfig = struct {
             if (arg.getTruthy(global, "onNodeHTTPRequest")) |onRequest_| {
                 if (!onRequest_.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected onNodeHTTPRequest to be a function", .{}, global, exception);
-                    return args;
+                    return;
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());

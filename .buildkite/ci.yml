@@ -8,22 +8,21 @@
 # for a particular commit.
 
 steps:
-  - command: uname -a
-    plugins:
-      - cirruslabs/tart#v0.2.0:
-        image: ghcr.io/oven-sh/bun-vm:darwin-aarch64-sonoma-14-v3
-  # # macOS aarch64
-  # - key: "darwin-aarch64"
-  #   group: ":darwin: aarch64"
-  #   steps:
-  #     - key: "darwin-aarch64-build-deps"
-  #       label: "build-deps"
-  #       agents:
-  #         queue: "build-darwin"
-  #         os: "darwin"
-  #         arch: "aarch64"
-  #       command:
-  #         - "bun run build:ci --target dependencies"
+  # macOS aarch64
+  - key: "darwin-aarch64"
+    group: ":darwin: aarch64"
+    steps:
+      - key: "darwin-aarch64-build-deps"
+        label: "build-deps"
+        agents:
+          queue: "build-darwin"
+          os: "darwin"
+          arch: "aarch64"
+        plugins:
+          - cirruslabs/tart#v0.2.0:
+              image: ghcr.io/oven-sh/bun-vm:darwin-aarch64-sonoma-14-v3
+        command:
+          - "bun run build:ci --target dependencies"
 
   #     - key: "darwin-aarch64-build-cpp"
   #       label: "build-cpp"

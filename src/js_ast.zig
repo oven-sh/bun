@@ -9028,18 +9028,4 @@ const ToJSError = error{
     OutOfMemory,
 };
 
-fn assertNoPointers(T: type) void {
-    switch (@typeInfo(T)) {
-        .Pointer => @compileError("no pointers!"),
-        .Struct => |s| for (s.fields) |field| {
-            assertNoPointers(field.type);
-        },
-        .Array => |a| assertNoPointers(a.child),
-        else => {},
-    }
-}
-
-inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
-    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
-    hasher.update(std.mem.asBytes(&thing));
-}
+const writeAnyToHasher = bun.writeAnyToHasher;

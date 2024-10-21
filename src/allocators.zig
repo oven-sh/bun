@@ -676,7 +676,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         // There's two parts to this.
-        // 1. Storing the underyling string.
+        // 1. Storing the underlying string.
         // 2. Making the key accessible at the index.
         pub fn putKey(self: *Self, key: anytype, result: *Result) !void {
             self.map.mutex.lock();

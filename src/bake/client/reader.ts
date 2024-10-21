@@ -40,4 +40,8 @@ export class DataViewReader {
   hasMoreData() {
     return this.cursor < this.view.byteLength;
   }
+
+  rest() {
+    return this.view.buffer.slice(this.cursor);
+  }
 }

@@ -57,7 +57,7 @@ login() {
   }
 
   enable_auto_login() {
-    echo '00000000: 1ced 3f4a bcbc ba2c caca 4e82' | execute xxd -r - /etc/kcpassword
+    echo "00000000: 1ced 3f4a bcbc ba2c caca 4e82" | execute xxd -r - /etc/kcpassword
     execute defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser "${username}"
   }
 

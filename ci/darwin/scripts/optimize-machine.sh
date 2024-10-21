@@ -99,7 +99,7 @@ enable_performance_mode() {
 }
 
 add_terminal_to_desktop() {
-  execute ln -s /System/Applications/Utilities/Terminal.app ~/Desktop/Terminal
+  execute ln -sf /System/Applications/Utilities/Terminal.app ~/Desktop/Terminal
 }
 
 main() {

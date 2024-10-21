@@ -6,7 +6,7 @@ data "external-raw" "boot-script" {
 }
 
 source "tart-cli" "bun-darwin-aarch64-vanilla" {
-  vm_name      = "bun-darwin-aarch64-${local.release.distro}-${local.release.release}-vanilla"
+  vm_name      = "bun-darwin-aarch64-vanilla-${local.release.distro}-${local.release.release}"
   from_ipsw    = local.release.ipsw
   cpu_count    = local.cpu_count
   memory_gb    = local.memory_gb
@@ -16,6 +16,7 @@ source "tart-cli" "bun-darwin-aarch64-vanilla" {
   ssh_timeout  = "120s"
   create_grace_time = "30s"
   boot_command = split("\n", data.external-raw.boot-script.result)
+  headless     = true # Disable if you need to debug why the boot_command is not working
 }
 
 build {
@@ -31,7 +32,7 @@ build {
   }
 
   provisioner "file" {
-    content = file("optimize-machine.sh")
+    content = file("scripts/optimize-machine.sh")
     destination = "/tmp/optimize-machine.sh"
   }
 
@@ -40,6 +41,6 @@ build {
   }
 
   provisioner "shell" {
-    inline = ["rm -rf /tmp/*.sh"]
+    inline = ["sudo rm -rf /tmp/*"]
   }
 }

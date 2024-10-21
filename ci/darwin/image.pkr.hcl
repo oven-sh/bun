@@ -2,20 +2,21 @@
 
 source "tart-cli" "bun-darwin-aarch64" {
   vm_name      = "bun-darwin-aarch64-${local.release.distro}-${local.release.release}"
-  vm_base_name = "bun-darwin-aarch64-${local.release.distro}-${local.release.release}-vanilla"
+  vm_base_name = "bun-darwin-aarch64-vanilla-${local.release.distro}-${local.release.release}"
   cpu_count    = local.cpu_count
   memory_gb    = local.memory_gb
   disk_size_gb = local.disk_size_gb
   ssh_username = local.username
   ssh_password = local.password
   ssh_timeout  = "120s"
+  headless     = true
 }
 
 build {
   sources = ["source.tart-cli.bun-darwin-aarch64"]
 
   provisioner "file" {
-    content = file("../../bootstrap.sh")
+    content = file("../../scripts/bootstrap.sh")
     destination = "/tmp/bootstrap.sh"
   }
 
@@ -24,7 +25,7 @@ build {
   }
 
   provisioner "file" {
-    source = "scripts/images/darwin/plists/"
+    source = "darwin/plists/"
     destination = "/tmp/"
   }
 

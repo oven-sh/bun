@@ -7433,7 +7433,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // Therefore, we split it into two tasks.
                 this.flags.terminated = true;
                 const task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
-                task.* = JSC.AnyTask.New(App, App.close).init(this.app);
+                task.* = JSC.AnyTask.New(App, App.close).init(this.app.?);
                 this.vm.enqueueTask(JSC.Task.init(task));
             }
 

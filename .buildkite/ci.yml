@@ -22,7 +22,7 @@ steps:
           - cirruslabs/tart#v0.2.0:
               image: ghcr.io/oven-sh/bun-vm:darwin-aarch64-sonoma-14-v3
         command:
-          - "./scripts/runner.node.mjs --exec-path $(which bun)"
+          - 'printenv && ./scripts/runner.node.mjs --exec-path="$(which bun)"'
 
   #     - key: "darwin-aarch64-build-cpp"
   #       label: "build-cpp"

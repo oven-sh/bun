@@ -15,6 +15,8 @@ $.cwd(process.cwd());
 $.nothrow();
 
 const DEFAULT_THRESHOLD = process.platform === "darwin" ? 100 * (1 << 20) : 150 * (1 << 20);
+const aaa128kb = Buffer.alloc(128 * 1024, "a").toString();
+const aaa2kb = Buffer.alloc(2 * 1024, "a").toString();
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
@@ -143,37 +145,17 @@ describe("fd leak", () => {
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(1 << 20)}`, 100);
   memLeakTest(
     "Blob_something",
-    () =>
-      TestBuilder.command`cat < ${new Blob([
-        Array(128 * 1024)
-          .fill("a")
-          .join(""),
-      ])}`.stdout(str =>
-        expect(str).toEqual(
-          Array(128 * 1024)
-            .fill("a")
-            .join(""),
-        ),
-      ),
+    () => TestBuilder.command`cat < ${new Blob([aaa128kb])}`.stdout(str => expect(str).toEqual(aaa128kb)),
     100,
   );
-  memLeakTest(
-    "Blob_nothing",
-    () =>
-      TestBuilder.command`echo hi < ${new Blob([
-        Array(128 * 1024)
-          .fill("a")
-          .join(""),
-      ])}`.stdout("hi\n"),
-    100,
-  );
+  memLeakTest("Blob_nothing", () => TestBuilder.command`echo hi < ${new Blob([aaa128kb])}`.stdout("hi\n"), 100);
   memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
 
   describe("#11816", async () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
         const files = tempDirWithFiles("hi", {
-          "input.txt": Array(2048).fill("a").join(""),
+          "input.txt": aaa2kb,
         });
         for (let j = 0; j < 10; j++) {
           const promises = [];
@@ -206,7 +188,7 @@ describe("fd leak", () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
         const files = tempDirWithFiles("hi", {
-          "input.txt": Array(2048).fill("a").join(""),
+          "input.txt": aaa2kb,
         });
         // wrapping in a function
         // because of an optimization

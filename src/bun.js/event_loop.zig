@@ -822,10 +822,7 @@ pub const EventLoop = struct {
         defer this.debug.exit();
 
         if (count == 1) {
-            const vm = this.virtual_machine;
-            const global = this.global;
-            const jsc = vm.jsc;
-            this.drainTasks(vm, global, jsc);
+            this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc);
         }
 
         this.entered_event_loop_count -= 1;
@@ -1484,19 +1481,6 @@ pub const EventLoop = struct {
         this.virtual_machine.gc_controller.processGCTimer();
     }
 
-    pub fn drainTasks(this: *EventLoop, ctx: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, js_vm: *JSC.VM) void {
-        while (true) {
-            while (this.tickWithCount(ctx) > 0) : (global.handleRejectedPromises()) {
-                this.tickConcurrent();
-            } else {
-                this.drainMicrotasksWithGlobal(global, js_vm);
-                this.tickConcurrent();
-                if (this.tasks.count > 0) continue;
-            }
-            break;
-        }
-    }
-
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
         {
@@ -1514,7 +1498,16 @@ pub const EventLoop = struct {
             const global = ctx.global;
             const global_vm = ctx.jsc;
 
-            this.drainTasks(ctx, global, global_vm);
+            while (true) {
+                while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+                    this.tickConcurrent();
+                } else {
+                    this.drainMicrotasksWithGlobal(global, global_vm);
+                    this.tickConcurrent();
+                    if (this.tasks.count > 0) continue;
+                }
+                break;
+            }
 
             while (this.tickWithCount(ctx) > 0) {
                 this.tickConcurrent();

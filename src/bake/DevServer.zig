@@ -186,7 +186,10 @@ pub fn init(options: Options) !*DevServer {
     else
         null;
 
-    const app = App.create(.{});
+    const app = App.create(.{}) orelse {
+        Output.prettyErrorln("Failed to create app", .{});
+        return error.AppInitialization;
+    };
 
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 

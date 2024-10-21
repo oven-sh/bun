@@ -84,6 +84,10 @@ function closeNT(callback, err) {
   callback(err);
 }
 
+function detachAfterFinish() {
+  this[bunSocketInternal] = null;
+}
+
 var SocketClass;
 const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
@@ -164,7 +168,7 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
 
         self.emit("secure", self);
-
+        self.alpnProtocol = socket.alpnProtocol;
         const { checkServerIdentity } = self[bunTLSConnectOptions];
         if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
           const cert = self.getPeerCertificate(true);
@@ -291,10 +295,7 @@ const Socket = (function (InternalSocket) {
 
         if (typeof connectionListener == "function") {
           this.pauseOnConnect = pauseOnConnect;
-          if (isTLS) {
-            // add secureConnection event handler
-            self.once("secureConnection", () => connectionListener.$call(self, _socket));
-          } else {
+          if (!isTLS) {
             connectionListener.$call(self, _socket);
           }
         }
@@ -312,6 +313,7 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
         self.servername = socket.getServername();
         const server = self.server;
+        self.alpnProtocol = socket.alpnProtocol;
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
@@ -329,7 +331,11 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        self.server.emit("secureConnection", self);
+        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+        if (typeof connectionListener == "function") {
+          connectionListener.$call(server, self);
+        }
+        server.emit("secureConnection", self);
         // after secureConnection event we emmit secure and secureConnect
         self.emit("secure", self);
         self.emit("secureConnect", verifyError);
@@ -685,14 +691,23 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
-      const socket = this[bunSocketInternal];
-      if (socket) {
-        this[bunSocketInternal] = null;
-        // we still have a socket, call end before destroy
-        process.nextTick(endNT, socket, callback, err);
-        return;
+      const { ending } = this._writableState;
+      // lets make sure that the writable side is closed
+      if (!ending) {
+        // at this state destroyed will be true but we need to close the writable side
+        this._writableState.destroyed = false;
+        this.end();
+        // we now restore the destroyed flag
+        this._writableState.destroyed = true;
       }
-      // no socket, just destroy
+
+      if (this.writableFinished) {
+        // closed we can detach the socket
+        this[bunSocketInternal] = null;
+      } else {
+        // lets wait for the finish event before detaching the socket
+        this.once("finish", detachAfterFinish);
+      }
       process.nextTick(closeNT, callback, err);
     }
 
@@ -706,7 +721,6 @@ const Socket = (function (InternalSocket) {
         this.#final_callback = callback;
       } else {
         // emit FIN not allowing half open
-        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }

@@ -8,6 +8,10 @@
 # for a particular commit.
 
 steps:
+  - command: uname -a
+    plugins:
+      - cirruslabs/tart#v0.2.0:
+        image: ghcr.io/oven-sh/bun-vm:darwin-aarch64-sonoma-14-v3
   # # macOS aarch64
   # - key: "darwin-aarch64"
   #   group: ":darwin: aarch64"

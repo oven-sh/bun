@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "bootstrap": "brew install gh jq cirruslabs/cli/tart hashicorp/tap/packer && packer init darwin",
+    "bootstrap": "brew install gh jq cirruslabs/cli/tart cirruslabs/cli/sshpass hashicorp/tap/packer && packer init darwin",
     "login": "gh auth token | tart login ghcr.io --username $(gh api user --jq .login) --password-stdin",
     "fetch:image-name": "echo ghcr.io/oven-sh/bun-vm",
     "fetch:darwin-version": "echo 1",

@@ -9,6 +9,7 @@
 #endif
 
 #include <stdint.h>
+#include <string.h>
 
 #if __has_include(<node/node_api.h>)
 
@@ -50,4 +51,39 @@ int main() {
 #endif
 
   return 42;
+}
+
+bool memset_and_memcpy_work(void) {
+  char dst[10] = {0};
+  char src[10] = {0};
+
+  if (memset(src, 5, 9) != src) {
+    return false;
+  }
+  for (int i = 0; i < 9; i++) {
+    if (src[i] != 5) {
+      return false;
+    }
+  }
+  if (src[9] != 0) {
+    return false;
+  }
+
+  for (int i = 0; i < 10; i++) {
+    src[i] = i + 1;
+  }
+
+  if (memcpy(dst, src, 9) != dst) {
+    return false;
+  }
+  for (int i = 0; i < 9; i++) {
+    if (dst[i] != src[i]) {
+      return false;
+    }
+  }
+  if (dst[9] != 0) {
+    return false;
+  }
+
+  return true;
 }

@@ -857,11 +857,11 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         }
         return .{ .result = {} };
     }
-    pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+    pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?*const JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;
 
-        if (ssl_options) |*tls| {
+        if (ssl_options) |tls| {
             this.flags.is_ssl = true;
             this.wrapper = WrapperType.init(tls, true, .{
                 .ctx = this,
@@ -893,13 +893,13 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         return .{ .result = {} };
     }
 
-    pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+    pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?*const JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;
         // ref because we are connecting
         _ = this.pipe.?.ref();
 
-        if (ssl_options) |*tls| {
+        if (ssl_options) |tls| {
             this.flags.is_ssl = true;
             this.wrapper = WrapperType.init(tls, true, .{
                 .ctx = this,
@@ -925,7 +925,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         this.connect_req.data = this;
         return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
     }
-    pub fn startTLS(this: *WindowsNamedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+    pub fn startTLS(this: *WindowsNamedPipe, ssl_options: *const JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
         this.flags.is_ssl = true;
         if (this.start(is_client)) {
             this.wrapper = try WrapperType.init(ssl_options, is_client, .{

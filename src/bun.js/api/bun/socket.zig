@@ -1057,13 +1057,13 @@ pub const Listener = struct {
         }
         const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
+        var socket_config: SocketConfig = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
             return .zero;
         };
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
-        var ssl = socket_config.ssl;
+        var ssl = if (socket_config.ssl) |*ssl_config| ssl_config else null;
         var handlers = socket_config.handlers;
         var default_data = socket_config.default_data;
 
@@ -1178,8 +1178,8 @@ pub const Listener = struct {
             }
         }
 
-        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
-            JSC.API.ServerConfig.SSLConfig.asUSockets(&ssl.?)
+        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl) |ssl_config|
+            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_config)
         else
             .{};
 
@@ -3996,7 +3996,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         return this;
     }
 
-    pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+    pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?*const JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
         // TODO: reuse the same context for multiple connections when possibles
 
         const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -4017,7 +4017,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         return &this.named_pipe;
     }
 
-    pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+    pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?*const JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
         // TODO: reuse the same context for multiple connections when possibles
 
         const this = WindowsNamedPipeContext.create(globalThis, socket);

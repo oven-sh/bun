@@ -134,8 +134,16 @@ Save the file. You'll need to open a new shell/terminal window for the changes t
 
 Once installed, the binary can upgrade itself.
 
+To upgrade to the latest version:
+
 ```sh
 $ bun upgrade
+```
+
+To intsall a specific version of Bun:
+
+```sh
+$ bun upgrade <version | canary | stable >
 ```
 
 {% callout %}
@@ -150,7 +158,7 @@ $ bun upgrade
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:
 
 ```sh
-$ bun upgrade --canary
+$ bun upgrade canary
 ```
 
 The canary build is useful for testing new features and bug fixes before they're released in a stable build. To help the Bun team fix bugs faster, canary builds automatically upload crash reports to Bun's team.
@@ -158,7 +166,7 @@ The canary build is useful for testing new features and bug fixes before they're
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
 
 {% callout %}
-**Note** — To switch back to a stable release from canary, run `bun upgrade --stable`.
+**Note** — To switch back to a stable release from canary, run `bun upgrade stable`.
 {% /callout %}
 
 ## Installing older versions of Bun

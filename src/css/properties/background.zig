@@ -611,20 +611,18 @@ pub const BackgroundHandler = struct {
         switch (property.*) {
             .@"background-color" => |*val| {
                 this.flushHelper(allocator, "color", CssColor, val, dest, context);
-                if (this.color) |*color| color.deinit(allocator);
                 this.color = val.deepClone(allocator);
             },
             .@"background-image" => |*val| {
                 this.backgroundHelper(allocator, SmallList(Image, 1), val, property, dest, context);
-                if (this.images) |*images| images.deinit(allocator);
                 this.images = val.deepClone(allocator);
             },
             .@"background-position" => |val| {
-                var x_positions = this.initSmallListHelper(HorizontalPosition, 1, "x_positions", allocator, val.len());
-                var y_positions = this.initSmallListHelper(VerticalPosition, 1, "y_positions", allocator, val.len());
-                for (val.slice()) |position| {
-                    x_positions.appendAssumeCapacity(position.x.deepClone(allocator));
-                    y_positions.appendAssumeCapacity(position.y.deepClone(allocator));
+                const x_positions = this.initSmallListHelper(HorizontalPosition, 1, "x_positions", allocator, val.len());
+                const y_positions = this.initSmallListHelper(VerticalPosition, 1, "y_positions", allocator, val.len());
+                for (val.slice(), x_positions, y_positions) |position, *x, *y| {
+                    x.* = position.x.deepClone(allocator);
+                    y.* = position.y.deepClone(allocator);
                 }
             },
             .@"background-position-x" => |val| {
@@ -696,21 +694,21 @@ pub const BackgroundHandler = struct {
                 this.color = color;
                 if (this.images) |*i| i.deinit(allocator);
                 this.images = images;
-                var x_positions = this.initSmallListHelper(HorizontalPosition, 1, "x_positions", allocator, val.len());
-                var y_positions = this.initSmallListHelper(VerticalPosition, 1, "y_positions", allocator, val.len());
-                var repeats = this.initSmallListHelper(BackgroundRepeat, 1, "repeats", allocator, val.len());
-                var sizes = this.initSmallListHelper(BackgroundSize, 1, "sizes", allocator, val.len());
-                var attachments = this.initSmallListHelper(BackgroundAttachment, 1, "attachments", allocator, val.len());
-                var origins = this.initSmallListHelper(BackgroundOrigin, 1, "origins", allocator, val.len());
+                const x_positions = this.initSmallListHelper(HorizontalPosition, 1, "x_positions", allocator, val.len());
+                const y_positions = this.initSmallListHelper(VerticalPosition, 1, "y_positions", allocator, val.len());
+                const repeats = this.initSmallListHelper(BackgroundRepeat, 1, "repeats", allocator, val.len());
+                const sizes = this.initSmallListHelper(BackgroundSize, 1, "sizes", allocator, val.len());
+                const attachments = this.initSmallListHelper(BackgroundAttachment, 1, "attachments", allocator, val.len());
+                const origins = this.initSmallListHelper(BackgroundOrigin, 1, "origins", allocator, val.len());
 
                 for (
                     val.slice(),
-                    x_positions.slice_mut(),
-                    y_positions.slice_mut(),
-                    repeats.slice_mut(),
-                    sizes.slice_mut(),
-                    attachments.slice_mut(),
-                    origins.slice_mut(),
+                    x_positions,
+                    y_positions,
+                    repeats,
+                    sizes,
+                    attachments,
+                    origins,
                 ) |*b, *x, *y, *r, *s, *a, *o| {
                     x.* = b.position.x.deepClone(allocator);
                     y.* = b.position.y.deepClone(allocator);
@@ -745,15 +743,17 @@ pub const BackgroundHandler = struct {
         comptime N: comptime_int,
         comptime field: []const u8,
         allocator: Allocator,
-        capacity: u32,
-    ) *SmallList(T, N) {
+        length: u32,
+    ) []T {
         if (@field(this, field)) |*list| {
             list.clearRetainingCapacity();
-            list.ensureTotalCapacity(allocator, capacity);
-            return list;
+            list.ensureTotalCapacity(allocator, length);
+            list.setLen(length);
+            return list.slice_mut();
         } else {
-            @field(this, field) = SmallList(T, 1).initCapacity(allocator, capacity);
-            return &@field(this, field).?;
+            @field(this, field) = SmallList(T, N).initCapacity(allocator, length);
+            @field(this, field).?.setLen(length);
+            return @field(this, field).?.slice_mut();
         }
     }
 

@@ -119,6 +119,18 @@ extern "C"
     }
   }
 
+  extern "C" void uws_res_clear_corked_socket(us_loop_t *loop) {
+    uWS::LoopData *loopData = uWS::Loop::data(loop);
+    void *corkedSocket = loopData->getCorkedSocket();
+    if (corkedSocket) {
+        if (loopData->isCorkedSSL()) {
+            ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
+        } else {
+            ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
+        }
+    }
+}
+
   void uws_app_delete(int ssl, uws_app_t *app, const char *pattern, uws_method_handler handler, void *user_data)
   {
     if (ssl)
@@ -1608,6 +1620,10 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
     }
   }
+
+int uws_res_is_closed(int ssl, uws_res_r res) {
+  return us_socket_is_closed(ssl, (us_socket_t *)res);
+}
 
 __attribute__((callback (corker, ctx)))
   void uws_res_cork(int ssl, uws_res_r res, void *ctx,

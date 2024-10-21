@@ -15,7 +15,7 @@ steps:
       - key: "darwin-aarch64-build-deps"
         label: "build-deps"
         agents:
-          queue: "build-darwin"
+          queue: "build-zig"
           os: "darwin"
           arch: "aarch64"
         plugins:

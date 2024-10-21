@@ -252,15 +252,20 @@ pub fn init(options: Options) !*DevServer {
         .{ .aligned = HotReloadTask.initEmpty(dev) },
     };
 
-    try dev.initBundler(&dev.server_bundler, .server);
-    try dev.initBundler(&dev.client_bundler, .client);
-    if (separate_ssr_graph)
-        try dev.initBundler(&dev.ssr_bundler, .ssr);
+    try dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_bundler);
+    dev.client_bundler.options.dev_server = dev;
+    try dev.framework.initBundler(allocator, &dev.log, .development, .client, &dev.client_bundler);
+    dev.server_bundler.options.dev_server = dev;
+    if (separate_ssr_graph) {
+        try dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_bundler);
+        dev.ssr_bundler.options.dev_server = dev;
+    }
 
     dev.framework = dev.framework.resolve(
         &dev.server_bundler.resolver,
         &dev.client_bundler.resolver,
     ) catch {
+        // bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         return error.FrameworkInitialization;
     };
@@ -393,64 +398,6 @@ fn deinit(dev: *DevServer) void {
     const allocator = dev.allocator;
     allocator.destroy(dev);
     bun.todoPanic(@src(), "bake.DevServer.deinit()");
-}
-
-fn initBundler(dev: *DevServer, bundler: *Bundler, comptime renderer: bake.Graph) !void {
-    const framework = dev.framework;
-
-    bundler.* = try bun.Bundler.init(
-        dev.allocator, // TODO: this is likely a memory leak
-        &dev.log,
-        std.mem.zeroes(bun.Schema.Api.TransformOptions),
-        null, // TODO:
-    );
-
-    bundler.options.target = switch (renderer) {
-        .client => .browser,
-        .server, .ssr => .bun,
-    };
-    bundler.options.public_path = switch (renderer) {
-        .client => client_prefix,
-        .server, .ssr => dev.cwd,
-    };
-    bundler.options.entry_points = &.{};
-    bundler.options.log = &dev.log;
-    bundler.options.output_format = .internal_bake_dev;
-    bundler.options.out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator);
-    bundler.options.hot_module_reloading = true;
-
-    // force disable filesystem output, even though bundle_v2
-    // is special cased to return before that code is reached.
-    bundler.options.output_dir = "";
-
-    // framework configuration
-    bundler.options.react_fast_refresh = renderer == .client and framework.react_fast_refresh != null;
-    bundler.options.server_components = framework.server_components != null;
-
-    bundler.options.conditions = try bun.options.ESMConditions.init(dev.allocator, bundler.options.target.defaultConditions());
-    if (renderer == .server and framework.server_components != null) {
-        try bundler.options.conditions.appendSlice(&.{"react-server"});
-    }
-
-    bundler.options.tree_shaking = false;
-    bundler.options.minify_syntax = true; // required for DCE
-    bundler.options.minify_identifiers = false;
-    bundler.options.minify_whitespace = false;
-
-    bundler.options.experimental_css = true;
-
-    bundler.options.dev_server = dev;
-    bundler.options.framework = &dev.framework;
-
-    bundler.configureLinker();
-    try bundler.configureDefines();
-
-    try bake.addImportMetaDefines(dev.allocator, bundler.options.define, .development, switch (renderer) {
-        .client => .client,
-        .server, .ssr => .server,
-    });
-
-    bundler.resolver.opts = bundler.options;
 }
 
 pub fn runLoopForever(dev: *DevServer) noreturn {
@@ -884,7 +831,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
                 .fulfilled => |v| bun.assert(v == .undefined),
             }
 
-            const default_export = c.BakeGetRequestHandlerFromModule(dev.server_global, server_code.key);
+            const default_export = c.BakeGetDefaultExportFromModule(dev.server_global.js(), server_code.key.toJS());
             if (!default_export.isObject())
                 @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
             const fetch_function: JSValue = default_export.get(dev.server_global.js(), "handleRequest") orelse
@@ -3328,7 +3275,7 @@ const c = struct {
     extern fn BakeCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
 
     // BakeSourceProvider.cpp
-    extern fn BakeGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
+    extern fn BakeGetDefaultExportFromModule(global: *JSC.JSGlobalObject, module: JSValue) JSValue;
 
     const LoadServerCodeResult = struct {
         promise: *JSInternalPromise,

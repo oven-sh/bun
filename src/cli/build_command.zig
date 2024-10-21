@@ -47,6 +47,10 @@ pub const BuildCommand = struct {
             ctx.args.target = .bun;
         }
 
+        if (ctx.bundler_options.bake) {
+            return bun.bake.production.buildCommand(ctx);
+        }
+
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
@@ -290,7 +294,6 @@ pub const BuildCommand = struct {
 
             break :brk (BundleV2.generateFromCLI(
                 &this_bundler,
-                if (this_bundler.options.server_components) @panic("TODO") else null,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),

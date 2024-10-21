@@ -275,8 +275,6 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
-        clap.parseParam("--server-components              Enable Server Components (experimental)") catch unreachable,
-        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
@@ -286,7 +284,11 @@ pub const Arguments = struct {
         clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
-    };
+    } ++ if (FeatureFlags.bake) [_]ParamType{
+        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake") catch unreachable,
+        clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
+        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
+    } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
     // TODO: update test completions
@@ -772,6 +774,7 @@ pub const Arguments = struct {
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
+            ctx.bundler_options.bake = args.flag("--app");
 
             // TODO: support --format=esm
             if (ctx.bundler_options.bytecode) {
@@ -845,12 +848,17 @@ pub const Arguments = struct {
                     else => invalidTarget(&diag, _target),
                 };
 
-                if (opts.target.? == .bun)
+                if (opts.target.? == .bun) {
                     ctx.debug.run_in_bun = opts.target.? == .bun;
+                } else {
+                    if (ctx.bundler_options.bytecode) {
+                        Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
+                        Global.exit(1);
+                    }
 
-                if (opts.target.? != .bun and ctx.bundler_options.bytecode) {
-                    Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
-                    Global.exit(1);
+                    if (ctx.bundler_options.bake) {
+                        Output.errGeneric("target must be 'bun' when using --app. Received: {s}", .{@tagName(opts.target.?)});
+                    }
                 }
             }
 
@@ -1069,7 +1077,7 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0) {
+            if (opts.entry_points.len == 0 and !ctx.bundler_options.bake) {
                 Output.prettyln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
                 Output.pretty("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
@@ -1422,6 +1430,8 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             experimental_css: bool = false,
+
+            bake: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

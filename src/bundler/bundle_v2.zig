@@ -322,11 +322,17 @@ const Watcher = bun.JSC.NewHotReloader(BundleV2, EventLoop, true);
 pub const BakeEntryPoint = struct {
     path: []const u8,
     graph: bake.Graph,
+
     css: bool = false,
+    client_wrapped: bool = false,
     route_index: bake.DevServer.Route.Index.Optional = .none,
 
     pub fn init(path: []const u8, graph: bake.Graph) BakeEntryPoint {
         return .{ .path = path, .graph = graph };
+    }
+
+    pub fn initClientWrapped(path: []const u8, graph: bake.Graph) BakeEntryPoint {
+        return .{ .path = path, .graph = graph, .client_wrapped = true };
     }
 
     pub fn route(path: []const u8, index: bake.DevServer.Route.Index) BakeEntryPoint {
@@ -367,7 +373,7 @@ pub const BundleV2 = struct {
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
-    const KitOptions = struct {
+    const BakeOptions = struct {
         framework: bake.Framework,
         client_bundler: *Bundler,
         ssr_bundler: *Bundler,
@@ -812,7 +818,7 @@ pub const BundleV2 = struct {
 
     pub fn init(
         bundler: *ThisBundler,
-        kit_options: ?KitOptions,
+        kit_options: ?BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
         enable_reloading: bool,
@@ -919,13 +925,14 @@ pub const BundleV2 = struct {
 
     pub fn enqueueEntryPoints(
         this: *BundleV2,
-        comptime variant: enum { normal, dev_server },
+        comptime variant: enum { normal, dev_server, bake_production },
         data: switch (variant) {
             .normal => []const []const u8,
             .dev_server => struct {
                 files: []const BakeEntryPoint,
                 css_data: *std.AutoArrayHashMapUnmanaged(Index, BakeBundleOutput.CssEntryPointMeta),
             },
+            .bake_production => []const BakeEntryPoint,
         },
     ) !ThreadPoolLib.Batch {
         var batch = ThreadPoolLib.Batch{};
@@ -963,7 +970,7 @@ pub const BundleV2 = struct {
         {
             // Setup entry points
             const entry_points = switch (variant) {
-                .normal => data,
+                .normal, .bake_production => data,
                 .dev_server => data.files,
             };
 
@@ -998,6 +1005,27 @@ pub const BundleV2 = struct {
 
                         if (entry_point.css) {
                             try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
+                        }
+                    },
+                    .bake_production => {
+                        const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch
+                            continue;
+
+                        const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
+                            .client => .browser,
+                            .server => this.bundler.options.target,
+                            .ssr => .kit_server_components_ssr,
+                        }) orelse continue;
+
+                        if (entry_point.client_wrapped) {
+                            const wrapped_index = try this.enqueueServerComponentGeneratedFile(.{
+                                .client_entry_wrapper = .{
+                                    .path = resolved.pathConst().?.*.text,
+                                },
+                            }, bun.logger.Source.initEmptyFile("client-wrapper.js"));
+                            try this.graph.entry_points.append(this.graph.allocator, Index.source(wrapped_index));
+                        } else {
+                            try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
                         }
                     },
                 }
@@ -1279,7 +1307,6 @@ pub const BundleV2 = struct {
 
     pub fn generateFromCLI(
         bundler: *ThisBundler,
-        kit_options: ?KitOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
         unique_key: u64,
@@ -1288,7 +1315,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
     ) !std.ArrayList(options.OutputFile) {
-        var this = try BundleV2.init(bundler, kit_options, allocator, event_loop, enable_reloading, null, null);
+        var this = try BundleV2.init(bundler, null, allocator, event_loop, enable_reloading, null, null);
         this.unique_key = unique_key;
 
         if (this.bundler.log.hasErrors()) {
@@ -1314,6 +1341,52 @@ pub const BundleV2 = struct {
 
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
+
+        try this.processFilesToCopy(reachable_files);
+
+        try this.cloneAST();
+
+        const chunks = try this.linker.link(
+            this,
+            this.graph.entry_points.items,
+            this.graph.server_component_boundaries,
+            reachable_files,
+            unique_key,
+        );
+
+        return try this.linker.generateChunksInParallel(chunks, false);
+    }
+
+    pub fn generateFromBakeProductionCLI(
+        entry_points: []const BakeEntryPoint,
+        server_bundler: *ThisBundler,
+        kit_options: BakeOptions,
+        allocator: std.mem.Allocator,
+        event_loop: EventLoop,
+        unique_key: u64,
+    ) !std.ArrayList(options.OutputFile) {
+        var this = try BundleV2.init(server_bundler, kit_options, allocator, event_loop, false, null, null);
+        this.unique_key = unique_key;
+
+        if (this.bundler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.bake_production, entry_points));
+
+        if (this.bundler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        this.waitForParse();
+
+        if (this.bundler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        try this.processServerComponentManifestFiles();
+
+        const reachable_files = try this.findReachableFiles();
 
         try this.processFilesToCopy(reachable_files);
 
@@ -3782,9 +3855,15 @@ pub const ServerComponentParseTask = struct {
         /// client ast, a "reference proxy" is created with identical exports.
         client_reference_proxy: ReferenceProxy,
 
+        client_entry_wrapper: ClientEntryWrapper,
+
         pub const ReferenceProxy = struct {
             other_source: Logger.Source,
             named_exports: JSAst.NamedExports,
+        };
+
+        pub const ClientEntryWrapper = struct {
+            path: []const u8,
         };
     };
 
@@ -3837,18 +3916,33 @@ pub const ServerComponentParseTask = struct {
 
         switch (task.data) {
             .client_reference_proxy => |data| try task.generateClientReferenceProxy(data, &ab),
+            .client_entry_wrapper => |data| try task.generateClientEntryWrapper(data, &ab),
         }
 
         return .{
             .ast = try ab.toBundledAst(switch (task.data) {
                 // Server-side
                 .client_reference_proxy => task.ctx.bundler.options.target,
+                // Client-side,
+                .client_entry_wrapper => .browser,
             }),
             .source = task.source,
             .log = log.*,
             .use_directive = .none,
             .side_effects = .no_side_effects__pure_data,
         };
+    }
+
+    fn generateClientEntryWrapper(_: *ServerComponentParseTask, data: Data.ClientEntryWrapper, b: *AstBuilder) !void {
+        const record = try b.addImportRecord(data.path, .stmt);
+        const namespace_ref = try b.newSymbol(.other, "main");
+        try b.appendStmt(S.Import{
+            .namespace_ref = namespace_ref,
+            .import_record_index = record,
+            .items = &.{},
+            .is_single_line = true,
+        });
+        b.import_records.items[record].was_originally_bare_import = true;
     }
 
     fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {
@@ -5275,6 +5369,8 @@ pub const LinkerContext = struct {
             }
         }
 
+        bun.assert(js_chunks.count() > 0);
+
         // Sort the chunks for determinism. This matters because we use chunk indices
         // as sorting keys in a few places.
         var sorted_chunks = BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count()) catch bun.outOfMemory();
@@ -5362,14 +5458,17 @@ pub const LinkerContext = struct {
             // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
             const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
 
-            var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
-                try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
-                return error.FailedToOpenEntryPointDirectory;
-            };
-            defer dir.close();
-
             var real_path_buf: bun.PathBuffer = undefined;
-            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf));
+            const dir = dir: {
+                var dir = std.fs.cwd().openDir(dir_path, .{}) catch {
+                    break :dir bun.path.normalizeBuf(dir_path, &real_path_buf, .auto);
+                };
+                defer dir.close();
+
+                break :dir try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf);
+            };
+
+            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, dir);
         }
 
         return chunks;
@@ -14586,6 +14685,10 @@ pub const AstBuilder = struct {
             .tag = .symbol,
         };
         try p.current_scope.generated.push(p.allocator, ref);
+        try p.declared_symbols.append(p.allocator, .{
+            .ref = ref,
+            .is_top_level = p.scopes.items.len == 0 or p.current_scope == p.scopes.items[0],
+        });
         return ref;
     }
 

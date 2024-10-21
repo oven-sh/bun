@@ -109,6 +109,7 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
+pub const bun_js = @import("./bun_js.zig");
 
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");

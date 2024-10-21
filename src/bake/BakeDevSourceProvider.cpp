@@ -58,10 +58,11 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(DevGlobalObject* global, B
   return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue BakeGetRequestHandlerFromModule(
-  DevGlobalObject* global,
-  JSC::JSString* key
+extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
+  JSC::JSGlobalObject* global,
+  JSC::JSValue keyValue
 ) {
+  JSC::JSString* key = JSC::jsCast<JSC::JSString*>(keyValue);
   JSC::VM&vm = global->vm();
   JSC::JSMap* map = JSC::jsCast<JSC::JSMap*>(
     global->moduleLoader()->getDirect(

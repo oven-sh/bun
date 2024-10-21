@@ -43,6 +43,6 @@ private:
 // Zig API
 extern "C" LoadServerCodeResult BakeLoadInitialServerCode(DevGlobalObject* global, BunString source);
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(DevGlobalObject* global, BunString source);
-extern "C" JSC::EncodedJSValue BakeGetRequestHandlerFromModule(DevGlobalObject* global, JSC::JSString* encodedModule);
+extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(JSC::JSGlobalObject* global, JSC::JSValue key);
 
 } // namespace Bake

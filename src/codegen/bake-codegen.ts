@@ -26,12 +26,12 @@ const base_dir = join(import.meta.dirname, "../bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
 function convertZigEnum(zig: string) {
-  const startTrigger = '\npub const MessageId = enum(u8) {';
+  const startTrigger = "\npub const MessageId = enum(u8) {";
   const start = zig.indexOf(startTrigger) + startTrigger.length;
   const endTrigger = /\n    pub fn |\n};/g;
   const end = zig.slice(start).search(endTrigger) + start;
   const enumText = zig.slice(start, end);
-  const values = enumText.replaceAll('\n    ', '\n  ').replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
+  const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
     return `\n  ${name} = ${value.charCodeAt(0)},`;
   });
   return `/** Generated from DevServer.zig */\nexport const enum MessageId {${values}}`;

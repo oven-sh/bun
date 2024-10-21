@@ -17,7 +17,6 @@ afterEach(() => gc());
  * 1. First we run them with native Buffer.write
  * 2. Then we run them with Node.js' implementation of Buffer.write, calling out to Bun's implementation of utf8Write, asciiWrite, latin1Write, base64Write, base64urlWrite, ucs2Write, utf16leWrite, utf16beWrite, etc.
  *
- *
  */
 const NumberIsInteger = Number.isInteger;
 class ERR_INVALID_ARG_TYPE extends TypeError {

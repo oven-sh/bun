@@ -106,14 +106,17 @@ public:
 
 
     /* Server name */
-    TemplatedApp &&addServerName(std::string hostname_pattern, SocketContextOptions options = {}) {
+    TemplatedApp &&addServerName(std::string hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr) {
 
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
             /* First we create a new router for this domain */
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
 
-            us_bun_socket_context_add_server_name(SSL, (struct us_socket_context_t *) httpContext, hostname_pattern.c_str(), options, domainRouter);
+            int result = us_bun_socket_context_add_server_name(SSL, (struct us_socket_context_t *) httpContext, hostname_pattern.c_str(), options, domainRouter);
+            if (success) {
+                *success = result == 0;
+            }
         }
 
         return std::move(*this);
@@ -236,6 +239,18 @@ public:
 
     TemplatedApp(SocketContextOptions options = {}) {
         httpContext = HttpContext<SSL>::create(Loop::get(), options);
+    }
+
+    TemplatedApp(HttpContext<SSL> &context) {
+        httpContext = &context;
+    }
+
+    static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
+        auto* httpContext = HttpContext<SSL>::create(Loop::get(), options);
+        if (!httpContext) {
+            return nullptr;
+        }
+        return new TemplatedApp<SSL>(*httpContext);
     }
 
     bool constructorFailed() {

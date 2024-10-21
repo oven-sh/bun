@@ -1,6 +1,6 @@
 # JS Modules
 
-**TLDR**: If anything here changes, re-run `make js`. If you add/remove files, `make regenerate-bindings`.
+**TLDR**: If anything here changes, re-run `bun run build`.
 
 - `./node` contains all `node:*` modules
 - `./bun` contains all `bun:*` modules
@@ -81,9 +81,9 @@ object->putDirectBuiltinFunction(
 
 ## Building
 
-Run `make js` to bundle all the builtins. The output is placed in `src/js/out/{modules,functions}/`, where these files are loaded dynamically by `bun-debug` (an exact filepath is inlined into the binary pointing at where you cloned bun, so moving the binary to another machine may not work). In a release build, these get minified and inlined into the binary (Please commit those generated headers).
+Run `bun run build` to bundle all the builtins. The output is placed in `build/debug/js`, where these files are loaded dynamically by `bun-debug` (an exact filepath is inlined into the binary pointing at where you cloned bun, so moving the binary to another machine may not work). In a release build, these get minified and inlined into the binary (Please commit those generated headers).
 
-If you change the list of files or functions, you will have to run `make regenerate-bindings`, but otherwise any change can be done with just `make js`.
+If you change the list of files or functions, you will have to run `bun run build`.
 
 ## Notes on how the build process works
 

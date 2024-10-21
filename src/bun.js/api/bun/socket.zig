@@ -628,7 +628,7 @@ pub const Listener = struct {
 
                     this.listener = .{
                         // we need to add support for the backlog parameter on listen here we use the default value of nodejs
-                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, &ssl, this) catch {
+                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, &ssl.?, this) catch {
                             exception.* = JSC.toInvalidArguments("Failed to listen at {s}", .{pipe_name}, globalObject).asObjectRef();
                             this.deinit();
                             return .zero;

@@ -899,7 +899,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         // ref because we are connecting
         _ = this.pipe.?.ref();
 
-        if (ssl_options) |tls| {
+        if (ssl_options) |*tls| {
             this.flags.is_ssl = true;
             this.wrapper = WrapperType.init(tls, true, .{
                 .ctx = this,

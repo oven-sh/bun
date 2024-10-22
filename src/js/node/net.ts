@@ -426,9 +426,6 @@ const Socket = (function (InternalSocket) {
       this.once("connect", () => this.emit("ready"));
     }
 
-    get bytesWritten() {
-      return this[bunSocketInternal]?.bytesWritten || 0;
-    }
     address() {
       return {
         address: this.localAddress,

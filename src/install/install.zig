@@ -231,12 +231,7 @@ pub const Aligner = struct {
     }
 };
 
-const EnqueuedGitDependencyEntry = struct {
-    dependency_id: DependencyID,
-    package_id: PackageID,
-};
-
-threadlocal var EnqueuedGitDependencies = std.ArrayList(EnqueuedGitDependencyEntry).init(bun.default_allocator);
+threadlocal var EnqueuedGitDependencies = std.ArrayList(DependencyID).init(bun.default_allocator);
 
 const NetworkTask = struct {
     http: AsyncHTTP = undefined,
@@ -5325,8 +5320,8 @@ pub const PackageManager = struct {
                     successFn(this, id, pkg_id);
 
                     // TODO? correct package ID
-                    while (EnqueuedGitDependencies.popOrNull()) |entry| {
-                        successFn(this, entry.dependency_id, pkg_id);
+                    while (EnqueuedGitDependencies.popOrNull()) |dep_id| {
+                        successFn(this, dep_id, pkg_id);
                     }
 
                     return;
@@ -5381,10 +5376,7 @@ pub const PackageManager = struct {
                     }
 
                     if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) {
-                        try EnqueuedGitDependencies.append(.{
-                            .dependency_id = id,
-                            .package_id = invalid_package_id,
-                        });
+                        try EnqueuedGitDependencies.append(id);
                         return;
                     }
 
@@ -5412,11 +5404,7 @@ pub const PackageManager = struct {
                     }
 
                     if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) {
-                        try EnqueuedGitDependencies.append(.{
-                            .dependency_id = id,
-                            .package_id = invalid_package_id,
-                        });
-
+                        try EnqueuedGitDependencies.append(id);
                         return;
                     }
 
@@ -5437,9 +5425,10 @@ pub const PackageManager = struct {
                     successFn(this, id, pkg_id);
 
                     // TODO? correct package ID
-                    while (EnqueuedGitDependencies.popOrNull()) |entry| {
-                        successFn(this, entry.dependency_id, pkg_id);
+                    while (EnqueuedGitDependencies.popOrNull()) |dep_id| {
+                        successFn(this, dep_id, pkg_id);
                     }
+
                     return;
                 }
 

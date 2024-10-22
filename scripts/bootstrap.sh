@@ -489,34 +489,7 @@ install_llvm() {
   brew)
     install_packages "llvm@$(llvm_version)"
     ;;
-  *)
-    compile_llvm
-    ;;
 	esac
-}
-
-compile_llvm() {
-  return # TODO
-
-  version="$(llvm_version_exact)"
-  src="$(mktemp -d)/llvm-$version"
-  build="$src/build"
-
-  git="$(require git)"
-  execute "$git" clone \
-    --depth 1 \
-    --branch "llvmorg-$version" \
-    --single-branch \
-    https://github.com/llvm/llvm-project.git "$src"
-
-  cmake="$(require cmake)"
-  execute "$cmake" \
-    -S "$src/llvm" \
-    -B "$build" \
-    -DCMAKE_BUILD_TYPE=Release
-  execute "$cmake" \
-    --build "$build" \
-    --target install
 }
 
 install_ccache() {
@@ -524,35 +497,7 @@ install_ccache() {
   apt | brew)
     install_packages ccache
     ;;
-  *)
-    compile_ccache
-    ;;
   esac
-}
-
-compile_ccache() {
-  return # TODO
-
-  src="$(mktemp -d)/ccache"
-  build="$src/build"
-
-  git="$(require git)"
-  execute "$git" clone \
-    --depth 1 \
-    --single-branch \
-    https://github.com/ccache/ccache.git "$src"
-
-  cmake="$(require cmake)"
-  execute "$cmake" \
-    -S "$src" \
-    -B "$build" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DENABLE_TESTING=OFF \
-    -DREDIS_STORAGE_BACKEND=OFF \
-    -DSTATIC_LINK=ON
-  execute "$cmake" \
-    --build "$build" \
-    --target install
 }
 
 install_rust() {

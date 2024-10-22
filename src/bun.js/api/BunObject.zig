@@ -1221,9 +1221,10 @@ pub const Crypto = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn init(algorithm: EVP.Algorithm, key: []const u8) ?*HMAC {
+            const md = algorithm.md() orelse return null;
             var ctx: BoringSSL.HMAC_CTX = undefined;
             BoringSSL.HMAC_CTX_init(&ctx);
-            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), algorithm.md(), null) != 1) {
+            if (BoringSSL.HMAC_Init_ex(&ctx, key.ptr, @intCast(key.len), md, null) != 1) {
                 BoringSSL.HMAC_CTX_cleanup(&ctx);
                 return null;
             }
@@ -2645,7 +2646,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
+                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                             return JSC.JSValue.zero;
                         };
 
@@ -2714,7 +2715,7 @@ pub const Crypto = struct {
                                     BoringSSL.ERR_clear_error();
                                     globalThis.throwValue(instance);
                                 } else {
-                                    globalThis.throwTODO("HMAC is not supported for this algorithm");
+                                    globalThis.throwTODO("HMAC is not supported for this algorithm yet");
                                 }
                             }
                             return null;
@@ -2833,7 +2834,7 @@ pub const Crypto = struct {
                     inline else => |*str| {
                         defer str.deinit();
                         const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str.*});
+                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                             return JSC.JSValue.zero;
                         };
 
@@ -2964,8 +2965,16 @@ pub const Crypto = struct {
                 switch (string_or_buffer) {
                     inline else => |*str| {
                         defer str.deinit();
-                        globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
-                        return JSC.JSValue.zero;
+                        const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
+                            globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
+                            return JSC.JSValue.zero;
+                        };
+
+                        if (encoding == .buffer) {
+                            return hashByNameInnerToBytes(globalThis, Algorithm, input, null);
+                        }
+
+                        return hashByNameInnerToString(globalThis, Algorithm, input, encoding);
                     },
                     .buffer => |buffer| {
                         return hashByNameInnerToBytes(globalThis, Algorithm, input, buffer.buffer);
@@ -2973,6 +2982,23 @@ pub const Crypto = struct {
                 }
             }
             return hashByNameInnerToBytes(globalThis, Algorithm, input, null);
+        }
+
+        fn hashByNameInnerToString(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, encoding: JSC.Node.Encoding) JSC.JSValue {
+            defer input.deinit();
+
+            if (input == .blob and input.blob.isBunFile()) {
+                globalThis.throw("Bun.file() is not supported here yet (it needs an async version)", .{});
+                return .zero;
+            }
+
+            var h = Algorithm.init(.{});
+            h.update(input.slice());
+
+            var out: [digestLength(Algorithm)]u8 = undefined;
+            h.final(&out);
+
+            return encoding.encodeWithSize(globalThis, digestLength(Algorithm), &out);
         }
 
         fn hashByNameInnerToBytes(globalThis: *JSGlobalObject, comptime Algorithm: type, input: JSC.Node.BlobOrStringOrBuffer, output: ?JSC.ArrayBuffer) JSC.JSValue {
@@ -3064,6 +3090,7 @@ pub const Crypto = struct {
     fn StaticCryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
         return struct {
             hashing: Hasher = Hasher{},
+            digested: bool = false,
 
             const ThisHasher = @This();
 
@@ -3155,7 +3182,7 @@ pub const Crypto = struct {
                         inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str.slice()});
+                                globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                                 return JSC.JSValue.zero;
                             };
 
@@ -3185,6 +3212,10 @@ pub const Crypto = struct {
             }
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+                if (this.digested) {
+                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to update", .{}).throw();
+                    return .zero;
+                }
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
@@ -3206,12 +3237,16 @@ pub const Crypto = struct {
                 globalThis: *JSGlobalObject,
                 output: ?JSC.Node.StringOrBuffer,
             ) JSC.JSValue {
+                if (this.digested) {
+                    globalThis.ERR_INVALID_STATE(name ++ " hasher already digested, create a new instance to digest again", .{}).throw();
+                    return .zero;
+                }
                 if (output) |*string_or_buffer| {
                     switch (string_or_buffer.*) {
                         inline else => |*str| {
                             defer str.deinit();
                             const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: \"{s}\"", .{str.slice()});
+                                globalThis.ERR_INVALID_ARG_VALUE("Unknown encoding: {s}", .{str.slice()}).throw();
                                 return JSC.JSValue.zero;
                             };
 
@@ -3244,6 +3279,7 @@ pub const Crypto = struct {
                 }
 
                 this.hashing.final(output_digest_slice);
+                this.digested = true;
 
                 if (output) |output_buf| {
                     return output_buf.value;
@@ -3267,6 +3303,7 @@ pub const Crypto = struct {
                 const output_digest_slice: *Hasher.Digest = &output_digest_buf;
 
                 this.hashing.final(output_digest_slice);
+                this.digested = true;
 
                 return encoding.encodeWithSize(globalThis, Hasher.digest, output_digest_slice);
             }
@@ -3323,8 +3360,6 @@ pub fn serve(
         break :brk config;
     };
 
-    var exception_value: *JSC.JSValue = undefined;
-
     if (config.allow_hot) {
         if (globalObject.bunVM().hotMap()) |hot| {
             if (config.id.len == 0) {
@@ -3359,98 +3394,43 @@ pub fn serve(
         }
     }
 
-    // Listen happens on the next tick!
-    // This is so we can return a Server object
-    if (config.ssl_config != null) {
-        if (config.development) {
-            var server = JSC.API.DebugHTTPSServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!server.thisObject.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(server.thisObject);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
+    switch (config.ssl_config != null) {
+        inline else => |has_ssl_config| {
+            switch (config.development) {
+                inline else => |development| {
+                    const ServerType = comptime switch (development) {
+                        true => switch (has_ssl_config) {
+                            true => JSC.API.DebugHTTPSServer,
+                            false => JSC.API.DebugHTTPServer,
+                        },
+                        false => switch (has_ssl_config) {
+                            true => JSC.API.HTTPSServer,
+                            false => JSC.API.HTTPServer,
+                        },
+                    };
 
-            server.thisObject = obj;
+                    var server = ServerType.init(config, globalObject);
+                    if (globalObject.hasException()) {
+                        return .zero;
+                    }
+                    server.listen();
+                    if (globalObject.hasException()) {
+                        return .zero;
+                    }
+                    const obj = server.toJS(globalObject);
+                    obj.protect();
 
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
-            }
-            return obj;
-        } else {
-            var server = JSC.API.HTTPSServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!exception_value.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(exception_value.*);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
-            server.thisObject = obj;
+                    server.thisObject = obj;
 
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
+                    if (config.allow_hot) {
+                        if (globalObject.bunVM().hotMap()) |hot| {
+                            hot.insert(config.id, server);
+                        }
+                    }
+                    return obj;
+                },
             }
-            return obj;
-        }
-    } else {
-        if (config.development) {
-            var server = JSC.API.DebugHTTPServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!exception_value.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(exception_value.*);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
-            server.thisObject = obj;
-
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
-            }
-            return obj;
-        } else {
-            var server = JSC.API.HTTPServer.init(config, globalObject.ptr());
-            exception_value = &server.thisObject;
-            server.listen();
-            if (!exception_value.isEmpty()) {
-                exception_value.unprotect();
-                globalObject.throwValue(exception_value.*);
-                server.thisObject = JSC.JSValue.zero;
-                server.deinit();
-                return .zero;
-            }
-            const obj = server.toJS(globalObject);
-            obj.protect();
-
-            server.thisObject = obj;
-
-            if (config.allow_hot) {
-                if (globalObject.bunVM().hotMap()) |hot| {
-                    hot.insert(config.id, server);
-                }
-            }
-            return obj;
-        }
+        },
     }
 
     unreachable;

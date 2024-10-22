@@ -2,7 +2,7 @@
 name: Build an app with Next.js and Bun
 ---
 
-Initialize a Next.js app with `create-next-app`. This will scaffold a new Next.js project and automatically installs dependencies.
+Initialize a Next.js app with `create-next-app`. This will scaffold a new Next.js project and automatically install dependencies.
 
 ```sh
 $ bun create next-app

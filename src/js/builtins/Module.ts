@@ -76,6 +76,17 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
     // If we can pull out a ModuleNamespaceObject, let's do it.
     if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
       const namespace = Loader.getModuleNamespaceObject(esm!.module);
+      // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+      // Various libraries expect __esModule to be set when using ESM from require().
+      // We don't want to always inject the __esModule export into every module,
+      // And creating an Object wrapper causes the actual exports to not be own properties.
+      // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+      // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+      // https://github.com/oven-sh/bun/issues/14411
+      if (namespace.__esModule === undefined) {
+        namespace.__esModule = true;
+      }
+
       return (mod.exports = namespace);
     }
   }

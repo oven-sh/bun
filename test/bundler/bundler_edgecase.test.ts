@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
+import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -1344,6 +1345,7 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
+    todo: isBroken && isWindows,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {

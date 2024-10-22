@@ -14,43 +14,48 @@
  * limitations under the License.
  *
  */
-
-import assert from "assert";
-
-import * as grpc from "@grpc/grpc-js";
-import { Client } from "@grpc/grpc-js";
-import { afterAll, beforeAll, describe, it } from "bun:test";
-import { ConnectivityState, TestClient, TestServer } from "./common";
+import grpc from "@grpc/grpc-js";
+import assert from "node:assert";
+import { afterAll, beforeAll, describe, it, beforeEach, afterEach } from "bun:test";
+import { Server, ServerCredentials } from "@grpc/grpc-js/build/src";
+import { Client } from "@grpc/grpc-js/build/src";
+import { ConnectivityState } from "@grpc/grpc-js/build/src/connectivity-state";
 
 const clientInsecureCreds = grpc.credentials.createInsecure();
+const serverInsecureCreds = ServerCredentials.createInsecure();
 
-["h2", "h2c"].forEach(protocol => {
-  describe(`Client ${protocol}`, () => {
-    it("should call the waitForReady callback only once, when channel connectivity state is READY", async () => {
-      const server = new TestServer(protocol === "h2");
-      await server.start();
-      const client = TestClient.createFromServer(server);
-      try {
-        const { promise, resolve, reject } = Promise.withResolvers();
-        const deadline = Date.now() + 1000;
-        let calledTimes = 0;
-        client.waitForReady(deadline, err => {
-          calledTimes++;
-          try {
-            assert.ifError(err);
-            assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
-            resolve(undefined);
-          } catch (e) {
-            reject(e);
-          }
-        });
-        await promise;
-        assert.equal(calledTimes, 1);
-      } finally {
-        client?.close();
-        server.shutdown();
-      }
+describe("Client", () => {
+  let server: Server;
+  let client: Client;
+
+  beforeAll(done => {
+    server = new Server();
+
+    server.bindAsync("localhost:0", serverInsecureCreds, (err, port) => {
+      assert.ifError(err);
+      client = new Client(`localhost:${port}`, clientInsecureCreds);
+      server.start();
+      done();
     });
+  });
+
+  afterAll(done => {
+    client.close();
+    server.tryShutdown(done);
+  });
+
+  it("should call the waitForReady callback only once, when channel connectivity state is READY", done => {
+    const deadline = Date.now() + 100;
+    let calledTimes = 0;
+    client.waitForReady(deadline, err => {
+      assert.ifError(err);
+      assert.equal(client.getChannel().getConnectivityState(true), ConnectivityState.READY);
+      calledTimes += 1;
+    });
+    setTimeout(() => {
+      assert.equal(calledTimes, 1);
+      done();
+    }, deadline - Date.now());
   });
 });
 
@@ -63,8 +68,7 @@ describe("Client without a server", () => {
   afterAll(() => {
     client.close();
   });
-  // This test is flaky because error.stack sometimes undefined aka TypeError: undefined is not an object (evaluating 'error.stack.split')
-  it.skip("should fail multiple calls to the nonexistent server", function (done) {
+  it("should fail multiple calls to the nonexistent server", function (done) {
     // Regression test for https://github.com/grpc/grpc-node/issues/1411
     client.makeUnaryRequest(
       "/service/method",
@@ -87,6 +91,21 @@ describe("Client without a server", () => {
         );
       },
     );
+  });
+  it("close should force calls to end", done => {
+    client.makeUnaryRequest(
+      "/service/method",
+      x => x,
+      x => x,
+      Buffer.from([]),
+      new grpc.Metadata({ waitForReady: true }),
+      (error, value) => {
+        assert(error);
+        assert.strictEqual(error?.code, grpc.status.UNAVAILABLE);
+        done();
+      },
+    );
+    client.close();
   });
 });
 
@@ -122,5 +141,20 @@ describe("Client with a nonexistent target domain", () => {
         );
       },
     );
+  });
+  it("close should force calls to end", done => {
+    client.makeUnaryRequest(
+      "/service/method",
+      x => x,
+      x => x,
+      Buffer.from([]),
+      new grpc.Metadata({ waitForReady: true }),
+      (error, value) => {
+        assert(error);
+        assert.strictEqual(error?.code, grpc.status.UNAVAILABLE);
+        done();
+      },
+    );
+    client.close();
   });
 });

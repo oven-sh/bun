@@ -83,6 +83,9 @@ function generate(ssl) {
       alpnProtocol: {
         getter: "getALPNProtocol",
       },
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
       write: {
         fn: "write",
         length: 3,

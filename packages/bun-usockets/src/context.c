@@ -212,12 +212,13 @@ void us_socket_context_add_server_name(int ssl, struct us_socket_context_t *cont
     }
 #endif
 }
-void us_bun_socket_context_add_server_name(int ssl, struct us_socket_context_t *context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user) {
+int us_bun_socket_context_add_server_name(int ssl, struct us_socket_context_t *context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        us_bun_internal_ssl_socket_context_add_server_name((struct us_internal_ssl_socket_context_t *) context, hostname_pattern, options, user);
+        return us_bun_internal_ssl_socket_context_add_server_name((struct us_internal_ssl_socket_context_t *) context, hostname_pattern, options, user);
     }
 #endif
+    return 0;
 }
 
 /* Remove SNI context */

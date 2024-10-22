@@ -3113,32 +3113,50 @@ declare module "bun" {
      * @example \x1b[38;2;100;200;200m
      */
     | "ansi"
+      | "ansi-16"
+      | "ansi-16m"
       /**
        * 256 color ANSI color string, for use in terminals which don't support true color
        *
        * Tries to match closest 24-bit color to 256 color palette
        */
-      | "ansi256"
+      | "ansi-256"
+      /**
+       * Picks the format that produces the shortest output
+       */
+      | "css"
       /**
        * Lowercase hex color string without alpha
-       * @example #aabb11
+       * @example #ff9800
        */
       | "hex"
       /**
+       * Uppercase hex color string without alpha
+       * @example #FF9800
+       */
+      | "HEX"
+      /**
+       * @example hsl(35.764706, 1, 0.5)
+       */
+      | "hsl"
+      /**
+       * @example lab(0.72732764, 33.938198, -25.311619)
+       */
+      | "lab"
+      /**
+       * @example 16750592
+       */
+      | "number"
+      /**
        * RGB color string without alpha
-       * rgb(100, 200, 200)
+       * @example rgb(255, 152, 0)
        */
       | "rgb"
       /**
        * RGB color string with alpha
-       * rgba(100, 200, 200, 0.5)
+       * @example rgba(255, 152, 0, 1)
        */
-      | "rgba"
-      | "hsl"
-      | "lab"
-      | "css"
-      | "lab"
-      | "HEX",
+      | "rgba",
   ): string | null;
 
   function color(
@@ -3231,7 +3249,7 @@ declare module "bun" {
   }
   const unsafe: Unsafe;
 
-  type DigestEncoding = "hex" | "base64";
+  type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
    * Are ANSI colors enabled for stdin and stdout?

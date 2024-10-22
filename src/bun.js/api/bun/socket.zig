@@ -1323,9 +1323,6 @@ fn NewSocket(comptime ssl: bool) type {
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
         buffered_data_for_node_net: bun.ByteList = .{},
-
-        /// For node:net, this is buffered bytes written. Not bytes sent.
-        /// Otherwise, this is bytes sent.
         bytes_written: u64 = 0,
 
         // TODO: switch to something that uses `visitAggregate` and have the
@@ -1477,23 +1474,6 @@ fn NewSocket(comptime ssl: bool) type {
             if (vm.isShuttingDown()) {
                 return;
             }
-            if (this.buffered_data_for_node_net.len > 0) {
-                const rc = this.socket.write(this.buffered_data_for_node_net.slice(), false);
-
-                if (rc > 0) {
-                    const written: u32 = @intCast(rc);
-                    this.bytes_written += written;
-                    if (this.buffered_data_for_node_net.len == written) {
-                        this.buffered_data_for_node_net.len = 0;
-                        this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
-                    } else {
-                        this.buffered_data_for_node_net.moveBytesToBeginning(written, this.buffered_data_for_node_net.len - written);
-                        // in this case, we stop here.
-                        // it is no longer writable.
-                        return;
-                    }
-                }
-            }
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
 
@@ -1630,13 +1610,6 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.JSGlobalObject,
         ) JSValue {
             return JSValue.jsNumber(this.bytes_written);
-        }
-
-        pub fn getBufferedAmount(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            return JSValue.jsNumber(this.buffered_data_for_node_net.len);
         }
 
         pub fn markInactive(this: *This) void {
@@ -2076,22 +2049,6 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.localPort());
         }
 
-        pub fn pause(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            _ = this; // autofix
-            return JSValue.jsBoolean(false);
-        }
-
-        pub fn @"resume"(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            _ = this; // autofix
-            return JSValue.jsBoolean(false);
-        }
-
         pub fn getRemoteAddress(
             this: *This,
             globalThis: *JSC.JSGlobalObject,
@@ -2212,7 +2169,6 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const total_to_write: usize = buffer.slice().len + @as(usize, this.buffered_data_for_node_net.len);
-
             if (total_to_write == 0) {
                 return .{ .success = .{} };
             }
@@ -2224,6 +2180,7 @@ fn NewSocket(comptime ssl: bool) type {
                         const rc = this.socket.socket.connected.write2(this.buffered_data_for_node_net.slice(), buffer.slice());
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
+                        this.bytes_written += written;
 
                         if (leftover == 0) {
                             this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
@@ -2236,7 +2193,9 @@ fn NewSocket(comptime ssl: bool) type {
 
                         if (written > 0) {
                             if (remaining_in_buffered_data.len > 0) {
-                                this.buffered_data_for_node_net.moveBytesToBeginning(written, remaining_in_buffered_data.len);
+                                var input_buffer = this.buffered_data_for_node_net.slice();
+                                bun.C.memmove(input_buffer.ptr, input_buffer.ptr[written..], remaining_in_buffered_data.len);
+                                this.buffered_data_for_node_net.len = @truncate(remaining_in_buffered_data.len);
                             }
                         }
 
@@ -2253,6 +2212,7 @@ fn NewSocket(comptime ssl: bool) type {
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice(), is_end);
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
+                    this.bytes_written += wrote;
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
@@ -2263,14 +2223,13 @@ fn NewSocket(comptime ssl: bool) type {
                         const len = @as(usize, @intCast(this.buffered_data_for_node_net.len)) - wrote;
                         bun.debugAssert(len <= this.buffered_data_for_node_net.len);
                         bun.debugAssert(len <= this.buffered_data_for_node_net.cap);
-                        this.buffered_data_for_node_net.moveBytesToBeginning(wrote, len);
+                        bun.C.memmove(this.buffered_data_for_node_net.ptr, this.buffered_data_for_node_net.ptr[wrote..], len);
+                        this.buffered_data_for_node_net.len = @truncate(len);
                     }
                 }
 
                 break :brk rc;
             };
-
-            this.bytes_written += @intCast(@max(wrote, 0));
 
             return .{
                 .success = .{

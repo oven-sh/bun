@@ -2704,7 +2704,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
         ) JSValue {
-            return JSC.JSValue.jsNumber(this.bytes_written);
+            return JSC.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
         pub fn getALPNProtocol(
             this: *This,

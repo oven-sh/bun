@@ -1520,7 +1520,7 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          if (run.exitCode) {
+          if (run.exitCode != null) {
             expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
           } else {
             throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());

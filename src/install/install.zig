@@ -231,6 +231,13 @@ pub const Aligner = struct {
     }
 };
 
+const EnqueuedGitDependencyEntry = struct {
+    dependency_id: DependencyID,
+    package_id: PackageID,
+};
+
+threadlocal var EnqueuedGitDependencies = std.ArrayList(EnqueuedGitDependencyEntry).init(bun.default_allocator);
+
 const NetworkTask = struct {
     http: AsyncHTTP = undefined,
     task_id: u64,
@@ -5316,6 +5323,12 @@ pub const PackageManager = struct {
                 // First: see if we already loaded the git package in-memory
                 if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
+
+                    // TODO? correct package ID
+                    while (EnqueuedGitDependencies.popOrNull()) |entry| {
+                        successFn(this, entry.dependency_id, pkg_id);
+                    }
+
                     return;
                 }
 
@@ -5367,7 +5380,13 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
+                    if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) {
+                        try EnqueuedGitDependencies.append(.{
+                            .dependency_id = id,
+                            .package_id = invalid_package_id,
+                        });
+                        return;
+                    }
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
                         checkout_id,
@@ -5392,7 +5411,14 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
+                    if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) {
+                        try EnqueuedGitDependencies.append(.{
+                            .dependency_id = id,
+                            .package_id = invalid_package_id,
+                        });
+
+                        return;
+                    }
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, dependency, null)));
                 }
@@ -5409,6 +5435,11 @@ pub const PackageManager = struct {
                 // First: see if we already loaded the github package in-memory
                 if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
                     successFn(this, id, pkg_id);
+
+                    // TODO? correct package ID
+                    while (EnqueuedGitDependencies.popOrNull()) |entry| {
+                        successFn(this, entry.dependency_id, pkg_id);
+                    }
                     return;
                 }
 
@@ -9685,7 +9716,7 @@ pub const PackageManager = struct {
                     const outro_text =
                         \\<b>Examples:<r>
                         \\  <d>Display files that would be published, without publishing to the registry.<r>
-                        \\  <b><green>bun publish --dry-run<r>  
+                        \\  <b><green>bun publish --dry-run<r>
                         \\
                         \\  <d>Publish the current package with public access.<r>
                         \\  <b><green>bun publish --access public<r>

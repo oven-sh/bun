@@ -530,7 +530,8 @@ const JSXTag = struct {
     };
     data: Data,
     range: logger.Range,
-    name: string = "",
+    /// Empty string for fragments.
+    name: string,
 
     pub fn parse(comptime P: type, p: *P) anyerror!JSXTag {
         const loc = p.lexer.loc();
@@ -547,7 +548,7 @@ const JSXTag = struct {
         // The tag is an identifier
         var name = p.lexer.identifier;
         var tag_range = p.lexer.range();
-        try p.lexer.expectInsideJSXElement(.t_identifier);
+        try p.lexer.expectInsideJSXElementWithName(.t_identifier, "JSX element name");
 
         // Certain identifiers are strings
         // <div
@@ -559,6 +560,7 @@ const JSXTag = struct {
                     .data = name,
                 }, loc) },
                 .range = tag_range,
+                .name = name,
             };
         }
 
@@ -2509,12 +2511,8 @@ const ExprIn = struct {
     // Currently this is only used when unwrapping a call to `require()`
     // with `__toESM()`.
     is_immediately_assigned_to_decl: bool = false,
-};
 
-const ExprOut = struct {
-    // True if the child node is an optional chain node (EDot, EIndex, or ECall
-    // with an IsOptionalChain value of true)
-    child_contains_optional_chain: bool = false,
+    property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
 };
 
 const Tup = std.meta.Tuple;
@@ -3451,28 +3449,6 @@ pub const Parser = struct {
                         try p.appendPart(parts_list, sliced.items);
                     },
 
-                    // Hoist functions to the top in the output
-                    // This is normally done by the JS parser, but we need to do it here
-                    // incase we have CommonJS exports converted to ESM exports there are assignments
-                    // to the exports object that need to be hoisted.
-                    .s_function => {
-                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
-                        sliced.items.len = 1;
-                        sliced.items[0] = stmt;
-                        // since we convert top-level function statements to look like this:
-                        //
-                        //   let foo = function () { ... }
-                        //
-                        // we have to hoist them to the top of the file, even when not bundling
-                        //
-                        // we might also need to do this for classes but i'm not sure yet.
-                        try p.appendPart(&parts, sliced.items);
-
-                        if (parts.items.len > 0) {
-                            before.append(parts.getLast()) catch unreachable;
-                            parts.items.len -= 1;
-                        }
-                    },
                     .s_class => |class| {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
@@ -4893,6 +4869,8 @@ fn NewParser_(
         /// We must be careful to avoid revisiting nodes that have scopes.
         is_revisit_for_substitution: bool = false,
 
+        method_call_must_be_replaced_with_undefined: bool = false,
+
         // Inside a TypeScript namespace, an "export declare" statement can be used
         // to cause a namespace to be emitted even though it has no other observable
         // effect. This flag is used to implement this feature.
@@ -6058,6 +6036,19 @@ fn NewParser_(
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
+
+                // ensure every e_import_identifier holds the namespace
+                if (p.options.features.hot_module_reloading) {
+                    const symbol = &p.symbols.items[ref.inner_index];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = namespace_ref,
+                            .alias = alias_name,
+                            .import_record_index = import_record_i,
+                        };
+                    }
+                }
+
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(allocator, ref, js_ast.NamedImport{
                     .alias = alias_name,
@@ -9207,7 +9198,7 @@ fn NewParser_(
                         }
                     }
                 }
-            } else if (import_tag == .kit_resolve_to_ssr_graph) {
+            } else if (import_tag == .bake_resolve_to_ssr_graph) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
             }
         }
@@ -12217,7 +12208,7 @@ fn NewParser_(
                 const SupportedAttribute = enum {
                     type,
                     embed,
-                    bunKitGraph,
+                    bunBakeGraph,
                 };
 
                 var has_seen_embed_true = false;
@@ -12280,11 +12271,11 @@ fn NewParser_(
                                         }
                                     }
                                 },
-                                .bunKitGraph => {
+                                .bunBakeGraph => {
                                     if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
-                                        path.import_tag = .kit_resolve_to_ssr_graph;
+                                        path.import_tag = .bake_resolve_to_ssr_graph;
                                     } else {
-                                        try p.lexer.addRangeError(p.lexer.range(), "'bunKitGraph' can only be set to 'ssr'", .{}, true);
+                                        try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
                                     }
                                 },
                             }
@@ -15807,10 +15798,16 @@ fn NewParser_(
                         const end_tag = try JSXTag.parse(P, p);
 
                         if (!strings.eql(end_tag.name, tag.name)) {
-                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag \\</{s}> to match opening tag \\<{s}>", .{
-                                end_tag.name,
-                                tag.name,
-                            });
+                            try p.log.addRangeErrorFmtWithNote(
+                                p.source,
+                                end_tag.range,
+                                p.allocator,
+                                "Expected closing JSX tag to match opening tag \"\\<{s}\\>\"",
+                                .{tag.name},
+                                "Opening tag here:",
+                                .{},
+                                tag.range,
+                            );
                             return error.SyntaxError;
                         }
 
@@ -16344,6 +16341,11 @@ fn NewParser_(
                             }
                             if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
                                 e_.call_can_be_unwrapped_if_unused = true;
+                            }
+
+                            // If the user passed --drop=console, drop all property accesses to console.
+                            if (def.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
+                                p.method_call_must_be_replaced_with_undefined = true;
                             }
                         }
 
@@ -17015,6 +17017,10 @@ fn NewParser_(
                                     if (!define.data.valueless) {
                                         return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                     }
+
+                                    if (define.data.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
+                                        p.method_call_must_be_replaced_with_undefined = true;
+                                    }
                                 }
 
                                 // Copy the side effect flags over in case this expression is unused
@@ -17046,7 +17052,9 @@ fn NewParser_(
                         }
                     }
 
-                    e_.target = p.visitExpr(e_.target);
+                    e_.target = p.visitExprInOut(e_.target, .{
+                        .property_access_for_method_call_maybe_should_replace_with_undefined = in.property_access_for_method_call_maybe_should_replace_with_undefined,
+                    });
 
                     // 'require.resolve' -> .e_require_resolve_call_target
                     if (e_.target.data == .e_require_call_target and
@@ -17318,6 +17326,7 @@ fn NewParser_(
                     const target_was_identifier_before_visit = e_.target.data == .e_identifier;
                     e_.target = p.visitExprInOut(e_.target, .{
                         .has_chain_parent = e_.optional_chain == .continuation,
+                        .property_access_for_method_call_maybe_should_replace_with_undefined = true,
                     });
 
                     // Copy the call side effect flag over if this is a known target
@@ -17373,6 +17382,7 @@ fn NewParser_(
                         defer p.options.ignore_dce_annotations = old_ce;
                         const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
                         defer p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+                        const old_is_control_flow_dead = p.is_control_flow_dead;
 
                         // We want to forcefully fold constants inside of
                         // certain calls even when minification is disabled, so
@@ -17389,8 +17399,28 @@ fn NewParser_(
                             p.should_fold_typescript_constant_expressions = true;
                         }
 
+                        var method_call_should_be_replaced_with_undefined = p.method_call_must_be_replaced_with_undefined;
+
+                        if (method_call_should_be_replaced_with_undefined) {
+                            p.method_call_must_be_replaced_with_undefined = false;
+                            switch (e_.target.data) {
+                                // If we're removing this call, don't count any arguments as symbol uses
+                                .e_index, .e_dot => {
+                                    p.is_control_flow_dead = true;
+                                },
+                                else => {
+                                    method_call_should_be_replaced_with_undefined = false;
+                                },
+                            }
+                        }
+
                         for (e_.args.slice()) |*arg| {
                             arg.* = p.visitExpr(arg.*);
+                        }
+
+                        if (method_call_should_be_replaced_with_undefined) {
+                            p.is_control_flow_dead = old_is_control_flow_dead;
+                            return .{ .data = .{ .e_undefined = .{} }, .loc = expr.loc };
                         }
                     }
 
@@ -18975,7 +19005,13 @@ fn NewParser_(
 
             switch (stmt.data) {
                 // These don't contain anything to traverse
-                .s_debugger, .s_empty, .s_comment => {
+                .s_debugger => {
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+                    if (p.define.drop_debugger) {
+                        return;
+                    }
+                },
+                .s_empty, .s_comment => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                 },
                 .s_type_script => {
@@ -19457,6 +19493,7 @@ fn NewParser_(
                         }
                     }
 
+                    data.kind = kind;
                     try stmts.append(stmt.*);
 
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
@@ -20860,30 +20897,8 @@ fn NewParser_(
                         // TODO: prop.kind == .declare and prop.value == null
 
                         if (prop.ts_decorators.len > 0) {
-                            const loc = prop.key.?.loc;
-                            const _descriptor_key = switch (prop.key.?.data) {
-                                .e_identifier => |k| p.newExpr(E.Identifier{ .ref = k.ref }, loc),
-                                .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
-                                .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
-                                .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
-                                .e_private_identifier => |k| p.newExpr(E.PrivateIdentifier{ .ref = k.ref }, loc),
-
-                                // This should be unreachable. Due to zig bug using `unreachable` keyword or `noreturn` type will
-                                // result in a segfault at runtime with a release build. Minimum repro:
-                                //
-                                // class Foo {
-                                //   foo;
-                                // }
-                                //
-                                // Workaround: assign to null and say the orelse branch is unreachable. The cause
-                                // of this bug seems to be a combination of release build optimizations with switch expression
-                                // and unreachable or noreturn else.
-                                //
-                                // TODO: when zig is upgraded check if this workaround is still needed. The bug happens
-                                // on macos aarch64
-                                else => null,
-                            };
-                            const descriptor_key = _descriptor_key orelse unreachable;
+                            const descriptor_key = prop.key.?;
+                            const loc = descriptor_key.loc;
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.
@@ -22339,29 +22354,37 @@ fn NewParser_(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
-                                if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
+                                if (!local.is_export and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
+                                    var any_decl_in_const_values = local.kind == .k_const;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
-                                            const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
-                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref) and symbol.use_count_estimate == 0) {
-                                                continue;
+                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                                                any_decl_in_const_values = true;
+                                                const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
+                                                if (symbol.use_count_estimate == 0) {
+                                                    // Skip declarations that are constants with zero usage
+                                                    continue;
+                                                }
                                             }
                                         }
                                         decls[end] = decl;
                                         end += 1;
                                     }
                                     local.decls.len = @as(u32, @truncate(end));
-                                    if (end == 0) {
-                                        stmt.* = stmt.*.toEmpty();
+                                    if (any_decl_in_const_values) {
+                                        if (end == 0) {
+                                            stmt.* = stmt.*.toEmpty();
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
                             },
                             else => {},
                         }
 
+                        // Break after processing relevant statements
                         break;
                     }
                 }
@@ -23419,7 +23442,7 @@ fn NewParser_(
                 });
 
                 for (parts) |part| {
-                    // Kit does not care about 'import =', as it handles it on it's own
+                    // Bake does not care about 'import =', as it handles it on it's own
                     _ = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none, true, &hmr_transform_ctx);
                 }
 

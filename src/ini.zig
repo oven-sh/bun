@@ -439,16 +439,13 @@ pub const Parser = struct {
             }
 
             const env_var = val[i + 2 .. j];
-            const expanded = this.expandEnvVar(env_var);
+            // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
+            const expanded = this.env.get(env_var) orelse return null;
             unesc.appendSlice(expanded) catch bun.outOfMemory();
 
             return j;
         }
         return null;
-    }
-
-    fn expandEnvVar(this: *Parser, name: []const u8) []const u8 {
-        return this.env.get(name) orelse "";
     }
 
     fn singleStrRope(ropealloc: Allocator, str: []const u8) *Rope {
@@ -962,6 +959,32 @@ pub fn loadNpmrc(
             install.dry_run = bun.strings.eqlComptime(str, "true");
         } else if (query.expr.asBool()) |b| {
             install.dry_run = b;
+        }
+    }
+
+    if (out.asProperty("ca")) |query| {
+        if (query.expr.asUtf8StringLiteral()) |str| {
+            install.ca = .{
+                .str = str,
+            };
+        } else if (query.expr.isArray()) {
+            const arr = query.expr.data.e_array;
+            var list = try allocator.alloc([]const u8, arr.items.len);
+            var i: usize = 0;
+            for (arr.items.slice()) |item| {
+                list[i] = try item.asStringCloned(allocator) orelse continue;
+                i += 1;
+            }
+
+            install.ca = .{
+                .list = list,
+            };
+        }
+    }
+
+    if (out.asProperty("cafile")) |query| {
+        if (try query.expr.asStringCloned(allocator)) |cafile| {
+            install.cafile = cafile;
         }
     }
 

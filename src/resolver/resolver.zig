@@ -563,7 +563,7 @@ pub const Resolver = struct {
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
         return this.package_manager orelse brk: {
-            bun.HTTPThread.init();
+            bun.HTTPThread.init(&.{});
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
@@ -757,7 +757,7 @@ pub const Resolver = struct {
                         .primary = Path.init(import_path),
                     },
                     .is_external = true,
-                    .module_type = .esm,
+                    .module_type = if (!kind.isFromCSS()) .esm else .unknown,
                 },
             };
         }
@@ -911,7 +911,8 @@ pub const Resolver = struct {
         }
     }
 
-    /// Runs a resolution but also checking if a Bun Kit framework has an override. This is used in one place in the bundler.
+    /// Runs a resolution but also checking if a Bun Bake framework has an
+    /// override. This is used in one place in the bundler.
     pub fn resolveWithFramework(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
         if (r.opts.framework) |f| {
             if (f.built_in_modules.get(import_path)) |mod| {

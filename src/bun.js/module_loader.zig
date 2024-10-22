@@ -436,7 +436,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -1587,7 +1587,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -2143,7 +2143,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
-                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.slice());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,

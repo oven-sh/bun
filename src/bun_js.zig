@@ -93,6 +93,8 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.experimental_css = ctx.bundler_options.experimental_css;
+
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {
@@ -125,7 +127,7 @@ pub const Run = struct {
 
     fn doPreconnect(preconnect: []const string) void {
         if (preconnect.len == 0) return;
-        bun.HTTPThread.init();
+        bun.HTTPThread.init(&.{});
 
         for (preconnect) |url_str| {
             const url = bun.URL.parse(url_str);

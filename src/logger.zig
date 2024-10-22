@@ -21,12 +21,13 @@ const assert = bun.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
-pub const Kind = enum(i8) {
-    err,
-    warn,
-    note,
-    debug,
-    verbose,
+
+pub const Kind = enum(u8) {
+    err = 0,
+    warn = 1,
+    note = 2,
+    debug = 3,
+    verbose = 4,
 
     pub inline fn shouldPrint(this: Kind, other: Log.Level) bool {
         return switch (other) {
@@ -379,6 +380,7 @@ pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
     metadata: Metadata = .{ .build = 0 },
+    // TODO: make this non-optional, empty slice for no notes
     notes: ?[]Data = null,
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
@@ -598,7 +600,9 @@ pub const Range = struct {
 
 pub const Log = struct {
     debug: bool = false,
+    // TODO: make u32
     warnings: usize = 0,
+    // TODO: make u32
     errors: usize = 0,
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,

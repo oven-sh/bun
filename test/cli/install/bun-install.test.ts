@@ -11,8 +11,18 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, tempDirWithFiles, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { access, mkdir, readlink, rm, writeFile, cp, stat } from "fs/promises";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  tempDirWithFiles,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+  runBunInstall,
+  isWindows,
+} from "harness";
 import { join, sep } from "path";
 import {
   dummyAfterAll,
@@ -32,7 +42,6 @@ expect.extend({
   toBeValidBin,
   toHaveBins,
   toHaveWorkspaceLink: async function (package_dir: string, [link, real]: [string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", real));
     } else {
@@ -40,7 +49,6 @@ expect.extend({
     }
   },
   toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
-    const isWindows = process.platform === "win32";
     if (!isWindows) {
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
     } else {
@@ -8183,6 +8191,27 @@ describe("Registry URLs", () => {
 
     expect(await exited).toBe(0);
   });
+});
+
+it("should ensure read permissions of all extracted files", async () => {
+  await Promise.all([
+    cp(join(import.meta.dir, "pkg-only-owner-2.2.2.tgz"), join(package_dir, "pkg-only-owner-2.2.2.tgz")),
+    writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "pkg-only-owner": "file:pkg-only-owner-2.2.2.tgz",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, package_dir);
+
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "package.json"))).mode & 0o444).toBe(0o444);
+  expect((await stat(join(package_dir, "node_modules", "pkg-only-owner", "src", "index.js"))).mode & 0o444).toBe(0o444);
 });
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {

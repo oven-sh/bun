@@ -718,7 +718,7 @@ pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
-pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
         var value: ReturnType = undefined;
         var ran = false;
@@ -3296,14 +3296,11 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-pub fn runtimeEmbedFile(
+pub inline fn resolveSourcePath(
     comptime root: enum { codegen, src },
-    comptime sub_path: []const u8,
-) []const u8 {
-    comptime assert(Environment.isDebug);
-    comptime assert(!Environment.embed_code);
-
-    const abs_path = comptime path: {
+    comptime sub_path: string,
+) string {
+    return comptime path: {
         var buf: bun.PathBuffer = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
@@ -3315,6 +3312,26 @@ pub fn runtimeEmbedFile(
         }) catch
             @compileError(unreachable))[0..].*;
         break :path &resolved;
+    };
+}
+
+const RuntimeEmbedRoot = enum {
+    codegen,
+    src,
+    src_eager,
+    codegen_eager,
+};
+
+pub fn runtimeEmbedFile(
+    comptime root: RuntimeEmbedRoot,
+    comptime sub_path: []const u8,
+) []const u8 {
+    comptime assert(Environment.isDebug);
+    comptime assert(!Environment.codegen_embed);
+
+    const abs_path = switch (root) {
+        .codegen, .codegen_eager => resolveSourcePath(.codegen, sub_path),
+        .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
     const static = struct {
@@ -3328,11 +3345,16 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DFORCE_EMBED_CODE=1 to CMake
+                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
                 , .{ abs_path, e });
             };
         }
     };
+
+    if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
+        static.once.done = false;
+        default_allocator.free(static.storage);
+    }
 
     static.once.call();
 
@@ -3762,9 +3784,7 @@ pub fn memmove(output: []u8, input: []const u8) void {
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
 
-/// Deprecated: use `bun.bake`
-pub const kit = bake;
-pub const bake = @import("kit/bake.zig");
+pub const bake = @import("bake/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
@@ -3838,19 +3858,26 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
+        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
 
         pub fn lock(impl: *@This()) void {
-            bun.assert(impl.owning_thread == null);
+            if (impl.owning_thread) |thread| {
+                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
+                crash_handler.dumpStackTrace(impl.locked_at.trace());
+                @panic("Safety lock violated");
+            }
             impl.owning_thread = std.Thread.getCurrentId();
+            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
         }
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.owning_thread = null;
+            impl.* = .{};
         }
 
         pub fn assertLocked(impl: *const @This()) void {
-            assert(std.Thread.getCurrentId() == impl.owning_thread);
+            assert(impl.owning_thread != null); // not locked
+            assert(impl.owning_thread == std.Thread.getCurrentId());
         }
     }
 else
@@ -3865,12 +3892,14 @@ pub const bytecode_extension = ".jsc";
 /// An typed index into an array or other structure.
 /// maxInt is reserved for an empty state.
 ///
-/// `const Index = bun.GenericIndex(u32, opaque{})
+/// const Thing = struct {};
+/// const Index = bun.GenericIndex(u32, Thing)
 ///
-/// The empty opaque prevents Zig from memoizing the
+/// The second argument prevents Zig from memoizing the
 /// call, which would otherwise make all indexes
 /// equal to each other.
 pub fn GenericIndex(backing_int: type, uid: anytype) type {
+    const null_value = std.math.maxInt(backing_int);
     return enum(backing_int) {
         _,
         const Index = @This();
@@ -3878,19 +3907,39 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             _ = uid;
         }
 
-        pub fn toOptional(oi: @This()) Optional {
-            return @enumFromInt(@intFromEnum(oi));
+        /// Prefer this over @enumFromInt to assert the int is in range
+        pub inline fn init(int: backing_int) Index {
+            bun.assert(int != null_value); // would be confused for null
+            return @enumFromInt(int);
+        }
+
+        /// Prefer this over @intFromEnum because of type confusion with `.Optional`
+        pub inline fn get(i: @This()) backing_int {
+            bun.assert(@intFromEnum(i) != null_value); // memory corruption
+            return @intFromEnum(i);
+        }
+
+        pub inline fn toOptional(oi: @This()) Optional {
+            return @enumFromInt(oi.get());
+        }
+
+        pub fn sortFnAsc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
         }
 
         pub const Optional = enum(backing_int) {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub fn init(maybe: ?Index) ?Index {
-                return if (maybe) |i| @enumFromInt(@intFromEnum(i)) else .none;
+            pub inline fn init(maybe: ?Index) ?Index {
+                return if (maybe) |i| i.toOptional() else .none;
             }
 
-            pub fn unwrap(oi: Optional) ?Index {
+            pub inline fn unwrap(oi: Optional) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
         };
@@ -3900,4 +3949,91 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 comptime {
     // Must be nominal
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
+}
+
+pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } {
+    bun.assert(mid <= slice.len);
+
+    return .{ slice[0..mid], slice[mid..] };
+}
+
+/// Reverse of the slice index operator.
+/// Given `&slice[index] == item`, returns the `index` needed.
+/// The item must be in the slice.
+pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
+    bun.assert(isSliceInBufferT(T, item[0..1], slice));
+    const offset = @intFromPtr(item) - @intFromPtr(slice.ptr);
+    const index = @divExact(offset, @sizeOf(T));
+    return index;
+}
+
+pub fn getThreadCount() u16 {
+    const max_threads = 1024;
+    const min_threads = 2;
+    const ThreadCount = struct {
+        pub var cached_thread_count: u16 = 0;
+        var cached_thread_count_once = std.once(getThreadCountOnce);
+        fn getThreadCountFromUser() ?u16 {
+            inline for (.{ "UV_THREADPOOL_SIZE", "GOMAXPROCS" }) |envname| {
+                if (getenvZ(envname)) |env| {
+                    if (std.fmt.parseInt(u16, env, 10) catch null) |parsed| {
+                        if (parsed >= min_threads) {
+                            if (bun.logger.Log.default_log_level.atLeast(.debug)) {
+                                Output.note("Using {d} threads from {s}={d}", .{ parsed, envname, parsed });
+                                Output.flush();
+                            }
+                            return @min(parsed, max_threads);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+        fn getThreadCountOnce() void {
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+        }
+    };
+    ThreadCount.cached_thread_count_once.call();
+    return ThreadCount.cached_thread_count;
+}
+
+/// Copied from zig std. Modified to accept arguments.
+pub fn once(comptime f: anytype) Once(f) {
+    return Once(f){};
+}
+
+/// Copied from zig std. Modified to accept arguments.
+///
+/// An object that executes the function `f` just once.
+/// It is undefined behavior if `f` re-enters the same Once instance.
+pub fn Once(comptime f: anytype) type {
+    return struct {
+        done: bool = false,
+        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+
+        /// Call the function `f`.
+        /// If `call` is invoked multiple times `f` will be executed only the
+        /// first time.
+        /// The invocations are thread-safe.
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            if (@atomicLoad(bool, &self.done, .acquire))
+                return;
+
+            return self.callSlow(args);
+        }
+
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            @setCold(true);
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // The first thread to acquire the mutex gets to run the initializer
+            if (!self.done) {
+                @call(.auto, f, args);
+                @atomicStore(bool, &self.done, true, .release);
+            }
+        }
+    };
 }

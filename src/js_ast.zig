@@ -3438,6 +3438,65 @@ pub const Expr = struct {
         return if (asProperty(expr, name)) |query| query.expr else null;
     }
 
+    /// Don't use this if you care about performance.
+    ///
+    /// Sets the value of a property, creating it if it doesn't exist.
+    /// `expr` must be an object.
+    pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr) OOM!void {
+        bun.assertWithLocation(expr.isObject(), @src());
+        for (0..expr.data.e_object.properties.len) |i| {
+            const prop = &expr.data.e_object.properties.ptr[i];
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data.e_string.eql(string, name)) {
+                prop.value = value;
+                return;
+            }
+        }
+
+        var new_props = expr.data.e_object.properties.listManaged(allocator);
+        try new_props.append(.{
+            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .value = value,
+        });
+
+        expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
+    }
+
+    /// Don't use this if you care about performance.
+    ///
+    /// Sets the value of a property to a string, creating it if it doesn't exist.
+    /// `expr` must be an object.
+    pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value: string) OOM!void {
+        bun.assertWithLocation(expr.isObject(), @src());
+        for (0..expr.data.e_object.properties.len) |i| {
+            const prop = &expr.data.e_object.properties.ptr[i];
+            const key = prop.key orelse continue;
+            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data.e_string.eql(string, name)) {
+                prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
+                return;
+            }
+        }
+
+        var new_props = expr.data.e_object.properties.listManaged(allocator);
+        try new_props.append(.{
+            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
+        });
+
+        expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
+    }
+
+    pub fn getObject(expr: *const Expr, name: string) ?Expr {
+        if (expr.asProperty(name)) |query| {
+            if (query.expr.isObject()) {
+                return query.expr;
+            }
+        }
+        return null;
+    }
+
     pub fn getString(expr: *const Expr, allocator: std.mem.Allocator, name: string) OOM!?struct { string, logger.Loc } {
         if (asProperty(expr, name)) |q| {
             if (q.expr.asString(allocator)) |str| {
@@ -6969,6 +7028,7 @@ pub const Ast = struct {
     }
 };
 
+/// TLA => Top Level Await
 pub const TlaCheck = struct {
     depth: u32 = 0,
     parent: Index.Int = Index.invalid.get(),
@@ -6994,6 +7054,8 @@ pub const BundledAst = struct {
 
     hashbang: string = "",
     parts: Part.List = .{},
+    css: ?*bun.css.BundlerStyleSheet = null,
+    url_for_css: ?[]const u8 = null,
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7152,6 +7214,38 @@ pub const BundledAst = struct {
                 .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
             },
         };
+    }
+
+    /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
+    pub fn addUrlForCss(
+        this: *BundledAst,
+        allocator: std.mem.Allocator,
+        css_enabled: bool,
+        source: *const logger.Source,
+        mime_type_: ?[]const u8,
+        unique_key: ?[]const u8,
+    ) void {
+        if (css_enabled) {
+            const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
+            const contents = source.contents;
+            // TODO: make this configurable
+            const COPY_THRESHOLD = 128 * 1024; // 128kb
+            const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
+            this.url_for_css = url_for_css: {
+                // Copy it
+                if (should_copy) break :url_for_css unique_key.?;
+
+                // Encode as base64
+                const encode_len = bun.base64.encodeLen(contents);
+                if (encode_len == 0) return;
+                const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
+                const total_buffer_len = data_url_prefix_len + encode_len;
+                var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
+                _ = std.fmt.bufPrint(encoded[0..data_url_prefix_len], "data:{s};base64,", .{mime_type}) catch unreachable;
+                const len = bun.base64.encode(encoded[data_url_prefix_len..], contents);
+                break :url_for_css encoded[0 .. data_url_prefix_len + len];
+            };
+        }
     }
 };
 
@@ -8606,7 +8700,7 @@ pub const ServerComponentBoundary = struct {
     /// server's code. For server actions, this is the client's code.
     reference_source_index: Index.Int,
 
-    /// When `kit.Framework.ServerComponents.separate_ssr_graph` is enabled this
+    /// When `bake.Framework.ServerComponents.separate_ssr_graph` is enabled this
     /// points to the separated module. When the SSR graph is not separate, this is
     /// equal to `reference_source_index`
     //
@@ -8678,6 +8772,14 @@ pub const ServerComponentBoundary = struct {
                 ) orelse return null;
                 bun.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
                 return l.list.items(.reference_source_index)[i];
+            }
+
+            pub fn bitSet(scbs: Slice, alloc: std.mem.Allocator, input_file_count: usize) !bun.bit_set.DynamicBitSetUnmanaged {
+                var scb_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(alloc, input_file_count);
+                for (scbs.list.items(.source_index)) |source_index| {
+                    scb_bitset.set(source_index);
+                }
+                return scb_bitset;
             }
         };
 

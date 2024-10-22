@@ -503,7 +503,7 @@ pub const Options = struct {
     target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
-    input_files_for_kit: ?[]logger.Source = null,
+    input_files_for_dev_server: ?[]logger.Source = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
@@ -2001,8 +2001,8 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (p.options.input_files_for_kit) |input_files| {
-                    bun.assert(module_type == .internal_kit_dev);
+                if (p.options.input_files_for_dev_server) |input_files| {
+                    bun.assert(module_type == .internal_bake_dev);
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.commonjs_module_ref);
                     p.print(".require(");
@@ -2074,7 +2074,7 @@ fn NewPrinter(
 
                 const wrap_with_to_esm = record.wrap_with_to_esm;
 
-                if (module_type == .internal_kit_dev) {
+                if (module_type == .internal_bake_dev) {
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.commonjs_module_ref);
                     if (record.tag == .builtin)
@@ -2320,7 +2320,7 @@ fn NewPrinter(
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
-                    if (p.options.module_type == .internal_kit_dev) {
+                    if (p.options.module_type == .internal_bake_dev) {
                         p.printSymbol(p.options.commonjs_module_ref);
                         p.print(".importMeta()");
                     } else if (!p.options.import_meta_ref.isValid()) {
@@ -2351,7 +2351,7 @@ fn NewPrinter(
                         }
                         p.print("import.meta.main");
                     } else {
-                        bun.assert(p.options.module_type != .internal_kit_dev);
+                        bun.assert(p.options.module_type != .internal_bake_dev);
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
@@ -2618,7 +2618,7 @@ fn NewPrinter(
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
-                        if (p.options.module_type == .internal_kit_dev) {
+                        if (p.options.module_type == .internal_bake_dev) {
                             p.printSymbol(p.options.commonjs_module_ref);
                             p.print(".dynamicImport(");
                         } else {
@@ -3101,7 +3101,7 @@ fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    const ref = if (p.options.module_type != .internal_kit_dev)
+                    const ref = if (p.options.module_type != .internal_bake_dev)
                         p.symbols().follow(e.ref)
                     else
                         e.ref;
@@ -3192,7 +3192,7 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
-                        // assert(p.options.module_type != .internal_kit_dev);
+                        // assert(p.options.module_type != .internal_bake_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
@@ -3709,7 +3709,7 @@ fn NewPrinter(
                                 },
                                 .e_import_identifier => |e| inner: {
                                     const ref = p.symbols().follow(e.ref);
-                                    if (p.options.input_files_for_kit != null)
+                                    if (p.options.input_files_for_dev_server != null)
                                         break :inner;
                                     // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
                                     //     break :inner;
@@ -4940,15 +4940,8 @@ fn NewPrinter(
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
                 },
-                else => {
-                    var slice = p.writer.slice();
-                    const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
-
-                    if (to_print.len > 0) {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
-                    } else {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
-                    }
+                else => |tag| {
+                    Output.panic("Unexpected tag in printStmt: .{s}", .{@tagName(tag)});
                 },
             }
         }
@@ -5804,7 +5797,7 @@ const FileWriterInternal = struct {
         ctx: *FileWriterInternal,
     ) anyerror!void {
         defer buffer.reset();
-        const result_ = buffer.toOwnedSliceLeaky();
+        const result_ = buffer.slice();
         var result = result_;
 
         while (result.len > 0) {
@@ -5873,6 +5866,15 @@ pub const BufferWriter = struct {
             ) catch unreachable,
         };
     }
+
+    pub fn print(ctx: *BufferWriter, comptime fmt: string, args: anytype) anyerror!void {
+        try ctx.buffer.list.writer(ctx.buffer.allocator).print(fmt, args);
+    }
+
+    pub fn writeByteNTimes(ctx: *BufferWriter, byte: u8, n: usize) anyerror!void {
+        try ctx.buffer.appendCharNTimes(byte, n);
+    }
+
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
         ctx.approximate_newline_count += @intFromBool(byte == '\n');
@@ -5945,10 +5947,10 @@ pub const BufferWriter = struct {
         }
 
         if (ctx.append_null_byte) {
-            ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.sentinel = ctx.buffer.sliceWithSentinel();
+            ctx.written = ctx.buffer.slice();
         } else {
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.written = ctx.buffer.slice();
         }
     }
 
@@ -6330,7 +6332,7 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .internal_kit_dev) {
+    if (opts.module_type == .internal_bake_dev) {
         printer.indent();
         printer.printIndent();
         printer.print('"');

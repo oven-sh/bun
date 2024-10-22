@@ -3008,6 +3008,17 @@ pub const JSGlobalObject = opaque {
         this.vm().throwError(this, err);
     }
 
+    pub inline fn throwMissingArgumentsValue(this: *JSGlobalObject, comptime arg_names: []const []const u8) JSValue {
+        switch (arg_names.len) {
+            0 => @compileError("requires at least one argument"),
+            1 => this.ERR_MISSING_ARGS("The \"{s}\" argument must be specified", .{arg_names[0]}).throw(),
+            2 => this.ERR_MISSING_ARGS("The \"{s}\" and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1] }).throw(),
+            3 => this.ERR_MISSING_ARGS("The \"{s}\", \"{s}\", and \"{s}\" arguments must be specified", .{ arg_names[0], arg_names[1], arg_names[2] }).throw(),
+            else => @compileError("implement this message"),
+        }
+        return .zero;
+    }
+
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -3129,7 +3140,7 @@ pub const JSGlobalObject = opaque {
                 return ZigString.static(fmt).toErrorInstance(this);
 
             // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.initUTF8(buf.slice());
 
             return str.toErrorInstance(this);
         } else {
@@ -3148,7 +3159,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.fromUTF8(buf.slice());
             return str.toTypeErrorInstance(this);
         } else {
             return ZigString.static(fmt).toTypeErrorInstance(this);
@@ -3162,7 +3173,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.fromUTF8(buf.slice());
             return str.toSyntaxErrorInstance(this);
         } else {
             return ZigString.static(fmt).toSyntaxErrorInstance(this);
@@ -3176,7 +3187,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            var str = ZigString.fromUTF8(buf.slice());
             return str.toRangeErrorInstance(this);
         } else {
             return ZigString.static(fmt).toRangeErrorInstance(this);
@@ -3450,20 +3461,10 @@ pub const JSGlobalObject = opaque {
             (!opts.allowArray and value.isArray()) or
             (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
         {
-            this.throwValue(this.ERR_INVALID_ARG_TYPE_static(
-                ZigString.static(arg_name),
-                ZigString.static("object"),
-                value,
-            ));
+            _ = this.throwInvalidArgumentTypeValue(arg_name, "object", value);
             return false;
         }
         return true;
-    }
-
-    extern fn Bun__ERR_INVALID_ARG_TYPE_static(*JSGlobalObject, *const ZigString, *const ZigString, JSValue) JSValue;
-    /// Caller asserts 'arg_name' and 'etype' are utf-8 literals.
-    pub fn ERR_INVALID_ARG_TYPE_static(this: *JSGlobalObject, arg_name: *const ZigString, etype: *const ZigString, atype: JSValue) JSValue {
-        return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
     }
 
     pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) void {
@@ -3546,11 +3547,6 @@ pub const JSGlobalObject = opaque {
         return default;
     }
 
-    extern fn Bun__ERR_MISSING_ARGS_static(*JSGlobalObject, *const ZigString, ?*const ZigString, ?*const ZigString) JSValue;
-    pub fn ERR_MISSING_ARGS_static(this: *JSGlobalObject, arg1: *const ZigString, arg2: ?*const ZigString, arg3: ?*const ZigString) JSValue {
-        return Bun__ERR_MISSING_ARGS_static(this, arg1, arg2, arg3);
-    }
-
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
@@ -3628,7 +3624,7 @@ pub const JSMap = opaque {
     }
 
     pub fn fromJS(value: JSValue) ?*JSMap {
-        if (value.jsTypeLoose() == .JSMap) {
+        if (value.jsTypeLoose() == .Map) {
             return bun.cast(*JSMap, value.asEncoded().asPtr.?);
         }
 
@@ -3728,26 +3724,27 @@ pub const JSValue = enum(JSValueReprInt) {
         RegExpObject = 60,
         JSDate = 61,
         ProxyObject = 62,
-        JSGenerator = 63,
-        JSAsyncGenerator = 64,
+        Generator = 63,
+        AsyncGenerator = 64,
         JSArrayIterator = 65,
-        JSIterator = 66,
-        JSMapIterator = 67,
-        JSSetIterator = 68,
-        JSStringIterator = 69,
-        JSWrapForValidIterator = 70,
-        JSRegExpStringIterator = 71,
-        JSPromise = 72,
-        JSMap = 73,
-        JSSet = 74,
-        JSWeakMap = 75,
-        JSWeakSet = 76,
-        WebAssemblyModule = 77,
-        WebAssemblyInstance = 78,
-        WebAssemblyGCObject = 79,
-        StringObject = 80,
-        DerivedStringObject = 81,
-        InternalFieldTuple = 82,
+        Iterator = 66,
+        IteratorHelper = 67,
+        MapIterator = 68,
+        SetIterator = 69,
+        StringIterator = 70,
+        WrapForValidIterator = 71,
+        RegExpStringIterator = 72,
+        JSPromise = 73,
+        Map = 74,
+        Set = 75,
+        WeakMap = 76,
+        WeakSet = 77,
+        WebAssemblyModule = 78,
+        WebAssemblyInstance = 79,
+        WebAssemblyGCObject = 80,
+        StringObject = 81,
+        DerivedStringObject = 82,
+        InternalFieldTuple = 83,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -3785,18 +3782,20 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Int8Array,
                 .InternalFunction,
                 .JSArrayIterator,
-                .JSAsyncGenerator,
+                .AsyncGenerator,
                 .JSDate,
                 .JSFunction,
-                .JSGenerator,
-                .JSMap,
-                .JSMapIterator,
+                .Generator,
+                .Map,
+                .MapIterator,
                 .JSPromise,
-                .JSSet,
-                .JSSetIterator,
-                .JSStringIterator,
-                .JSWeakMap,
-                .JSWeakSet,
+                .Set,
+                .SetIterator,
+                .IteratorHelper,
+                .Iterator,
+                .StringIterator,
+                .WeakMap,
+                .WeakSet,
                 .ModuleNamespaceObject,
                 .NumberObject,
                 .Object,
@@ -3946,14 +3945,14 @@ pub const JSValue = enum(JSValueReprInt) {
 
         pub inline fn isSet(this: JSType) bool {
             return switch (this) {
-                .JSSet, .JSWeakSet => true,
+                .Set, .WeakSet => true,
                 else => false,
             };
         }
 
         pub inline fn isMap(this: JSType) bool {
             return switch (this) {
-                .JSMap, .JSWeakMap => true,
+                .Map, .WeakMap => true,
                 else => false,
             };
         }
@@ -4616,7 +4615,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         var writer = buf.writer();
         try writer.print(fmt, args);
-        return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
+        return String.init(buf.slice()).toJS(globalThis);
     }
 
     /// Create a JSValue string from a zig format-print (fmt + args), with pretty format
@@ -4630,7 +4629,7 @@ pub const JSValue = enum(JSValueReprInt) {
         switch (Output.enable_ansi_colors) {
             inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
         }
-        return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
+        return String.init(buf.slice()).toJS(globalThis);
     }
 
     pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
@@ -5270,14 +5269,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
         return if (value.isEmpty()) null else value;
-    }
-
-    extern fn JSC__JSValue__getIfPropertyExistsImplString(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
-
-    pub fn getWithString(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
-        var property_name_str = bun.String.init(property_name);
-        const value = JSC__JSValue__getIfPropertyExistsImplString(this, global, &property_name_str);
-        return if (@intFromEnum(value) != 0) value else return null;
     }
 
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;
@@ -6506,6 +6497,14 @@ pub const CallFrame = opaque {
 
             pub inline fn slice(self: *const @This()) []const JSValue {
                 return self.ptr[0..self.len];
+            }
+
+            pub inline fn all(self: *const @This()) []const JSValue {
+                return self.ptr[0..];
+            }
+
+            pub inline fn mut(self: *@This()) []JSValue {
+                return self.ptr[0..];
             }
         };
     }

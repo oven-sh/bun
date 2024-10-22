@@ -474,14 +474,10 @@ pub export fn Bun__Process__send(
     };
 
     if (message.isUndefined()) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalObject.throwMissingArgumentsValue(&.{"message"});
     }
     if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
-        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
-            ZigString.static("message"),
-            ZigString.static("string, object, number, or boolean"),
-            message,
-        ));
+        return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
     }
 
     const good = ipc_instance.data.serializeAndSend(globalObject, message);
@@ -2293,7 +2289,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/")) {
+        } else if (strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path)) {
             ret.result = null;
             ret.path = specifier;
             return;
@@ -2742,7 +2738,6 @@ pub const VirtualMachine = struct {
             )) {
                 .success => |r| r,
                 .failure => |e| {
-                    {}
                     this.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
@@ -3359,6 +3354,7 @@ pub const VirtualMachine = struct {
         if (frames.len == 0) return;
 
         var top = &frames[0];
+        var top_frame_is_builtin = false;
         if (this.hide_bun_stackframes) {
             for (frames) |*frame| {
                 if (frame.source_url.hasPrefixComptime("bun:") or
@@ -3366,10 +3362,12 @@ pub const VirtualMachine = struct {
                     frame.source_url.isEmpty() or
                     frame.source_url.eqlComptime("native"))
                 {
+                    top_frame_is_builtin = true;
                     continue;
                 }
 
                 top = frame;
+                top_frame_is_builtin = false;
                 break;
             }
         }
@@ -3418,8 +3416,14 @@ pub const VirtualMachine = struct {
                     }
                 }
 
+                if (top_frame_is_builtin) {
+                    // Avoid printing "export default 'native'"
+                    break :code ZigString.Slice.empty;
+                }
+
                 var log = logger.Log.init(bun.default_allocator);
                 defer log.deinit();
+
                 var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
                 must_reset_parser_arena_later.* = true;
                 break :code original_source.source_code.toUTF8(bun.default_allocator);
@@ -4167,7 +4171,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         pub const HotReloadTask = struct {
             count: u8 = 0,
             hashes: [8]u32,
-            paths: if (Ctx == bun.kit.DevServer) [8][]const u8 else void,
+            paths: if (Ctx == bun.bake.DevServer) [8][]const u8 else void,
             /// Left uninitialized until .enqueue
             concurrent_task: JSC.ConcurrentTask,
             reloader: *Reloader,
@@ -4177,7 +4181,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .reloader = reloader,
 
                     .hashes = [_]u32{0} ** 8,
-                    .paths = if (Ctx == bun.kit.DevServer) [_][]const u8{&.{}} ** 8,
+                    .paths = if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8,
                     .count = 0,
                     .concurrent_task = undefined,
                 };
@@ -4191,7 +4195,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                 this.hashes[this.count] = id;
                 // TODO(@paperdave/bake): this allocation is terrible and must be removed
-                if (Ctx == bun.kit.DevServer)
+                if (Ctx == bun.bake.DevServer)
                     this.paths[this.count] = default_allocator.dupe(u8, path) catch bun.outOfMemory();
                 this.count += 1;
             }

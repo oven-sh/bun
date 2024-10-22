@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
+import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -1121,7 +1122,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "qYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -1344,6 +1345,7 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
+    todo: isBroken && isWindows,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -1883,6 +1885,7 @@ describe("bundler", () => {
     target: "browser",
     run: { stdout: `123` },
   });
+
   itBundled("edgecase/UninitializedVariablesMoved", {
     files: {
       "/entry.ts": `

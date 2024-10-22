@@ -120,7 +120,6 @@ export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
   todo?: boolean;
 
-
   // file options
   files: Record<string, string | Buffer | Blob>;
   /** Files to be written only after the bundle is done. */
@@ -147,7 +146,9 @@ export interface BundlerTestInput {
   alias?: Record<string, string>;
   assetNaming?: string;
   banner?: string;
+  footer?: string;
   define?: Record<string, string | number>;
+  drop?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -162,7 +163,7 @@ export interface BundlerTestInput {
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
-  format?: "esm" | "cjs" | "iife" | "internal_kit_dev";
+  format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   emitDCEAnnotations?: boolean;
@@ -190,6 +191,7 @@ export interface BundlerTestInput {
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
+  experimentalCss?: boolean;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -415,7 +417,9 @@ function expectBundled(
     env,
     external,
     packages,
+    drop = [],
     files,
+    footer,
     format,
     globalName,
     inject,
@@ -430,6 +434,7 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
+    experimentalCss,
     onAfterBundle,
     outdir,
     outfile,
@@ -512,9 +517,6 @@ function expectBundled(
   }
   if (!ESBUILD && mainFields) {
     throw new Error("mainFields not implemented in bun build");
-  }
-  if (!ESBUILD && banner) {
-    throw new Error("banner not implemented in bun build");
   }
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
@@ -653,6 +655,8 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              drop?.length && drop.map(x => ["--drop=" + x]),
+              experimentalCss && "--experimental-css",
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -666,6 +670,8 @@ function expectBundled(
               splitting && `--splitting`,
               serverComponents && "--server-components",
               outbase && `--root=${outbase}`,
+              banner && `--banner="${banner}"`, // TODO: --banner-css=*
+              footer && `--footer="${footer}"`,
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
@@ -710,6 +716,7 @@ function expectBundled(
               metafile && `--metafile=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               banner && `--banner:js=${banner}`,
+              footer && `--footer:js=${footer}`,
               legalComments && `--legal-comments=${legalComments}`,
               ignoreDCEAnnotations && `--ignore-annotations`,
               splitting && `--splitting`,
@@ -786,6 +793,7 @@ function expectBundled(
           delete bundlerEnv[key];
         }
       }
+
       const { stdout, stderr, success, exitCode } = Bun.spawnSync({
         cmd,
         cwd: root,
@@ -984,6 +992,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          drop,
         } as BuildConfig;
 
         if (conditions?.length) {
@@ -1529,7 +1538,7 @@ for (const [key, blob] of build.outputs) {
           let result = out!.toUnixString().trim();
 
           // no idea why this logs. ¯\_(ツ)_/¯
-          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, '');
+          result = result.replace(`[EventLoop] enqueueTaskConcurrent(RuntimeTranspilerStore)\n`, "");
 
           if (typeof expected === "string") {
             expected = dedent(expected).trim();
@@ -1604,10 +1613,8 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      (opts.snapshotSourceMap
-        ? isDebug ? Infinity : 30_000
-        : isDebug ? 15_000 : 5_000)
-      * ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+      (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
+        ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
     );
   }
   return ref;
@@ -1619,10 +1626,8 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any),
     // sourcemap code is slow
-    (opts.snapshotSourceMap
-      ? isDebug ? Infinity : 30_000
-      : isDebug ? 15_000 : 5_000)
-    * ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
+    (opts.snapshotSourceMap ? (isDebug ? Infinity : 30_000) : isDebug ? 15_000 : 5_000) *
+      ((isDebug ? opts.debugTimeoutScale : opts.timeoutScale) ?? 1),
   );
 };
 

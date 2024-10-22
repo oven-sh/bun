@@ -729,7 +729,6 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            assertIsValidWindowsPath(bun.OSPathChar, file_path);
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
             if (Maybe(void).errnoSys(

@@ -234,7 +234,7 @@ unsigned short us_socket_context_timestamp(int ssl, us_socket_context_r context)
 
 /* Adds SNI domain and cert in asn1 format */
 void us_socket_context_add_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern, struct us_socket_context_options_t options, void *user);
-void us_bun_socket_context_add_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user);
+int us_bun_socket_context_add_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user);
 void us_socket_context_remove_server_name(int ssl, us_socket_context_r context, const char *hostname_pattern);
 void us_socket_context_on_server_name(int ssl, us_socket_context_r context, void (*cb)(us_socket_context_r context, const char *hostname));
 void *us_socket_server_name_userdata(int ssl, us_socket_r s);

@@ -1,7 +1,8 @@
 import { pathToFileURL } from "bun";
-import { expect, it } from "bun:test";
+import { expect, it, describe } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, joinP, tempDirWithFiles } from "harness";
+import { isWindows } from "../../node/test/common";
 import { join, sep } from "path";
 
 it("spawn test file", () => {
@@ -310,4 +311,79 @@ it("import override to bun", async () => {
 it.todo("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
+});
+
+describe("NODE_PATH test", () => {
+  const prepareTest = () => {
+    const tempDir = tempDirWithFiles("node_path", {
+      "modules/node_modules/node-path-test/index.js": "exports.testValue = 'NODE_PATH works';",
+      "modules/node_modules/node-path-test/package.json": JSON.stringify({
+        name: "node-path-test",
+        version: "1.0.0",
+        description: "A node_path test module",
+        main: "index.js",
+      }),
+      "lib/node_modules/node-path-test/index.js": "exports.testValue = 'NODE_PATH from lib works';",
+      "lib/node_modules/node-path-test/package.json": JSON.stringify({
+        name: "node-path-test",
+        version: "1.0.0",
+        description: "A node_path test module from lib",
+        main: "index.js",
+      }),
+      "test/index.js": "const { testValue } = require('node-path-test');\nconsole.log(testValue);",
+    });
+
+    const nodePath = joinP(tempDir, "modules/node_modules");
+    const nodePathLib = joinP(tempDir, "lib/node_modules");
+    const testDir = joinP(tempDir, "test");
+
+    const delimiter = isWindows ? ";" : ":";
+
+    return {
+      tempDir,
+      nodePath,
+      nodePathLib,
+      testDir,
+      delimiter,
+    };
+  };
+
+  it("should resolve modules from NODE_PATH", () => {
+    const { nodePath, testDir } = prepareTest();
+
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "index.js", "--no-install"],
+      env: { ...bunEnv, NODE_PATH: nodePath },
+      cwd: testDir,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("NODE_PATH works");
+  });
+
+  it("should resolve modules from NODE_PATH entries", () => {
+    const { nodePath, testDir, delimiter } = prepareTest();
+
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "index.js", "--no-install"],
+      env: { ...bunEnv, NODE_PATH: ["/a/path/not/exist", nodePath].join(delimiter) },
+      cwd: testDir,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("NODE_PATH works");
+  });
+
+  it("should resolve first modules from NODE_PATH entries", () => {
+    const { nodePath, nodePathLib, testDir, delimiter } = prepareTest();
+
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "index.js", "--no-install"],
+      env: { ...bunEnv, NODE_PATH: ["/a/path/not/exist", nodePathLib, nodePath].join(delimiter) },
+      cwd: testDir,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("NODE_PATH from lib works");
+  });
 });

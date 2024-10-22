@@ -1675,6 +1675,64 @@ describe("optionalDependencies", () => {
   }
 });
 
+describe("optionalDependencies", () => {
+  test("should not install optional deps if false in bunfig", async () => {
+    await writeFile(
+      join(packageDir, "bunfig.toml"),
+      `
+  [install]
+  cache = "${join(packageDir, ".bun-cache")}"
+  optional = false
+  registry = "http://localhost:${port}/"
+  `,
+    );
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify(
+        {
+          name: "publish-pkg-deps",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+          optionalDependencies: {
+            "basic-1": "1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    const out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "+ no-deps@1.0.0",
+      "",
+      "1 package installed",
+    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      "no-deps",
+    ]);
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  });
+});
+
 test("tarball override does not crash", async () => {
   await write(
     join(packageDir, "package.json"),
@@ -11789,3 +11847,4 @@ registry = "http://localhost:${port}/"
     });
   }
 });
+

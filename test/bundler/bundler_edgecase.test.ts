@@ -2043,9 +2043,17 @@ describe("bundler", () => {
     },
     generateOutput: false,
     backend: "api",
-    onAfterApiBundle: build => {
+    onAfterApiBundle: async build => {
       expect(build.success).toEqual(true);
       expect(build.outputs).toBeArrayOfSize(2);
+
+      expect(build.outputs[0].path).toEqual("./entry.js");
+      expect(build.outputs[0].loader).toEqual("ts");
+      expect(build.outputs[0].kind).toEqual("entry-point");
+
+      expect(build.outputs[1].loader).toEqual("file");
+      expect(build.outputs[1].kind).toEqual("asset");
+      expect(await build.outputs[1].text()).toEqual("<head></head>");
     },
   });
 

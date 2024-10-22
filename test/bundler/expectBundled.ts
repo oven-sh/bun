@@ -282,7 +282,7 @@ export interface BundlerTestInput {
   generateOutput?: boolean;
 
   /** Run after the bun.build function is called with its output */
-  onAfterApiBundle?(build: BuildOutput): void;
+  onAfterApiBundle?(build: BuildOutput): Promise<void> | void;
 }
 
 export interface SourceMapTests {
@@ -1034,7 +1034,7 @@ for (const [key, blob] of build.outputs) {
 
         configRef = buildConfig;
         const build = await Bun.build(buildConfig);
-        if (onAfterApiBundle) onAfterApiBundle(build);
+        if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);
 

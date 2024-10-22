@@ -11741,7 +11741,7 @@ pub const LinkerContext = struct {
         const root_path = c.resolver.opts.output_dir;
         const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache or (has_css_chunk and has_js_chunk);
 
-        if (!c.resolver.opts.compile and more_than_one_output and (c.resolver.opts.outfile or c.resolver.opts.output_to_stdout)) {
+        if (!c.resolver.opts.compile and more_than_one_output and !c.resolver.opts.supports_multiple_outputs) {
             try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
             return error.MultipleOutputFilesWithoutOutputDir;
         }

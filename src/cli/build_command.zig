@@ -84,8 +84,7 @@ pub const BuildCommand = struct {
         var outfile = ctx.bundler_options.outfile;
         const output_to_stdout = !ctx.bundler_options.compile and outfile.len == 0 and ctx.bundler_options.outdir.len == 0;
 
-        this_bundler.options.outfile = outfile.len > 0;
-        this_bundler.options.output_to_stdout = output_to_stdout;
+        this_bundler.options.supports_multiple_outputs = !(output_to_stdout or outfile.len > 0);
 
         this_bundler.options.public_path = ctx.bundler_options.public_path;
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;

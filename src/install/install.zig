@@ -14741,15 +14741,6 @@ pub const PackageManager = struct {
             for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
                 if (package_id < end) continue;
 
-                // https://github.com/oven-sh/bun/issues/12036
-                // If this is not a root resolution and the package_id is invalid, it is
-                // most likely due to a nested dependency having the same git dependency
-                // as one of its own dependencies, but with a different version string
-                if (failed_dep.version.tag == .git and parent_id != 0) {
-                    // If it is because of an invalid package_id then it is likely a nested git dep
-                    if (package_id == invalid_package_id) continue;
-                }
-
                 // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
                 //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
                 if (failed_dep.behavior.isPeer()) continue;

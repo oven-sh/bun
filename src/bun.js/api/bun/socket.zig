@@ -1605,13 +1605,6 @@ fn NewSocket(comptime ssl: bool) type {
             socket.close(code);
         }
 
-        pub fn getBytesWritten(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            return JSValue.jsNumber(this.bytes_written);
-        }
-
         pub fn markInactive(this: *This) void {
             if (this.flags.is_active) {
                 // we have to close the socket before the socket context is closed
@@ -2082,18 +2075,16 @@ fn NewSocket(comptime ssl: bool) type {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
                     const res = this.socket.rawWrite(buffer, is_end);
-                    if (res > 0) {
-                        this.bytesWritten += @intCast(res);
-                    }
+                    const uwrote: usize = @intCast(@max(res, 0));
+                    this.bytes_written += uwrote;
                     log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
                     return res;
                 }
             }
 
             const res = this.socket.write(buffer, is_end);
-            if (res > 0) {
-                this.bytesWritten += @intCast(res);
-            }
+            const uwrote: usize = @intCast(@max(res, 0));
+            this.bytes_written += uwrote;
             log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
             return res;
         }
@@ -2180,8 +2171,6 @@ fn NewSocket(comptime ssl: bool) type {
                         const rc = this.socket.socket.connected.write2(this.buffered_data_for_node_net.slice(), buffer.slice());
                         const written: usize = @intCast(@max(rc, 0));
                         const leftover = total_to_write -| written;
-                        this.bytes_written += written;
-
                         if (leftover == 0) {
                             this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                             this.buffered_data_for_node_net = .{};
@@ -2212,7 +2201,6 @@ fn NewSocket(comptime ssl: bool) type {
                 const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice(), is_end);
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
-                    this.bytes_written += wrote;
                     // did we write everything?
                     // we can free this temporary buffer.
                     if (wrote == this.buffered_data_for_node_net.len) {
@@ -2360,9 +2348,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             const wrote = this.writeMaybeCorked(bytes, is_end);
             const uwrote: usize = @intCast(@max(wrote, 0));
-
-            this.bytes_written += uwrote;
-
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
                 if (remaining.len > 0) {
@@ -2719,7 +2704,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
         ) JSValue {
-            return JSC.JSValue.jsNumber(this.bytesWritten);
+            return JSC.JSValue.jsNumber(this.bytes_written);
         }
         pub fn getALPNProtocol(
             this: *This,

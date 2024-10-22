@@ -13,12 +13,6 @@ function generate(ssl) {
         length: 0,
       },
 
-      bufferedAmount: {
-        getter: "getBufferedAmount",
-        enumerable: false,
-        configurable: false,
-      },
-
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",
         length: 0,
@@ -175,6 +169,7 @@ function generate(ssl) {
       bytesWritten: {
         getter: "getBytesWritten",
       },
+
       setServername: {
         fn: "setServername",
         length: 1,

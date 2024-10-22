@@ -10,7 +10,6 @@
 # increment the version number to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
 v="3"
-
 pid=$$
 script="$(realpath "$0")"
 

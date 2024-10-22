@@ -20,12 +20,6 @@
     <key>RunAtLoad</key>
     <true />
 
-    <key>ProcessType</key>
-    <string>Interactive</string>
-
-    <key>ThrottleInterval</key>
-    <integer>30</integer>
-
     <key>StandardOutPath</key>
     <string>/var/buildkite-agent/logs/buildkite-agent.log</string>
 
@@ -34,9 +28,6 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-      <key>PATH</key>
-      <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin</string>
-
       <key>BUILDKITE_AGENT_CONFIG</key>
       <string>/etc/buildkite-agent/buildkite-agent.cfg</string>
     </dict>

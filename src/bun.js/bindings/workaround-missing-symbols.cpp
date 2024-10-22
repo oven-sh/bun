@@ -94,7 +94,6 @@ __asm__(".symver tanf,tanf@GLIBC_2.2.5");
 __asm__(".symver cosf,cosf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
 __asm__(".symver expf,expf@GLIBC_2.17");
-__asm__(".symver fcntl,fcntl@GLIBC_2.17");
 __asm__(".symver fmod,fmod@GLIBC_2.17");
 __asm__(".symver fmodf,fmodf@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
@@ -128,8 +127,10 @@ float BUN_WRAP_GLIBC_SYMBOL(log2f)(float);
 float BUN_WRAP_GLIBC_SYMBOL(logf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(sinf)(float);
 float BUN_WRAP_GLIBC_SYMBOL(tanf)(float);
+#if defined(__x86_64__)
 int BUN_WRAP_GLIBC_SYMBOL(fcntl)(int, int, ...);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
+#endif
 void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
 }
 

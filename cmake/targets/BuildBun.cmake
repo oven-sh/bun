@@ -846,6 +846,12 @@ else()
     set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
   endif()
 
+  if(ARCH STREQUAL "x86_64")
+    set(x86_64_WRAP_FCNTL "-Wl,--wrap=fcntl -Wl,--wrap=fcntl64")
+  else()
+    set(x86_64_WRAP_FCNTL "")
+  endif()
+
   target_link_options(${bun} PUBLIC
     -fuse-ld=${LLD_NAME}
     -fno-pic
@@ -859,8 +865,7 @@ else()
     -Wl,--wrap=cosf
     -Wl,--wrap=exp
     -Wl,--wrap=expf
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
+    ${x86_64_WRAP_FCNTL}
     -Wl,--wrap=fmod
     -Wl,--wrap=fmodf
     -Wl,--wrap=fstat

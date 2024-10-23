@@ -194,21 +194,32 @@ const json = struct {
     // 1 is regular
     // 2 is internal
 
-    pub fn decodeIPCMessage(
-        data: []const u8,
-        globalThis: *JSC.JSGlobalObject,
-    ) IPCDecodeError!DecodeIPCMessageResult {
+    pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
             var kind = data[0];
-            var json_data = data[1..idx];
+            var json_data = data[0..idx];
+
+            if (json_data.len == 0) return error.NotEnoughBytes;
 
             switch (kind) {
-                1, 2 => {},
-                else => {
-                    // if the message being recieved is from a node process then it wont have the leading marker byte
-                    // assume full message will be json
+                2 => {
+                    json_data = data[1..idx];
+                },
+                '{', //object
+                '[', //array
+                '"', //string
+                '0'...'9', //number
+                't', //true
+                'f', //false
+                'n', //null
+                '\n', //empty
+                => {
                     kind = 1;
-                    json_data = data[0..idx];
+                },
+                else => {
+                    std.log.warn("{d} {d} {d}", .{ kind, json_data.len, idx });
+                    std.log.warn("{d}", .{json_data});
+                    @panic("ipc: invalid json");
                 },
             }
 
@@ -230,10 +241,11 @@ const json = struct {
             }
 
             const deserialized = str.toJSByParseJSON(globalThis);
+            // if (deserialized == .zero) return error.JSError;
 
             return switch (kind) {
                 1 => .{
-                    .bytes_consumed = idx + 1,
+                    .bytes_consumed = idx,
                     .message = .{ .data = deserialized },
                 },
                 2 => .{
@@ -259,13 +271,12 @@ const json = struct {
 
         const slice = str.slice();
 
-        try writer.ensureUnusedCapacity(1 + slice.len + 1);
+        try writer.ensureUnusedCapacity(slice.len + 1);
 
-        writer.writeAssumeCapacity(&.{1});
         writer.writeAssumeCapacity(slice);
         writer.writeAssumeCapacity("\n");
 
-        return 1 + slice.len + 1;
+        return slice.len + 1;
     }
 
     pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {

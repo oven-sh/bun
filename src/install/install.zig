@@ -4201,6 +4201,8 @@ pub const PackageManager = struct {
             };
         } else if (behavior.isPeer() and !install_peer) {
             return null;
+        } else if (behavior.isOptional() and !this.options.remote_package_features.optional_dependencies) {
+            return null;
         }
 
         // appendPackage sets the PackageID on the package
@@ -6943,6 +6945,9 @@ pub const PackageManager = struct {
 
         publish_config: PublishConfig = .{},
 
+        ca: []const string = &.{},
+        ca_file_name: string = &.{},
+
         pub const PublishConfig = struct {
             access: ?Access = null,
             tag: string = "",
@@ -7087,8 +7092,8 @@ pub const PackageManager = struct {
                 .password = "",
                 .token = "",
             };
-            if (bun_install_) |bun_install| {
-                if (bun_install.default_registry) |registry| {
+            if (bun_install_) |config| {
+                if (config.default_registry) |registry| {
                     base = registry;
                 }
             }
@@ -7097,8 +7102,8 @@ pub const PackageManager = struct {
             defer {
                 this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
             }
-            if (bun_install_) |bun_install| {
-                if (bun_install.scoped) |scoped| {
+            if (bun_install_) |config| {
+                if (config.scoped) |scoped| {
                     for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
                         var registry = registry_.*;
                         if (registry.url.len == 0) registry.url = base.url;
@@ -7106,42 +7111,57 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (bun_install.disable_cache orelse false) {
+                if (config.ca) |ca| {
+                    switch (ca) {
+                        .list => |ca_list| {
+                            this.ca = ca_list;
+                        },
+                        .str => |ca_str| {
+                            this.ca = &.{ca_str};
+                        },
+                    }
+                }
+
+                if (config.cafile) |cafile| {
+                    this.ca_file_name = cafile;
+                }
+
+                if (config.disable_cache orelse false) {
                     this.enable.cache = false;
                 }
 
-                if (bun_install.disable_manifest_cache orelse false) {
+                if (config.disable_manifest_cache orelse false) {
                     this.enable.manifest_cache = false;
                 }
 
-                if (bun_install.force orelse false) {
+                if (config.force orelse false) {
                     this.enable.manifest_cache_control = false;
                     this.enable.force_install = true;
                 }
 
-                if (bun_install.save_yarn_lockfile orelse false) {
+                if (config.save_yarn_lockfile orelse false) {
                     this.do.save_yarn_lock = true;
                 }
 
-                if (bun_install.save_lockfile) |save_lockfile| {
+                if (config.save_lockfile) |save_lockfile| {
                     this.do.save_lockfile = save_lockfile;
                     this.enable.force_save_lockfile = true;
                 }
 
-                if (bun_install.save_dev) |save| {
+                if (config.save_dev) |save| {
                     this.local_package_features.dev_dependencies = save;
                 }
 
-                if (bun_install.save_peer) |save| {
+                if (config.save_peer) |save| {
                     this.do.install_peer_dependencies = save;
                     this.remote_package_features.peer_dependencies = save;
                 }
 
-                if (bun_install.exact) |exact| {
+                if (config.exact) |exact| {
                     this.enable.exact_versions = exact;
                 }
 
-                if (bun_install.production) |production| {
+                if (config.production) |production| {
                     if (production) {
                         this.local_package_features.dev_dependencies = false;
                         this.enable.fail_early = true;
@@ -7150,22 +7170,22 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (bun_install.frozen_lockfile) |frozen_lockfile| {
+                if (config.frozen_lockfile) |frozen_lockfile| {
                     if (frozen_lockfile) {
                         this.enable.frozen_lockfile = true;
                     }
                 }
 
-                if (bun_install.concurrent_scripts) |jobs| {
+                if (config.concurrent_scripts) |jobs| {
                     this.max_concurrent_lifecycle_scripts = jobs;
                 }
 
-                if (bun_install.save_optional) |save| {
+                if (config.save_optional) |save| {
                     this.remote_package_features.optional_dependencies = save;
                     this.local_package_features.optional_dependencies = save;
                 }
 
-                this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;
+                this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
             }
 
             const default_disable_progress_bar: bool = brk: {
@@ -7391,6 +7411,13 @@ pub const PackageManager = struct {
                 }
                 if (cli.publish_config.auth_type) |auth_type| {
                     this.publish_config.auth_type = auth_type;
+                }
+
+                if (cli.ca.len > 0) {
+                    this.ca = cli.ca;
+                }
+                if (cli.ca_file_name.len > 0) {
+                    this.ca_file_name = cli.ca_file_name;
                 }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
@@ -8329,14 +8356,33 @@ pub const PackageManager = struct {
         }
     };
 
+    fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
+        switch (err) {
+            error.LoadCAFile => {
+                if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
+                    Output.err("HTTPThread", "could not find CA file: '{s}'", .{opts.abs_ca_file_name});
+                } else {
+                    Output.err("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
+                }
+            },
+            error.InvalidCAFile => {
+                Output.err("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
+            },
+            error.InvalidCA => {
+                Output.err("HTTPThread", "the CA is invalid", .{});
+            },
+            error.FailedToOpenSocket => {
+                Output.errGeneric("failed to start HTTP client thread", .{});
+            },
+        }
+        Global.crash();
+    }
+
     pub fn init(
         ctx: Command.Context,
         cli: CommandLineArguments,
         subcommand: Subcommand,
     ) !struct { *PackageManager, string } {
-        // assume that spawning a thread will take a lil so we do that asap
-        HTTP.HTTPThread.init();
-
         if (cli.global) {
             var explicit_global_dir: string = "";
             if (ctx.install) |opts| {
@@ -8592,13 +8638,7 @@ pub const PackageManager = struct {
             ".npmrc",
         );
 
-        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
-
-        if (env.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @min(cpu_count, cpu_count_);
-            } else |_| {}
-        }
+        const cpu_count = bun.getThreadCount();
 
         const options = Options{
             .global = cli.global,
@@ -8677,6 +8717,36 @@ pub const PackageManager = struct {
             subcommand,
         );
 
+        var ca: []stringZ = &.{};
+        if (manager.options.ca.len > 0) {
+            ca = try manager.allocator.alloc(stringZ, manager.options.ca.len);
+            for (ca, manager.options.ca) |*z, s| {
+                z.* = try manager.allocator.dupeZ(u8, s);
+            }
+        }
+
+        var abs_ca_file_name: stringZ = &.{};
+        if (manager.options.ca_file_name.len > 0) {
+            // resolve with original cwd
+            if (std.fs.path.isAbsolute(manager.options.ca_file_name)) {
+                abs_ca_file_name = try manager.allocator.dupeZ(u8, manager.options.ca_file_name);
+            } else {
+                var path_buf: bun.PathBuffer = undefined;
+                abs_ca_file_name = try manager.allocator.dupeZ(u8, bun.path.joinAbsStringBuf(
+                    original_cwd_clone,
+                    &path_buf,
+                    &.{manager.options.ca_file_name},
+                    .auto,
+                ));
+            }
+        }
+
+        HTTP.HTTPThread.init(&.{
+            .ca = ca,
+            .abs_ca_file_name = abs_ca_file_name,
+            .onInitError = &httpThreadOnInitError,
+        });
+
         manager.timestamp_for_manifest_cache_control = brk: {
             if (comptime bun.Environment.allow_assert) {
                 if (env.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP")) |cache_control| {
@@ -8705,13 +8775,7 @@ pub const PackageManager = struct {
             PackageManager.verbose_install = true;
         }
 
-        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
-
-        if (env.get("GOMAXPROCS")) |max_procs| {
-            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @min(cpu_count, cpu_count_);
-            } else |_| {}
-        }
+        const cpu_count = bun.getThreadCount();
 
         var manager = &instance;
         var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
@@ -9207,6 +9271,8 @@ pub const PackageManager = struct {
         clap.parseParam("-p, --production                      Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                             Don't update package.json or save a lockfile") catch unreachable,
         clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
+        clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
+        clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
         clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
         clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
@@ -9348,6 +9414,9 @@ pub const PackageManager = struct {
         registry: string = "",
 
         publish_config: Options.PublishConfig = .{},
+
+        ca: []const string = &.{},
+        ca_file_name: string = "",
 
         const PatchOpts = union(enum) {
             nothing: struct {},
@@ -9688,6 +9757,11 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            cli.ca = args.options("--ca");
+
+            if (args.option("--cafile")) |ca_file_name| {
+                cli.ca_file_name = ca_file_name;
+            }
 
             // commands that support --filter
             if (comptime subcommand.supportsWorkspaceFiltering()) {
@@ -12307,6 +12381,16 @@ pub const PackageManager = struct {
             this.names = packages.items(.name);
             this.bins = packages.items(.bin);
             this.resolutions = packages.items(.resolution);
+
+            // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
+            // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
+            if (this.successfully_installed.bit_length < this.lockfile.packages.len) {
+                const new = Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len) catch bun.outOfMemory();
+                var old = this.successfully_installed;
+                defer old.deinit(bun.default_allocator);
+                old.copyInto(new);
+                this.successfully_installed = new;
+            }
         }
 
         /// Install versions of a package which are waiting on a network request

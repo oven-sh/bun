@@ -197,6 +197,13 @@ pub const Arena = struct {
         mimalloc.mi_heap_collect(this.heap orelse return, force);
     }
 
+    pub inline fn helpCatchMemoryIssues(this: Arena) void {
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            this.gc(true);
+            bun.Mimalloc.mi_collect(true);
+        }
+    }
+
     pub fn ownsPtr(this: Arena, ptr: *const anyopaque) bool {
         return mimalloc.mi_heap_check_owned(this.heap.?, ptr);
     }

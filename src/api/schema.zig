@@ -1635,6 +1635,8 @@ pub const Api = struct {
         /// define
         define: ?StringMap = null,
 
+        drop: []const []const u8 = &.{},
+
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,
 
@@ -2973,6 +2975,13 @@ pub const Api = struct {
 
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
+
+        cafile: ?[]const u8 = null,
+
+        ca: ?union(enum) {
+            str: []const u8,
+            list: []const []const u8,
+        } = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

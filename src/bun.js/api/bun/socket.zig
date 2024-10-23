@@ -19,6 +19,7 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
+const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;
@@ -642,15 +643,20 @@ pub const Listener = struct {
                 }
             }
         }
-        const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl);
+        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
+            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+        else
+            .{};
 
         vm.eventLoop().ensureWaker();
 
+        var create_err: uws.create_bun_socket_error_t = .none;
         const socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
             uws.Loop.get(),
             @sizeOf(usize),
             ctx_opts,
+            &create_err,
         ) orelse {
             var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
             defer {
@@ -1172,9 +1178,13 @@ pub const Listener = struct {
             }
         }
 
-        const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
+        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
+            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+        else
+            .{};
 
-        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts) orelse {
+        var create_err: uws.create_bun_socket_error_t = .none;
+        const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err) orelse {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to connect"),
                 .syscall = bun.String.static("connect"),
@@ -1285,22 +1295,17 @@ fn selectALPNCallback(
         if (protos.len == 0) {
             return BoringSSL.SSL_TLSEXT_ERR_NOACK;
         }
-
         const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @as(c_uint, @intCast(protos.len)), in, inlen);
-
         // Previous versions of Node.js returned SSL_TLSEXT_ERR_NOACK if no protocol
         // match was found. This would neither cause a fatal alert nor would it result
         // in a useful ALPN response as part of the Server Hello message.
         // We now return SSL_TLSEXT_ERR_ALERT_FATAL in that case as per Section 3.2
         // of RFC 7301, which causes a fatal no_application_protocol alert.
-        const expected = if (comptime BoringSSL.OPENSSL_NPN_NEGOTIATED == 1) BoringSSL.SSL_TLSEXT_ERR_OK else BoringSSL.SSL_TLSEXT_ERR_ALERT_FATAL;
-
-        return if (status == expected) 1 else 0;
+        return if (status == BoringSSL.OPENSSL_NPN_NEGOTIATED) BoringSSL.SSL_TLSEXT_ERR_OK else BoringSSL.SSL_TLSEXT_ERR_ALERT_FATAL;
     } else {
         return BoringSSL.SSL_TLSEXT_ERR_NOACK;
     }
 }
-
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -1319,12 +1324,41 @@ fn NewSocket(comptime ssl: bool) type {
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
+        bytesWritten: u64 = 0,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+        native_callback: NativeCallbacks = .none,
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+
+        pub const DEBUG_REFCOUNT_NAME = "Socket";
+
+        // We use this direct callbacks on HTTP2 when available
+        pub const NativeCallbacks = union(enum) {
+            h2: *H2FrameParser,
+            none,
+
+            pub fn onData(this: NativeCallbacks, data: []const u8) bool {
+                switch (this) {
+                    .h2 => |h2| {
+                        h2.onNativeRead(data);
+                        return true;
+                    },
+                    .none => return false,
+                }
+            }
+            pub fn onWritable(this: NativeCallbacks) bool {
+                switch (this) {
+                    .h2 => |h2| {
+                        h2.onNativeWritable();
+                        return true;
+                    },
+                    .none => return false,
+                }
+            }
+        };
 
         const This = @This();
         const log = Output.scoped(.Socket, false);
@@ -1351,6 +1385,29 @@ fn NewSocket(comptime ssl: bool) type {
             @fence(.acquire);
 
             return this.has_pending_activity.load(.acquire);
+        }
+
+        pub fn attachNativeCallback(this: *This, callback: NativeCallbacks) bool {
+            if (this.native_callback != .none) return false;
+            this.native_callback = callback;
+
+            switch (callback) {
+                .h2 => |h2| h2.ref(),
+                .none => {},
+            }
+            return true;
+        }
+        pub fn detachNativeCallback(this: *This) void {
+            const native_callback = this.native_callback;
+            this.native_callback = .none;
+
+            switch (native_callback) {
+                .h2 => |h2| {
+                    h2.onNativeClose();
+                    h2.deref();
+                },
+                .none => {},
+            }
         }
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
@@ -1409,6 +1466,7 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onWritable", .{});
             if (this.socket.isDetached()) return;
+            if (this.native_callback.onWritable()) return;
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
@@ -1540,6 +1598,8 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn closeAndDetach(this: *This, code: uws.CloseCode) void {
             const socket = this.socket;
             this.socket.detach();
+            this.detachNativeCallback();
+
             socket.close(code);
         }
 
@@ -1771,6 +1831,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
+            this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
             defer this.markInactive();
@@ -1811,6 +1872,8 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onData({d})", .{data.len});
             if (this.socket.isDetached()) return;
+
+            if (this.native_callback.onData(data)) return;
 
             const handlers = this.handlers;
             const callback = handlers.onData;
@@ -2006,7 +2069,7 @@ fn NewSocket(comptime ssl: bool) type {
             return ZigString.init(text).toJS(globalThis);
         }
 
-        fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
+        pub fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
@@ -2016,12 +2079,18 @@ fn NewSocket(comptime ssl: bool) type {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
                     const res = this.socket.rawWrite(buffer, is_end);
+                    if (res > 0) {
+                        this.bytesWritten += @intCast(res);
+                    }
                     log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
                     return res;
                 }
             }
 
             const res = this.socket.write(buffer, is_end);
+            if (res > 0) {
+                this.bytesWritten += @intCast(res);
+            }
             log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
             return res;
         }
@@ -2252,6 +2321,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn deinit(this: *This) void {
             this.markInactive();
+            this.detachNativeCallback();
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
@@ -2490,7 +2560,12 @@ fn NewSocket(comptime ssl: bool) type {
             bun.assert(result_size == size);
             return buffer;
         }
-
+        pub fn getBytesWritten(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+        ) JSValue {
+            return JSC.JSValue.jsNumber(this.bytesWritten);
+        }
         pub fn getALPNProtocol(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
@@ -3313,6 +3388,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer this.deref();
 
             // detach and invalidate the old instance
+            this.detachNativeCallback();
             this.socket.detach();
 
             // start TLS handshake after we set extension on the socket

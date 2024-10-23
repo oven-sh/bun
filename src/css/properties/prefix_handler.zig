@@ -24,10 +24,10 @@ pub const FallbackHandler = struct {
     @"caret-color": ?usize = null,
     caret: ?usize = null,
 
-    const property_ids = property_ids: {
-        var map = bun.ComptimeEnumMap();
-        _ = map; // autofix
-    };
+    // const property_ids = property_ids: {
+    //     var map = bun.ComptimeEnumMap();
+    //     _ = map; // autofix
+    // };
 
     pub fn handleProperty(
         this: *FallbackHandler,

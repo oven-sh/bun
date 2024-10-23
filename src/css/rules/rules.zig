@@ -196,7 +196,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                     },
                     .media => |*med| {
                         moved_rule = false;
-                        if (rules.items[rules.items.len - 1] == .media) {
+                        if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .media) {
                             var last_rule = &rules.items[rules.items.len - 1].media;
                             if (last_rule.query.eql(&med.query)) {
                                 last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items) catch bun.outOfMemory();
@@ -210,7 +210,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         }
                     },
                     .supports => |*supp| {
-                        if (rules.items[rules.items.len - 1] == .supports) {
+                        if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .supports) {
                             var last_rule = &rules.items[rules.items.len - 1].supports;
                             if (last_rule.condition.eql(&supp.condition)) {
                                 continue;

@@ -962,7 +962,7 @@ pub const PseudoClass = union(enum) {
 
     pub fn isUserActionState(this: *const PseudoClass) bool {
         return switch (this.*) {
-            .active, .hover => true,
+            .active, .hover, .focus, .focus_within, .focus_visible => true,
             else => false,
         };
     }
@@ -3075,39 +3075,43 @@ pub fn parse_functional_pseudo_class(
     name: []const u8,
     state: *SelectorParsingState,
 ) Result(GenericComponent(Impl)) {
-    // todo_stuff.match_ignore_ascii_case
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-child")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .child);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-of-type")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .of_type);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-child")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_child);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-of-type")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_of_type);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-col")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .col);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nth-last-col")) {
-        return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_col);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "is") and parser.parseIsAndWhere()) {
-        return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_is, .{});
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "where") and parser.parseIsAndWhere()) {
-        return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_where, .{});
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "has")) {
-        return parse_has(Impl, parser, input, state);
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "host")) {
-        if (!state.allowsTreeStructuralPseudoClasses()) {
-            return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
+    const FunctionalPseudoClass = enum {
+        @"nth-child",
+        @"nth-of-type",
+        @"nth-last-child",
+        @"nth-last-of-type",
+        @"nth-col",
+        @"nth-last-col",
+        is,
+        where,
+        has,
+        host,
+        not,
+    };
+    const Map = bun.ComptimeEnumMap(FunctionalPseudoClass);
+
+    if (Map.get(name)) |functional_pseudo_class| {
+        switch (functional_pseudo_class) {
+            .@"nth-child" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .child),
+            .@"nth-of-type" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .of_type),
+            .@"nth-last-child" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_child),
+            .@"nth-last-of-type" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_of_type),
+            .@"nth-col" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .col),
+            .@"nth-last-col" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .last_col),
+            .is => if (parser.parseIsAndWhere()) return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_is, .{}),
+            .where => if (parser.parseIsAndWhere()) return parse_is_or_where(Impl, parser, input, state, GenericComponent(Impl).convertHelper_where, .{}),
+            .has => return parse_has(Impl, parser, input, state),
+            .host => if (!state.allowsTreeStructuralPseudoClasses())
+                return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) }
+            else
+                return .{ .result = .{
+                    .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
+                        .err => |e| return .{ .err = e },
+                        .result => |v| v,
+                    },
+                } },
+            .not => return parse_negation(Impl, parser, input, state),
         }
-        return .{ .result = .{
-            .host = switch (parse_inner_compound_selector(Impl, parser, input, state)) {
-                .err => |e| return .{ .err = e },
-                .result => |v| v,
-            },
-        } };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "not")) {
-        return parse_negation(Impl, parser, input, state);
-    } else {
-        //
     }
 
     if (parser.parseAnyPrefix(name)) |prefix| {

@@ -400,7 +400,8 @@ pub fn SupportsRule(comptime R: type) type {
             _ = this; // autofix
             _ = context; // autofix
             _ = parent_is_unused; // autofix
-            @panic(css.todo_stuff.depth);
+            // TODO: Implement this
+            return;
         }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

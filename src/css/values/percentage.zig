@@ -144,11 +144,7 @@ pub fn DimensionPercentage(comptime D: type) type {
         const This = @This();
 
         pub fn eql(this: *const This, other: *const This) bool {
-            return switch (this.*) {
-                .dimension => |*d| css.generic.eql(D, d, &other.dimension),
-                .percentage => |*p| p.eql(&other.percentage),
-                .calc => |calc| calc.eql(other.calc),
-            };
+            return css.implementEql(@This(), this, other);
         }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

@@ -169,7 +169,7 @@ pub const VendorPrefix = packed struct(u8) {
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
-            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit"),
+            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit-"),
             VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
             VendorPrefix.asBits(.{ .ms = true }) => dest.writeStr("-ms-"),
             VendorPrefix.asBits(.{ .o = true }) => dest.writeStr("-o-"),
@@ -3920,7 +3920,7 @@ pub const nth = struct {
 
         if (tok.* == .delim and tok.delim == '+') return parse_signless_b(input, a, 1);
         if (tok.* == .delim and tok.delim == '-') return parse_signless_b(input, a, -1);
-        if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return parse_signless_b(input, a, tok.number.int_value.?);
+        if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return .{ .result = NthResult{ a, tok.number.int_value.? } };
         input.reset(&start);
         return .{ .result = .{ a, 0 } };
     }

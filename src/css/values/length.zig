@@ -9,6 +9,7 @@ const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
+const MathFunction = css.css_values.calc.MathFunction;
 const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
@@ -254,6 +255,16 @@ pub const LengthValue = union(enum) {
         return false;
     }
 
+    pub fn isSignNegative(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignNegative(s);
+    }
+
+    pub fn isSignPositive(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignPositive(s);
+    }
+
     pub fn trySign(this: *const @This()) ?f32 {
         return sign(this);
     }
@@ -433,9 +444,8 @@ pub const Length = union(enum) {
         if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
             // PERF: I don't like this redundant allocation
             if (calc_value == .value) {
-                var mutable: *Calc(Length) = @constCast(&calc_value);
                 const ret = calc_value.value.*;
-                mutable.deinit(input.allocator());
+                input.allocator().destroy(calc_value.value);
                 return .{ .result = ret };
             }
             return .{ .result = .{
@@ -496,10 +506,123 @@ pub const Length = union(enum) {
         // Unwrap calc(...) functions so we can add inside.
         // Then wrap the result in a calc(...) again if necessary.
         const a = unwrapCalc(allocator, this);
-        _ = a; // autofix
         const b = unwrapCalc(allocator, other);
-        _ = b; // autofix
-        @panic(css.todo_stuff.depth);
+        const res: Length = Length.addInternal(a, allocator, b);
+        if (res == .calc) {
+            if (res.calc.* == .value) return res.calc.value.*;
+            if (res.calc.* == .function and res.calc.function.* != .calc) return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){ .function = res.calc.function }) };
+            return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                .function = bun.create(allocator, MathFunction(Length), MathFunction(Length){ .calc = res.calc.* }),
+            }) };
+        }
+        return res;
+    }
+
+    fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
+        if (this.tryAdd(allocator, &other)) |r| return r;
+        return this.add__(allocator, other);
+    }
+
+    fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
+        return switch (this) {
+            .calc => |c| c.*,
+            else => |v| Calc(Length){ .value = bun.create(allocator, Length, v) },
+        };
+    }
+
+    fn add__(this: Length, allocator: Allocator, other: Length) Length {
+        var a = this;
+        var b = other;
+
+        if (a.isZero()) return b;
+
+        if (b.isZero()) return a;
+
+        if (a.isSignNegative() and b.isSignPositive()) {
+            std.mem.swap(Length, &a, &b);
+        }
+
+        if (a == .calc and b == .calc) {
+            return Length{ .calc = bun.create(allocator, Calc(Length), a.calc.add(allocator, b.calc.*)) };
+        } else if (a == .calc) {
+            switch (a.calc.*) {
+                .value => |v| return v.add__(allocator, b),
+                else => return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                    .sum = .{
+                        .left = bun.create(allocator, Calc(Length), a.calc.*),
+                        .right = bun.create(allocator, Calc(Length), b.intoCalc(allocator)),
+                    },
+                }) },
+            }
+        } else if (b == .calc) {
+            switch (b.calc.*) {
+                .value => |v| return a.add__(allocator, v.*),
+                else => return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                    .sum = .{
+                        .left = bun.create(allocator, Calc(Length), a.intoCalc(allocator)),
+                        .right = bun.create(allocator, Calc(Length), b.calc.*),
+                    },
+                }) },
+            }
+        } else {
+            return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                .sum = .{
+                    .left = bun.create(allocator, Calc(Length), a.intoCalc(allocator)),
+                    .right = bun.create(allocator, Calc(Length), b.intoCalc(allocator)),
+                },
+            }) };
+        }
+    }
+
+    fn tryAdd(this: *const Length, allocator: Allocator, other: *const Length) ?Length {
+        if (this.* == .value and other.* == .value) {
+            if (this.value.tryAdd(allocator, &other.value)) |res| {
+                return Length{ .value = res };
+            }
+            return null;
+        }
+
+        if (this.* == .calc) {
+            switch (this.calc.*) {
+                .value => |v| return v.tryAdd(allocator, other),
+                .sum => |s| {
+                    const a = Length{ .calc = s.left };
+                    if (a.tryAdd(allocator, other)) |res| {
+                        return res.add__(allocator, Length{ .calc = s.right });
+                    }
+
+                    const b = Length{ .calc = s.right };
+                    if (b.tryAdd(allocator, other)) |res| {
+                        return (Length{ .calc = s.left }).add__(allocator, res);
+                    }
+
+                    return null;
+                },
+                else => return null,
+            }
+        }
+
+        if (other.* == .calc) {
+            switch (other.calc.*) {
+                .value => |v| return v.tryAdd(allocator, this),
+                .sum => |s| {
+                    const a = Length{ .calc = s.left };
+                    if (this.tryAdd(allocator, &a)) |res| {
+                        return res.add__(allocator, Length{ .calc = s.right });
+                    }
+
+                    const b = Length{ .calc = s.right };
+                    if (this.tryAdd(allocator, &b)) |res| {
+                        return (Length{ .calc = s.left }).add__(allocator, res);
+                    }
+
+                    return null;
+                },
+                else => return null,
+            }
+        }
+
+        return null;
     }
 
     fn unwrapCalc(allocator: Allocator, length: Length) Length {
@@ -524,6 +647,16 @@ pub const Length = union(enum) {
             .value => |v| v.sign(),
             .calc => |v| v.trySign(),
         };
+    }
+
+    pub fn isSignNegative(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignNegative(s);
+    }
+
+    pub fn isSignPositive(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignPositive(s);
     }
 
     pub fn partialCmp(this: *const Length, other: *const Length) ?std.math.Order {
@@ -566,5 +699,12 @@ pub const Length = union(enum) {
             return this.value.tryOpTo(&other.value, R, ctx, op_fn);
         }
         return null;
+    }
+
+    pub fn isZero(this: *const Length) bool {
+        return switch (this.*) {
+            .value => |v| v.isZero(),
+            else => false,
+        };
     }
 };

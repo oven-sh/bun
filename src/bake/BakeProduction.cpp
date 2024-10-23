@@ -11,8 +11,8 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProd(
     BunString outbase,
     JSC::JSValue renderStaticCallback,
     JSC::JSValue files,
-    JSC::JSValue patterns
-) {
+    JSC::JSValue patterns)
+{
     JSC::VM& vm = global->vm();
     JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::bakeRenderRoutesForProdCodeGenerator(vm), global);
     JSC::CallData callData = JSC::getCallData(cb);

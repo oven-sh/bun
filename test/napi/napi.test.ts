@@ -199,6 +199,9 @@ describe("napi", () => {
     it("exists while calling a napi_async_complete_callback", () => {
       checkSameOutput("create_promise", [false]);
     });
+    it("keeps arguments moved off the stack alive", () => {
+      checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
+    });
   });
 
   describe("escapable_handle_scope", () => {

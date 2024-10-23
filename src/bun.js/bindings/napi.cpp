@@ -444,25 +444,33 @@ void NapiWeakValue::setString(JSString* string, WeakHandleOwner& owner, void* co
 
 class NAPICallFrame {
 public:
-    NAPICallFrame(const JSC::ArgList args, void* dataPtr)
-        : m_args(args)
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
+        : m_callFrame(callFrame)
         , m_dataPtr(dataPtr)
     {
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
+        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
+        // `this` to an object.
+        // TODO change to global? or find another way to avoid JSGlobalProxy
+        JSC::JSObject* jscThis = globalObject->globalThis();
+        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            jscThis = m_callFrame->thisValue().toObject(globalObject);
+            // https://tc39.es/ecma262/#sec-toobject
+            // toObject only throws for undefined and null, which we checked for
+            scope.assertNoException();
+        }
+        m_callFrame->setThisValue(jscThis);
     }
 
     JSValue thisValue() const
     {
-        return m_args.at(0);
+        return m_callFrame->thisValue();
     }
 
     napi_callback_info toNapi()
     {
         return reinterpret_cast<napi_callback_info>(this);
-    }
-
-    ALWAYS_INLINE const JSC::ArgList& args() const
-    {
-        return m_args;
     }
 
     ALWAYS_INLINE void* dataPtr() const
@@ -477,7 +485,7 @@ public:
         void** data, Zig::GlobalObject* globalObject)
     {
         if (this_arg != nullptr) {
-            *this_arg = ::toNapi(thisValue(), globalObject);
+            *this_arg = ::toNapi(m_callFrame->thisValue(), globalObject);
         }
 
         if (data != nullptr) {
@@ -487,37 +495,36 @@ public:
         size_t maxArgc = 0;
         if (argc != nullptr) {
             maxArgc = *argc;
-            *argc = args().size() - 1;
+            *argc = m_callFrame->argumentCount();
         }
 
         if (argv != nullptr) {
-            size_t realArgCount = args().size() - 1;
-
-            size_t overflow = maxArgc > realArgCount ? maxArgc - realArgCount : 0;
-            realArgCount = realArgCount < maxArgc ? realArgCount : maxArgc;
-
-            if (realArgCount > 0) {
-                memcpy(argv, args().data() + 1, sizeof(napi_value) * realArgCount);
-                argv += realArgCount;
-            }
-
-            if (overflow > 0) {
-                while (overflow--) {
-                    *argv = ::toNapi(jsUndefined(), globalObject);
-                    argv++;
-                }
+            for (size_t i = 0; i < maxArgc; i++) {
+                // OK if we overflow argumentCount(), because argument() returns JS undefined
+                // for OOB which is what we want
+                argv[i] = ::toNapi(m_callFrame->argument(i), globalObject);
             }
         }
     }
 
-    JSValue newTarget;
+    JSValue newTarget()
+    {
+        JSValue target = m_callFrame->newTarget();
+        if (target.isUndefined()) {
+            // napi_get_new_target:
+            // "This API returns the new.target of the constructor call. If the current callback
+            // is not a constructor call, the result is NULL."
+            // they mean a null pointer, not JavaScript null
+            return JSValue();
+        } else {
+            return target;
+        }
+    }
 
 private:
-    const JSC::ArgList m_args;
+    JSC::CallFrame* m_callFrame;
     void* m_dataPtr;
 };
-
-#define ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callframe) callframe->addressOfArgumentsStart() - 1
 
 class NAPIFunction : public JSC::JSFunction {
 
@@ -527,18 +534,13 @@ public:
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue call(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
     {
-        ASSERT(jsCast<NAPIFunction*>(callframe->jsCallee()));
-        auto* function = static_cast<NAPIFunction*>(callframe->jsCallee());
+        auto* function = jsDynamicCast<NAPIFunction*>(callframe->jsCallee());
+        ASSERT(function);
         auto* env = toNapi(globalObject);
         auto* callback = reinterpret_cast<napi_callback>(function->m_method);
         JSC::VM& vm = globalObject->vm();
 
-        MarkedArgumentBufferWithSize<12> args;
-        size_t argc = callframe->argumentCount() + 1;
-        args.fill(vm, argc, [&](auto* slot) {
-            memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callframe), sizeof(JSValue) * argc);
-        });
-        NAPICallFrame frame(JSC::ArgList(args), function->m_dataPtr);
+        NAPICallFrame frame(globalObject, callframe, function->m_dataPtr);
 
         auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
@@ -823,7 +825,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     auto identifier = JSC::Identifier::fromString(vm, WTFMove(nameStr));
 
     // TODO should maybe be false
-    PutPropertySlot slot(target, true);
+    PutPropertySlot slot(target, false);
 
     target->put(target, globalObject, identifier, jsValue, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
@@ -1057,8 +1059,6 @@ NapiRef** getRefToWrapValue(Zig::GlobalObject* globalObject, JSValue value, Bun:
         return nullptr;
     } else if (auto* proto = jsDynamicCast<NapiPrototype*>(value)) {
         return &proto->napiRef;
-    } else if (auto* class_ = jsDynamicCast<NapiClass*>(value)) {
-        return &class_->napiRef;
     } else {
         // TODO this probably leaks in napi_unwrap on an object that isn't wrapped
         if (auto* found_external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()))) {
@@ -1237,8 +1237,8 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     void* inheritedDataPtr = nullptr;
     if (NapiPrototype* proto = jsDynamicCast<NapiPrototype*>(objectValue)) {
         inheritedDataPtr = proto->napiRef ? proto->napiRef->data : nullptr;
-    } else if (NapiClass* proto = jsDynamicCast<NapiClass*>(objectValue)) {
-        inheritedDataPtr = proto->dataPtr;
+    } else if (NapiClass* class_ = jsDynamicCast<NapiClass*>(objectValue)) {
+        inheritedDataPtr = class_->dataPtr;
     }
 
     for (size_t i = 0; i < property_count; i++) {
@@ -1665,6 +1665,7 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
     }
 
     Zig::GlobalObject* globalObject = toJS(env);
+    // TODO change to global? or find another way to avoid JSGlobalProxy
     *result = toNapi(globalObject->globalThis(), globalObject);
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1690,7 +1691,7 @@ extern "C" napi_status napi_get_new_target(napi_env env,
 
     NAPICallFrame* callFrame = reinterpret_cast<NAPICallFrame*>(cbinfo);
 
-    *result = toNapi(callFrame->newTarget, toJS(env));
+    *result = toNapi(callFrame->newTarget(), toJS(env));
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -1730,13 +1731,12 @@ void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(NapiClass);
 
-JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+template<bool ConstructCall>
+JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* constructorTarget = asObject(callFrame->jsCallee());
-    JSObject* newTarget = asObject(callFrame->newTarget());
     NapiClass* napi = jsDynamicCast<NapiClass*>(constructorTarget);
     while (!napi && constructorTarget) {
         constructorTarget = constructorTarget->getPrototypeDirect().getObject();
@@ -1748,30 +1748,33 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype));
-    RETURN_IF_EXCEPTION(scope, {});
+    if constexpr (ConstructCall) {
+        NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype));
+        RETURN_IF_EXCEPTION(scope, {});
 
-    if (!prototype) {
-        JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
-        return JSValue::encode(JSC::jsUndefined());
+        if (!prototype) {
+            JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
+            return JSValue::encode(JSC::jsUndefined());
+        }
+
+        auto* subclass = prototype->subclass(globalObject, asObject(callFrame->newTarget()));
+        RETURN_IF_EXCEPTION(scope, {});
+        callFrame->setThisValue(subclass);
     }
 
-    auto* subclass = prototype->subclass(globalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, {});
-    callFrame->setThisValue(subclass);
-
-    MarkedArgumentBufferWithSize<12> args;
-    size_t argc = callFrame->argumentCount() + 1;
-    args.fill(vm, argc, [&](auto* slot) {
-        memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSValue) * argc);
-    });
-    NAPICallFrame frame(JSC::ArgList(args), napi->dataPtr);
-    frame.newTarget = newTarget;
+    NAPICallFrame frame(globalObject, callFrame, napi->dataPtr);
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
-    napi->constructor()(toNapi(globalObject), frame.toNapi());
+    JSValue ret = toJS(napi->constructor()(toNapi(globalObject), frame.toNapi()));
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(frame.thisValue()));
+    if (ret.isEmpty()) {
+        ret = jsUndefined();
+    }
+    if constexpr (ConstructCall) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(frame.thisValue()));
+    } else {
+        RELEASE_AND_RETURN(scope, JSValue::encode(ret));
+    }
 }
 
 NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char* utf8name,
@@ -1782,7 +1785,12 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     const napi_property_descriptor* properties)
 {
     WTF::String name = WTF::String::fromUTF8({ utf8name, length }).isolatedCopy();
-    NativeExecutable* executable = vm.getHostFunction(NapiClass_ConstructorFunction, ImplementationVisibility::Public, NapiClass_ConstructorFunction, name);
+    NativeExecutable* executable = vm.getHostFunction(
+        // for normal call
+        NapiClass_ConstructorFunction<false>,
+        ImplementationVisibility::Public,
+        // for constructor call
+        NapiClass_ConstructorFunction<true>, name);
     Structure* structure = globalObject->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, globalObject, structure);
     napiClass->finishCreation(vm, executable, length, name, constructor, data, property_count, properties);

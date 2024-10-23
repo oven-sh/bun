@@ -71,6 +71,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     // object.
     JSC::JSObject* jscThis = globalObject->globalThis();
     if (!callFrame->thisValue().isUndefinedOrNull()) {
+        // TODO(@190n) throwscope, assert no exception
         jscThis = callFrame->thisValue().toObject(globalObject);
     }
     Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);

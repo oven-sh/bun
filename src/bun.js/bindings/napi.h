@@ -230,7 +230,6 @@ public:
 
     void* dataPtr = nullptr;
     napi_callback m_constructor = nullptr;
-    NapiRef* napiRef = nullptr;
 
 private:
     NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure)

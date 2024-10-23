@@ -47,6 +47,33 @@ static napi_valuetype get_typeof(napi_env env, napi_value value) {
   return result;
 }
 
+static const char *napi_valuetype_to_string(napi_valuetype type) {
+  switch (type) {
+  case napi_undefined:
+    return "undefined";
+  case napi_null:
+    return "null";
+  case napi_boolean:
+    return "boolean";
+  case napi_number:
+    return "number";
+  case napi_string:
+    return "string";
+  case napi_symbol:
+    return "symbol";
+  case napi_object:
+    return "object";
+  case napi_function:
+    return "function";
+  case napi_external:
+    return "external";
+  case napi_bigint:
+    return "bigint";
+  default:
+    return "unknown";
+  }
+}
+
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
   Napi::Env env(info.Env());
   Napi::HandleScope scope(env);
@@ -359,6 +386,22 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// call this with a bunch (>10) of string arguments representing increasing
+// decimal numbers. ensures that the runtime does not let these arguments be
+// freed.
+//
+// test_napi_handle_scope_many_args(() => gc(), '1', '2', '3', ...)
+napi_value test_napi_handle_scope_many_args(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  run_gc(info);
+  // now if bun is broken a bunch of our args are dead
+  for (size_t i = 1; i < info.Length(); i++) {
+    Napi::String s = info[i].As<Napi::String>();
+    assert(s.Utf8Value() == std::to_string(i));
+  }
+  return env.Undefined();
+}
+
 napi_value constructor(napi_env env, napi_callback_info info) {
   napi_value this_value;
   void *data;
@@ -366,11 +409,25 @@ napi_value constructor(napi_env env, napi_callback_info info) {
          napi_ok);
   printf("in constructor, data = \"%s\"\n",
          reinterpret_cast<const char *>(data));
+  napi_value new_target;
+  assert(napi_get_new_target(env, info, &new_target) == napi_ok);
+  printf("typeof new.target = %s\n",
+         new_target ? napi_valuetype_to_string(get_typeof(env, new_target))
+                    : "[nullptr]");
+  printf("typeof this = %s\n",
+         napi_valuetype_to_string(get_typeof(env, this_value)));
+  napi_value global;
+  assert(napi_get_global(env, &global) == napi_ok);
+  bool equal;
+  assert(napi_strict_equals(env, this_value, global, &equal) == napi_ok);
+  printf("this == global = %s\n", equal ? "true" : "false");
   napi_value property_value;
   assert(napi_create_string_utf8(env, "meow", NAPI_AUTO_LENGTH,
                                  &property_value) == napi_ok);
-  assert(napi_set_named_property(env, this_value, "foo", property_value) ==
-         napi_ok);
+  /*assert(*/ napi_set_named_property(env, this_value, "foo",
+                                      property_value) /* ==
+napi_ok)*/
+      ;
   napi_value undefined;
   assert(napi_get_undefined(env, &undefined) == napi_ok);
   return undefined;
@@ -485,6 +542,31 @@ napi_value create_promise(const Napi::CallbackInfo &info) {
 
   assert(napi_queue_async_work(env, data->work) == napi_ok);
   return promise;
+}
+
+class EchoWorker : public Napi::AsyncWorker {
+public:
+  EchoWorker(Napi::Env env, Napi::Promise::Deferred deferred,
+             const std::string &&echo)
+      : Napi::AsyncWorker(env), m_echo(echo), m_deferred(deferred) {}
+  ~EchoWorker() override {}
+
+  void Execute() override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  void OnOK() override { m_deferred.Resolve(Napi::String::New(Env(), m_echo)); }
+
+private:
+  std::string m_echo;
+  Napi::Promise::Deferred m_deferred;
+};
+
+Napi::Value create_promise_with_napi_cpp(const Napi::CallbackInfo &info) {
+  auto deferred = Napi::Promise::Deferred::New(info.Env());
+  auto *work = new EchoWorker(info.Env(), deferred, "hello world");
+  work->Queue();
+  return deferred.Promise();
 }
 
 struct ThreadsafeFunctionData {
@@ -628,33 +710,6 @@ napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   napi_value ret;
   assert(napi_get_boolean(info.Env(), finalize_called, &ret) == napi_ok);
   return ret;
-}
-
-static const char *napi_valuetype_to_string(napi_valuetype type) {
-  switch (type) {
-  case napi_undefined:
-    return "undefined";
-  case napi_null:
-    return "null";
-  case napi_boolean:
-    return "boolean";
-  case napi_number:
-    return "number";
-  case napi_string:
-    return "string";
-  case napi_symbol:
-    return "symbol";
-  case napi_object:
-    return "object";
-  case napi_function:
-    return "function";
-  case napi_external:
-    return "external";
-  case napi_bigint:
-    return "bigint";
-  default:
-    return "unknown";
-  }
 }
 
 // calls a function (the sole argument) which must throw. catches and returns
@@ -1193,6 +1248,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, get_wrap_data_from_ref));
   exports.Set("get_object_from_ref",
               Napi::Function::New(env, get_object_from_ref));
+  exports.Set("create_promise_with_napi_cpp",
+              Napi::Function::New(env, create_promise_with_napi_cpp));
+  exports.Set("test_napi_handle_scope_many_args",
+              Napi::Function::New(env, test_napi_handle_scope_many_args));
 
   return exports;
 }

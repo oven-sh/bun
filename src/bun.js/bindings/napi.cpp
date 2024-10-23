@@ -545,9 +545,10 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
-        auto result = callback(env, frame.toNapi());
+        napi_value napi_result = callback(env, frame.toNapi());
+        JSValue result = napi_result ? toJS(napi_result) : jsUndefined();
 
-        RELEASE_AND_RETURN(scope, JSValue::encode(toJS(result)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
     }
 
     NAPIFunction(JSC::VM& vm, JSC::NativeExecutable* exec, JSGlobalObject* globalObject, Structure* structure, Zig::CFFIFunction method, void* dataPtr)

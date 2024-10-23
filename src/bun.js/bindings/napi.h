@@ -293,8 +293,6 @@ public:
         RELEASE_AND_RETURN(scope, footprint);
     }
 
-    NapiRef* napiRef = nullptr;
-
 private:
     NapiPrototype(VM& vm, Structure* structure)
         : Base(vm, structure)

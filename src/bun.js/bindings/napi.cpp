@@ -1058,8 +1058,6 @@ NapiRef** getRefToWrapValue(Zig::GlobalObject* globalObject, JSValue value, Bun:
 
     if (!value.isCell()) {
         return nullptr;
-    } else if (auto* proto = jsDynamicCast<NapiPrototype*>(value)) {
-        return &proto->napiRef;
     } else {
         // TODO this probably leaks in napi_unwrap on an object that isn't wrapped
         if (auto* found_external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()))) {
@@ -1236,9 +1234,7 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     void* inheritedDataPtr = nullptr;
-    if (NapiPrototype* proto = jsDynamicCast<NapiPrototype*>(objectValue)) {
-        inheritedDataPtr = proto->napiRef ? proto->napiRef->data : nullptr;
-    } else if (NapiClass* class_ = jsDynamicCast<NapiClass*>(objectValue)) {
+    if (NapiClass* class_ = jsDynamicCast<NapiClass*>(objectValue)) {
         inheritedDataPtr = class_->dataPtr;
     }
 

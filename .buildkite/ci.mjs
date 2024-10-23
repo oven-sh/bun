@@ -273,7 +273,7 @@ function getPipeline() {
     }
 
     return {
-      key: `${getKey(platform)}-${distro}-${release}-test-bun`,
+      key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
       depends_on: [`${getKey(platform)}-build-bun`],
       agents,

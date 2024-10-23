@@ -562,7 +562,7 @@ pub fn StyleRuleKey(comptime R: type) type {
                 V,
                 struct {
                     pub fn hash(_: @This(), key: This) u32 {
-                        return @intCast(key.hash);
+                        return @truncate(key.hash);
                     }
 
                     pub fn eql(_: @This(), a: This, b: This, _: usize) bool {

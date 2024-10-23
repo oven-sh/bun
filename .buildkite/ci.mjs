@@ -272,6 +272,13 @@ function getPipeline() {
       command = `./scripts/runner.node.mjs --step ${getKey(platform)}-build-bun`;
     }
 
+    let parallelism;
+    if (os === "darwin") {
+      parallelism = 2;
+    } else {
+      parallelism = 10;
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
@@ -279,6 +286,7 @@ function getPipeline() {
       agents,
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
+      parallelism,
       command,
     };
   };

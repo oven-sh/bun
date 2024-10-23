@@ -14,7 +14,13 @@ fn BakeGetOnModuleNamespace(global: *JSC.JSGlobalObject, module: JSValue, proper
     return result;
 }
 
-extern fn BakeRenderRoutesForProd(*JSC.JSGlobalObject, out_base: bun.String, render_static_cb: JSValue, arr: JSValue) *JSC.JSPromise;
+extern fn BakeRenderRoutesForProd(
+    *JSC.JSGlobalObject,
+    out_base: bun.String,
+    render_static_cb: JSValue,
+    arr: JSValue,
+    patterns: JSValue,
+) *JSC.JSPromise;
 
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.
@@ -173,6 +179,14 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
     const separate_ssr_graph = if (framework.server_components) |sc| sc.separate_ssr_graph else false;
 
+    // this is probably wrong
+    const map = try allocator.create(bun.DotEnv.Map);
+    map.* = bun.DotEnv.Map.init(allocator);
+    const loader = try allocator.create(bun.DotEnv.Loader);
+    loader.* = bun.DotEnv.Loader.init(map, allocator);
+    try loader.map.put("NODE_ENV", "production");
+    bun.DotEnv.instance = loader;
+
     var client_bundler: bun.bundler.Bundler = undefined;
     var server_bundler: bun.bundler.Bundler = undefined;
     var ssr_bundler: bun.bundler.Bundler = undefined;
@@ -182,6 +196,9 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         try framework.initBundler(allocator, vm.log, .production, .ssr, &ssr_bundler);
     }
 
+    // these share pointers right now, so setting NODE_ENV == production
+    bun.assert(server_bundler.env == client_bundler.env);
+
     framework.* = framework.resolve(&server_bundler.resolver, &client_bundler.resolver) catch {
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         bun.Global.crash();
@@ -189,7 +206,6 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
     Output.prettyErrorln("Bundling routes", .{});
     Output.flush();
-    const unique_key = std.crypto.random.int(u64);
 
     var root_dir_buf: bun.PathBuffer = undefined;
     const root_dir_path = bun.path.joinAbsStringBuf(cwd, &root_dir_buf, &.{"dist"}, .auto);
@@ -217,7 +233,6 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         },
         allocator,
         .{ .js = vm.event_loop },
-        unique_key,
     );
 
     Output.prettyErrorln("Rendering routes", .{});
@@ -232,7 +247,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     const module_key_routes = JSValue.createEmptyArray(vm.global, options.routes.len);
 
     for (initial_output.items, 0..) |file, i| {
-        std.debug.print("{} - {s} : {s} - {?d}\n", .{ file.side, file.src_path.text, file.dest_path, file.entry_point_index });
+        // std.debug.print("{} - {s} : {s} - {?d}\n", .{ file.side, file.src_path.text, file.dest_path, file.entry_point_index });
 
         switch (file.side) {
             .client => {
@@ -242,7 +257,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
                 if (file.entry_point_index) |entry_point| {
                     switch (entry_point) {
                         1 => chunk_id_client_entry = @intCast(i),
-                        else => |j| Output.panic("unknown client entry point index {d}", .{j}),
+                        else => {},
                     }
                 }
             },
@@ -277,7 +292,13 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
                             switch (entry_point) {
                                 0 => module_key_server_entry = module_key,
                                 1 => {}, // client entry
-                                else => |j| module_key_routes.putIndex(vm.global, j - 2, module_key),
+                                else => |j| {
+                                    // SCBs are entry points past
+                                    const route_index = j - 2;
+                                    if (route_index < options.routes.len) {
+                                        module_key_routes.putIndex(vm.global, j - 2, module_key);
+                                    }
+                                },
                             }
                         }
                     },
@@ -295,23 +316,41 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     // Right now server.tsx is what controls the value, but imports happen first.
     vm.global.toJSValue().put(vm.global, "__webpack_require__", JSValue.createEmptyObject(vm.global, 0));
 
+    const route_patterns = JSValue.createEmptyArray(vm.global, options.routes.len);
+    for (options.routes, 0..) |route, i| {
+        route_patterns.putIndex(vm.global, @intCast(i), bun.String.createUTF8(route.pattern).toJS(vm.global));
+    }
+
     // Static site generator
     const server_entry_point = loadModule(vm, module_key_server_entry);
-    server_entry_point.print(vm.global, .Log, .Info);
     const server_render_func: JSValue = BakeGetOnModuleNamespace(vm.global, server_entry_point, "renderStatic") orelse {
         Output.errGeneric("Framework does not support static site generation", .{});
         Output.note("The file {s} is missing the \"renderStatic\" export", .{bun.fmt.quote(framework.entry_server)});
         bun.Global.crash();
     };
-    server_render_func.print(vm.global, .Log, .Info);
 
     const render_promise = BakeRenderRoutesForProd(
         vm.global,
         bun.String.init(root_dir_path),
         server_render_func,
         module_key_routes,
+        route_patterns,
     );
     vm.waitForPromise(.{ .normal = render_promise });
+    switch (render_promise.unwrap(vm.jsc, .mark_handled)) {
+        .pending => unreachable,
+        .fulfilled => {
+            Output.prettyln("done", .{});
+            Output.flush();
+        },
+        .rejected => |err| {
+            vm.printErrorLikeObjectToConsole(err);
+            if (vm.exit_handler.exit_code == 0) {
+                vm.exit_handler.exit_code = 1;
+            }
+            vm.globalExit();
+        },
+    }
 }
 
 /// unsafe function, must be run outside of the event loop

@@ -8637,7 +8637,6 @@ pub const UseDirective = enum(u2) {
 
     pub const Flags = struct {
         has_any_client: bool = false,
-        has_any_server: bool = false,
     };
 
     pub fn isBoundary(this: UseDirective, other: UseDirective) bool {

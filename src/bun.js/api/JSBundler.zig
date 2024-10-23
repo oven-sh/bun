@@ -1087,9 +1087,6 @@ pub const BuildArtifact = struct {
         chunk,
         asset,
         @"entry-point",
-        @"component-manifest",
-        @"use client",
-        @"use server",
         sourcemap,
         bytecode,
 

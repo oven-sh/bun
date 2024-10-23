@@ -370,6 +370,7 @@ pub const BundleV2 = struct {
     /// Allocations not tracked by a threadlocal heap
     free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),
 
+    /// See the comment in `Chunk.OutputPiece`
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
 
@@ -800,6 +801,7 @@ pub const BundleV2 = struct {
         task.tree_shaking = this.linker.options.tree_shaking;
         task.is_entry_point = is_entry_point;
         task.known_target = target;
+        task.jsx = this.bundlerForTarget(target).options.jsx;
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1011,7 +1013,7 @@ pub const BundleV2 = struct {
                         const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch
                             continue;
 
-                        if (entry_point.client_wrapped) {
+                        if (false and entry_point.client_wrapped) {
                             const wrapped_index = try this.enqueueServerComponentGeneratedFile(.{
                                 .client_entry_wrapper = .{
                                     .path = resolved.pathConst().?.*.text,
@@ -1076,7 +1078,6 @@ pub const BundleV2 = struct {
         var client_manifest_props: std.ArrayListUnmanaged(G.Property) = .{};
 
         const scbs = this.graph.server_component_boundaries.list.slice();
-        const sources = this.graph.input_files.items(.source);
         const named_exports_array = this.graph.ast.items(.named_exports);
 
         const id_string = server.newExpr(E.String{ .data = "id" });
@@ -1088,12 +1089,12 @@ pub const BundleV2 = struct {
         for (
             scbs.items(.use_directive),
             scbs.items(.source_index),
-        ) |use, source_id| {
-            const source = sources[source_id];
+            scbs.items(.ssr_source_index),
+        ) |use, source_id, ssr_index| {
             if (use == .client) {
-                // TODO(@paperdave/kit): this file is being generated far too
+                // TODO(@paperdave/bake): this file is being generated far too
                 // early. we don't know which exports are dead and which exports
-                // are live.  Tree-shaking figures that out. However,
+                // are live. Tree-shaking figures that out. However,
                 // tree-shaking happens after import binding, which would
                 // require this ast.
                 //
@@ -1107,14 +1108,27 @@ pub const BundleV2 = struct {
                 const keys = named_exports_array[source_id].keys();
                 const client_manifest_items = try alloc.alloc(G.Property, keys.len);
 
-                const client_path = server.newExpr(E.String{ .data = source.path.pretty });
-                const ssr_path = if (sc.separate_ssr_graph)
-                    server.newExpr(E.String{ .data = try std.fmt.allocPrint(alloc, "ssr:{s}", .{source.path.pretty}) })
-                else
-                    client_path;
+                if (!sc.separate_ssr_graph) bun.todoPanic(@src(), "separate_ssr_graph=false", .{});
+
+                const client_path = server.newExpr(E.String{
+                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                        bun.fmt.hexIntLower(this.unique_key),
+                        source_id,
+                    }),
+                });
+                const ssr_path = server.newExpr(E.String{
+                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                        bun.fmt.hexIntLower(this.unique_key),
+                        ssr_index,
+                    }),
+                });
 
                 for (keys, client_manifest_items) |export_name_string, *client_item| {
-                    const server_key_string = try std.fmt.allocPrint(alloc, "{s}#{s}", .{ source.path.pretty, export_name_string });
+                    const server_key_string = try std.fmt.allocPrint(alloc, "{}S{d:0>8}#{s}", .{
+                        bun.fmt.hexIntLower(this.unique_key),
+                        source_id,
+                        export_name_string,
+                    });
                     const export_name = server.newExpr(E.String{ .data = export_name_string });
 
                     // write dependencies on the underlying module, not the proxy
@@ -1122,7 +1136,7 @@ pub const BundleV2 = struct {
                         .key = server.newExpr(E.String{ .data = server_key_string }),
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
-                                .{ .key = id_string, .value = client_path },
+                                .{ .key = id_string, .value = ssr_path },
                                 .{ .key = name_string, .value = export_name },
                                 .{ .key = chunks_string, .value = empty_array },
                             }),
@@ -1133,14 +1147,14 @@ pub const BundleV2 = struct {
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
                                 .{ .key = name_string, .value = export_name },
-                                .{ .key = specifier_string, .value = ssr_path },
+                                .{ .key = specifier_string, .value = client_path },
                             }),
                         }),
                     };
                 }
 
                 try client_manifest_props.append(alloc, .{
-                    .key = client_path,
+                    .key = ssr_path,
                     .value = server.newExpr(E.Object{
                         .properties = G.Property.List.init(client_manifest_items),
                     }),
@@ -1200,7 +1214,7 @@ pub const BundleV2 = struct {
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = ParseTask.init(resolve_result, source_index, this);
         task.loader = loader;
-        task.jsx = this.bundler.options.jsx;
+        task.jsx = this.bundlerForTarget(known_target).options.jsx;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         task.known_target = known_target;
@@ -1247,7 +1261,7 @@ pub const BundleV2 = struct {
                 .contents = source.contents,
             },
             .side_effects = .has_side_effects,
-            .jsx = this.bundler.options.jsx,
+            .jsx = this.bundlerForTarget(known_target).options.jsx,
             .source_index = source_index,
             .module_type = .unknown,
             .emit_decorator_metadata = false, // TODO
@@ -1263,7 +1277,7 @@ pub const BundleV2 = struct {
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
-            var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
@@ -1308,14 +1322,13 @@ pub const BundleV2 = struct {
         bundler: *ThisBundler,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
-        unique_key: u64,
         enable_reloading: bool,
         reachable_files_count: *usize,
         minify_duration: *u64,
         source_code_size: *u64,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(bundler, null, allocator, event_loop, enable_reloading, null, null);
-        this.unique_key = unique_key;
+        this.unique_key = generateUniqueKey();
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1343,6 +1356,8 @@ pub const BundleV2 = struct {
 
         try this.processFilesToCopy(reachable_files);
 
+        try this.addServerComponentBoundariesAsExtraEntryPoints();
+
         try this.cloneAST();
 
         const chunks = try this.linker.link(
@@ -1350,7 +1365,6 @@ pub const BundleV2 = struct {
             this.graph.entry_points.items,
             this.graph.server_component_boundaries,
             reachable_files,
-            unique_key,
         );
 
         return try this.linker.generateChunksInParallel(chunks, false);
@@ -1362,10 +1376,9 @@ pub const BundleV2 = struct {
         kit_options: BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
-        unique_key: u64,
     ) !std.ArrayList(options.OutputFile) {
         var this = try BundleV2.init(server_bundler, kit_options, allocator, event_loop, false, null, null);
-        this.unique_key = unique_key;
+        this.unique_key = generateUniqueKey();
 
         if (this.bundler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1389,6 +1402,8 @@ pub const BundleV2 = struct {
 
         try this.processFilesToCopy(reachable_files);
 
+        try this.addServerComponentBoundariesAsExtraEntryPoints();
+
         try this.cloneAST();
 
         const chunks = try this.linker.link(
@@ -1396,16 +1411,30 @@ pub const BundleV2 = struct {
             this.graph.entry_points.items,
             this.graph.server_component_boundaries,
             reachable_files,
-            unique_key,
         );
 
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
-    pub fn processFilesToCopy(
-        this: *BundleV2,
-        reachable_files: []const Index,
-    ) !void {
+    pub fn addServerComponentBoundariesAsExtraEntryPoints(this: *BundleV2) !void {
+        // Prepare server component boundaries. Each boundary turns into two
+        // entry points, a client entrypoint and a server entrypoint.
+        //
+        // TODO: This should be able to group components by the user specified
+        // entry points. This way, using two component files in a route does not
+        // create two separate chunks. (note: bake passes each route as an entrypoint)
+        {
+            const scbs = this.graph.server_component_boundaries.slice();
+            try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, scbs.list.len * 2);
+            for (scbs.list.items(.source_index), scbs.list.items(.ssr_source_index)) |original_index, ssr_index| {
+                inline for (.{ original_index, ssr_index }) |idx| {
+                    this.graph.entry_points.appendAssumeCapacity(Index.init(idx));
+                }
+            }
+        }
+    }
+
+    pub fn processFilesToCopy(this: *BundleV2, reachable_files: []const Index) !void {
         if (this.graph.estimated_file_loader_count > 0) {
             const unique_key_for_additional_files = this.graph.input_files.items(.unique_key_for_additional_file);
             const content_hashes_for_additional_files = this.graph.input_files.items(.content_hash_for_additional_file);
@@ -1877,7 +1906,7 @@ pub const BundleV2 = struct {
                                 },
                             },
                             .side_effects = _resolver.SideEffects.has_side_effects,
-                            .jsx = this.bundler.options.jsx,
+                            .jsx = this.bundlerForTarget(resolve.import_record.original_target).options.jsx,
                             .source_index = source_index,
                             .module_type = .unknown,
                             .loader = loader,
@@ -1967,7 +1996,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
         entry_points: []const []const u8,
     ) !std.ArrayList(options.OutputFile) {
-        this.unique_key = std.crypto.random.int(u64);
+        this.unique_key = generateUniqueKey();
 
         if (this.bundler.log.errors > 0) {
             return error.BuildFailed;
@@ -1998,12 +2027,13 @@ pub const BundleV2 = struct {
 
         try this.processFilesToCopy(reachable_files);
 
+        try this.addServerComponentBoundariesAsExtraEntryPoints();
+
         const chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,
             this.graph.server_component_boundaries,
             reachable_files,
-            this.unique_key,
         );
 
         if (this.bundler.log.errors > 0) {
@@ -2016,7 +2046,7 @@ pub const BundleV2 = struct {
     /// Dev Server uses this instead to run a subset of the bundler, where
     /// it indexes the chunks into IncrementalGraph on it's own.
     pub fn runFromBakeDevServer(this: *BundleV2, bake_entry_points: []const BakeEntryPoint) !BakeBundleOutput {
-        this.unique_key = std.crypto.random.int(u64);
+        this.unique_key = generateUniqueKey();
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -2601,7 +2631,7 @@ pub const BundleV2 = struct {
             resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = target;
-            resolve_task.jsx.development = resolve_result.jsx.development;
+            resolve_task.jsx = this.bundlerForTarget(target).options.jsx;
 
             if (import_record.tag.loader()) |loader| {
                 resolve_task.loader = loader;
@@ -3952,7 +3982,20 @@ pub const ServerComponentParseTask = struct {
             &.{server_components.server_register_client_reference},
         ))[0];
 
-        const module_path = b.newExpr(E.String{ .data = data.other_source.path.pretty });
+        const module_path = b.newExpr(E.String{
+            // In development, the path loaded is the source file: Easy!
+            //
+            // In production, the path here must be the final chunk path, but
+            // that information is not yet available since chunks are not
+            // computed. The unique_key replacement system is used here.
+            .data = if (task.ctx.bundler.options.dev_server != null)
+                data.other_source.path.pretty
+            else
+                try std.fmt.allocPrint(b.allocator, "{}S{d:0>8}", .{
+                    bun.fmt.hexIntLower(task.ctx.unique_key),
+                    data.other_source.index.get(),
+                }),
+        });
 
         for (client_named_exports.keys()) |key| {
             const is_default = bun.strings.eqlComptime(key, "default");
@@ -4285,19 +4328,19 @@ pub const AdditionalFile = union(enum) {
 const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
 
 const EntryPoint = struct {
-    // This may be an absolute path or a relative path. If absolute, it will
-    // eventually be turned into a relative path by computing the path relative
-    // to the "outbase" directory. Then this relative path will be joined onto
-    // the "outdir" directory to form the final output path for this entry point.
+    /// This may be an absolute path or a relative path. If absolute, it will
+    /// eventually be turned into a relative path by computing the path relative
+    /// to the "outbase" directory. Then this relative path will be joined onto
+    /// the "outdir" directory to form the final output path for this entry point.
     output_path: bun.PathString = bun.PathString.empty,
 
-    // This is the source index of the entry point. This file must have a valid
-    // entry point kind (i.e. not "none").
+    /// This is the source index of the entry point. This file must have a valid
+    /// entry point kind (i.e. not "none").
     source_index: Index.Int = 0,
 
-    // Manually specified output paths are ignored when computing the default
-    // "outbase" directory, which is computed as the lowest common ancestor of
-    // all automatically generated output paths.
+    /// Manually specified output paths are ignored when computing the default
+    /// "outbase" directory, which is computed as the lowest common ancestor of
+    /// all automatically generated output paths.
     output_path_was_auto_generated: bool = false,
 
     pub const List = MultiArrayList(EntryPoint);
@@ -4307,17 +4350,9 @@ const EntryPoint = struct {
         user_specified,
         dynamic_import,
 
-        /// Created via an import of a "use client" file
-        react_client_component,
-
-        /// Created via an import of a "use server" file
-        react_server_component,
-
         pub fn outputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
             return switch (this) {
                 .user_specified => .@"entry-point",
-                .react_client_component => .@"use client",
-                .react_server_component => .@"use server",
                 else => .chunk,
             };
         }
@@ -4330,21 +4365,9 @@ const EntryPoint = struct {
             return this == .user_specified;
         }
 
+        // TODO: delete
         pub inline fn isServerEntryPoint(this: Kind) bool {
-            return this == .user_specified or this == .react_server_component;
-        }
-
-        // TODO: Rename this to isServerComponentBoundary
-        pub fn isReactReference(this: Kind) bool {
-            return this == .react_client_component or this == .react_server_component;
-        }
-
-        pub fn useDirective(this: Kind) UseDirective {
-            return switch (this) {
-                .react_client_component => .client,
-                .react_server_component => .server,
-                else => .none,
-            };
+            return this == .user_specified;
         }
     };
 };
@@ -4382,8 +4405,7 @@ const LinkerGraph = struct {
 
     stable_source_indices: []const u32 = &[_]u32{},
 
-    react_client_component_boundary: BitSet = .{},
-    react_server_component_boundary: BitSet = .{},
+    is_scb_bitset: BitSet = .{},
     has_client_components: bool = false,
     has_server_components: bool = false,
 
@@ -4397,22 +4419,6 @@ const LinkerGraph = struct {
             .allocator = allocator,
             .files_live = try BitSet.initEmpty(allocator, file_count),
         };
-    }
-
-    pub fn useDirectiveBoundary(this: *const LinkerGraph, source_index: Index.Int) UseDirective {
-        if (this.react_client_component_boundary.bit_length > 0) {
-            if (this.react_client_component_boundary.isSet(source_index)) {
-                return .client;
-            }
-        }
-
-        if (this.react_server_component_boundary.bit_length > 0) {
-            if (this.react_server_component_boundary.isSet(source_index)) {
-                return .server;
-            }
-        }
-
-        return .none;
     }
 
     pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {
@@ -4666,92 +4672,40 @@ const LinkerGraph = struct {
             this.meta.len = this.ast.len;
             this.meta.zero();
 
-            if (server_component_boundaries.list.len > 0) {
-                this.react_client_component_boundary = BitSet.initEmpty(this.allocator, this.files.len) catch unreachable;
-                this.react_server_component_boundary = BitSet.initEmpty(this.allocator, this.files.len) catch unreachable;
-                var any_server = false;
-                var any_client = false;
+            if (scb.list.len > 0) {
+                this.is_scb_bitset = BitSet.initEmpty(this.allocator, this.files.len) catch unreachable;
 
-                // Loop #1: populate the list of files that are react client components
-                for (scb.list.items(.use_directive), scb.list.items(.source_index)) |use, source_id| {
+                // Index all SCBs into the bitset. This is needed so chunking
+                // can track the chunks that SCBs belong to.
+                for (scb.list.items(.use_directive), scb.list.items(.source_index), scb.list.items(.reference_source_index)) |use, original_id, ref_id| {
                     switch (use) {
                         .none => {},
                         .client => {
-                            any_client = true;
-                            this.react_client_component_boundary.set(source_id);
+                            this.is_scb_bitset.set(original_id);
+                            this.is_scb_bitset.set(ref_id);
                         },
                         .server => {
-                            any_server = true;
-                            this.react_server_component_boundary.set(source_id);
+                            bun.todoPanic(@src(), "um", .{});
                         },
                     }
                 }
 
-                if (any_client or any_server) {
-                    // Loop #2: For each import in the entire module graph
-                    for (this.reachable_files) |source_id| {
-                        const use_directive = this.useDirectiveBoundary(source_id.get());
-                        const is_shadow_entrypoint = false;
-
-                        // If the reachable file has a "use client"; at the top
-                        for (import_records_list[source_id.get()].slice()) |*import_record| {
-                            const source_index_ = import_record.source_index;
-                            if (source_index_.isValid()) {
-                                const source_index = import_record.source_index.get();
-
-                                // and the import path refers to a server entry point
-                                if (import_record.tag == .none) {
-                                    const other = this.useDirectiveBoundary(source_index);
-
-                                    if (use_directive.boundering(other)) |boundary| {
-                                        // That import is a Server Component reference.
-                                        switch (boundary) {
-                                            .client => {
-                                                if (!is_shadow_entrypoint) {
-                                                    // const pretty = sources[source_index].path.pretty;
-                                                    // import_record.module_id = bun.hash32(pretty);
-                                                    // import_record.tag = .react_client_component;
-                                                    // import_record.path.namespace = "client";
-                                                    // import_record.print_namespace_in_path = true;
-                                                    import_record.source_index = Index.init(
-                                                        scb.getReferenceSourceIndex(
-                                                            source_index,
-                                                        ) orelse unreachable, // file didn't have a boundary
-                                                    );
-                                                    bun.assert(import_record.source_index.isValid()); // did not generate
-                                                }
-                                            },
-                                            .server => {
-                                                {
-                                                    bun.todoPanic(@src(), "\"use server\"", .{});
-                                                }
-                                                import_record.module_id = bun.hash32(sources[source_index].path.pretty);
-                                                import_record.tag = .react_server_component;
-                                                import_record.path.namespace = "server";
-                                                import_record.print_namespace_in_path = true;
-
-                                                if (entry_point_kinds[source_index] == .none) {
-                                                    if (comptime Environment.allow_assert)
-                                                        debug("Adding server component entry point for {s}", .{sources[source_index].path.text});
-
-                                                    try this.entry_points.append(this.allocator, .{
-                                                        .source_index = source_index,
-                                                        .output_path = bun.PathString.init(sources[source_index].path.text),
-                                                        .output_path_was_auto_generated = true,
-                                                    });
-                                                    entry_point_kinds[source_index] = .react_server_component;
-                                                }
-                                            },
-                                        }
-                                    }
-                                }
-                            }
+                // For client components, the import record index currently points to the original source index, instead of the reference source index.
+                for (this.reachable_files) |source_id| {
+                    for (import_records_list[source_id.get()].slice()) |*import_record| {
+                        if (import_record.source_index.isValid() and this.is_scb_bitset.isSet(import_record.source_index.get())) {
+                            import_record.source_index = Index.init(
+                                scb.getReferenceSourceIndex(import_record.source_index.get()) orelse
+                                    // If this gets hit, might be fine to switch this to `orelse continue`
+                                    // not confident in this assertion
+                                    Output.panic("Missing SCB boundary for file #{d}", .{import_record.source_index.get()}),
+                            );
+                            bun.assert(import_record.source_index.isValid()); // did not generate
                         }
                     }
-                } else {
-                    this.react_client_component_boundary = .{};
-                    this.react_server_component_boundary = .{};
                 }
+            } else {
+                this.is_scb_bitset = .{};
             }
         }
 
@@ -4843,15 +4797,19 @@ const LinkerGraph = struct {
         /// to this file
         distance_from_entry_point: u32 = std.math.maxInt(u32),
 
-        /// If "entryPointKind" is not "entryPointNone", this is the index of the
-        /// corresponding entry point chunk.
-        entry_point_chunk_index: u32 = 0,
-
-        /// This file is an entry point if and only if this is not "entryPointNone".
+        /// This file is an entry point if and only if this is not ".none".
         /// Note that dynamically-imported files are allowed to also be specified by
         /// the user as top-level entry points, so some dynamically-imported files
-        /// may be "entryPointUserSpecified" instead of "entryPointDynamicImport".
+        /// may be ".user_specified" instead of ".dynamic_import".
         entry_point_kind: EntryPoint.Kind = .none,
+
+        /// If "entry_point_kind" is not ".none", this is the index of the
+        /// corresponding entry point chunk.
+        ///
+        /// This is also initialized for files that are a SCB's generated
+        /// reference, pointing to its destination. This forms a lookup map from
+        /// a Source.Index to its output path inb reakOutputIntoPieces
+        entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
         line_offset_table: bun.sourcemap.LineOffsetTable.List = .{},
         quoted_source_contents: string = "",
@@ -5145,7 +5103,6 @@ pub const LinkerContext = struct {
         entry_points: []Index,
         server_component_boundaries: ServerComponentBoundary.List,
         reachable: []Index,
-        unique_key: u64,
     ) ![]Chunk {
         try this.load(
             bundle,
@@ -5179,7 +5136,7 @@ pub const LinkerContext = struct {
             this.checkForMemoryCorruption();
         }
 
-        const chunks = try this.computeChunks(unique_key);
+        const chunks = try this.computeChunks(bundle.unique_key);
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -5416,6 +5373,25 @@ pub const LinkerContext = struct {
         // Determine the order of JS files (and parts) within the chunk ahead of time
         try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
 
+        {
+            const scb = this.parse_graph.server_component_boundaries.slice();
+
+            // Propagate server component boundary chunk IDs.
+            for (
+                scb.list.items(.use_directive),
+                scb.list.items(.source_index),
+                scb.list.items(.reference_source_index),
+                scb.list.items(.ssr_source_index),
+            ) |use, original_id, ref_id, ssr_id| {
+                _ = original_id; // autofix
+                _ = ref_id; // autofix
+                _ = ssr_id; // autofix
+                if (use == .server) @panic("TODO");
+
+                // entry_point_chunk_indices[original_id] = entry_point_chunk_indices[ref_id];
+            }
+        }
+
         const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
         var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
         this.unique_key_buf = unique_key_builder.allocatedSlice();
@@ -5431,9 +5407,9 @@ pub const LinkerContext = struct {
             // Assign a unique key to each chunk. This key encodes the index directly so
             // we can easily recover it later without needing to look it up in a map. The
             // last 8 numbers of the key are the chunk index.
-            chunk.unique_key = unique_key_builder.fmt("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
+            chunk.unique_key = unique_key_builder.fmt("{}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
             if (this.unique_key_prefix.len == 0)
-                this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{any}", .{bun.fmt.hexIntLower(unique_key)})];
+                this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{}", .{bun.fmt.hexIntLower(unique_key)})];
 
             if (chunk.entry_point.is_entry_point and
                 kinds[chunk.entry_point.source_index] == .user_specified)
@@ -5478,16 +5454,17 @@ pub const LinkerContext = struct {
         var parts_prefix_shared = std.ArrayList(PartRange).init(temp_allocator);
         defer part_ranges_shared.deinit();
         defer parts_prefix_shared.deinit();
-        for (chunks) |*chunk| {
+        for (chunks, 0..) |*chunk, index| {
             switch (chunk.content) {
                 .javascript => {
                     try this.findImportedPartsInJSOrder(
                         chunk,
                         &part_ranges_shared,
                         &parts_prefix_shared,
+                        @intCast(index),
                     );
                 },
-                .css => {},
+                .css => {}, // handled in `findImportedCSSFilesInJSOrder`
             }
         }
     }
@@ -5497,6 +5474,7 @@ pub const LinkerContext = struct {
         chunk: *Chunk,
         part_ranges_shared: *std.ArrayList(PartRange),
         parts_prefix_shared: *std.ArrayList(PartRange),
+        chunk_index: u32,
     ) !void {
         var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator, chunk.files_with_parts_in_chunk.count());
         defer chunk_order_array.deinit();
@@ -5513,17 +5491,18 @@ pub const LinkerContext = struct {
 
         Chunk.Order.sort(chunk_order_array.items);
 
-        const Visitor = struct {
+        const FindImportedPartsVisitor = struct {
             entry_bits: *const AutoBitSet,
             flags: []const JSMeta.Flags,
             parts: []BabyList(js_ast.Part),
             import_records: []BabyList(ImportRecord),
-            files: std.ArrayList(Index.Int) = undefined,
-            part_ranges: std.ArrayList(PartRange) = undefined,
-            visited: std.AutoHashMap(Index.Int, void) = undefined,
-            parts_prefix: std.ArrayList(PartRange) = undefined,
+            files: std.ArrayList(Index.Int),
+            part_ranges: std.ArrayList(PartRange),
+            visited: std.AutoHashMap(Index.Int, void),
+            parts_prefix: std.ArrayList(PartRange),
             c: *LinkerContext,
             entry_point: Chunk.EntryPoint,
+            chunk_index: u32,
 
             fn appendOrExtendRange(
                 ranges: *std.ArrayList(PartRange),
@@ -5550,8 +5529,8 @@ pub const LinkerContext = struct {
             pub fn visit(
                 v: *@This(),
                 source_index: Index.Int,
-                comptime with_server_components: UseDirective.Flags,
                 comptime with_code_splitting: bool,
+                comptime with_scb: bool,
             ) void {
                 if (source_index == Index.invalid.value) return;
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
@@ -5563,29 +5542,6 @@ pub const LinkerContext = struct {
                 else
                     // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
                     v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
-
-                if (with_server_components.has_any_client or with_server_components.has_any_server) {
-                    if (is_file_in_chunk and
-                        v.entry_point.is_entry_point and
-                        v.entry_point.source_index != source_index)
-                    {
-                        if (with_server_components.has_any_client) {
-                            if (v.c.graph.react_client_component_boundary.isSet(source_index)) {
-                                if (!v.c.graph.react_client_component_boundary.isSet(v.entry_point.source_index)) {
-                                    return;
-                                }
-                            }
-                        }
-
-                        if (with_server_components.has_any_server) {
-                            if (v.c.graph.react_server_component_boundary.isSet(source_index)) {
-                                if (!v.c.graph.react_server_component_boundary.isSet(v.entry_point.source_index)) {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
 
                 // Wrapped files can't be split because they are all inside the wrapper
                 const can_be_split = v.flags[source_index].wrap == .none;
@@ -5608,7 +5564,7 @@ pub const LinkerContext = struct {
                                 continue;
                             }
 
-                            v.visit(record.source_index.get(), with_server_components, with_code_splitting);
+                            v.visit(record.source_index.get(), with_code_splitting, with_scb);
                         }
                     }
 
@@ -5631,7 +5587,11 @@ pub const LinkerContext = struct {
                 }
 
                 if (is_file_in_chunk) {
-                    v.files.append(source_index) catch unreachable;
+                    if (with_scb and v.c.graph.is_scb_bitset.isSet(source_index)) {
+                        v.c.graph.files.items(.entry_point_chunk_index)[source_index] = v.chunk_index;
+                    }
+
+                    v.files.append(source_index) catch bun.outOfMemory();
 
                     // CommonJS files are all-or-nothing so all parts must be contiguous
                     if (!can_be_split) {
@@ -5641,7 +5601,7 @@ pub const LinkerContext = struct {
                                 .part_index_begin = 0,
                                 .part_index_end = @as(u32, @truncate(parts.len)),
                             },
-                        ) catch unreachable;
+                        ) catch bun.outOfMemory();
                     }
                 }
             }
@@ -5650,7 +5610,7 @@ pub const LinkerContext = struct {
         part_ranges_shared.clearRetainingCapacity();
         parts_prefix_shared.clearRetainingCapacity();
 
-        var visitor = Visitor{
+        var visitor = FindImportedPartsVisitor{
             .files = std.ArrayList(Index.Int).init(this.allocator),
             .part_ranges = part_ranges_shared.*,
             .parts_prefix = parts_prefix_shared.*,
@@ -5661,6 +5621,7 @@ pub const LinkerContext = struct {
             .entry_bits = chunk.entryBits(),
             .c = this,
             .entry_point = chunk.entry_point,
+            .chunk_index = chunk_index,
         };
         defer {
             part_ranges_shared.* = visitor.part_ranges;
@@ -5669,38 +5630,22 @@ pub const LinkerContext = struct {
         }
 
         switch (this.graph.code_splitting) {
-            inline else => |with_code_splitting| switch (this.graph.react_client_component_boundary.bit_length > 0) {
-                inline else => |with_client| switch (this.graph.react_server_component_boundary.bit_length > 0) {
-                    inline else => |with_server| {
-                        visitor.visit(
-                            Index.runtime.value,
-                            .{
-                                .has_any_server = with_server,
-                                .has_any_client = with_client,
-                            },
-                            with_code_splitting,
-                        );
-                        for (chunk_order_array.items) |order| {
-                            visitor.visit(
-                                order.source_index,
-                                .{
-                                    .has_any_server = with_server,
-                                    .has_any_client = with_client,
-                                },
-                                with_code_splitting,
-                            );
-                        }
-                    },
+            inline else => |with_code_splitting| switch (this.graph.is_scb_bitset.bit_length > 0) {
+                inline else => |with_scb| {
+                    visitor.visit(Index.runtime.value, with_code_splitting, with_scb);
+
+                    for (chunk_order_array.items) |order| {
+                        visitor.visit(order.source_index, with_code_splitting, with_scb);
+                    }
                 },
             },
         }
 
         const parts_in_chunk_order = try this.allocator.alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
-        bun.concat(
-            PartRange,
-            parts_in_chunk_order,
-            &.{ visitor.parts_prefix.items, visitor.part_ranges.items },
-        );
+        bun.concat(PartRange, parts_in_chunk_order, &.{
+            visitor.parts_prefix.items,
+            visitor.part_ranges.items,
+        });
         chunk.content.javascript.files_in_chunk_order = visitor.files.items;
         chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
     }
@@ -7694,6 +7639,7 @@ pub const LinkerContext = struct {
         {
             const trace2 = tracer(@src(), "markFileLiveForTreeShaking");
             defer trace2.end();
+
             // Tree shaking: Each entry point marks all files reachable from itself
             for (entry_points) |entry_point| {
                 c.markFileLiveForTreeShaking(
@@ -9101,7 +9047,10 @@ pub const LinkerContext = struct {
         const show_comments = c.options.mode == .bundle and
             !c.options.minify_whitespace;
 
+        const emit_targets_in_commands = show_comments and (if (ctx.c.framework) |fw| fw.server_components != null else false);
+
         const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
+        const targets: []const options.Target = c.parse_graph.ast.items(.target);
         for (compile_results) |compile_result| {
             const source_index = compile_result.sourceIndex();
             const is_runtime = source_index == Index.runtime.value;
@@ -9151,6 +9100,16 @@ pub const LinkerContext = struct {
 
                 j.pushStatic(pretty);
                 line_offset.advance(pretty);
+
+                if (emit_targets_in_commands) {
+                    j.pushStatic(" (");
+                    line_offset.advance(" (");
+                    const target = @tagName(targets[source_index].bakeGraph());
+                    j.pushStatic(target);
+                    line_offset.advance(target);
+                    j.pushStatic(")");
+                    line_offset.advance(")");
+                }
 
                 switch (comment_type) {
                     .multiline => {
@@ -11948,6 +11907,7 @@ pub const LinkerContext = struct {
                 const _code_result = chunk.intermediate_output.code(
                     null,
                     c.parse_graph,
+                    &c.graph,
                     c.resolver.opts.public_path,
                     chunk,
                     chunks,
@@ -12169,12 +12129,12 @@ pub const LinkerContext = struct {
         // Mix in hashes for referenced asset paths (i.e. the "file" loader)
         switch (chunk.intermediate_output) {
             .pieces => |pieces| for (pieces.slice()) |piece| {
-                if (piece.index.kind == .asset) {
+                if (piece.query.kind == .asset) {
                     var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
-                    const additional_files: []AdditionalFile = c.parse_graph.input_files.items(.additional_files)[piece.index.index].slice();
+                    const additional_files: []AdditionalFile = c.parse_graph.input_files.items(.additional_files)[piece.query.index].slice();
                     bun.assert(additional_files.len > 0);
                     switch (additional_files[0]) {
                         .output_file => |output_file_id| {
@@ -12256,6 +12216,7 @@ pub const LinkerContext = struct {
             var code_result = chunk.intermediate_output.code(
                 code_allocator,
                 c.parse_graph,
+                &c.graph,
                 c.resolver.opts.public_path,
                 chunk,
                 chunks,
@@ -12669,8 +12630,7 @@ pub const LinkerContext = struct {
                 },
             );
 
-        if (css_reprs[source_index]) |css| {
-            _ = css; // autofix
+        if (css_reprs[source_index] != null) {
             for (import_records[source_index].slice()) |*record| {
                 if (record.source_index.isValid() and !c.isExternalDynamicImport(record, source_index)) {
                     c.markFileReachableForCodeSplitting(
@@ -12687,8 +12647,6 @@ pub const LinkerContext = struct {
             }
             return;
         }
-
-        // TODO: CSS AST
 
         for (import_records[source_index].slice()) |*record| {
             if (record.source_index.isValid() and !c.isExternalDynamicImport(record, source_index)) {
@@ -12754,8 +12712,7 @@ pub const LinkerContext = struct {
             return;
         }
 
-        if (css_reprs[source_index]) |css| {
-            _ = css; // autofix
+        if (css_reprs[source_index] != null) {
             for (import_records[source_index].slice()) |*record| {
                 const other_source_index = record.source_index.get();
                 if (record.source_index.isValid()) {
@@ -13701,97 +13658,81 @@ pub const LinkerContext = struct {
         const trace = tracer(@src(), "breakOutputIntoPieces");
         defer trace.end();
 
+        const OutputPiece = Chunk.OutputPiece;
+
         if (!j.contains(c.unique_key_prefix))
             // There are like several cases that prohibit this from being checked more trivially, example:
             // 1. dynamic imports
             // 2. require()
             // 3. require.resolve()
             // 4. externals
-            return Chunk.IntermediateOutput{ .joiner = j.* };
+            return .{ .joiner = j.* };
 
-        var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(allocator, count);
+        var pieces = try std.ArrayList(OutputPiece).initCapacity(allocator, count);
         const complete_output = try j.done(allocator);
         var output = complete_output;
 
         const prefix = c.unique_key_prefix;
 
-        while (true) {
-            const invalid_boundary = std.math.maxInt(usize);
+        outer: while (true) {
             // Scan for the next piece boundary
-            var boundary = strings.indexOf(output, prefix) orelse invalid_boundary;
-
-            var output_piece_index = Chunk.OutputPieceIndex{};
-            var index: usize = 0;
+            const boundary = strings.indexOf(output, prefix) orelse
+                break;
 
             // Try to parse the piece boundary
-            if (boundary != invalid_boundary) {
-                const start = boundary + prefix.len;
-                if (start + 9 > output.len) {
-                    // Not enough bytes to parse the piece index
-                    boundary = invalid_boundary;
-                } else {
-                    switch (output[start]) {
-                        'A' => {
-                            output_piece_index.kind = .asset;
-                        },
-                        'C' => {
-                            output_piece_index.kind = .chunk;
-                        },
-                        else => {},
-                    }
-
-                    for (output[start..][1..9].*) |char| {
-                        if (char < '0' or char > '9') {
-                            boundary = invalid_boundary;
-                            break;
-                        }
-
-                        index = (index * 10) + (@as(usize, char) - '0');
-                    }
-                }
-            }
-
-            // Validate the boundary
-            switch (output_piece_index.kind) {
-                .asset => {
-                    if (index >= c.graph.files.len) {
-                        boundary = invalid_boundary;
-                    }
-                },
-                .chunk => {
-                    if (index >= count) {
-                        boundary = invalid_boundary;
-                    }
-                },
-                else => {
-                    boundary = invalid_boundary;
-                },
-            }
-
-            output_piece_index.index = @as(u30, @intCast(index));
-
-            // If we're at the end, generate one final piece
-            if (boundary == invalid_boundary) {
-                try pieces.append(Chunk.OutputPiece{
-                    .index = output_piece_index,
-                    .data_ptr = output.ptr,
-                    .data_len = @as(u32, @truncate(output.len)),
-                });
+            const start = boundary + prefix.len;
+            if (start + 9 > output.len) {
+                // Not enough bytes to parse the piece index
                 break;
             }
 
-            // Otherwise, generate an interior piece and continue
-            try pieces.append(Chunk.OutputPiece{
-                .index = output_piece_index,
-                .data_ptr = output.ptr,
+            const kind: OutputPiece.Query.Kind = switch (output[start]) {
+                'A' => .asset,
+                'C' => .chunk,
+                'S' => .scb,
+                else => {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+            };
 
-                // sliced this way to panic if out of bounds
-                .data_len = @as(u32, @truncate(output[0..boundary].len)),
-            });
+            var index: usize = 0;
+            for (output[start..][1..9].*) |char| {
+                if (char < '0' or char > '9') {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break :outer;
+                }
+
+                index = (index * 10) + (@as(usize, char) - '0');
+            }
+
+            // Validate the boundary
+            switch (kind) {
+                .asset, .scb => if (index >= c.graph.files.len) {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+                .chunk => if (index >= count) {
+                    if (bun.Environment.isDebug)
+                        bun.Output.debugWarn("Invalid output piece boundary", .{});
+                    break;
+                },
+                else => unreachable,
+            }
+
+            try pieces.append(OutputPiece.init(output[0..boundary], .{
+                .kind = kind,
+                .index = @intCast(index),
+            }));
             output = output[boundary + prefix.len + 9 ..];
         }
 
-        return Chunk.IntermediateOutput{
+        try pieces.append(OutputPiece.init(output, OutputPiece.Query.none));
+
+        return .{
             .pieces = bun.BabyList(Chunk.OutputPiece).init(pieces.items),
         };
     }
@@ -13996,9 +13937,11 @@ pub const Chunk = struct {
     /// Can we make the JSPrinter itself track this without increasing
     /// complexity a lot?
     pub const IntermediateOutput = union(enum) {
-        /// If the chunk has references to other chunks, then "pieces" contains the
-        /// contents of the chunk. Another joiner
-        /// will have to be constructed later when merging the pieces together.
+        /// If the chunk has references to other chunks, then "pieces" contains
+        /// the contents of the chunk. Another joiner will have to be
+        /// constructed later when merging the pieces together.
+        ///
+        /// See OutputPiece's documentation comment for more details.
         pieces: bun.BabyList(OutputPiece),
 
         /// If the chunk doesn't have any references to other chunks, then
@@ -14023,7 +13966,8 @@ pub const Chunk = struct {
         pub fn code(
             this: *IntermediateOutput,
             allocator_to_use: ?std.mem.Allocator,
-            graph: *const Graph,
+            parse_graph: *const Graph,
+            linker_graph: *const LinkerGraph,
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
@@ -14033,7 +13977,8 @@ pub const Chunk = struct {
             return switch (enable_source_map_shifts) {
                 inline else => |source_map_shifts| this.codeWithSourceMapShifts(
                     allocator_to_use,
-                    graph,
+                    parse_graph,
+                    linker_graph,
                     import_prefix,
                     chunk,
                     chunks,
@@ -14047,6 +13992,7 @@ pub const Chunk = struct {
             this: *IntermediateOutput,
             allocator_to_use: ?std.mem.Allocator,
             graph: *const Graph,
+            linker_graph: *const LinkerGraph,
             import_prefix: []const u8,
             chunk: *Chunk,
             chunks: []Chunk,
@@ -14057,6 +14003,8 @@ pub const Chunk = struct {
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
             switch (this.*) {
                 .pieces => |*pieces| {
+                    const entry_point_chunks_for_scb = linker_graph.files.items(.entry_point_chunk_index);
+
                     var shift = if (enable_source_map_shifts)
                         sourcemap.SourceMapShifts{
                             .after = .{},
@@ -14076,10 +14024,10 @@ pub const Chunk = struct {
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
 
-                        switch (piece.index.kind) {
-                            .chunk, .asset => {
-                                const index = piece.index.index;
-                                const file_path = switch (piece.index.kind) {
+                        switch (piece.query.kind) {
+                            .chunk, .asset, .scb => {
+                                const index = piece.query.index;
+                                const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
                                         const files = additional_files[index];
                                         if (!(files.len > 0)) {
@@ -14091,7 +14039,8 @@ pub const Chunk = struct {
                                         break :brk graph.additional_output_files.items[output_file].dest_path;
                                     },
                                     .chunk => chunks[index].final_rel_path,
-                                    else => unreachable,
+                                    .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
+                                    .none => unreachable,
                                 };
 
                                 const cheap_normalizer = cheapPrefixNormalizer(
@@ -14134,34 +14083,41 @@ pub const Chunk = struct {
 
                         remain = remain[data.len..];
 
-                        switch (piece.index.kind) {
-                            .asset, .chunk => {
-                                const index = piece.index.index;
-                                const file_path = brk: {
-                                    switch (piece.index.kind) {
-                                        .asset => {
-                                            const files = additional_files[index];
-                                            bun.assert(files.len > 0);
+                        switch (piece.query.kind) {
+                            .asset, .chunk, .scb => {
+                                const index = piece.query.index;
+                                const file_path = switch (piece.query.kind) {
+                                    .asset => brk: {
+                                        const files = additional_files[index];
+                                        bun.assert(files.len > 0);
 
-                                            const output_file = files.last().?.output_file;
+                                        const output_file = files.last().?.output_file;
 
-                                            if (enable_source_map_shifts) {
-                                                shift.before.advance(unique_key_for_additional_files[index]);
-                                            }
+                                        if (enable_source_map_shifts) {
+                                            shift.before.advance(unique_key_for_additional_files[index]);
+                                        }
 
-                                            break :brk graph.additional_output_files.items[output_file].dest_path;
-                                        },
-                                        .chunk => {
-                                            const piece_chunk = chunks[index];
+                                        break :brk graph.additional_output_files.items[output_file].dest_path;
+                                    },
+                                    .chunk => brk: {
+                                        const piece_chunk = chunks[index];
 
-                                            if (enable_source_map_shifts) {
-                                                shift.before.advance(piece_chunk.unique_key);
-                                            }
+                                        if (enable_source_map_shifts) {
+                                            shift.before.advance(piece_chunk.unique_key);
+                                        }
 
-                                            break :brk piece_chunk.final_rel_path;
-                                        },
-                                        else => unreachable,
-                                    }
+                                        break :brk piece_chunk.final_rel_path;
+                                    },
+                                    .scb => brk: {
+                                        const piece_chunk = chunks[entry_point_chunks_for_scb[index]];
+
+                                        if (enable_source_map_shifts) {
+                                            shift.before.advance(piece_chunk.unique_key);
+                                        }
+
+                                        break :brk piece_chunk.final_rel_path;
+                                    },
+                                    else => unreachable,
                                 };
 
                                 // normalize windows paths to '/'
@@ -14250,41 +14206,65 @@ pub const Chunk = struct {
         }
     };
 
+    /// An issue with asset files and server component boundaries is they
+    /// contain references to output paths, but those paths are not known until
+    /// very late in the bundle. The solution is to have a magic word in the
+    /// bundle text (BundleV2.unique_key, a random u64; impossible to guess).
+    /// When a file wants a path to an emitted chunk, it emits the unique key
+    /// in hex followed by the kind of path it wants:
+    ///
+    ///     `74f92237f4a85a6aA00000009` --> `./some-asset.png`
+    ///      ^--------------^|^------- .query.index
+    ///      unique_key      .query.kind
+    ///
+    /// An output piece is the concatenation of source code text and an output
+    /// path, in that order. An array of pieces makes up an entire file.
     pub const OutputPiece = struct {
-        // laid out like this so it takes up the same amount of space as a []const u8
-        data_ptr: [*]const u8 = undefined,
-        data_len: u32 = 0,
+        /// Pointer and length split to reduce struct size
+        data_ptr: [*]const u8,
+        data_len: u32,
+        query: Query,
 
-        index: OutputPieceIndex = .{},
-
-        pub inline fn data(this: OutputPiece) []const u8 {
+        pub fn data(this: OutputPiece) []const u8 {
             return this.data_ptr[0..this.data_len];
+        }
+
+        pub const Query = packed struct(u32) {
+            index: u30,
+            kind: Kind,
+
+            pub const Kind = enum(u2) {
+                /// The last piece in an array uses this to indicate it is just data
+                none,
+                /// Given a source index, print the asset's output
+                asset,
+                /// Given a chunk index, print the chunk's output path
+                chunk,
+                /// Given a server component boundary index, print the chunk's output path
+                scb,
+            };
+
+            pub const none: Query = .{ .index = 0, .kind = .none };
+        };
+
+        pub fn init(data_slice: []const u8, query: Query) OutputPiece {
+            return .{
+                .data_ptr = data_slice.ptr,
+                .data_len = @intCast(data_slice.len),
+                .query = query,
+            };
         }
     };
 
-    pub const OutputPieceIndex = packed struct {
-        index: u30 = 0,
-
-        kind: Kind = Kind.none,
-
-        pub const Kind = enum(u2) {
-            /// The "kind" may be "none" in which case there is one piece
-            /// with data and no chunk index. For example, the chunk may not contain any
-            /// imports.
-            none,
-
-            asset,
-            chunk,
-        };
-    };
+    pub const OutputPieceIndex = OutputPiece.Query;
 
     pub const EntryPoint = packed struct(u64) {
         /// Index into `Graph.input_files`
-        source_index: Index.Int = 0,
-        entry_point_id: ID = 0,
+        source_index: u32 = 0,
+        entry_point_id: u31 = 0,
         is_entry_point: bool = false,
 
-        // so it fits in a 64-bit integer
+        /// so `EntryPoint` can be a u64
         pub const ID = u31;
     };
 
@@ -14950,3 +14930,20 @@ pub const BakeBundleOutput = struct {
         return out.chunks[1..];
     }
 };
+
+pub fn generateUniqueKey() u64 {
+    const key = std.crypto.random.int(u64) & @as(u64, 0x0FFFFFFF_FFFFFFFF);
+    // without this check, putting unique_key in an object key would
+    // sometimes get converted to an identifier. ensuring it starts
+    // with a number forces that optimization off.
+    if (Environment.isDebug) {
+        var buf: [16]u8 = undefined;
+        const hex = std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(key)}) catch
+            unreachable;
+        switch (hex[0]) {
+            '0'...'9' => {},
+            else => Output.panic("unique key is a valid identifier: {s}", .{hex}),
+        }
+    }
+    return key;
+}

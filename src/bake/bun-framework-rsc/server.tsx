@@ -113,11 +113,13 @@ export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
   }
 }
 
+console.log(JSON.stringify({clientManifest, serverManifest}, null, 2));
+
 // This is a hack to make react-server-dom-webpack work with Bun's bundler.
 // It will be removed once Bun acquires react-server-dom-bun.
 globalThis.__webpack_require__ = (id: string) => {
-  console.log(JSON.stringify({clientManifest, serverManifest}, null, 2));
-  clientManifest[id] 
   console.log("Bun: __webpack_require__", id);
-  return {};
+  const y = import.meta.require(id);
+  console.log({y});
+  return y;
 };

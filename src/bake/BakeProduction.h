@@ -3,6 +3,6 @@
 
 namespace Bake {
 
-extern "C" JSC::JSPromise* BakeRenderRoutesForProd(JSC::JSGlobalObject*, BunString, JSC::JSValue, JSC::JSValue);
+extern "C" JSC::JSPromise* BakeRenderRoutesForProd(JSC::JSGlobalObject*, BunString, JSC::JSValue, JSC::JSValue, JSC::JSValue);
 
 } // namespace Bake

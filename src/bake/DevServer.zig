@@ -1179,6 +1179,7 @@ pub fn finalizeBundle(
         const code = try chunk.intermediate_output.code(
             dev.allocator,
             &bv2.graph,
+            &bv2.linker.graph,
             "/_bun/TODO-import-prefix-where-is-this-used?",
             chunk,
             result.chunks,

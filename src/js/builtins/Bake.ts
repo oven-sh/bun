@@ -8,10 +8,16 @@ type RenderStatic = Bake.ServerEntryPoint['staticRender'];
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
  * and 
  */
-export async function renderRoutesForProd(outBase: string, renderStatic: RenderStatic, files: string[]): Promise<void> {
-  const { resolve: pathResolve } = require('node:path');
+export function renderRoutesForProd(
+  outBase: string,
+  renderStatic: RenderStatic,
+  files: string[],
+  patterns: string[],
+): Promise<void> {
+  const { join: pathJoin } = require('node:path');
 
-  await Promise.all(files.map(async(file) => {
+  return Promise.all(files.map(async(file, i) => {
+    const pattern = patterns[i];
     const route = await import(file);
     const results = await renderStatic(route, {
       scripts: [],
@@ -19,8 +25,8 @@ export async function renderRoutesForProd(outBase: string, renderStatic: RenderS
     });
     if (!results || typeof results !== 'object') {
       // TODO: retrieve original filename
-      throw new Error(`Rendering route ${JSON.stringify(file)} did not return an object, got ${Bun.inspect(results)}`);
+      throw new Error(`Rendering route ${JSON.stringify(pattern)} did not return an object, got ${Bun.inspect(results)}`);
     }
-    await Promise.all(Object.entries(results).map(([key, value]) => Bun.write(pathResolve(outBase + key), value)));
+    await Promise.all(Object.entries(results).map(([key, value]) => Bun.write(pathJoin(outBase, pattern + key), value)));
   }));
 }

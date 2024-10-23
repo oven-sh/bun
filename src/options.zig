@@ -977,7 +977,7 @@ pub const JSX = struct {
         // these need to be arrays
         factory: []const string = Defaults.Factory,
         fragment: []const string = Defaults.Fragment,
-        runtime: JSX.Runtime = JSX.Runtime.automatic,
+        runtime: JSX.Runtime = .automatic,
         import_source: ImportSource = .{},
 
         /// Facilitates automatic JSX importing

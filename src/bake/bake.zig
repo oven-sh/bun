@@ -277,7 +277,7 @@ pub const Framework = struct {
             allocator, // TODO: this is likely a memory leak
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
-            null, // TODO: env_loader
+            null,
         );
 
         out.options.target = switch (renderer) {
@@ -311,6 +311,8 @@ pub const Framework = struct {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
 
+        out.options.production = mode == .production;
+
         out.options.tree_shaking = mode == .production;
         out.options.minify_syntax = true; // required for DCE
         // out.options.minify_identifiers = mode == .production;
@@ -323,13 +325,16 @@ pub const Framework = struct {
         out.configureLinker();
         try out.configureDefines();
 
+        out.options.jsx.development = mode == .development;
+
         try addImportMetaDefines(allocator, out.options.define, mode, switch (renderer) {
             .client => .client,
             .server, .ssr => .server,
         });
 
         if (mode == .production) {
-            out.options.entry_naming = "[hash].[ext]";
+            out.options.entry_naming = "[name]-[hash].[ext]";
+            out.options.chunk_naming = "chunk-[name]-[hash].[ext]";
         }
 
         out.resolver.opts = out.options;

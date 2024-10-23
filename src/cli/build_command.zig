@@ -296,7 +296,6 @@ pub const BuildCommand = struct {
                 &this_bundler,
                 allocator,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
-                std.crypto.random.int(u64),
                 ctx.debug.hot_reload == .watch,
                 &reachable_file_count,
                 &minify_duration,

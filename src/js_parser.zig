@@ -2939,7 +2939,6 @@ pub const Parser = struct {
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
-
                 .jsx = jsx,
             };
             opts.jsx.parse = loader.isJSX();

@@ -647,7 +647,7 @@ pub fn parseColorFunction(location: css.SourceLocation, function: []const u8, in
     const ColorFunctions = enum { lab, oklab, lch, oklch, color, hsl, hsla, hwb, rgb, rgba, @"color-mix", @"light-dark" };
     const Map = bun.ComptimeEnumMap(ColorFunctions);
 
-    if (Map.get(function)) |val| {
+    if (Map.getASCIIICaseInsensitive(function)) |val| {
         return switch (val) {
             .lab => parseLab(LAB, input, &parser, struct {
                 fn callback(l: f32, a: f32, b: f32, alpha: f32) LABColor {

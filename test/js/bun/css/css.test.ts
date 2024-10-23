@@ -69,7 +69,6 @@ describe("css tests", () => {
   });
 
   describe("border", () => {
-    // TODO:
     // cssTest(
     //   `
     //   .foo {

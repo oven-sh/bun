@@ -3090,7 +3090,7 @@ pub fn parse_functional_pseudo_class(
     };
     const Map = bun.ComptimeEnumMap(FunctionalPseudoClass);
 
-    if (Map.get(name)) |functional_pseudo_class| {
+    if (Map.getASCIIICaseInsensitive(name)) |functional_pseudo_class| {
         switch (functional_pseudo_class) {
             .@"nth-child" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .child),
             .@"nth-of-type" => return parse_nth_pseudo_class(Impl, parser, input, state.*, .of_type),

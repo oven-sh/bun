@@ -8750,6 +8750,10 @@ pub const PackageManager = struct {
         }
 
         AsyncHTTP.max_simultaneous_requests.store(brk: {
+            if (cli.network_concurrency) |network_concurrency| {
+                break :brk @max(network_concurrency, 1);
+            }
+
             // If any HTTP proxy is set, reduce the default limit to 16 from 48.
             if (env.has("http_proxy") or env.has("https_proxy") or env.has("HTTPS_PROXY") or env.has("HTTP_PROXY")) {
                 break :brk default_max_simultaneous_requests_for_bun_install_for_proxies;
@@ -9307,6 +9311,7 @@ pub const PackageManager = struct {
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+        clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9390,7 +9395,7 @@ pub const PackageManager = struct {
         token: string = "",
         global: bool = false,
         config: ?string = null,
-
+        network_concurrency: ?u16 = null,
         backend: ?PackageInstall.Method = null,
 
         positionals: []const string = &[_]string{},
@@ -9778,6 +9783,13 @@ pub const PackageManager = struct {
 
             if (args.option("--cafile")) |ca_file_name| {
                 cli.ca_file_name = ca_file_name;
+            }
+
+            if (args.option("--network-concurrency")) |network_concurrency| {
+                cli.network_concurrency = std.fmt.parseInt(u16, network_concurrency, 10) catch {
+                    Output.errGeneric("Expected --network-concurrency to be a number between 0 and 65535: {s}", .{network_concurrency});
+                    Global.crash();
+                };
             }
 
             // commands that support --filter

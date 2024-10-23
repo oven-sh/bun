@@ -240,13 +240,13 @@ const Socket = (function (InternalSocket) {
       if (!self) return;
       const callback = self.#writeCallback;
       if (callback) {
-        const writeChunk = self.#writeChunk;
+        const writeChunk = self._pendingData;
 
         if (socket.$write(writeChunk || "", "utf8")) {
-          self.#writeChunk = self.#writeCallback = null;
+          self._pendingData = self.#writeCallback = null;
           callback(null);
         } else {
-          self.#writeChunk = null;
+          self._pendingData = null;
         }
 
         self[kBytesWritten] = socket.bytesWritten;
@@ -370,7 +370,8 @@ const Socket = (function (InternalSocket) {
     [bunTLSConnectOptions] = null;
     timeout = 0;
     #writeCallback;
-    #writeChunk;
+    _pendingData;
+    _pendingEncoding; // for compatibility
     #pendingRead;
 
     isServer = false;
@@ -446,7 +447,6 @@ const Socket = (function (InternalSocket) {
     get bytesWritten() {
       let bytes = this[kBytesWritten] || 0;
       const data = this._pendingData;
-      const encoding = this._pendingEncoding;
       const writableBuffer = this.writableBuffer;
       if (!writableBuffer) return undefined;
 
@@ -463,9 +463,7 @@ const Socket = (function (InternalSocket) {
           else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
         }
       } else if (data) {
-        // Writes are either a string or a Buffer.
-        if (typeof data !== "string") pending += data.length;
-        else bytes += Buffer.byteLength(data, encoding);
+        bytes += data.byteLength;
       }
       return bytes;
     }
@@ -604,6 +602,7 @@ const Socket = (function (InternalSocket) {
         // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
         // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
         this._undestroy();
+        this.connecting = true;
         this.#readQueue = $createFIFO();
 
         if (connection) {
@@ -613,7 +612,6 @@ const Socket = (function (InternalSocket) {
             upgradeDuplex = isNamedPipeSocket(socket);
           }
           if (upgradeDuplex) {
-            this.connecting = true;
             this.#upgraded = connection;
             const [result, events] = upgradeDuplexToTLS(connection, {
               data: this,
@@ -629,7 +627,6 @@ const Socket = (function (InternalSocket) {
             this[bunSocketInternal] = result;
           } else {
             if (socket) {
-              this.connecting = true;
               this.#upgraded = connection;
               const result = socket.upgradeTLS({
                 data: this,
@@ -656,7 +653,6 @@ const Socket = (function (InternalSocket) {
                   upgradeDuplex = isNamedPipeSocket(socket);
                 }
                 if (upgradeDuplex) {
-                  this.connecting = true;
                   this.#upgraded = connection;
 
                   const [result, events] = upgradeDuplexToTLS(connection, {
@@ -672,7 +668,6 @@ const Socket = (function (InternalSocket) {
 
                   this[bunSocketInternal] = result;
                 } else {
-                  this.connecting = true;
                   this.#upgraded = connection;
                   const result = socket.upgradeTLS({
                     data: this,
@@ -852,10 +847,28 @@ const Socket = (function (InternalSocket) {
     }
 
     _write(chunk, encoding, callback) {
+      // If we are still connecting, then buffer this for later.
+      // The Writable logic will buffer up any more writes while
+      // waiting for this one to be done.
+      if (this.connecting) {
+        this.#writeCallback = callback;
+        this._pendingEncoding = "buffer";
+        this._pendingData = Buffer.from(chunk, encoding);
+        this.once("connect", function connect() {
+          this.off("close", onClose);
+        });
+        function onClose() {
+          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("Socket closed before the connection was established"));
+        }
+        this.once("close", onClose);
+        return;
+      }
       const socket = this[bunSocketInternal];
       if (!socket) {
+        // detached but connected? wait for the socket to be attached
         this.#writeCallback = callback;
-        this.#writeChunk = Buffer.from(chunk, encoding);
+        this._pendingEncoding = "buffer";
+        this._pendingData = Buffer.from(chunk, encoding);
         return;
       }
 

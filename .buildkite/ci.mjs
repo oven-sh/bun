@@ -176,7 +176,7 @@ function getPipeline() {
       env: {
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
       },
-      command: ["bun", "run", "build:ci", "--target", "dependencies"],
+      command: "bun run build:ci --target dependencies",
     };
   };
 
@@ -197,7 +197,7 @@ function getPipeline() {
         BUN_CPP_ONLY: "ON",
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
       },
-      command: ["bun", "run", "build:ci", "--target", "bun"],
+      command: "bun run build:ci --target bun",
     };
   };
 
@@ -216,7 +216,7 @@ function getPipeline() {
       env: {
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
       },
-      command: ["bun", "run", "build:ci", "--target", "bun-zig", "--toolchain", toolchain],
+      command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
     };
   };
 
@@ -242,7 +242,7 @@ function getPipeline() {
         BUN_LINK_ONLY: "ON",
         ENABLE_BASELINE: baseline ? "ON" : "OFF",
       },
-      command: ["bun", "run", "build:ci", "--target", "bun"],
+      command: "bun run build:ci --target bun",
     };
   };
 
@@ -265,6 +265,13 @@ function getPipeline() {
       agents = { os, arch, distro, release, robobun: true };
     }
 
+    let command;
+    if (os === "windows") {
+      command = `node .\\scripts\\runner.node.mjs --step ${getKey(platform)}-build-bun`;
+    } else {
+      command = `./scripts/runner.node.mjs --step ${getKey(platform)}-build-bun`;
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release}-test-bun`,
       label: `${name} - test-bun`,
@@ -272,6 +279,7 @@ function getPipeline() {
       agents,
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
+      command,
     };
   };
 

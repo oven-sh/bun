@@ -222,6 +222,7 @@ pub const PatchTask = struct {
                         dep_id,
                         pkg,
                         this.callback.calc_hash.name_and_version_hash,
+                        .allow_authorization,
                     ) orelse unreachable;
                     if (manager.getPreinstallState(pkg.meta.id) == .extract) {
                         manager.setPreinstallState(pkg.meta.id, manager.lockfile, .extracting);

@@ -18,17 +18,6 @@ function getEnv(name, required = true) {
   return value;
 }
 
-function isPullRequest() {
-  return (
-    getEnv("BUILDKITE_PULL_REQUEST", false) === "true" &&
-    getEnv("BUILDKITE_REPO") !== getEnv("BUILDKITE_PULL_REQUEST_REPO", false)
-  );
-}
-
-function getCommit() {
-  return getEnv("BUILDKITE_COMMIT");
-}
-
 function getRepository() {
   const url = getEnv("BUILDKITE_PULL_REQUEST_REPO", false) || getEnv("BUILDKITE_REPO");
   const match = url.match(/github.com\/([^/]+)\/([^/]+)\.git$/);
@@ -39,6 +28,10 @@ function getRepository() {
   return `${owner}/${repo}`;
 }
 
+function getCommit() {
+  return getEnv("BUILDKITE_COMMIT");
+}
+
 function getBranch() {
   return getEnv("BUILDKITE_BRANCH");
 }
@@ -47,12 +40,21 @@ function getMainBranch() {
   return getEnv("BUILDKITE_PIPELINE_DEFAULT_BRANCH", false) || "main";
 }
 
+function isFork() {
+  const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
+  return !!repository && repository !== getEnv("BUILDKITE_REPO");
+}
+
 function isMainBranch() {
-  return getBranch() === getMainBranch() && !isPullRequest();
+  return getBranch() === getMainBranch() && !isFork();
 }
 
 function isMergeQueue() {
   return /^gh-readonly-queue/.test(getEnv("BUILDKITE_BRANCH"));
+}
+
+function isPullRequest() {
+  return getEnv("BUILDKITE_PULL_REQUEST", false) === "true";
 }
 
 async function getChangedFiles() {
@@ -158,6 +160,20 @@ function getPipeline() {
         { signal_reason: "agent_stop", limit },
       ],
     };
+  };
+
+  // https://buildkite.com/docs/pipelines/managing-priorities
+  const getPriority = () => {
+    if (isFork()) {
+      return -1;
+    }
+    if (isMainBranch()) {
+      return 2;
+    }
+    if (isMergeQueue()) {
+      return 1;
+    }
+    return 0;
   };
 
   /**
@@ -290,6 +306,7 @@ function getPipeline() {
       agents,
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
+      soft_fail: isMainBranch(),
       parallelism,
       command,
     };
@@ -328,6 +345,7 @@ function getPipeline() {
   ];
 
   return {
+    priority: getPriority(),
     steps: [
       ...buildPlatforms.map(platform => {
         const { os, arch, baseline } = platform;

@@ -10,6 +10,7 @@ const Delimiters = css.Delimiters;
 const PrintErr = css.PrintErr;
 const Allocator = std.mem.Allocator;
 const implementEql = css.implementEql;
+const TextShadow = css.css_properties.text.TextShadow;
 
 /// This is a type whose items can either be heap-allocated (essentially the
 /// same as a BabyList(T)) or inlined in the struct itself.
@@ -215,6 +216,49 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                 }
                 return res;
             }
+            if (T == TextShadow and N == 1) {
+                var fallbacks = css.ColorFallbackKind.empty();
+                for (this.slice()) |*shadow| {
+                    fallbacks.insert(shadow.color.getNecessaryFallbacks(targets));
+                }
+
+                var res = SmallList(SmallList(TextShadow, 1), 2){};
+                if (fallbacks.contains(css.ColorFallbackKind{ .rgb = true })) {
+                    var rgb = SmallList(TextShadow, 1).initCapacity(allocator, this.len());
+                    for (this.slice()) |*shadow| {
+                        var new_shadow = shadow.*;
+                        // dummy non-alloced color to avoid deep cloning the real one since we will replace it
+                        new_shadow.color = .current_color;
+                        new_shadow = new_shadow.deepClone(allocator);
+                        new_shadow.color = shadow.color.toRGB(allocator).?;
+                        rgb.appendAssumeCapacity(new_shadow);
+                    }
+                    res.append(allocator, rgb);
+                }
+
+                if (fallbacks.contains(css.ColorFallbackKind{ .p3 = true })) {
+                    var p3 = SmallList(TextShadow, 1).initCapacity(allocator, this.len());
+                    for (this.slice()) |*shadow| {
+                        var new_shadow = shadow.*;
+                        // dummy non-alloced color to avoid deep cloning the real one since we will replace it
+                        new_shadow.color = .current_color;
+                        new_shadow = new_shadow.deepClone(allocator);
+                        new_shadow.color = shadow.color.toP3(allocator).?;
+                        p3.appendAssumeCapacity(new_shadow);
+                    }
+                    res.append(allocator, p3);
+                }
+
+                if (fallbacks.contains(css.ColorFallbackKind{ .lab = true })) {
+                    for (this.slice_mut()) |*shadow| {
+                        const out = shadow.color.toLAB(allocator).?;
+                        shadow.color.deinit(allocator);
+                        shadow.color = out;
+                    }
+                }
+
+                return res;
+            }
             @compileError("Dunno what to do here.");
         }
 
@@ -223,7 +267,10 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             if (@hasDecl(Type, "getImage") and InlineSize == 1) {
                 return bun.BabyList(SmallList(Type, 1));
             }
-            @compileError("Unhandled.");
+            if (Type == TextShadow and InlineSize == 1) {
+                return SmallList(SmallList(TextShadow, 1), 2);
+            }
+            @compileError("Unhandled for: " ++ @typeName(Type));
         }
 
         // TODO: remove this stupid function

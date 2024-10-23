@@ -187,7 +187,7 @@ const Font = font.Font;
 // const TextEmphasisPositionVertical = text.TextEmphasisPositionVertical;
 // const TextEmphasisPositionHorizontal = text.TextEmphasisPositionHorizontal;
 // const TextEmphasisPosition = text.TextEmphasisPosition;
-// const TextShadow = text.TextShadow;
+const TextShadow = text.TextShadow;
 // const TextSizeAdjust = text.TextSizeAdjust;
 const Direction = text.Direction;
 // const UnicodeBidi = text.UnicodeBidi;
@@ -445,6 +445,7 @@ pub const Property = union(PropertyIdTag) {
     font: Font,
     @"text-decoration-color": struct { CssColor, VendorPrefix },
     @"text-emphasis-color": struct { CssColor, VendorPrefix },
+    @"text-shadow": SmallList(TextShadow, 1),
     direction: Direction,
     composes: Composes,
     @"mask-image": struct { SmallList(Image, 1), VendorPrefix },
@@ -3548,6 +3549,22 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(CssColor) ++ ": does not have a eql() function.\n";
             }
 
+            if (!@hasDecl(SmallList(TextShadow, 1), "deepClone")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(TextShadow, 1), "parse")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(TextShadow, 1), "toCss")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(SmallList(TextShadow, 1), "eql")) {
+                compile_error = compile_error ++ @typeName(SmallList(TextShadow, 1)) ++ ": does not have a eql() function.\n";
+            }
+
             if (!@hasDecl(Direction, "deepClone")) {
                 compile_error = compile_error ++ @typeName(Direction) ++ ": does not have a deepClone() function.\n";
             }
@@ -5076,6 +5093,7 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .@"margin-block-start" => {
+                @setEvalBranchQuota(5000);
                 if (css.generic.parseWithOptions(LengthPercentageOrAuto, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"margin-block-start" = c } };
@@ -5423,6 +5441,13 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(CssColor, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"text-emphasis-color" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"text-shadow" => {
+                if (css.generic.parseWithOptions(SmallList(TextShadow, 1), input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"text-shadow" = c } };
                     }
                 }
             },
@@ -5854,6 +5879,7 @@ pub const Property = union(PropertyIdTag) {
             .font => .font,
             .@"text-decoration-color" => |*v| PropertyId{ .@"text-decoration-color" = v[1] },
             .@"text-emphasis-color" => |*v| PropertyId{ .@"text-emphasis-color" = v[1] },
+            .@"text-shadow" => .@"text-shadow",
             .direction => .direction,
             .composes => .composes,
             .@"mask-image" => |*v| PropertyId{ .@"mask-image" = v[1] },
@@ -6091,6 +6117,7 @@ pub const Property = union(PropertyIdTag) {
             .font => |*v| .{ .font = v.deepClone(allocator) },
             .@"text-decoration-color" => |*v| .{ .@"text-decoration-color" = .{ v[0].deepClone(allocator), v[1] } },
             .@"text-emphasis-color" => |*v| .{ .@"text-emphasis-color" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"text-shadow" => |*v| .{ .@"text-shadow" = v.deepClone(allocator) },
             .direction => |*v| .{ .direction = v.deepClone(allocator) },
             .composes => |*v| .{ .composes = v.deepClone(allocator) },
             .@"mask-image" => |*v| .{ .@"mask-image" = .{ v[0].deepClone(allocator), v[1] } },
@@ -6338,6 +6365,7 @@ pub const Property = union(PropertyIdTag) {
             .font => .{ "font", VendorPrefix{ .none = true } },
             .@"text-decoration-color" => |*x| .{ "text-decoration-color", x.@"1" },
             .@"text-emphasis-color" => |*x| .{ "text-emphasis-color", x.@"1" },
+            .@"text-shadow" => .{ "text-shadow", VendorPrefix{ .none = true } },
             .direction => .{ "direction", VendorPrefix{ .none = true } },
             .composes => .{ "composes", VendorPrefix{ .none = true } },
             .@"mask-image" => |*x| .{ "mask-image", x.@"1" },
@@ -6582,6 +6610,7 @@ pub const Property = union(PropertyIdTag) {
             .font => |*value| value.toCss(W, dest),
             .@"text-decoration-color" => |*value| value[0].toCss(W, dest),
             .@"text-emphasis-color" => |*value| value[0].toCss(W, dest),
+            .@"text-shadow" => |*value| value.toCss(W, dest),
             .direction => |*value| value.toCss(W, dest),
             .composes => |*value| value.toCss(W, dest),
             .@"mask-image" => |*value| value[0].toCss(W, dest),
@@ -6892,6 +6921,7 @@ pub const Property = union(PropertyIdTag) {
             .font => |*v| css.generic.eql(Font, v, &rhs.font),
             .@"text-decoration-color" => |*v| css.generic.eql(CssColor, &v[0], &v[0]) and v[1].eq(rhs.@"text-decoration-color"[1]),
             .@"text-emphasis-color" => |*v| css.generic.eql(CssColor, &v[0], &v[0]) and v[1].eq(rhs.@"text-emphasis-color"[1]),
+            .@"text-shadow" => |*v| css.generic.eql(SmallList(TextShadow, 1), v, &rhs.@"text-shadow"),
             .direction => |*v| css.generic.eql(Direction, v, &rhs.direction),
             .composes => |*v| css.generic.eql(Composes, v, &rhs.composes),
             .@"mask-image" => |*v| css.generic.eql(SmallList(Image, 1), &v[0], &v[0]) and v[1].eq(rhs.@"mask-image"[1]),
@@ -7127,6 +7157,7 @@ pub const PropertyId = union(PropertyIdTag) {
     font,
     @"text-decoration-color": VendorPrefix,
     @"text-emphasis-color": VendorPrefix,
+    @"text-shadow",
     direction,
     composes,
     @"mask-image": VendorPrefix,
@@ -7370,6 +7401,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .font => VendorPrefix.empty(),
             .@"text-decoration-color" => |p| p,
             .@"text-emphasis-color" => |p| p,
+            .@"text-shadow" => VendorPrefix.empty(),
             .direction => VendorPrefix.empty(),
             .composes => VendorPrefix.empty(),
             .@"mask-image" => |p| p,
@@ -8005,6 +8037,9 @@ pub const PropertyId = union(PropertyIdTag) {
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-emphasis-color")) {
             const allowed_prefixes = VendorPrefix{ .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
+        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-shadow")) {
+            const allowed_prefixes = VendorPrefix{ .none = true };
+            if (allowed_prefixes.contains(pre)) return .@"text-shadow";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "direction")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .direction;
@@ -8301,6 +8336,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .font => .font,
             .@"text-decoration-color" => .{ .@"text-decoration-color" = pre },
             .@"text-emphasis-color" => .{ .@"text-emphasis-color" = pre },
+            .@"text-shadow" => .@"text-shadow",
             .direction => .direction,
             .composes => .composes,
             .@"mask-image" => .{ .@"mask-image" = pre },
@@ -8616,6 +8652,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"text-emphasis-color" => |*p| {
                 p.insert(pre);
             },
+            .@"text-shadow" => {},
             .direction => {},
             .composes => {},
             .@"mask-image" => |*p| {
@@ -8901,6 +8938,7 @@ pub const PropertyIdTag = enum(u16) {
     font,
     @"text-decoration-color",
     @"text-emphasis-color",
+    @"text-shadow",
     direction,
     composes,
     @"mask-image",
@@ -8933,4 +8971,244 @@ pub const PropertyIdTag = enum(u16) {
     all,
     unparsed,
     custom,
+
+    /// Helper function used in comptime code to know whether to access the underlying value
+    /// with tuple indexing syntax because it may have a VendorPrefix associated with it.
+    pub fn hasVendorPrefix(this: PropertyIdTag) bool {
+        return switch (this) {
+            .@"background-color" => false,
+            .@"background-image" => false,
+            .@"background-position-x" => false,
+            .@"background-position-y" => false,
+            .@"background-position" => false,
+            .@"background-size" => false,
+            .@"background-repeat" => false,
+            .@"background-attachment" => false,
+            .@"background-clip" => true,
+            .@"background-origin" => false,
+            .background => false,
+            .@"box-shadow" => true,
+            .opacity => false,
+            .color => false,
+            .display => false,
+            .visibility => false,
+            .width => false,
+            .height => false,
+            .@"min-width" => false,
+            .@"min-height" => false,
+            .@"max-width" => false,
+            .@"max-height" => false,
+            .@"block-size" => false,
+            .@"inline-size" => false,
+            .@"min-block-size" => false,
+            .@"min-inline-size" => false,
+            .@"max-block-size" => false,
+            .@"max-inline-size" => false,
+            .@"box-sizing" => true,
+            .@"aspect-ratio" => false,
+            .overflow => false,
+            .@"overflow-x" => false,
+            .@"overflow-y" => false,
+            .@"text-overflow" => true,
+            .position => false,
+            .top => false,
+            .bottom => false,
+            .left => false,
+            .right => false,
+            .@"inset-block-start" => false,
+            .@"inset-block-end" => false,
+            .@"inset-inline-start" => false,
+            .@"inset-inline-end" => false,
+            .@"inset-block" => false,
+            .@"inset-inline" => false,
+            .inset => false,
+            .@"border-spacing" => false,
+            .@"border-top-color" => false,
+            .@"border-bottom-color" => false,
+            .@"border-left-color" => false,
+            .@"border-right-color" => false,
+            .@"border-block-start-color" => false,
+            .@"border-block-end-color" => false,
+            .@"border-inline-start-color" => false,
+            .@"border-inline-end-color" => false,
+            .@"border-top-style" => false,
+            .@"border-bottom-style" => false,
+            .@"border-left-style" => false,
+            .@"border-right-style" => false,
+            .@"border-block-start-style" => false,
+            .@"border-block-end-style" => false,
+            .@"border-inline-start-style" => false,
+            .@"border-inline-end-style" => false,
+            .@"border-top-width" => false,
+            .@"border-bottom-width" => false,
+            .@"border-left-width" => false,
+            .@"border-right-width" => false,
+            .@"border-block-start-width" => false,
+            .@"border-block-end-width" => false,
+            .@"border-inline-start-width" => false,
+            .@"border-inline-end-width" => false,
+            .@"border-top-left-radius" => true,
+            .@"border-top-right-radius" => true,
+            .@"border-bottom-left-radius" => true,
+            .@"border-bottom-right-radius" => true,
+            .@"border-start-start-radius" => false,
+            .@"border-start-end-radius" => false,
+            .@"border-end-start-radius" => false,
+            .@"border-end-end-radius" => false,
+            .@"border-radius" => true,
+            .@"border-image-source" => false,
+            .@"border-image-outset" => false,
+            .@"border-image-repeat" => false,
+            .@"border-image-width" => false,
+            .@"border-image-slice" => false,
+            .@"border-image" => true,
+            .@"border-color" => false,
+            .@"border-style" => false,
+            .@"border-width" => false,
+            .@"border-block-color" => false,
+            .@"border-block-style" => false,
+            .@"border-block-width" => false,
+            .@"border-inline-color" => false,
+            .@"border-inline-style" => false,
+            .@"border-inline-width" => false,
+            .border => false,
+            .@"border-top" => false,
+            .@"border-bottom" => false,
+            .@"border-left" => false,
+            .@"border-right" => false,
+            .@"border-block" => false,
+            .@"border-block-start" => false,
+            .@"border-block-end" => false,
+            .@"border-inline" => false,
+            .@"border-inline-start" => false,
+            .@"border-inline-end" => false,
+            .outline => false,
+            .@"outline-color" => false,
+            .@"outline-style" => false,
+            .@"outline-width" => false,
+            .@"flex-direction" => true,
+            .@"flex-wrap" => true,
+            .@"flex-flow" => true,
+            .@"flex-grow" => true,
+            .@"flex-shrink" => true,
+            .@"flex-basis" => true,
+            .flex => true,
+            .order => true,
+            .@"align-content" => true,
+            .@"justify-content" => true,
+            .@"place-content" => false,
+            .@"align-self" => true,
+            .@"justify-self" => false,
+            .@"place-self" => false,
+            .@"align-items" => true,
+            .@"justify-items" => false,
+            .@"place-items" => false,
+            .@"row-gap" => false,
+            .@"column-gap" => false,
+            .gap => false,
+            .@"box-orient" => true,
+            .@"box-direction" => true,
+            .@"box-ordinal-group" => true,
+            .@"box-align" => true,
+            .@"box-flex" => true,
+            .@"box-flex-group" => true,
+            .@"box-pack" => true,
+            .@"box-lines" => true,
+            .@"flex-pack" => true,
+            .@"flex-order" => true,
+            .@"flex-align" => true,
+            .@"flex-item-align" => true,
+            .@"flex-line-pack" => true,
+            .@"flex-positive" => true,
+            .@"flex-negative" => true,
+            .@"flex-preferred-size" => true,
+            .@"margin-top" => false,
+            .@"margin-bottom" => false,
+            .@"margin-left" => false,
+            .@"margin-right" => false,
+            .@"margin-block-start" => false,
+            .@"margin-block-end" => false,
+            .@"margin-inline-start" => false,
+            .@"margin-inline-end" => false,
+            .@"margin-block" => false,
+            .@"margin-inline" => false,
+            .margin => false,
+            .@"padding-top" => false,
+            .@"padding-bottom" => false,
+            .@"padding-left" => false,
+            .@"padding-right" => false,
+            .@"padding-block-start" => false,
+            .@"padding-block-end" => false,
+            .@"padding-inline-start" => false,
+            .@"padding-inline-end" => false,
+            .@"padding-block" => false,
+            .@"padding-inline" => false,
+            .padding => false,
+            .@"scroll-margin-top" => false,
+            .@"scroll-margin-bottom" => false,
+            .@"scroll-margin-left" => false,
+            .@"scroll-margin-right" => false,
+            .@"scroll-margin-block-start" => false,
+            .@"scroll-margin-block-end" => false,
+            .@"scroll-margin-inline-start" => false,
+            .@"scroll-margin-inline-end" => false,
+            .@"scroll-margin-block" => false,
+            .@"scroll-margin-inline" => false,
+            .@"scroll-margin" => false,
+            .@"scroll-padding-top" => false,
+            .@"scroll-padding-bottom" => false,
+            .@"scroll-padding-left" => false,
+            .@"scroll-padding-right" => false,
+            .@"scroll-padding-block-start" => false,
+            .@"scroll-padding-block-end" => false,
+            .@"scroll-padding-inline-start" => false,
+            .@"scroll-padding-inline-end" => false,
+            .@"scroll-padding-block" => false,
+            .@"scroll-padding-inline" => false,
+            .@"scroll-padding" => false,
+            .@"font-weight" => false,
+            .@"font-size" => false,
+            .@"font-stretch" => false,
+            .@"font-family" => false,
+            .@"font-style" => false,
+            .@"font-variant-caps" => false,
+            .@"line-height" => false,
+            .font => false,
+            .@"text-decoration-color" => true,
+            .@"text-emphasis-color" => true,
+            .@"text-shadow" => false,
+            .direction => false,
+            .composes => false,
+            .@"mask-image" => true,
+            .@"mask-mode" => false,
+            .@"mask-repeat" => true,
+            .@"mask-position-x" => false,
+            .@"mask-position-y" => false,
+            .@"mask-position" => true,
+            .@"mask-clip" => true,
+            .@"mask-origin" => true,
+            .@"mask-size" => true,
+            .@"mask-composite" => false,
+            .@"mask-type" => false,
+            .mask => true,
+            .@"mask-border-source" => false,
+            .@"mask-border-mode" => false,
+            .@"mask-border-slice" => false,
+            .@"mask-border-width" => false,
+            .@"mask-border-outset" => false,
+            .@"mask-border-repeat" => false,
+            .@"mask-border" => false,
+            .@"-webkit-mask-composite" => false,
+            .@"mask-source-type" => true,
+            .@"mask-box-image" => true,
+            .@"mask-box-image-source" => true,
+            .@"mask-box-image-slice" => true,
+            .@"mask-box-image-width" => true,
+            .@"mask-box-image-outset" => true,
+            .@"mask-box-image-repeat" => true,
+            .unparsed => false,
+            .custom => false,
+            .all => false,
+        };
+    }
 };

@@ -185,6 +185,69 @@ pub const LengthValue = union(enum) {
     /// A length in the `cqmax` unit. An `cqmin` is equal to the larger of `cqi` and `cqb`.
     cqmax: CSSNumber,
 
+    const FeatureMap = .{
+        .px = null,
+        .in = null,
+        .cm = null,
+        .mm = null,
+        .q = css.Feature.q_unit,
+        .pt = null,
+        .pc = null,
+        .em = null,
+        .rem = css.Feature.rem_unit,
+        .ex = css.Feature.ex_unit,
+        .rex = null,
+        .ch = css.Feature.ch_unit,
+        .rch = null,
+        .cap = css.Feature.cap_unit,
+        .rcap = null,
+        .ic = css.Feature.ic_unit,
+        .ric = null,
+        .lh = css.Feature.lh_unit,
+        .rlh = css.Feature.rlh_unit,
+        .vw = css.Feature.vw_unit,
+        .lvw = css.Feature.viewport_percentage_units_large,
+        .svw = css.Feature.viewport_percentage_units_small,
+        .dvw = css.Feature.viewport_percentage_units_dynamic,
+        .cqw = css.Feature.container_query_length_units,
+        .vh = css.Feature.vh_unit,
+        .lvh = css.Feature.viewport_percentage_units_large,
+        .svh = css.Feature.viewport_percentage_units_small,
+        .dvh = css.Feature.viewport_percentage_units_dynamic,
+        .cqh = css.Feature.container_query_length_units,
+        .vi = css.Feature.vi_unit,
+        .svi = css.Feature.viewport_percentage_units_small,
+        .lvi = css.Feature.viewport_percentage_units_large,
+        .dvi = css.Feature.viewport_percentage_units_dynamic,
+        .cqi = css.Feature.container_query_length_units,
+        .vb = css.Feature.vb_unit,
+        .svb = css.Feature.viewport_percentage_units_small,
+        .lvb = css.Feature.viewport_percentage_units_large,
+        .dvb = css.Feature.viewport_percentage_units_dynamic,
+        .cqb = css.Feature.container_query_length_units,
+        .vmin = css.Feature.vmin_unit,
+        .svmin = css.Feature.viewport_percentage_units_small,
+        .lvmin = css.Feature.viewport_percentage_units_large,
+        .dvmin = css.Feature.viewport_percentage_units_dynamic,
+        .cqmin = css.Feature.container_query_length_units,
+        .vmax = css.Feature.vmax_unit,
+        .svmax = css.Feature.viewport_percentage_units_small,
+        .lvmax = css.Feature.viewport_percentage_units_large,
+        .dvmax = css.Feature.viewport_percentage_units_dynamic,
+        .cqmax = css.Feature.container_query_length_units,
+    };
+
+    comptime {
+        const struct_fields = std.meta.fields(LengthValue);
+        const feature_fields = std.meta.fields(@TypeOf(FeatureMap));
+        if (struct_fields.len != feature_fields.len) {
+            @compileError("LengthValue and FeatureMap must have the same number of fields");
+        }
+        for (struct_fields) |field| {
+            _ = @field(FeatureMap, field.name);
+        }
+    }
+
     pub fn parse(input: *css.Parser) Result(@This()) {
         const location = input.currentSourceLocation();
         const token = switch (input.next()) {
@@ -416,6 +479,19 @@ pub const LengthValue = union(enum) {
             }
         }
         return null;
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        inline for (bun.meta.EnumFields(LengthValue)) |field| {
+            if (field.value == @intFromEnum(this.*)) {
+                if (comptime @TypeOf(@field(FeatureMap, field.name)) == css.compat.Feature) {
+                    const feature = @field(FeatureMap, field.name);
+                    return css.compat.Feature.isCompatible(feature, browsers);
+                }
+                return true;
+            }
+        }
+        unreachable;
     }
 };
 
@@ -705,6 +781,13 @@ pub const Length = union(enum) {
         return switch (this.*) {
             .value => |v| v.isZero(),
             else => false,
+        };
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .value => |*v| v.isCompatible(browsers),
+            .calc => |c| c.isCompatible(browsers),
         };
     }
 };

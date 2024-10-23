@@ -273,16 +273,16 @@ pub fn parse_declaration(
     const Closure = struct {
         property_id: css.PropertyId,
         options: *const css.ParserOptions,
-
-        pub fn parsefn(this: *@This(), input2: *css.Parser) Result(css.Property) {
-            return css.Property.parse(this.property_id, input2, this.options);
-        }
     };
     var closure = Closure{
         .property_id = property_id,
         .options = options,
     };
-    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, Closure.parsefn)) {
+    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
+        pub fn parseFn(this: *Closure, input2: *css.Parser) Result(css.Property) {
+            return css.Property.parse(this.property_id, input2, this.options);
+        }
+    }.parseFn)) {
         .err => |e| return .{ .err = e },
         .result => |v| v,
     };
@@ -304,7 +304,7 @@ pub fn parse_declaration(
 
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
-    // fallback: FallbackHandler = .{},
+    fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
 
@@ -322,13 +322,13 @@ pub const DeclarationHandler = struct {
 
         // TODO:
         this.background.finalize(&this.decls, context);
-        // this.fallback.finalize(&this.decls, context);
+        this.fallback.finalize(&this.decls, context);
     }
 
     pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
-        return this.background.handleProperty(property, &this.decls, context);
-        // return this.background.handleProperty(property, &this.decls, context) or
-        //     this.fallback.handleProperty(property, &this.decls, context);
+        // return this.background.handleProperty(property, &this.decls, context);
+        return this.background.handleProperty(property, &this.decls, context) or
+            this.fallback.handleProperty(property, &this.decls, context);
     }
 
     pub fn default() DeclarationHandler {

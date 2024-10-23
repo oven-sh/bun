@@ -245,10 +245,11 @@ pub fn StyleRule(comptime R: type) type {
             return this.declarations.len() == other.declarations.len() and
                 this.selectors.eql(&other.selectors) and
                 brk: {
-                const len = @min(this.declarations.len(), other.declarations.len());
+                var len = @min(this.declarations.declarations.items.len, other.declarations.declarations.items.len);
                 for (this.declarations.declarations.items[0..len], other.declarations.declarations.items[0..len]) |*a, *b| {
                     if (!a.propertyId().eql(&b.propertyId())) break :brk false;
                 }
+                len = @min(this.declarations.important_declarations.items.len, other.declarations.important_declarations.items.len);
                 for (this.declarations.important_declarations.items[0..len], other.declarations.important_declarations.items[0..len]) |*a, *b| {
                     if (!a.propertyId().eql(&b.propertyId())) break :brk false;
                 }

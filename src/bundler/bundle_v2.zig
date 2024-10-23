@@ -1011,12 +1011,6 @@ pub const BundleV2 = struct {
                         const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch
                             continue;
 
-                        const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
-                            .client => .browser,
-                            .server => this.bundler.options.target,
-                            .ssr => .kit_server_components_ssr,
-                        }) orelse continue;
-
                         if (entry_point.client_wrapped) {
                             const wrapped_index = try this.enqueueServerComponentGeneratedFile(.{
                                 .client_entry_wrapper = .{
@@ -1025,6 +1019,11 @@ pub const BundleV2 = struct {
                             }, bun.logger.Source.initEmptyFile("client-wrapper.js"));
                             try this.graph.entry_points.append(this.graph.allocator, Index.source(wrapped_index));
                         } else {
+                            const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
+                                .client => .browser,
+                                .server => this.bundler.options.target,
+                                .ssr => .kit_server_components_ssr,
+                            }) orelse continue;
                             try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
                         }
                     },
@@ -1264,7 +1263,7 @@ pub const BundleV2 = struct {
         // Handle onLoad plugins
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
             if (loader.shouldCopyForBundling(this.bundler.options.experimental_css)) {
-                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
+            var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 additional_files.push(this.graph.allocator, .{ .source_index = task.source_index.get() }) catch unreachable;
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                 this.graph.estimated_file_loader_count += 1;
@@ -1441,25 +1440,22 @@ pub const BundleV2 = struct {
 
                     const loader = loaders[index];
 
-                    additional_output_files.append(
-                        options.OutputFile.init(
-                            options.OutputFile.Options{
-                                .data = .{
-                                    .buffer = .{
-                                        .data = source.contents,
-                                        .allocator = bun.default_allocator,
-                                    },
-                                },
-                                .size = source.contents.len,
-                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory(),
-                                .input_path = bun.default_allocator.dupe(u8, source.path.text) catch bun.outOfMemory(),
-                                .input_loader = .file,
-                                .output_kind = .asset,
-                                .loader = loader,
-                                .hash = content_hashes_for_additional_files[index],
-                            },
-                        ),
-                    ) catch unreachable;
+                    additional_output_files.append(options.OutputFile.init(.{
+                        .data = .{ .buffer = .{
+                            .data = source.contents,
+                            .allocator = bun.default_allocator,
+                        } },
+                        .size = source.contents.len,
+                        .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory(),
+                        .input_path = bun.default_allocator.dupe(u8, source.path.text) catch bun.outOfMemory(),
+                        .input_loader = .file,
+                        .output_kind = .asset,
+                        .loader = loader,
+                        .hash = content_hashes_for_additional_files[index],
+                        .side = .client,
+                        .entry_point_index = null,
+                        .is_executable = false,
+                    })) catch unreachable;
                     additional_files[index].push(this.graph.allocator, AdditionalFile{
                         .output_file = @as(u32, @truncate(additional_output_files.items.len - 1)),
                     }) catch unreachable;
@@ -4317,7 +4313,7 @@ const EntryPoint = struct {
         /// Created via an import of a "use server" file
         react_server_component,
 
-        pub fn OutputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
+        pub fn outputKind(this: Kind) JSC.API.BuildArtifact.OutputKind {
             return switch (this) {
                 .user_specified => .@"entry-point",
                 .react_client_component => .@"use client",
@@ -8695,7 +8691,7 @@ pub const LinkerContext = struct {
                     },
                     .source_index => |source_index| {
                         // Multiple imports may refer to the same file/AST, but they
-                        // may wrap or modify the AST in differetn ways. So we need
+                        // may wrap or modify the AST in different ways. So we need
                         // to make a shallow copy and be careful not to modify shared
                         // references.
                         var ast = ast: {
@@ -11945,7 +11941,6 @@ pub const LinkerContext = struct {
         if (root_path.len > 0) {
             try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
         } else {
-
             // In-memory build
             for (chunks) |*chunk| {
                 var display_size: usize = 0;
@@ -11996,22 +11991,23 @@ pub const LinkerContext = struct {
                             code_result.buffer = buf.items;
                         }
 
-                        sourcemap_output_file = options.OutputFile.init(
-                            options.OutputFile.Options{
-                                .data = .{
-                                    .buffer = .{
-                                        .data = output_source_map,
-                                        .allocator = bun.default_allocator,
-                                    },
+                        sourcemap_output_file = options.OutputFile.init(.{
+                            .data = .{
+                                .buffer = .{
+                                    .data = output_source_map,
+                                    .allocator = bun.default_allocator,
                                 },
-                                .hash = null,
-                                .loader = .json,
-                                .input_loader = .file,
-                                .output_path = source_map_final_rel_path,
-                                .output_kind = .sourcemap,
-                                .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
                             },
-                        );
+                            .hash = null,
+                            .loader = .json,
+                            .input_loader = .file,
+                            .output_path = source_map_final_rel_path,
+                            .output_kind = .sourcemap,
+                            .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
+                            .side = .server,
+                            .entry_point_index = null,
+                            .is_executable = false,
+                        });
                     },
                     .@"inline" => {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
@@ -12059,21 +12055,22 @@ pub const LinkerContext = struct {
                                 @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                                 fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 
-                                break :brk options.OutputFile.init(
-                                    options.OutputFile.Options{
-                                        .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                                        .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
-                                        .input_loader = .js,
-                                        .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
-                                        .output_kind = .bytecode,
-                                        .loader = .file,
-                                        .size = @as(u32, @truncate(bytecode.len)),
-                                        .display_size = @as(u32, @truncate(bytecode.len)),
-                                        .data = .{
-                                            .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
-                                        },
+                                break :brk options.OutputFile.init(.{
+                                    .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                    .input_loader = .js,
+                                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                    .output_kind = .bytecode,
+                                    .loader = .file,
+                                    .size = @as(u32, @truncate(bytecode.len)),
+                                    .display_size = @as(u32, @truncate(bytecode.len)),
+                                    .data = .{
+                                        .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
                                     },
-                                );
+                                    .side = .server,
+                                    .entry_point_index = null,
+                                    .is_executable = false,
+                                });
                             } else {
                                 // an error
                                 c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to generate bytecode for {s}", .{
@@ -12098,31 +12095,36 @@ pub const LinkerContext = struct {
                 else
                     null;
 
-                try output_files.append(
-                    options.OutputFile.init(
-                        options.OutputFile.Options{
-                            .data = .{
-                                .buffer = .{
-                                    .data = code_result.buffer,
-                                    .allocator = Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
-                                },
-                            },
-                            .hash = chunk.template.placeholder.hash,
-                            .loader = chunk.content.loader(),
-                            .input_path = input_path,
-                            .display_size = @as(u32, @truncate(display_size)),
-                            .output_kind = if (chunk.entry_point.is_entry_point)
-                                c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
-                            else
-                                .chunk,
-                            .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
-                            .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
-                            .is_executable = chunk.is_executable,
-                            .source_map_index = source_map_index,
-                            .bytecode_index = bytecode_index,
+                const output_kind = if (chunk.entry_point.is_entry_point)
+                    c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
+                else
+                    .chunk;
+                try output_files.append(options.OutputFile.init(.{
+                    .data = .{
+                        .buffer = .{
+                            .data = code_result.buffer,
+                            .allocator = Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
                         },
-                    ),
-                );
+                    },
+                    .hash = chunk.template.placeholder.hash,
+                    .loader = chunk.content.loader(),
+                    .input_path = input_path,
+                    .display_size = @as(u32, @truncate(display_size)),
+                    .output_kind = output_kind,
+                    .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
+                    .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
+                    .is_executable = chunk.is_executable,
+                    .source_map_index = source_map_index,
+                    .bytecode_index = bytecode_index,
+                    .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                        .browser => .client,
+                        else => .server,
+                    },
+                    .entry_point_index = if (output_kind == .@"entry-point")
+                        chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
+                    else
+                        null,
+                }));
                 if (sourcemap_output_file) |sourcemap_file| {
                     try output_files.append(sourcemap_file);
                 }
@@ -12330,19 +12332,20 @@ pub const LinkerContext = struct {
                         .result => {},
                     }
 
-                    source_map_output_file = options.OutputFile.init(
-                        options.OutputFile.Options{
-                            .output_path = source_map_final_rel_path,
-                            .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
-                            .loader = .json,
-                            .input_loader = .file,
-                            .output_kind = .sourcemap,
-                            .size = @as(u32, @truncate(output_source_map.len)),
-                            .data = .{
-                                .saved = 0,
-                            },
+                    source_map_output_file = options.OutputFile.init(.{
+                        .output_path = source_map_final_rel_path,
+                        .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
+                        .loader = .json,
+                        .input_loader = .file,
+                        .output_kind = .sourcemap,
+                        .size = @as(u32, @truncate(output_source_map.len)),
+                        .data = .{
+                            .saved = 0,
                         },
-                    );
+                        .side = .client,
+                        .entry_point_index = null,
+                        .is_executable = false,
+                    });
                 },
                 .@"inline" => {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
@@ -12421,21 +12424,22 @@ pub const LinkerContext = struct {
                                 },
                             }
 
-                            break :brk options.OutputFile.init(
-                                options.OutputFile.Options{
-                                    .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
-                                    .input_loader = .file,
-                                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
-                                    .output_kind = .bytecode,
-                                    .loader = .file,
-                                    .size = @as(u32, @truncate(bytecode.len)),
-                                    .display_size = @as(u32, @truncate(bytecode.len)),
-                                    .data = .{
-                                        .saved = 0,
-                                    },
+                            break :brk options.OutputFile.init(.{
+                                .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
+                                .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                                .input_loader = .file,
+                                .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
+                                .output_kind = .bytecode,
+                                .loader = .file,
+                                .size = @as(u32, @truncate(bytecode.len)),
+                                .display_size = @as(u32, @truncate(bytecode.len)),
+                                .data = .{
+                                    .saved = 0,
                                 },
-                            );
+                                .side = .server,
+                                .entry_point_index = null,
+                                .is_executable = false,
+                            });
                         }
                     }
                 }
@@ -12491,32 +12495,37 @@ pub const LinkerContext = struct {
             else
                 null;
 
-            try output_files.append(
-                options.OutputFile.init(
-                    options.OutputFile.Options{
-                        .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
-                        .input_path = input_path,
-                        .input_loader = if (chunk.entry_point.is_entry_point)
-                            c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
-                        else
-                            .js,
-                        .hash = chunk.template.placeholder.hash,
-                        .output_kind = if (chunk.entry_point.is_entry_point)
-                            c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
-                        else
-                            .chunk,
-                        .loader = .js,
-                        .source_map_index = source_map_index,
-                        .bytecode_index = bytecode_index,
-                        .size = @as(u32, @truncate(code_result.buffer.len)),
-                        .display_size = @as(u32, @truncate(display_size)),
-                        .is_executable = chunk.is_executable,
-                        .data = .{
-                            .saved = 0,
-                        },
-                    },
-                ),
-            );
+            const output_kind = if (chunk.entry_point.is_entry_point)
+                c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
+            else
+                .chunk;
+            try output_files.append(options.OutputFile.init(.{
+                .output_path = bun.default_allocator.dupe(u8, chunk.final_rel_path) catch unreachable,
+                .input_path = input_path,
+                .input_loader = if (chunk.entry_point.is_entry_point)
+                    c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
+                else
+                    .js,
+                .hash = chunk.template.placeholder.hash,
+                .output_kind = output_kind,
+                .loader = .js,
+                .source_map_index = source_map_index,
+                .bytecode_index = bytecode_index,
+                .size = @as(u32, @truncate(code_result.buffer.len)),
+                .display_size = @as(u32, @truncate(display_size)),
+                .is_executable = chunk.is_executable,
+                .data = .{
+                    .saved = 0,
+                },
+                .side = switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                    .browser => .client,
+                    else => .server,
+                },
+                .entry_point_index = if (output_kind == .@"entry-point")
+                    chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
+                else
+                    null,
+            }));
 
             if (source_map_output_file) |sourcemap_file| {
                 try output_files.append(sourcemap_file);

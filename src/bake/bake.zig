@@ -154,6 +154,9 @@ pub const Framework = struct {
             if (str.eqlComptime("react-server-components")) {
                 return Framework.react();
             }
+            if (str.eqlComptime("react")) {
+                return Framework.react();
+            }
         }
 
         if (!opts.isObject()) {

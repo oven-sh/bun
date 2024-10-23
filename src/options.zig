@@ -1851,13 +1851,17 @@ pub const OutputFile = struct {
     value: Value,
     size: usize = 0,
     size_without_sourcemap: usize = 0,
-    mtime: ?i128 = null,
     hash: u64 = 0,
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
     bytecode_index: u32 = std.math.maxInt(u32),
     output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+    /// Relative
     dest_path: []const u8 = "",
+    side: bun.bake.Side,
+    /// This is only set for the JS bundle, and not files associated with an
+    /// entrypoint like sourcemaps and bytecode
+    entry_point_index: ?u32,
 
     // Depending on:
     // - The target
@@ -1899,6 +1903,33 @@ pub const OutputFile = struct {
         },
         pending: resolver.Result,
         saved: SavedFile,
+
+        pub fn toBunString(v: Value) bun.String {
+            return switch (v) {
+                .noop => bun.String.empty,
+                .buffer => |buf| {
+                    // Use ExternalStringImpl to avoid cloning the string, at
+                    // the cost of allocating space to remember the allocator.
+                    const FreeContext = struct {
+                        allocator: std.mem.Allocator,
+
+                        fn onFree(uncast_ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void {
+                            const ctx: *@This() = @alignCast(@ptrCast(uncast_ctx));
+                            ctx.allocator.free(@as([*]u8, @ptrCast(buffer))[0..len]);
+                            bun.destroy(ctx);
+                        }
+                    };
+                    return bun.String.createExternal(
+                        buf.bytes,
+                        true,
+                        bun.new(FreeContext, .{ .allocator = buf.allocator }),
+                        FreeContext.onFree,
+                    );
+                },
+                .pending => unreachable,
+                else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)}),
+            };
+        }
     };
 
     pub const SavedFile = struct {
@@ -1965,8 +1996,8 @@ pub const OutputFile = struct {
         size: ?usize = null,
         input_path: []const u8 = "",
         display_size: u32 = 0,
-        output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
-        is_executable: bool = false,
+        output_kind: JSC.API.BuildArtifact.OutputKind,
+        is_executable: bool,
         data: union(enum) {
             buffer: struct {
                 allocator: std.mem.Allocator,
@@ -1979,10 +2010,12 @@ pub const OutputFile = struct {
             },
             saved: usize,
         },
+        side: bun.bake.Side,
+        entry_point_index: ?u32,
     };
 
     pub fn init(options: Options) OutputFile {
-        return OutputFile{
+        return .{
             .loader = options.loader,
             .input_loader = options.input_loader,
             .src_path = Fs.Path.init(options.input_path),
@@ -2009,6 +2042,8 @@ pub const OutputFile = struct {
                 },
                 .saved => Value{ .saved = .{} },
             },
+            .side = options.side,
+            .entry_point_index = options.entry_point_index,
         };
     }
 
@@ -2026,6 +2061,80 @@ pub const OutputFile = struct {
                 },
             },
         };
+    }
+
+    /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
+    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
+        bun.assert(std.fs.path.isAbsolute(root_dir_path));
+        switch (f.value) {
+            .saved => {
+                var rel_path = f.dest_path;
+                if (f.dest_path.len > root_dir_path.len) {
+                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                }
+                return rel_path;
+            },
+            .buffer => |value| {
+                var rel_path = f.dest_path;
+                if (f.dest_path.len > root_dir_path.len) {
+                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                    if (std.fs.path.dirname(rel_path)) |parent| {
+                        if (parent.len > root_dir_path.len) {
+                            try root_dir.makePath(parent);
+                        }
+                    }
+                }
+
+                var path_buf: bun.PathBuffer = undefined;
+                _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                    .data = .{ .buffer = .{
+                        .buffer = .{
+                            .ptr = @constCast(value.bytes.ptr),
+                            .len = value.bytes.len,
+                            .byte_len = value.bytes.len,
+                        },
+                    } },
+                    .encoding = .buffer,
+                    .mode = if (f.is_executable) 0o755 else 0o644,
+                    .dirfd = bun.toFD(root_dir.fd),
+                    .file = .{ .path = .{
+                        .string = JSC.PathString.init(rel_path),
+                    } },
+                }).unwrap();
+
+                return rel_path;
+            },
+            .move => |value| {
+                _ = value;
+                // var filepath_buf: bun.PathBuffer = undefined;
+                // filepath_buf[0] = '.';
+                // filepath_buf[1] = '/';
+                // const primary = f.dest_path[root_dir_path.len..];
+                // bun.copy(u8, filepath_buf[2..], primary);
+                // var rel_path: []const u8 = filepath_buf[0 .. primary.len + 2];
+                // rel_path = value.pathname;
+
+                // try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
+                {
+                    @panic("TODO: Regressed behavior");
+                }
+
+                // return primary;
+            },
+            .copy => |value| {
+                _ = value;
+                // rel_path = value.pathname;
+
+                // try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
+                {
+                    @panic("TODO: Regressed behavior");
+                }
+            },
+            .noop => {
+                return f.dest_path;
+            },
+            .pending => unreachable,
+        }
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {

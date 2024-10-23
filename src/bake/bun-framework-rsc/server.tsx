@@ -1,24 +1,11 @@
 import type { Bake } from "bun";
 import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
 import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunBakeGraph: "ssr" };
-import { serverManifest } from "bun:bake/server";
+import { clientManifest, serverManifest } from "bun:bake/server";
 
-// `server.tsx` exports a function to be used for handling user routes. It takes
-// in the Request object, the route's module, and extra route metadata.
-export default async function (request: Request, route: any, meta: Bake.RouteMetadata): Promise<Response> {
-  // TODO: be able to signal to Bake that Accept may include this, so that
-  // static pages can be pre-rendered both as RSC payload + HTML.
-
-  // The framework generally has two rendering modes.
-  // - Standard browser navigation
-  // - Client-side navigation
-  //
-  // For React, this means we will always perform `renderToReadableStream` to
-  // generate the RSC payload, but only generate HTML for the former of these
-  // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
-  const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
-
+function getPage(route, meta: Bake.RouteMetadata) {
   const Route = route.default;
+  const { styles } = meta;
 
   if (import.meta.env.DEV) {
     if (typeof Route !== "function") {
@@ -31,8 +18,7 @@ export default async function (request: Request, route: any, meta: Bake.RouteMet
     }
   }
 
-  const { styles } = meta;
-  const page = (
+  return (
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -46,6 +32,21 @@ export default async function (request: Request, route: any, meta: Bake.RouteMet
       </body>
     </html>
   );
+}
+
+// `server.tsx` exports a function to be used for handling user routes. It takes
+// in the Request object, the route's module, and extra route metadata.
+export default async function render(request: Request, route: any, meta: Bake.RouteMetadata): Promise<Response> {
+  // The framework generally has two rendering modes.
+  // - Standard browser navigation
+  // - Client-side navigation
+  //
+  // For React, this means we will always perform `renderToReadableStream` to
+  // generate the RSC payload, but only generate HTML for the former of these
+  // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
+  const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
+
+  const page = getPage(route, meta);
 
   // This renders Server Components to a ReadableStream "RSC Payload"
   const rscPayload = renderToReadableStream(page, serverManifest);
@@ -57,7 +58,7 @@ export default async function (request: Request, route: any, meta: Bake.RouteMet
   }
 
   // One straem is used to render SSR. The second is embedded into the html for browser hydration.
-  // Note: This approach does not stream the response.
+  // Note: This approach does not stream the response. That practice is called "react flight" and should be added
   const [rscPayload1, rscPayload2] = rscPayload.tee();
   const rscPayloadBuffer = Bun.readableStreamToText(rscPayload1);
   const rw = new HTMLRewriter();
@@ -82,3 +83,41 @@ export default async function (request: Request, route: any, meta: Bake.RouteMet
     }),
   );
 }
+
+// For static site generation, a different function is given, one without a request object.
+export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
+  const page = getPage(route, meta);
+  const rscPayload = renderToReadableStream(page, serverManifest);
+  const [rscPayload1, rscPayload2] = rscPayload.tee();
+  
+  // Prepare both files in parallel
+  let [html, rscPayloadBuffer] = await Promise.all([
+    Bun.readableStreamToText(await renderToHtml(rscPayload2)),
+    Bun.readableStreamToText(rscPayload1),
+  ]);
+  html = html.replace('</body>', `<script id="rsc_payload" type="json">${rscPayloadBuffer}</script></body>`);
+
+  // Each route generates a directory with framework-provided files. Keys are
+  // files relative to the route path, and values are anything `Bun.write`
+  // supports. Streams may result in lower memory usage.
+  return {
+    // Directories like `blog/index.html` are preferred over `blog.html` because
+    // certain static hosts do not support this conversion. By using `index.html`,
+    // the static build is more portable.
+    '/index.html': html,
+
+    // The RSC payload is provided so client-side can use this file for seamless
+    // client-side navigation. This is equivalent to 'Accept: text/x-component'
+    // for the non-static build.s
+    '/index.rsc': rscPayloadBuffer,
+  }
+}
+
+// This is a hack to make react-server-dom-webpack work with Bun's bundler.
+// It will be removed once Bun acquires react-server-dom-bun.
+globalThis.__webpack_require__ = (id: string) => {
+  console.log(JSON.stringify({clientManifest, serverManifest}, null, 2));
+  clientManifest[id] 
+  console.log("Bun: __webpack_require__", id);
+  return {};
+};

@@ -2478,9 +2478,6 @@ const IncrementalResult = struct {
     /// When tracing a file's dependencies via `traceDependencies`, this is
     /// populated with the hit routes. Tracing is used for many purposes.
     routes_affected: ArrayListUnmanaged(Route.Index),
-    // /// When tracing a file's imports via `traceImports` this is populated
-    // /// with hit css files.
-    // css_files: ArrayListUnmanaged(IncrementalGraph(.client).FileIndex),
 
     // Following three fields are populated during `receiveChunk`
 

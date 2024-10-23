@@ -1,6 +1,8 @@
 declare module "bun" {
   declare function wipDevServerExpectHugeBreakingChanges(options: Bake.Options): never;
 
+  type Awaitable<T> = T | Promise<T>;
+
   declare namespace Bake {
     interface Options {
       /**
@@ -145,7 +147,13 @@ declare module "bun" {
        * The framework implementation decides and enforces the shape
        * of the route module. Bun passes it as an opaque value.
        */
-      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Response;
+      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
+      /**
+       * Static rendering does not take a response in, and can generate
+       * multiple output files. Note that `import.meta.env.STATIC` will
+       * be inlined to true during a static build.
+       */
+      staticRender: (routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Record<string, Blob | ArrayBuffer>>;
     }
 
     interface ClientEntryPoint {

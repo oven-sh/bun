@@ -199,8 +199,6 @@ const json = struct {
             var kind = data[0];
             var json_data = data[0..idx];
 
-            if (json_data.len == 0) return error.NotEnoughBytes;
-
             switch (kind) {
                 2 => {
                     json_data = data[1..idx];
@@ -212,7 +210,6 @@ const json = struct {
                 't', //true
                 'f', //false
                 'n', //null
-                '\n', //empty
                 => {
                     kind = 1;
                 },
@@ -245,7 +242,7 @@ const json = struct {
 
             return switch (kind) {
                 1 => .{
-                    .bytes_consumed = idx,
+                    .bytes_consumed = idx + 1,
                     .message = .{ .data = deserialized },
                 },
                 2 => .{
@@ -871,7 +868,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         // copy the remaining bytes to the start of the buffer
                         bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);
                         ipc.incoming.len = @truncate(slice.len);
-                        log("hit NotEnoughBytes2", .{});
+                        log("hit NotEnoughBytes3", .{});
                         return;
                     },
                     error.InvalidFormat => {

@@ -15,6 +15,54 @@
 #include <thread>
 #include <utility>
 
+// e.g NODE_API_CALL(env, napi_create_int32(env, 5, &my_napi_integer))
+#define NODE_API_CALL(env, call) NODE_API_CALL_CUSTOM_RETURN(env, NULL, call)
+
+// Version of NODE_API_CALL for functions not returning napi_value
+#define NODE_API_CALL_CUSTOM_RETURN(env, value_to_return_if_threw, call)       \
+  do {                                                                         \
+    napi_status status = (call);                                               \
+    if (status != napi_ok) {                                                   \
+      const napi_extended_error_info *error_info = NULL;                       \
+      napi_get_last_error_info((env), &error_info);                            \
+      const char *err_message = error_info->error_message;                     \
+      bool is_pending;                                                         \
+      napi_is_exception_pending((env), &is_pending);                           \
+      /* If an exception is already pending, don't rethrow it */               \
+      if (!is_pending) {                                                       \
+        char buf[4096] = {0};                                                  \
+        snprintf(buf, sizeof(buf) - 1, "%s (%s:%d): Call %s failed: %s",       \
+                 __PRETTY_FUNCTION__, __FILE__, __LINE__, #call,               \
+                 (err_message == NULL) ? "empty error message" : err_message); \
+        napi_throw_error((env), NULL, buf);                                    \
+      }                                                                        \
+      return (value_to_return_if_threw);                                       \
+    }                                                                          \
+  } while (0)
+
+// Throw an error in the given napi_env and return if expr is false
+#define NODE_API_ASSERT(env, expr)                                             \
+  NODE_API_ASSERT_CUSTOM_RETURN(env, NULL, expr)
+
+#define STRINGIFY(x) #x
+
+// Version of NODE_API_ASSERT for functions not returning napi_value
+#define NODE_API_ASSERT_CUSTOM_RETURN(env, value_to_return_if_threw, expr)     \
+  do {                                                                         \
+    if (!(expr)) {                                                             \
+      bool is_pending;                                                         \
+      napi_is_exception_pending((env), &is_pending);                           \
+      /* If an exception is already pending, don't rethrow it */               \
+      if (!is_pending) {                                                       \
+        char buf[4096] = {0};                                                  \
+        snprintf(buf, sizeof(buf) - 1, "%s (%s:%d): Assertion failed: %s",     \
+                 __PRETTY_FUNCTION__, __FILE__, __LINE__, #expr);              \
+        napi_throw_error((env), NULL, buf);                                    \
+      }                                                                        \
+      return (value_to_return_if_threw);                                       \
+    }                                                                          \
+  } while (0)
+
 napi_value fail(napi_env env, const char *msg) {
   napi_value result;
   napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &result);
@@ -43,7 +91,9 @@ static void run_gc(const Napi::CallbackInfo &info) {
 // calls napi_typeof and asserts it returns napi_ok
 static napi_valuetype get_typeof(napi_env env, napi_value value) {
   napi_valuetype result;
-  assert(napi_typeof(env, value, &result) == napi_ok);
+  // return an invalid napi_valuetype if the call to napi_typeof fails
+  NODE_API_CALL_CUSTOM_RETURN(env, static_cast<napi_valuetype>(INT_MAX),
+                              napi_typeof(env, value, &result));
   return result;
 }
 
@@ -77,22 +127,15 @@ static const char *napi_valuetype_to_string(napi_valuetype type) {
 napi_value test_issue_7685(const Napi::CallbackInfo &info) {
   Napi::Env env(info.Env());
   Napi::HandleScope scope(env);
-#define napi_assert(expr)                                                      \
-  {                                                                            \
-    if (!expr) {                                                               \
-      Napi::Error::New(env, #expr).ThrowAsJavaScriptException();               \
-    }                                                                          \
-  }
   // info[0] is a function to run the GC
-  napi_assert(info[1].IsNumber());
-  napi_assert(info[2].IsNumber());
-  napi_assert(info[3].IsNumber());
-  napi_assert(info[4].IsNumber());
-  napi_assert(info[5].IsNumber());
-  napi_assert(info[6].IsNumber());
-  napi_assert(info[7].IsNumber());
-  napi_assert(info[8].IsNumber());
-#undef napi_assert
+  NODE_API_ASSERT(env, info[1].IsNumber());
+  NODE_API_ASSERT(env, info[2].IsNumber());
+  NODE_API_ASSERT(env, info[3].IsNumber());
+  NODE_API_ASSERT(env, info[4].IsNumber());
+  NODE_API_ASSERT(env, info[5].IsNumber());
+  NODE_API_ASSERT(env, info[6].IsNumber());
+  NODE_API_ASSERT(env, info[7].IsNumber());
+  NODE_API_ASSERT(env, info[8].IsNumber());
   return ok(env);
 }
 
@@ -112,19 +155,14 @@ static void test_issue_11949_callback(napi_env env, napi_value js_callback,
 static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
   Napi::Env env(info.Env());
   Napi::HandleScope scope(env);
-  napi_status status;
-  status = napi_create_string_utf8(env, "TSFN", 4, &tsfn_name_11949);
-  assert(status == napi_ok);
-  status = napi_create_threadsafe_function(
-      env, NULL, NULL, tsfn_name_11949, 0, 1, NULL, NULL, NULL,
-      &test_issue_11949_callback, &tsfn_11949);
-  assert(status == napi_ok);
-  status =
-      napi_call_threadsafe_function(tsfn_11949, NULL, napi_tsfn_nonblocking);
-  assert(status == napi_ok);
+  NODE_API_CALL(env, napi_create_string_utf8(env, "TSFN", 4, &tsfn_name_11949));
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, NULL, NULL, tsfn_name_11949, 0, 1, NULL, NULL,
+                         NULL, &test_issue_11949_callback, &tsfn_11949));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_11949, NULL,
+                                                   napi_tsfn_nonblocking));
   napi_value result;
-  status = napi_get_undefined(env, &result);
-  assert(status == napi_ok);
+  NODE_API_CALL(env, napi_get_undefined(env, &result));
   return result;
 }
 
@@ -135,20 +173,16 @@ napi_value test_napi_threadsafe_function_does_not_hang_after_finalize(
     const Napi::CallbackInfo &info) {
 
   Napi::Env env = info.Env();
-  napi_status status;
 
   napi_value resource_name;
-  status = napi_create_string_utf8(env, "simple", 6, &resource_name);
-  assert(status == napi_ok);
+  NODE_API_CALL(env, napi_create_string_utf8(env, "simple", 6, &resource_name));
 
   napi_threadsafe_function cb;
-  status = napi_create_threadsafe_function(env, nullptr, nullptr, resource_name,
-                                           0, 1, nullptr, nullptr, nullptr,
-                                           &callback_1, &cb);
-  assert(status == napi_ok);
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, nullptr, nullptr, resource_name, 0, 1, nullptr,
+                         nullptr, nullptr, &callback_1, &cb));
 
-  status = napi_release_threadsafe_function(cb, napi_tsfn_release);
-  assert(status == napi_ok);
+  NODE_API_CALL(env, napi_release_threadsafe_function(cb, napi_tsfn_release));
 
   printf("success!");
 
@@ -165,15 +199,13 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
 
   // get how many chars we need to copy
   uint32_t _len;
-  if (napi_get_value_uint32(env, chars_to_copy_js, &_len) != napi_ok) {
-    return fail(env, "call to napi_get_value_uint32 failed");
-  }
+  NODE_API_CALL(env, napi_get_value_uint32(env, chars_to_copy_js, &_len));
   size_t len = (size_t)_len;
 
   if (len == 424242) {
     len = NAPI_AUTO_LENGTH;
-  } else if (len > 29) {
-    return fail(env, "len > 29");
+  } else {
+    NODE_API_ASSERT(env, "len <= 29");
   }
 
   size_t copied;
@@ -209,8 +241,9 @@ napi_value test_napi_handle_scope_string(const Napi::CallbackInfo &info) {
 
   for (size_t i = 0; i < num_small_strings; i++) {
     std::string cpp_str = std::to_string(i);
-    assert(napi_create_string_utf8(env, cpp_str.c_str(), cpp_str.size(),
-                                   &small_strings[i]) == napi_ok);
+    NODE_API_CALL(env,
+                  napi_create_string_utf8(env, cpp_str.c_str(), cpp_str.size(),
+                                          &small_strings[i]));
   }
 
   run_gc(info);
@@ -218,10 +251,10 @@ napi_value test_napi_handle_scope_string(const Napi::CallbackInfo &info) {
   for (size_t j = 0; j < num_small_strings; j++) {
     char buf[16];
     size_t result;
-    assert(napi_get_value_string_utf8(env, small_strings[j], buf, sizeof buf,
-                                      &result) == napi_ok);
+    NODE_API_CALL(env, napi_get_value_string_utf8(env, small_strings[j], buf,
+                                                  sizeof buf, &result));
     printf("%s\n", buf);
-    assert(atoi(buf) == (int)j);
+    NODE_API_ASSERT(env, atoi(buf) == (int)j);
   }
 
   delete[] small_strings;
@@ -241,8 +274,8 @@ napi_value test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
   for (size_t i = 0; i < num_small_ints; i++) {
     std::array<uint64_t, small_int_size> words;
     words.fill(i + 1);
-    assert(napi_create_bigint_words(env, 0, small_int_size, words.data(),
-                                    &small_ints[i]) == napi_ok);
+    NODE_API_CALL(env, napi_create_bigint_words(env, 0, small_int_size,
+                                                words.data(), &small_ints[i]));
   }
 
   run_gc(info);
@@ -251,12 +284,13 @@ napi_value test_napi_handle_scope_bigint(const Napi::CallbackInfo &info) {
     std::array<uint64_t, small_int_size> words;
     int sign;
     size_t word_count = words.size();
-    assert(napi_get_value_bigint_words(env, small_ints[j], &sign, &word_count,
-                                       words.data()) == napi_ok);
+    NODE_API_CALL(env, napi_get_value_bigint_words(env, small_ints[j], &sign,
+                                                   &word_count, words.data()));
     printf("%d, %zu\n", sign, word_count);
-    assert(sign == 0 && word_count == words.size());
-    assert(std::all_of(words.begin(), words.end(),
-                       [j](const uint64_t &w) { return w == j + 1; }));
+    NODE_API_ASSERT(env, sign == 0 && word_count == words.size());
+    NODE_API_ASSERT(env,
+                    std::all_of(words.begin(), words.end(),
+                                [j](const uint64_t &w) { return w == j + 1; }));
   }
 
   delete[] small_ints;
@@ -269,34 +303,35 @@ napi_value test_napi_delete_property(const Napi::CallbackInfo &info) {
   // info[0] is a function to run the GC
   napi_value object = info[1];
   napi_valuetype type = get_typeof(env, object);
-  assert(type == napi_object);
+  NODE_API_ASSERT(env, type == napi_object);
 
   napi_value key;
-  assert(napi_create_string_utf8(env, "foo", 3, &key) == napi_ok);
+  NODE_API_CALL(env, napi_create_string_utf8(env, "foo", 3, &key));
 
   napi_value non_configurable_key;
-  assert(napi_create_string_utf8(env, "bar", 3, &non_configurable_key) ==
-         napi_ok);
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "bar", 3, &non_configurable_key));
 
   napi_value val;
-  assert(napi_create_int32(env, 42, &val) == napi_ok);
+  NODE_API_CALL(env, napi_create_int32(env, 42, &val));
 
   bool delete_result;
-  assert(napi_delete_property(env, object, non_configurable_key,
-                              &delete_result) == napi_ok);
-  assert(delete_result == false);
+  NODE_API_CALL(env, napi_delete_property(env, object, non_configurable_key,
+                                          &delete_result));
+  NODE_API_ASSERT(env, delete_result == false);
 
-  assert(napi_delete_property(env, object, key, &delete_result) == napi_ok);
-  assert(delete_result == true);
+  NODE_API_CALL(env, napi_delete_property(env, object, key, &delete_result));
+  NODE_API_ASSERT(env, delete_result == true);
 
   bool has_property;
-  assert(napi_has_property(env, object, key, &has_property) == napi_ok);
-  assert(has_property == false);
+  NODE_API_CALL(env, napi_has_property(env, object, key, &has_property));
+  NODE_API_ASSERT(env, has_property == false);
 
   return ok(env);
 }
 
-void store_escaped_handle(napi_env env, napi_value *out, const char *str) {
+// Returns false if any napi function failed
+bool store_escaped_handle(napi_env env, napi_value *out, const char *str) {
   // Allocate these values on the heap so they cannot be seen by stack scanning
   // after this function returns. An earlier version tried putting them on the
   // stack and using volatile stores to set them to nullptr, but that wasn't
@@ -305,18 +340,24 @@ void store_escaped_handle(napi_env env, napi_value *out, const char *str) {
   napi_escapable_handle_scope *ehs = new napi_escapable_handle_scope;
   napi_value *s = new napi_value;
   napi_value *escaped = new napi_value;
-  assert(napi_open_escapable_handle_scope(env, ehs) == napi_ok);
-  assert(napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH, s) == napi_ok);
-  assert(napi_escape_handle(env, *ehs, *s, escaped) == napi_ok);
+  NODE_API_CALL_CUSTOM_RETURN(env, false,
+                              napi_open_escapable_handle_scope(env, ehs));
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, false, napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH, s));
+  NODE_API_CALL_CUSTOM_RETURN(env, false,
+                              napi_escape_handle(env, *ehs, *s, escaped));
   // can't call a second time
-  assert(napi_escape_handle(env, *ehs, *s, escaped) ==
-         napi_escape_called_twice);
-  assert(napi_close_escapable_handle_scope(env, *ehs) == napi_ok);
+  NODE_API_ASSERT_CUSTOM_RETURN(env, false,
+                                napi_escape_handle(env, *ehs, *s, escaped) ==
+                                    napi_escape_called_twice);
+  NODE_API_CALL_CUSTOM_RETURN(env, false,
+                              napi_close_escapable_handle_scope(env, *ehs));
   *out = *escaped;
 
   delete escaped;
   delete s;
   delete ehs;
+  return true;
 }
 
 napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
@@ -331,16 +372,16 @@ napi_value test_napi_escapable_handle_scope(const Napi::CallbackInfo &info) {
   constexpr const char *str = "this is a long string meow meow meow";
 
   napi_value *hidden = new napi_value;
-  store_escaped_handle(env, hidden, str);
+  NODE_API_ASSERT(env, store_escaped_handle(env, hidden, str));
 
   run_gc(info);
 
   char buf[64];
   size_t len;
-  assert(napi_get_value_string_utf8(env, *hidden, buf, sizeof(buf), &len) ==
-         napi_ok);
-  assert(len == strlen(str));
-  assert(strcmp(buf, str) == 0);
+  NODE_API_CALL(
+      env, napi_get_value_string_utf8(env, *hidden, buf, sizeof(buf), &len));
+  NODE_API_ASSERT(env, len == strlen(str));
+  NODE_API_ASSERT(env, strcmp(buf, str) == 0);
 
   delete hidden;
   return ok(env);
@@ -353,17 +394,17 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   // Create an outer handle scope, hidden on the heap (the one created in
   // NAPIFunction::call is still on the stack
   napi_handle_scope *outer_hs = new napi_handle_scope;
-  assert(napi_open_handle_scope(env, outer_hs) == napi_ok);
+  NODE_API_CALL(env, napi_open_handle_scope(env, outer_hs));
 
   // Make a handle in the outer scope, on the heap so stack scanning can't see
   // it
   napi_value *outer_scope_handle = new napi_value;
-  assert(napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH,
-                                 outer_scope_handle) == napi_ok);
+  NODE_API_CALL(env, napi_create_string_utf8(env, str, NAPI_AUTO_LENGTH,
+                                             outer_scope_handle));
 
   // Make a new handle scope on the heap
   napi_handle_scope *inner_hs = new napi_handle_scope;
-  assert(napi_open_handle_scope(env, inner_hs) == napi_ok);
+  NODE_API_CALL(env, napi_open_handle_scope(env, inner_hs));
 
   // Force GC
   run_gc(info);
@@ -372,15 +413,15 @@ napi_value test_napi_handle_scope_nesting(const Napi::CallbackInfo &info) {
   // collected now that it's not on the global object?
   char buf[64];
   size_t len;
-  assert(napi_get_value_string_utf8(env, *outer_scope_handle, buf, sizeof(buf),
-                                    &len) == napi_ok);
-  assert(len == strlen(str));
-  assert(strcmp(buf, str) == 0);
+  NODE_API_CALL(env, napi_get_value_string_utf8(env, *outer_scope_handle, buf,
+                                                sizeof(buf), &len));
+  NODE_API_ASSERT(env, len == strlen(str));
+  NODE_API_ASSERT(env, strcmp(buf, str) == 0);
 
   // Clean up
-  assert(napi_close_handle_scope(env, *inner_hs) == napi_ok);
+  NODE_API_CALL(env, napi_close_handle_scope(env, *inner_hs));
   delete inner_hs;
-  assert(napi_close_handle_scope(env, *outer_hs) == napi_ok);
+  NODE_API_CALL(env, napi_close_handle_scope(env, *outer_hs));
   delete outer_hs;
   delete outer_scope_handle;
   return ok(env);
@@ -397,7 +438,7 @@ napi_value test_napi_handle_scope_many_args(const Napi::CallbackInfo &info) {
   // now if bun is broken a bunch of our args are dead
   for (size_t i = 1; i < info.Length(); i++) {
     Napi::String s = info[i].As<Napi::String>();
-    assert(s.Utf8Value() == std::to_string(i));
+    NODE_API_ASSERT(env, s.Utf8Value() == std::to_string(i));
   }
   return env.Undefined();
 }
@@ -405,44 +446,47 @@ napi_value test_napi_handle_scope_many_args(const Napi::CallbackInfo &info) {
 napi_value constructor(napi_env env, napi_callback_info info) {
   napi_value this_value;
   void *data;
-  assert(napi_get_cb_info(env, info, nullptr, nullptr, &this_value, &data) ==
-         napi_ok);
+  NODE_API_CALL(
+      env, napi_get_cb_info(env, info, nullptr, nullptr, &this_value, &data));
+
   printf("in constructor, data = \"%s\"\n",
          reinterpret_cast<const char *>(data));
+
   napi_value new_target;
-  assert(napi_get_new_target(env, info, &new_target) == napi_ok);
+  NODE_API_CALL(env, napi_get_new_target(env, info, &new_target));
   printf("typeof new.target = %s\n",
          new_target ? napi_valuetype_to_string(get_typeof(env, new_target))
                     : "[nullptr]");
+
   printf("typeof this = %s\n",
          napi_valuetype_to_string(get_typeof(env, this_value)));
+
   napi_value global;
-  assert(napi_get_global(env, &global) == napi_ok);
+  NODE_API_CALL(env, napi_get_global(env, &global));
   bool equal;
-  assert(napi_strict_equals(env, this_value, global, &equal) == napi_ok);
+  NODE_API_CALL(env, napi_strict_equals(env, this_value, global, &equal));
   printf("this == global = %s\n", equal ? "true" : "false");
+
   napi_value property_value;
-  assert(napi_create_string_utf8(env, "meow", NAPI_AUTO_LENGTH,
-                                 &property_value) == napi_ok);
-  /*assert(*/ napi_set_named_property(env, this_value, "foo",
-                                      property_value) /* ==
-napi_ok)*/
-      ;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "meow", NAPI_AUTO_LENGTH,
+                                             &property_value));
+  napi_set_named_property(env, this_value, "foo", property_value);
+
   napi_value undefined;
-  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  NODE_API_CALL(env, napi_get_undefined(env, &undefined));
   return undefined;
 }
 
 napi_value getData_callback(napi_env env, napi_callback_info info) {
   void *data;
 
-  assert(napi_get_cb_info(env, info, nullptr, nullptr, nullptr, &data) ==
-         napi_ok);
+  NODE_API_CALL(env,
+                napi_get_cb_info(env, info, nullptr, nullptr, nullptr, &data));
   const char *str_data = reinterpret_cast<const char *>(data);
 
   napi_value ret;
-  assert(napi_create_string_utf8(env, str_data, NAPI_AUTO_LENGTH, &ret) ==
-         napi_ok);
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, str_data, NAPI_AUTO_LENGTH, &ret));
   return ret;
 }
 
@@ -465,11 +509,13 @@ napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
       .data = reinterpret_cast<void *>(method_data),
   }};
 
-  assert(napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,
-                           reinterpret_cast<void *>(constructor_data), 1,
-                           properties, &napi_class) == napi_ok);
-  assert(napi_wrap(env, napi_class, reinterpret_cast<void *>(wrap_data),
-                   nullptr, nullptr, nullptr) == napi_ok);
+  NODE_API_CALL(
+      env, napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,
+                             reinterpret_cast<void *>(constructor_data), 1,
+                             properties, &napi_class));
+  NODE_API_CALL(env,
+                napi_wrap(env, napi_class, reinterpret_cast<void *>(wrap_data),
+                          nullptr, nullptr, nullptr));
   return napi_class;
 }
 
@@ -489,34 +535,42 @@ struct AsyncWorkData {
 
   static void complete(napi_env env, napi_status status, void *data) {
     AsyncWorkData *async_work_data = reinterpret_cast<AsyncWorkData *>(data);
-    assert(status == napi_ok);
+    NODE_API_ASSERT_CUSTOM_RETURN(env, void(), status == napi_ok);
 
     if (async_work_data->do_throw) {
       // still have to resolve/reject otherwise the process times out
       // we should not see the resolution as our unhandled exception handler
       // exits the process before that can happen
       napi_value result;
-      assert(napi_get_undefined(env, &result) == napi_ok);
-      assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
-             napi_ok);
+      NODE_API_CALL_CUSTOM_RETURN(env, void(),
+                                  napi_get_undefined(env, &result));
+      NODE_API_CALL_CUSTOM_RETURN(
+          env, void(),
+          napi_resolve_deferred(env, async_work_data->deferred, result));
 
       napi_value err;
       napi_value msg;
-      assert(napi_create_string_utf8(env, "error from napi", NAPI_AUTO_LENGTH,
-                                     &msg) == napi_ok);
-      assert(napi_create_error(env, nullptr, msg, &err) == napi_ok);
-      assert(napi_throw(env, err) == napi_ok);
+      NODE_API_CALL_CUSTOM_RETURN(
+          env, void(),
+          napi_create_string_utf8(env, "error from napi", NAPI_AUTO_LENGTH,
+                                  &msg));
+      NODE_API_CALL_CUSTOM_RETURN(env, void(),
+                                  napi_create_error(env, nullptr, msg, &err));
+      NODE_API_CALL_CUSTOM_RETURN(env, void(), napi_throw(env, err));
     } else {
       napi_value result;
       char buf[64] = {0};
       snprintf(buf, sizeof(buf), "the number is %d", async_work_data->result);
-      assert(napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result) ==
-             napi_ok);
-      assert(napi_resolve_deferred(env, async_work_data->deferred, result) ==
-             napi_ok);
+      NODE_API_CALL_CUSTOM_RETURN(
+          env, void(),
+          napi_create_string_utf8(env, buf, NAPI_AUTO_LENGTH, &result));
+      NODE_API_CALL_CUSTOM_RETURN(
+          env, void(),
+          napi_resolve_deferred(env, async_work_data->deferred, result));
     }
 
-    assert(napi_delete_async_work(env, async_work_data->work) == napi_ok);
+    NODE_API_CALL_CUSTOM_RETURN(
+        env, void(), napi_delete_async_work(env, async_work_data->work));
     delete async_work_data;
   }
 };
@@ -527,20 +581,20 @@ napi_value create_promise(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   auto *data = new AsyncWorkData();
   // info[0] is a callback to run the GC
-  assert(napi_get_value_bool(env, info[1], &data->do_throw) == napi_ok);
+  NODE_API_CALL(env, napi_get_value_bool(env, info[1], &data->do_throw));
 
   napi_value promise;
 
-  assert(napi_create_promise(env, &data->deferred, &promise) == napi_ok);
+  NODE_API_CALL(env, napi_create_promise(env, &data->deferred, &promise));
 
   napi_value resource_name;
-  assert(napi_create_string_utf8(env, "napitests::create_promise",
-                                 NAPI_AUTO_LENGTH, &resource_name) == napi_ok);
-  assert(napi_create_async_work(env, nullptr, resource_name,
-                                AsyncWorkData::execute, AsyncWorkData::complete,
-                                data, &data->work) == napi_ok);
+  NODE_API_CALL(env, napi_create_string_utf8(env, "napitests::create_promise",
+                                             NAPI_AUTO_LENGTH, &resource_name));
+  NODE_API_CALL(env, napi_create_async_work(
+                         env, nullptr, resource_name, AsyncWorkData::execute,
+                         AsyncWorkData::complete, data, &data->work));
 
-  assert(napi_queue_async_work(env, data->work) == napi_ok);
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
   return promise;
 }
 
@@ -600,26 +654,28 @@ struct ThreadsafeFunctionData {
         reinterpret_cast<ThreadsafeFunctionData *>(context);
 
     napi_value recv;
-    assert(napi_get_undefined(env, &recv) == napi_ok);
+    NODE_API_CALL_CUSTOM_RETURN(env, void(), napi_get_undefined(env, &recv));
 
     // call our JS function with undefined for this and no arguments
     napi_value js_result;
     napi_status call_result =
         napi_call_function(env, recv, js_callback, 0, nullptr, &js_result);
-    // assert(call_result == napi_ok || call_result == napi_pending_exception);
+    NODE_API_ASSERT_CUSTOM_RETURN(env, void(),
+                                  call_result == napi_ok ||
+                                      call_result == napi_pending_exception);
 
     if (call_result == napi_ok) {
       // only resolve if js_callback did not return an error
       // resolve the promise with the return value of the JS function
-      napi_status defer_result =
-          napi_resolve_deferred(env, tsfn_data->deferred, js_result);
-      printf("%d\n", defer_result);
-      assert(defer_result == napi_ok);
+      NODE_API_CALL_CUSTOM_RETURN(
+          env, void(),
+          napi_resolve_deferred(env, tsfn_data->deferred, js_result));
     }
 
     // clean up the threadsafe function
-    assert(napi_release_threadsafe_function(tsfn_data->tsfn, napi_tsfn_abort) ==
-           napi_ok);
+    NODE_API_CALL_CUSTOM_RETURN(
+        env, void(),
+        napi_release_threadsafe_function(tsfn_data->tsfn, napi_tsfn_abort));
   }
 };
 
@@ -629,25 +685,27 @@ create_promise_with_threadsafe_function(const Napi::CallbackInfo &info) {
   ThreadsafeFunctionData *tsfn_data = new ThreadsafeFunctionData;
 
   napi_value async_resource_name;
-  assert(napi_create_string_utf8(
-             env, "napitests::create_promise_with_threadsafe_function",
-             NAPI_AUTO_LENGTH, &async_resource_name) == napi_ok);
+  NODE_API_CALL(env,
+                napi_create_string_utf8(
+                    env, "napitests::create_promise_with_threadsafe_function",
+                    NAPI_AUTO_LENGTH, &async_resource_name));
 
   // this is called directly, without the GC callback, so argument 0 is a JS
   // callback used to resolve the promise
-  assert(napi_create_threadsafe_function(
-             env, info[0], nullptr, async_resource_name,
-             // max_queue_size, initial_thread_count
-             1, 1,
-             // thread_finalize_data, thread_finalize_cb
-             tsfn_data, ThreadsafeFunctionData::tsfn_finalize_callback,
-             // context
-             tsfn_data, ThreadsafeFunctionData::tsfn_callback,
-             &tsfn_data->tsfn) == napi_ok);
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, info[0], nullptr, async_resource_name,
+                    // max_queue_size, initial_thread_count
+                    1, 1,
+                    // thread_finalize_data, thread_finalize_cb
+                    tsfn_data, ThreadsafeFunctionData::tsfn_finalize_callback,
+                    // context
+                    tsfn_data, ThreadsafeFunctionData::tsfn_callback,
+                    &tsfn_data->tsfn));
   // create a promise we can return to JS and put the deferred counterpart in
   // tsfn_data
   napi_value promise;
-  assert(napi_create_promise(env, &tsfn_data->deferred, &promise) == napi_ok);
+  NODE_API_CALL(env, napi_create_promise(env, &tsfn_data->deferred, &promise));
 
   // spawn and release std::thread
   std::thread secondary_thread(ThreadsafeFunctionData::thread_entry, tsfn_data);
@@ -660,16 +718,16 @@ napi_value test_napi_ref(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
   napi_value object;
-  assert(napi_create_object(env, &object) == napi_ok);
+  NODE_API_CALL(env, napi_create_object(env, &object));
 
   napi_ref ref;
-  assert(napi_create_reference(env, object, 0, &ref) == napi_ok);
+  NODE_API_CALL(env, napi_create_reference(env, object, 0, &ref));
 
   napi_value from_ref;
-  assert(napi_get_reference_value(env, ref, &from_ref) == napi_ok);
-  assert(from_ref != nullptr);
+  NODE_API_CALL(env, napi_get_reference_value(env, ref, &from_ref));
+  NODE_API_ASSERT(env, from_ref != nullptr);
   napi_valuetype typeof_result = get_typeof(env, from_ref);
-  assert(typeof_result == napi_object);
+  NODE_API_ASSERT(env, typeof_result == napi_object);
   return ok(env);
 }
 
@@ -680,8 +738,8 @@ void finalize_cb(napi_env env, void *finalize_data, void *finalize_hint) {
   bool &create_handle_scope = *reinterpret_cast<bool *>(finalize_hint);
   if (create_handle_scope) {
     napi_handle_scope hs;
-    assert(napi_open_handle_scope(env, &hs) == napi_ok);
-    assert(napi_close_handle_scope(env, hs) == napi_ok);
+    NODE_API_CALL_CUSTOM_RETURN(env, void(), napi_open_handle_scope(env, &hs));
+    NODE_API_CALL_CUSTOM_RETURN(env, void(), napi_close_handle_scope(env, hs));
   }
   delete &create_handle_scope;
   finalize_called = true;
@@ -692,23 +750,24 @@ napi_value create_ref_with_finalizer(const Napi::CallbackInfo &info) {
   napi_value create_handle_scope_in_finalizer = info[0];
 
   napi_value object;
-  assert(napi_create_object(env, &object) == napi_ok);
+  NODE_API_CALL(env, napi_create_object(env, &object));
 
   bool *finalize_hint = new bool;
-  assert(napi_get_value_bool(env, create_handle_scope_in_finalizer,
-                             finalize_hint) == napi_ok);
+  NODE_API_CALL(env, napi_get_value_bool(env, create_handle_scope_in_finalizer,
+                                         finalize_hint));
 
   napi_ref ref;
 
-  assert(napi_wrap(env, object, nullptr, finalize_cb,
-                   reinterpret_cast<bool *>(finalize_hint), &ref) == napi_ok);
+  NODE_API_CALL(env, napi_wrap(env, object, nullptr, finalize_cb,
+                               reinterpret_cast<bool *>(finalize_hint), &ref));
 
   return ok(env);
 }
 
 napi_value was_finalize_called(const Napi::CallbackInfo &info) {
   napi_value ret;
-  assert(napi_get_boolean(info.Env(), finalize_called, &ret) == napi_ok);
+  NODE_API_CALL(info.Env(),
+                napi_get_boolean(info.Env(), finalize_called, &ret));
   return ret;
 }
 
@@ -718,22 +777,23 @@ napi_value call_and_get_exception(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value fn = info[0];
   napi_value undefined;
-  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  NODE_API_CALL(env, napi_get_undefined(env, &undefined));
 
-  (void)napi_call_function(env, undefined, fn, 0, nullptr, nullptr);
+  NODE_API_ASSERT(env, napi_call_function(env, undefined, fn, 0, nullptr,
+                                          nullptr) == napi_pending_exception);
 
   bool is_pending;
-  assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
-  assert(is_pending);
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_pending));
+  NODE_API_ASSERT(env, is_pending);
 
   napi_value exception;
-  assert(napi_get_and_clear_last_exception(env, &exception) == napi_ok);
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
 
   napi_valuetype type = get_typeof(env, exception);
   printf("typeof thrown exception = %s\n", napi_valuetype_to_string(type));
 
-  assert(napi_is_exception_pending(env, &is_pending) == napi_ok);
-  assert(!is_pending);
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_pending));
+  NODE_API_ASSERT(env, !is_pending);
 
   return exception;
 }
@@ -752,17 +812,18 @@ napi_value throw_error(const Napi::CallbackInfo &info) {
   char code_buf[256] = {0}, msg_buf[256] = {0}, error_kind_buf[256] = {0};
 
   if (get_typeof(env, js_code) == napi_string) {
-    assert(napi_get_value_string_utf8(env, js_code, code_buf, sizeof code_buf,
-                                      nullptr) == napi_ok);
+    NODE_API_CALL(env, napi_get_value_string_utf8(env, js_code, code_buf,
+                                                  sizeof code_buf, nullptr));
     code = code_buf;
   }
   if (get_typeof(env, js_msg) == napi_string) {
-    assert(napi_get_value_string_utf8(env, js_msg, msg_buf, sizeof msg_buf,
-                                      nullptr) == napi_ok);
+    NODE_API_CALL(env, napi_get_value_string_utf8(env, js_msg, msg_buf,
+                                                  sizeof msg_buf, nullptr));
     msg = msg_buf;
   }
-  assert(napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
-                                    sizeof error_kind_buf, nullptr) == napi_ok);
+  NODE_API_CALL(env,
+                napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
+                                           sizeof error_kind_buf, nullptr));
 
   std::map<std::string,
            napi_status (*)(napi_env, const char *code, const char *msg)>
@@ -774,10 +835,10 @@ napi_value throw_error(const Napi::CallbackInfo &info) {
   auto throw_function = functions[error_kind_buf];
 
   if (msg == nullptr) {
-    assert(throw_function(env, code, msg) == napi_invalid_arg);
+    NODE_API_ASSERT(env, throw_function(env, code, msg) == napi_invalid_arg);
     return ok(env);
   } else {
-    assert(throw_function(env, code, msg) == napi_ok);
+    NODE_API_ASSERT(env, throw_function(env, code, msg) == napi_ok);
     return nullptr;
   }
 }
@@ -800,8 +861,9 @@ napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
     js_msg = nullptr;
   }
 
-  assert(napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
-                                    sizeof error_kind_buf, nullptr) == napi_ok);
+  NODE_API_CALL(env,
+                napi_get_value_string_utf8(env, js_error_kind, error_kind_buf,
+                                           sizeof error_kind_buf, nullptr));
 
   std::map<std::string, napi_status (*)(napi_env, napi_value code,
                                         napi_value msg, napi_value *)>
@@ -825,12 +887,12 @@ napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
     // bun and node may return different errors here depending on in what order
     // the parameters are checked, but what's important is that there is an
     // error
-    assert(create_status == napi_string_expected ||
-           create_status == napi_invalid_arg);
+    NODE_API_ASSERT(env, create_status == napi_string_expected ||
+                             create_status == napi_invalid_arg);
     return ok(env);
   } else {
-    assert(create_status == napi_ok);
-    assert(napi_throw(env, err) == napi_ok);
+    NODE_API_ASSERT(env, create_status == napi_ok);
+    NODE_API_CALL(env, napi_throw(env, err));
     return nullptr;
   }
 }
@@ -854,24 +916,22 @@ napi_value perform_get(const Napi::CallbackInfo &info) {
   napi_valuetype type = get_typeof(env, key);
   if (type == napi_string) {
     char buf[1024];
-    assert(napi_get_value_string_utf8(env, key, buf, 1024, nullptr) == napi_ok);
+    NODE_API_CALL(env,
+                  napi_get_value_string_utf8(env, key, buf, 1024, nullptr));
     status = napi_get_named_property(env, obj, buf, &value);
-    printf("get_named_property status is pending_exception or generic_failure "
-           "= %d\n",
-           status == napi_pending_exception || status == napi_generic_failure);
     if (status == napi_ok) {
-      assert(value != nullptr);
+      NODE_API_ASSERT(env, value != nullptr);
       printf("value type = %d\n", get_typeof(env, value));
     } else {
+      NODE_API_ASSERT(env, status == napi_pending_exception);
       return ok(env);
     }
   }
 
   status = napi_get_property(env, obj, key, &value);
-  printf("get_property status is pending_exception or generic_failure  = %d\n",
-         status == napi_pending_exception || status == napi_generic_failure);
+  NODE_API_ASSERT(env, status == napi_pending_exception);
   if (status == napi_ok) {
-    assert(value != nullptr);
+    NODE_API_ASSERT(env, value != nullptr);
     printf("value type = %d\n", get_typeof(env, value));
     return value;
   } else {
@@ -888,10 +948,10 @@ napi_value double_to_i32(const Napi::CallbackInfo &info) {
   napi_value result;
   napi_status status = napi_get_value_int32(env, input, &integer);
   if (status == napi_ok) {
-    assert(napi_create_int32(env, integer, &result) == napi_ok);
+    NODE_API_CALL(env, napi_create_int32(env, integer, &result));
   } else {
-    assert(status == napi_number_expected);
-    assert(napi_get_undefined(env, &result) == napi_ok);
+    NODE_API_ASSERT(env, status == napi_number_expected);
+    NODE_API_CALL(env, napi_get_undefined(env, &result));
   }
   return result;
 }
@@ -905,10 +965,10 @@ napi_value double_to_u32(const Napi::CallbackInfo &info) {
   napi_value result;
   napi_status status = napi_get_value_uint32(env, input, &integer);
   if (status == napi_ok) {
-    assert(napi_create_uint32(env, integer, &result) == napi_ok);
+    NODE_API_CALL(env, napi_create_uint32(env, integer, &result));
   } else {
-    assert(status == napi_number_expected);
-    assert(napi_get_undefined(env, &result) == napi_ok);
+    NODE_API_ASSERT(env, status == napi_number_expected);
+    NODE_API_CALL(env, napi_get_undefined(env, &result));
   }
   return result;
 }
@@ -922,10 +982,10 @@ napi_value double_to_i64(const Napi::CallbackInfo &info) {
   napi_value result;
   napi_status status = napi_get_value_int64(env, input, &integer);
   if (status == napi_ok) {
-    assert(napi_create_int64(env, integer, &result) == napi_ok);
+    NODE_API_CALL(env, napi_create_int64(env, integer, &result));
   } else {
-    assert(status == napi_number_expected);
-    assert(napi_get_undefined(env, &result) == napi_ok);
+    NODE_API_ASSERT(env, status == napi_number_expected);
+    NODE_API_CALL(env, napi_get_undefined(env, &result));
   }
   return result;
 }
@@ -962,10 +1022,10 @@ napi_value test_number_integer_conversions(const Napi::CallbackInfo &info) {
 
   for (const auto &[in, expected_out] : i32_cases) {
     napi_value js_in;
-    assert(napi_create_double(env, in, &js_in) == napi_ok);
+    NODE_API_CALL(env, napi_create_double(env, in, &js_in));
     int32_t out_from_napi;
-    assert(napi_get_value_int32(env, js_in, &out_from_napi) == napi_ok);
-    assert(out_from_napi == expected_out);
+    NODE_API_CALL(env, napi_get_value_int32(env, js_in, &out_from_napi));
+    NODE_API_ASSERT(env, out_from_napi == expected_out);
   }
 
   std::array<std::pair<double, uint32_t>, 12> u32_cases{{
@@ -991,10 +1051,10 @@ napi_value test_number_integer_conversions(const Napi::CallbackInfo &info) {
 
   for (const auto &[in, expected_out] : u32_cases) {
     napi_value js_in;
-    assert(napi_create_double(env, in, &js_in) == napi_ok);
+    NODE_API_CALL(env, napi_create_double(env, in, &js_in));
     uint32_t out_from_napi;
-    assert(napi_get_value_uint32(env, js_in, &out_from_napi) == napi_ok);
-    assert(out_from_napi == expected_out);
+    NODE_API_CALL(env, napi_get_value_uint32(env, js_in, &out_from_napi));
+    NODE_API_ASSERT(env, out_from_napi == expected_out);
   }
 
   std::array<std::pair<double, int64_t>, 12> i64_cases{
@@ -1025,10 +1085,10 @@ napi_value test_number_integer_conversions(const Napi::CallbackInfo &info) {
 
   for (const auto &[in, expected_out] : i64_cases) {
     napi_value js_in;
-    assert(napi_create_double(env, in, &js_in) == napi_ok);
+    NODE_API_CALL(env, napi_create_double(env, in, &js_in));
     int64_t out_from_napi;
-    assert(napi_get_value_int64(env, js_in, &out_from_napi) == napi_ok);
-    assert(out_from_napi == expected_out);
+    NODE_API_CALL(env, napi_get_value_int64(env, js_in, &out_from_napi));
+    NODE_API_ASSERT(env, out_from_napi == expected_out);
   }
 
   return ok(env);
@@ -1038,9 +1098,9 @@ napi_value make_empty_array(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value js_size = info[0];
   uint32_t size;
-  assert(napi_get_value_uint32(env, js_size, &size) == napi_ok);
+  NODE_API_CALL(env, napi_get_value_uint32(env, js_size, &size));
   napi_value array;
-  assert(napi_create_array_with_length(env, size, &array) == napi_ok);
+  NODE_API_CALL(env, napi_create_array_with_length(env, size, &array));
   return array;
 }
 
@@ -1048,6 +1108,8 @@ static napi_ref ref_to_wrapped_object = nullptr;
 
 void delete_the_ref(napi_env env, void *_data, void *_hint) {
   printf("delete_the_ref\n");
+  // not using NODE_API_ASSERT as this runs in a finalizer where allocating an
+  // error might cause a harder-to-debug crash
   assert(ref_to_wrapped_object);
   napi_delete_reference(env, ref_to_wrapped_object);
   ref_to_wrapped_object = nullptr;
@@ -1061,6 +1123,7 @@ void finalize_for_create_wrap(napi_env env, void *opaque_data,
   delete data;
   delete hint;
   if (ref_to_wrapped_object) {
+    // TODO(@190n) implement this api in bun
     // node_api_post_finalizer(env, delete_the_ref, nullptr, nullptr);
   }
 }
@@ -1072,23 +1135,23 @@ napi_value create_wrap(const Napi::CallbackInfo &info) {
 
   napi_value js_ask_for_ref = info[1];
   bool ask_for_ref;
-  assert(napi_get_value_bool(env, js_ask_for_ref, &ask_for_ref) == napi_ok);
+  NODE_API_CALL(env, napi_get_value_bool(env, js_ask_for_ref, &ask_for_ref));
   napi_value js_strong = info[2];
   bool strong;
-  assert(napi_get_value_bool(env, js_strong, &strong) == napi_ok);
+  NODE_API_CALL(env, napi_get_value_bool(env, js_strong, &strong));
 
   // wrap it
   int *wrap_data = new int(42);
   int *wrap_hint = new int(123);
 
-  assert(napi_wrap(env, js_object, wrap_data, finalize_for_create_wrap,
-                   wrap_hint,
-                   ask_for_ref ? &ref_to_wrapped_object : nullptr) == napi_ok);
+  NODE_API_CALL(env, napi_wrap(env, js_object, wrap_data,
+                               finalize_for_create_wrap, wrap_hint,
+                               ask_for_ref ? &ref_to_wrapped_object : nullptr));
   if (ask_for_ref && strong) {
     uint32_t new_refcount;
-    assert(napi_reference_ref(env, ref_to_wrapped_object, &new_refcount) ==
-           napi_ok);
-    assert(new_refcount == 1);
+    NODE_API_CALL(
+        env, napi_reference_ref(env, ref_to_wrapped_object, &new_refcount));
+    NODE_API_ASSERT(env, new_refcount == 1);
   }
 
   if (!ask_for_ref) {
@@ -1104,11 +1167,12 @@ napi_value get_wrap_data(const Napi::CallbackInfo &info) {
   napi_value js_object = info[0];
 
   void *wrapped_data;
-  assert(napi_unwrap(env, js_object, &wrapped_data) == napi_ok);
+  NODE_API_CALL(env, napi_unwrap(env, js_object, &wrapped_data));
 
   napi_value js_number;
-  assert(napi_create_int32(env, *reinterpret_cast<int *>(wrapped_data),
-                           &js_number) == napi_ok);
+  NODE_API_CALL(env,
+                napi_create_int32(env, *reinterpret_cast<int *>(wrapped_data),
+                                  &js_number));
   return js_number;
 }
 
@@ -1117,8 +1181,8 @@ napi_value get_object_from_ref(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
   napi_value wrapped_object;
-  assert(napi_get_reference_value(env, ref_to_wrapped_object,
-                                  &wrapped_object) == napi_ok);
+  NODE_API_CALL(env, napi_get_reference_value(env, ref_to_wrapped_object,
+                                              &wrapped_object));
 
   return wrapped_object;
 }
@@ -1128,23 +1192,24 @@ napi_value get_wrap_data_from_ref(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
   napi_value wrapped_object;
-  assert(napi_get_reference_value(env, ref_to_wrapped_object,
-                                  &wrapped_object) == napi_ok);
+  NODE_API_CALL(env, napi_get_reference_value(env, ref_to_wrapped_object,
+                                              &wrapped_object));
 
   void *wrapped_data;
   napi_status status = napi_unwrap(env, wrapped_object, &wrapped_data);
   if (status == napi_ok) {
     napi_value js_number;
-    assert(napi_create_int32(env, *reinterpret_cast<int *>(wrapped_data),
-                             &js_number) == napi_ok);
+    NODE_API_CALL(env,
+                  napi_create_int32(env, *reinterpret_cast<int *>(wrapped_data),
+                                    &js_number));
     return js_number;
   } else if (status == napi_invalid_arg) {
     // no longer wrapped
     napi_value undefined;
-    assert(napi_get_undefined(env, &undefined) == napi_ok);
+    NODE_API_CALL(env, napi_get_undefined(env, &undefined));
     return undefined;
   } else {
-    assert(false && "unreachable");
+    NODE_API_ASSERT(env, false && "this should not be reached");
     return nullptr;
   }
 }
@@ -1155,10 +1220,10 @@ napi_value remove_wrap(const Napi::CallbackInfo &info) {
   napi_value js_object = info[0];
 
   void *wrap_data;
-  assert(napi_remove_wrap(env, js_object, &wrap_data) == napi_ok);
+  NODE_API_CALL(env, napi_remove_wrap(env, js_object, &wrap_data));
 
   napi_value undefined;
-  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  NODE_API_CALL(env, napi_get_undefined(env, &undefined));
   return undefined;
 }
 
@@ -1166,13 +1231,13 @@ napi_value remove_wrap(const Napi::CallbackInfo &info) {
 napi_value unref_wrapped_value(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   uint32_t new_refcount;
-  assert(napi_reference_unref(env, ref_to_wrapped_object, &new_refcount) ==
-         napi_ok);
+  NODE_API_CALL(
+      env, napi_reference_unref(env, ref_to_wrapped_object, &new_refcount));
   // should never have been set higher than 1
-  assert(new_refcount == 0);
+  NODE_API_ASSERT(env, new_refcount == 0);
 
   napi_value undefined;
-  assert(napi_get_undefined(env, &undefined) == napi_ok);
+  NODE_API_CALL(env, napi_get_undefined(env, &undefined));
   return undefined;
 }
 

@@ -756,7 +756,7 @@ export async function publish(
   });
 
   const out = await Bun.readableStreamToText(stdout);
-  const err = await Bun.readableStreamToText(stderr);
+  const err = stderrForInstall(await Bun.readableStreamToText(stderr));
   const exitCode = await exited;
   return { out, err, exitCode };
 }
@@ -7487,7 +7487,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -7720,7 +7720,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -7977,7 +7977,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8868,7 +8868,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = await Bun.readableStreamToText(stderr);
+        err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -9013,7 +9013,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("bun pm untrusted");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");

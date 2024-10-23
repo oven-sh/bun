@@ -100,5 +100,8 @@ assert_node
 assert_release
 assert_canary
 
-run_command node .buildkite/ci.mjs
-upload_buildkite_pipeline ".buildkite/ci.yml"
+run_command node ".buildkite/ci.mjs"
+
+if [ -f ".buildkite/ci.yml" ]; then
+  upload_buildkite_pipeline ".buildkite/ci.yml"
+fi

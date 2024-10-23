@@ -43,9 +43,12 @@ function getBranch() {
   return getEnv("BUILDKITE_BRANCH");
 }
 
+function getMainBranch() {
+  return getEnv("BUILDKITE_PIPELINE_DEFAULT_BRANCH", false) || "main";
+}
+
 function isMainBranch() {
-  const mainBranch = getEnv("BUILDKITE_PIPELINE_DEFAULT_BRANCH", false) || "main";
-  return getBranch() === mainBranch && !isPullRequest();
+  return getBranch() === getMainBranch() && !isPullRequest();
 }
 
 function isMergeQueue() {
@@ -54,10 +57,11 @@ function isMergeQueue() {
 
 async function getChangedFiles() {
   const repository = getRepository();
-  const commit = getCommit();
+  const head = getCommit();
+  const base = isMainBranch() ? `${head}^1` : getMainBranch();
 
   try {
-    const response = await fetch(`https://api.github.com/repos/${repository}/compare/main...${commit}`);
+    const response = await fetch(`https://api.github.com/repos/${repository}/compare/${base}...${head}`);
     if (response.ok) {
       const { files } = await response.json();
       return files.filter(({ status }) => !/removed|unchanged/i.test(status)).map(({ filename }) => filename);

@@ -1,13 +1,9 @@
 #!/usr/bin/env node
 
-// Build and test Bun on macOS, Linux, and Windows.
-// https://buildkite.com/docs/pipelines/defining-steps
-//
-// If a step has the `robobun: true` label, robobun will listen
-// to webhooks from Buildkite and provision a VM to run the step.
-//
-// Changes to this file will be automatically uploaded on the next run
-// for a particular commit.
+/**
+ * Build and test Bun on macOS, Linux, and Windows.
+ * @link https://buildkite.com/docs/pipelines/defining-steps
+ */
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

@@ -29,6 +29,10 @@ function assert_curl() {
   assert_command "curl" "curl" "https://curl.se/download.html"
 }
 
+function assert_node() {
+  assert_command "node" "node" "https://nodejs.org/en/download/"
+}
+
 function assert_command() {
   local command="$1"
   local package="$2"
@@ -92,6 +96,9 @@ assert_build
 assert_buildkite_agent
 assert_jq
 assert_curl
+assert_node
 assert_release
 assert_canary
+
+run_command node .buildkite/ci.mjs
 upload_buildkite_pipeline ".buildkite/ci.yml"

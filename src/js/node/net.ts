@@ -24,7 +24,6 @@ const EventEmitter = require("node:events");
 const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 const { ERR_SERVER_NOT_RUNNING } = require("internal/errors");
-const { ArrayIsArray } = require("internal/primordials");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -454,7 +453,7 @@ const Socket = (function (InternalSocket) {
         bytes += el.chunk instanceof Buffer ? el.chunk.length : Buffer.byteLength(el.chunk, el.encoding);
       }
 
-      if (ArrayIsArray(data)) {
+      if ($isArray(data)) {
         // Was a writev, iterate over chunks to get total length
         for (let i = 0; i < data.length; i++) {
           const chunk = data[i];

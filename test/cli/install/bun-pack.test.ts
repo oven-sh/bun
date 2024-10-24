@@ -1019,7 +1019,7 @@ test("$npm_command is accurate", async () => {
   );
   const p = await pack(packageDir, bunEnv);
   expect(p.out.split("\n")).toEqual([
-    `bun pack v1.1.30 (cb6ad49a)`,
+    `bun pack ${Bun.version_with_sha}`,
     ``,
     `packed 94B package.json`,
     ``,
@@ -1050,7 +1050,7 @@ test("$npm_lifecycle_event is accurate", async () => {
   );
   const p = await pack(packageDir, bunEnv);
   expect(p.out.split("\n")).toEqual([
-    `bun pack v1.1.30 (cb6ad49a)`,
+    `bun pack ${Bun.version_with_sha}`,
     ``,
     `packed 104B package.json`,
     ``,

@@ -13,6 +13,7 @@ export function renderRoutesForProd(
   renderStatic: RenderStatic,
   files: string[],
   patterns: string[],
+  styles: string[][],
 ): Promise<void> {
   const { join: pathJoin } = require('node:path');
 
@@ -21,7 +22,7 @@ export function renderRoutesForProd(
     const route = await import(file);
     const results = await renderStatic(route, {
       scripts: [],
-      styles: [],
+      styles: styles[i],
     });
     if (!results || typeof results !== 'object') {
       // TODO: retrieve original filename

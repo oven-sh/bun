@@ -380,8 +380,6 @@ pub const BundleV2 = struct {
         ssr_bundler: *Bundler,
     };
 
-    const ResolvedFramework = struct {};
-
     const debug = Output.scoped(.Bundle, false);
 
     pub inline fn loop(this: *BundleV2) *EventLoop {
@@ -726,7 +724,6 @@ pub const BundleV2 = struct {
                 &resolve_result,
                 .{
                     .path = path.*,
-                    .key_path = path.*,
                     .contents = "",
                 },
                 loader,
@@ -787,7 +784,6 @@ pub const BundleV2 = struct {
         try this.graph.input_files.append(bun.default_allocator, .{
             .source = .{
                 .path = path.*,
-                .key_path = path.*,
                 .contents = "",
                 .index = source_index,
             },
@@ -898,6 +894,7 @@ pub const BundleV2 = struct {
         this.linker.options.footer = bundler.options.footer;
 
         this.linker.options.experimental_css = bundler.options.experimental_css;
+        this.linker.options.css_chunking = bundler.options.css_chunking;
 
         this.linker.options.source_maps = bundler.options.source_map;
         this.linker.options.tree_shaking = bundler.options.tree_shaking;
@@ -1013,12 +1010,14 @@ pub const BundleV2 = struct {
                         const resolved = this.bundler.resolveEntryPoint(entry_point.path) catch
                             continue;
 
+                        // Wrap client entry points file with a file so that exports are tree-shaken
+                        // TODO: it is broken, it ends up shaking the entire file
                         if (false and entry_point.client_wrapped) {
                             const wrapped_index = try this.enqueueServerComponentGeneratedFile(.{
                                 .client_entry_wrapper = .{
-                                    .path = resolved.pathConst().?.*.text,
+                                    .path = resolved.pathConst().?.text,
                                 },
-                            }, bun.logger.Source.initEmptyFile("client-wrapper.js"));
+                            }, bun.logger.Source.initEmptyFile(resolved.pathConst().?.text));
                             try this.graph.entry_points.append(this.graph.allocator, Index.source(wrapped_index));
                         } else {
                             const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
@@ -1613,6 +1612,7 @@ pub const BundleV2 = struct {
             bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             bundler.options.experimental_css = config.experimental_css;
+            bundler.options.css_chunking = config.css_chunking;
             bundler.options.banner = config.banner.slice();
             bundler.options.footer = config.footer.slice();
 
@@ -1887,7 +1887,6 @@ pub const BundleV2 = struct {
                         this.graph.input_files.append(bun.default_allocator, .{
                             .source = .{
                                 .path = path,
-                                .key_path = path,
                                 .contents = "",
                                 .index = source_index,
                             },
@@ -2066,7 +2065,7 @@ pub const BundleV2 = struct {
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.graph.allocator);
 
         // Separate non-failing files into two lists: JS and CSS
-        const js_reachable_files, const css_total_files = reachable_files: {
+        const js_reachable_files = reachable_files: {
             var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
             try css_entry_points.ensureUnusedCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
@@ -2109,9 +2108,8 @@ pub const BundleV2 = struct {
                 }
             }
 
-            break :reachable_files .{ js_files.items, css_total_files };
+            break :reachable_files js_files.items;
         };
-        _ = css_total_files; // autofix
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -2776,7 +2774,6 @@ pub const BundleV2 = struct {
 
                         new_input_file.source.index = Index.source(graph.input_files.len);
                         new_input_file.source.path = new_task.path;
-                        new_input_file.source.key_path = new_input_file.source.path;
 
                         // We need to ensure the loader is set or else importstar_ts/ReExportTypeOnlyFileES6 will fail.
                         new_input_file.loader = loader;
@@ -3347,7 +3344,6 @@ pub const ParseTask = struct {
         };
         const source = Logger.Source{
             .path = parse_task.path,
-            .key_path = parse_task.path,
             .contents = parse_task.contents_or_fd.contents,
             .index = Index.runtime,
         };
@@ -3696,7 +3692,6 @@ pub const ParseTask = struct {
 
         var source = Logger.Source{
             .path = file_path,
-            .key_path = file_path,
             .index = task.source_index,
             .contents = entry.contents,
             .contents_is_recycled = false,
@@ -4879,6 +4874,7 @@ pub const LinkerContext = struct {
         banner: []const u8 = "",
         footer: []const u8 = "",
         experimental_css: bool = false,
+        css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
 
@@ -5176,10 +5172,13 @@ pub const LinkerContext = struct {
         var temp_allocator = arena.allocator();
         var js_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
         try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
-        var css_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
-        // try css_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
+
+        // Key is the hash of the CSS order. This deduplicates identical CSS files.
+        var css_chunks = std.AutoArrayHashMap(u64, Chunk).init(temp_allocator);
+        var js_chunks_with_css: usize = 0;
 
         const entry_source_indices = this.graph.entry_points.items(.source_index);
+        const css_asts = this.graph.ast.items(.css);
 
         // Create chunks for entry points
         for (entry_source_indices, 0..) |source_index, entry_id_| {
@@ -5188,13 +5187,21 @@ pub const LinkerContext = struct {
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
-            if (this.options.experimental_css) {
-                if (this.graph.ast.items(.css)[source_index] != null) {
-                    // Create a chunk for the entry point here to ensure that the chunk is
-                    // always generated even if the resulting file is empty
-                    const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
+            if (this.options.experimental_css and css_asts[source_index] != null) {
+                const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
+                // Create a chunk for the entry point here to ensure that the chunk is
+                // always generated even if the resulting file is empty
+                const hash_to_use = if (!this.options.css_chunking)
+                    bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
+                else brk: {
+                    var hasher = std.hash.Wyhash.init(5);
+                    bun.writeAnyToHasher(&hasher, order.len);
+                    for (order.slice()) |x| x.hash(&hasher);
+                    break :brk hasher.final();
+                };
+                const css_chunk_entry = try css_chunks.getOrPut(hash_to_use);
+                if (!css_chunk_entry.found_existing) {
                     // const css_chunk_entry = try js_chunks.getOrPut();
-                    const order = this.findImportedFilesInCSSOrder(temp_allocator, &.{Index.init(source_index)});
                     css_chunk_entry.value_ptr.* = .{
                         .entry_point = .{
                             .entry_point_id = entry_bit,
@@ -5210,8 +5217,9 @@ pub const LinkerContext = struct {
                         },
                         .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
                     };
-                    continue;
                 }
+
+                continue;
             }
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
@@ -5239,33 +5247,48 @@ pub const LinkerContext = struct {
                 const css_source_indices = this.findImportedCSSFilesInJSOrder(temp_allocator, Index.init(source_index));
                 if (css_source_indices.len > 0) {
                     const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
-                    var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
-                    for (order.slice()) |entry| {
-                        if (entry.kind == .source_index) {
-                            css_files_with_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
-                        }
-                    }
-                    const css_chunk_entry = try css_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                    // const css_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
-                    css_chunk_entry.value_ptr.* = .{
-                        .entry_point = .{
-                            .entry_point_id = entry_bit,
-                            .source_index = source_index,
-                            .is_entry_point = true,
-                        },
-                        .entry_bits = entry_bits.*,
-                        .content = .{
-                            .css = .{
-                                .imports_in_chunk_in_order = order,
-                                .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
-                            },
-                        },
-                        .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
-                    };
-                }
 
-                js_chunk_entry.value_ptr.content.javascript.has_css_chunk = true;
+                    const hash_to_use = if (!this.options.css_chunking)
+                        bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
+                    else brk: {
+                        var hasher = std.hash.Wyhash.init(5);
+                        bun.writeAnyToHasher(&hasher, order.len);
+                        for (order.slice()) |x| x.hash(&hasher);
+                        break :brk hasher.final();
+                    };
+
+                    const css_chunk_entry = try css_chunks.getOrPut(hash_to_use);
+
+                    js_chunk_entry.value_ptr.content.javascript.css_chunks = try this.allocator.dupe(u32, &.{
+                        @intCast(css_chunk_entry.index),
+                    });
+                    js_chunks_with_css += 1;
+
+                    if (!css_chunk_entry.found_existing) {
+                        var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                        for (order.slice()) |entry| {
+                            if (entry.kind == .source_index) {
+                                css_files_with_parts_in_chunk.put(this.allocator, entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            }
+                        }
+                        css_chunk_entry.value_ptr.* = .{
+                            .entry_point = .{
+                                .entry_point_id = entry_bit,
+                                .source_index = source_index,
+                                .is_entry_point = true,
+                            },
+                            .entry_bits = entry_bits.*,
+                            .content = .{
+                                .css = .{
+                                    .imports_in_chunk_in_order = order,
+                                    .asts = this.allocator.alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                                },
+                            },
+                            .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
+                            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator),
+                        };
+                    }
+                }
             }
         }
         var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
@@ -5326,39 +5349,47 @@ pub const LinkerContext = struct {
 
         // Sort the chunks for determinism. This matters because we use chunk indices
         // as sorting keys in a few places.
-        var sorted_chunks = BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count()) catch bun.outOfMemory();
-        var sorted_keys = BabyList(string).initCapacity(temp_allocator, @max(js_chunks.count(), css_chunks.count())) catch bun.outOfMemory();
-        sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
-        sorted_keys.sortAsc();
-        var js_chunk_indices_for_css = std.StringArrayHashMap(u32).init(temp_allocator);
-        js_chunk_indices_for_css.ensureTotalCapacity(brk: {
-            var count: u32 = 0;
-            for (js_chunks.values()) |*chunk| {
-                if (chunk.content.javascript.has_css_chunk) count += 1;
-            }
-            break :brk count;
-        }) catch bun.outOfMemory();
-        for (sorted_keys.slice()) |key| {
-            const chunk = js_chunks.get(key) orelse unreachable;
-            if (chunk.content.javascript.has_css_chunk) {
-                js_chunk_indices_for_css.put(key, sorted_chunks.len) catch unreachable;
-            }
-            sorted_chunks.appendAssumeCapacity(chunk);
-        }
-        sorted_keys.clearRetainingCapacity();
-        for (css_chunks.keys()) |key| {
-            sorted_keys.appendAssumeCapacity(key);
-        }
-        sorted_keys.sortAsc();
-        for (sorted_keys.slice()) |key| {
-            const chunk = css_chunks.get(key) orelse unreachable;
-            if (js_chunk_indices_for_css.get(key)) |js_chunk_index| {
-                sorted_chunks.mut(js_chunk_index).content.javascript.css_chunk_index = Index.init(sorted_chunks.len);
-            }
-            sorted_chunks.appendAssumeCapacity(chunk);
-        }
+        const chunks: []Chunk = sort_chunks: {
+            var sorted_chunks = try BabyList(Chunk).initCapacity(this.allocator, js_chunks.count() + css_chunks.count());
 
-        const chunks: []Chunk = sorted_chunks.slice();
+            var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
+
+            // JS Chunks
+            sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
+            sorted_keys.sortAsc();
+            var js_chunk_indices_with_css = try BabyList(u32).initCapacity(temp_allocator, js_chunks_with_css);
+            for (sorted_keys.slice(), 0..) |key, i| {
+                const chunk = js_chunks.get(key) orelse unreachable;
+                sorted_chunks.appendAssumeCapacity(chunk);
+
+                if (chunk.content.javascript.css_chunks.len > 0)
+                    js_chunk_indices_with_css.appendAssumeCapacity(@intCast(i));
+            }
+
+            if (css_chunks.count() > 0) {
+                const sorted_css_keys = try temp_allocator.dupe(u64, css_chunks.keys());
+                std.sort.pdq(u64, sorted_css_keys, {}, std.sort.asc(u64));
+
+                // A map from the index in `css_chunks` to it's final index in `sorted_chunks`
+                const remapped_css_indexes = try temp_allocator.alloc(u32, css_chunks.count());
+
+                const css_chunk_values = css_chunks.values();
+                for (sorted_css_keys, js_chunks.count()..) |key, sorted_index| {
+                    const index = css_chunks.getIndex(key) orelse unreachable;
+                    sorted_chunks.appendAssumeCapacity(css_chunk_values[index]);
+                    remapped_css_indexes[index] = @intCast(sorted_index);
+                }
+
+                // Update all affected JS chunks to point at the correct CSS chunk index.
+                for (js_chunk_indices_with_css.slice()) |js_index| {
+                    for (sorted_chunks.slice()[js_index].content.javascript.css_chunks) |*idx| {
+                        idx.* = remapped_css_indexes[idx.*];
+                    }
+                }
+            }
+
+            break :sort_chunks sorted_chunks.slice();
+        };
 
         const entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
         // Map from the entry point file to this chunk. We will need this later if
@@ -5372,25 +5403,6 @@ pub const LinkerContext = struct {
 
         // Determine the order of JS files (and parts) within the chunk ahead of time
         try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
-
-        {
-            const scb = this.parse_graph.server_component_boundaries.slice();
-
-            // Propagate server component boundary chunk IDs.
-            for (
-                scb.list.items(.use_directive),
-                scb.list.items(.source_index),
-                scb.list.items(.reference_source_index),
-                scb.list.items(.ssr_source_index),
-            ) |use, original_id, ref_id, ssr_id| {
-                _ = original_id; // autofix
-                _ = ref_id; // autofix
-                _ = ssr_id; // autofix
-                if (use == .server) @panic("TODO");
-
-                // entry_point_chunk_indices[original_id] = entry_point_chunk_indices[ref_id];
-            }
-        }
 
         const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
         var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
@@ -9435,7 +9447,7 @@ pub const LinkerContext = struct {
                 };
 
                 // Include the path namespace in the hash
-                hasher.write(source.key_path.namespace);
+                hasher.write(source.path.namespace);
 
                 // Then include the file path
                 hasher.write(file_path);
@@ -11892,10 +11904,10 @@ pub const LinkerContext = struct {
 
         const root_path = c.resolver.opts.output_dir;
 
-        if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache or (has_css_chunk and has_js_chunk)) and !c.resolver.opts.compile) {
-            try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
-            return error.MultipleOutputFilesWithoutOutputDir;
-        }
+        // if (root_path.len == 0 and (c.parse_graph.additional_output_files.items.len > 0 or c.parse_graph.generate_bytecode_cache or (has_css_chunk and has_js_chunk)) and !c.resolver.opts.compile) {
+        //     try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
+        //     return error.MultipleOutputFilesWithoutOutputDir;
+        // }
 
         if (root_path.len > 0) {
             try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
@@ -11964,7 +11976,7 @@ pub const LinkerContext = struct {
                             .output_path = source_map_final_rel_path,
                             .output_kind = .sourcemap,
                             .input_path = try strings.concat(bun.default_allocator, &.{ input_path, ".map" }),
-                            .side = .server,
+                            .side = null,
                             .entry_point_index = null,
                             .is_executable = false,
                         });
@@ -12027,7 +12039,7 @@ pub const LinkerContext = struct {
                                     .data = .{
                                         .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
                                     },
-                                    .side = .server,
+                                    .side = null,
                                     .entry_point_index = null,
                                     .is_executable = false,
                                 });
@@ -12055,7 +12067,9 @@ pub const LinkerContext = struct {
                 else
                     null;
 
-                const output_kind = if (chunk.entry_point.is_entry_point)
+                const output_kind = if (chunk.content == .css)
+                    .asset
+                else if (chunk.entry_point.is_entry_point)
                     c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
                 else
                     .chunk;
@@ -12084,6 +12098,10 @@ pub const LinkerContext = struct {
                         chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
                     else
                         null,
+                    .referenced_css_files = switch (chunk.content) {
+                        .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
+                        .css => &.{},
+                    },
                 }));
                 if (sourcemap_output_file) |sourcemap_file| {
                     try output_files.append(sourcemap_file);
@@ -12397,7 +12415,7 @@ pub const LinkerContext = struct {
                                 .data = .{
                                     .saved = 0,
                                 },
-                                .side = .server,
+                                .side = null,
                                 .entry_point_index = null,
                                 .is_executable = false,
                             });
@@ -12456,7 +12474,9 @@ pub const LinkerContext = struct {
             else
                 null;
 
-            const output_kind = if (chunk.entry_point.is_entry_point)
+            const output_kind = if (chunk.content == .css)
+                .asset
+            else if (chunk.entry_point.is_entry_point)
                 c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].outputKind()
             else
                 .chunk;
@@ -12486,6 +12506,10 @@ pub const LinkerContext = struct {
                     chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
                 else
                     null,
+                .referenced_css_files = switch (chunk.content) {
+                    .javascript => |js| @ptrCast(try bun.default_allocator.dupe(u32, js.css_chunks)),
+                    .css => &.{},
+                },
             }));
 
             if (source_map_output_file) |sourcemap_file| {
@@ -13322,7 +13346,7 @@ pub const LinkerContext = struct {
         const other_source_index = record.source_index.get();
         const other_id = other_source_index;
 
-        if (other_id > c.graph.ast.len or c.parse_graph.input_files.items(.source)[other_source_index].key_path.is_disabled) {
+        if (other_id > c.graph.ast.len or c.parse_graph.input_files.items(.source)[other_source_index].path.is_disabled) {
             return .{
                 .value = .{
                     .source_index = record.source_index,
@@ -13877,7 +13901,8 @@ const PathTemplate = options.PathTemplate;
 
 pub const Chunk = struct {
     /// This is a random string and is used to represent the output path of this
-    /// chunk before the final output path has been computed.
+    /// chunk before the final output path has been computed. See OutputPiece
+    /// for more info on this technique.
     unique_key: string = "",
 
     files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
@@ -13886,6 +13911,7 @@ pub const Chunk = struct {
     entry_bits: AutoBitSet = undefined,
 
     final_rel_path: string = "",
+    /// The path template used to generate `final_rel_path`
     template: PathTemplate = .{},
 
     /// For code splitting
@@ -14278,8 +14304,12 @@ pub const Chunk = struct {
         cross_chunk_prefix_stmts: BabyList(Stmt) = .{},
         cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
 
-        css_chunk_index: Index = Index.invalid,
-        has_css_chunk: bool = false,
+        /// Indexes to CSS chunks. Currently this will only ever be zero or one
+        /// items long, but smarter css chunking will allow multiple js entry points
+        /// share a css file, or have an entry point contain multiple css files.
+        ///
+        /// Mutated while sorting chunks in `computeChunks`
+        css_chunks: []u32 = &.{},
     };
 
     pub const CssChunk = struct {
@@ -14314,6 +14344,20 @@ pub const Chunk = struct {
             // kind == .source_idnex
             source_index: Index,
         },
+
+        pub fn hash(this: *const CssImportOrder, hasher: anytype) void {
+            // TODO: conditions, condition_import_records
+
+            bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind));
+            switch (this.kind) {
+                .layers => |layers| {
+                    for (layers) |layer| hasher.update(layer);
+                    hasher.update("\x00");
+                },
+                .external_path => |path| hasher.update(path.text),
+                .source_index => |idx| bun.writeAnyToHasher(hasher, idx),
+            }
+        }
 
         pub fn format(this: *const CssImportOrder, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.print("{s} = ", .{@tagName(this.kind)});

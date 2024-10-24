@@ -106,6 +106,7 @@ pub const BuildCommand = struct {
         this_bundler.options.drop = ctx.args.drop;
 
         this_bundler.options.experimental_css = ctx.bundler_options.experimental_css;
+        this_bundler.options.css_chunking = ctx.bundler_options.css_chunking;
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.options.output_format = ctx.bundler_options.output_format;

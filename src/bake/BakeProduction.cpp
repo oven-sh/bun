@@ -11,7 +11,8 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProd(
     BunString outbase,
     JSC::JSValue renderStaticCallback,
     JSC::JSValue files,
-    JSC::JSValue patterns)
+    JSC::JSValue patterns,
+    JSC::JSValue styles)
 {
     JSC::VM& vm = global->vm();
     JSC::JSFunction* cb = JSC::JSFunction::create(vm, global, WebCore::bakeRenderRoutesForProdCodeGenerator(vm), global);
@@ -22,6 +23,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProd(
     args.append(renderStaticCallback);
     args.append(files);
     args.append(patterns);
+    args.append(styles);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::call(global, cb, callData, JSC::jsUndefined(), args, returnedException);

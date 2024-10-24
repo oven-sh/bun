@@ -1505,6 +1505,7 @@ pub const BundleOptions = struct {
     dead_code_elimination: bool = true,
 
     experimental_css: bool,
+    css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
@@ -1515,8 +1516,7 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
 
-    /// Set when bake.DevServer is bundling. This changes the interface of the
-    /// bundler from emitting OutputFile to only emitting []CompileResult
+    /// Set when bake.DevServer is bundling.
     dev_server: ?*bun.bake.DevServer = null,
     /// Set when Bake is bundling. Affects module resolution.
     framework: ?*bun.bake.Framework = null,
@@ -1688,6 +1688,7 @@ pub const BundleOptions = struct {
             .env = Env.init(allocator),
             .transform_options = transform,
             .experimental_css = false,
+            .css_chunking = false,
             .drop = transform.drop,
         };
 
@@ -1855,13 +1856,16 @@ pub const OutputFile = struct {
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
     bytecode_index: u32 = std.math.maxInt(u32),
-    output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+    output_kind: JSC.API.BuildArtifact.OutputKind,
     /// Relative
     dest_path: []const u8 = "",
-    side: bun.bake.Side,
+    side: ?bun.bake.Side,
     /// This is only set for the JS bundle, and not files associated with an
     /// entrypoint like sourcemaps and bytecode
     entry_point_index: ?u32,
+    referenced_css_files: []const Index = &.{},
+
+    pub const Index = bun.GenericIndex(u32, OutputFile);
 
     // Depending on:
     // - The target
@@ -2010,8 +2014,9 @@ pub const OutputFile = struct {
             },
             saved: usize,
         },
-        side: bun.bake.Side,
+        side: ?bun.bake.Side,
         entry_point_index: ?u32,
+        referenced_css_files: []const Index = &.{},
     };
 
     pub fn init(options: Options) OutputFile {
@@ -2044,6 +2049,7 @@ pub const OutputFile = struct {
             },
             .side = options.side,
             .entry_point_index = options.entry_point_index,
+            .referenced_css_files = options.referenced_css_files,
         };
     }
 

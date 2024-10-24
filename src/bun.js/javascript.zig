@@ -2204,7 +2204,6 @@ pub const VirtualMachine = struct {
                     if (!blob.needsToReadFile()) {
                         virtual_source_to_use = logger.Source{
                             .path = path,
-                            .key_path = path,
                             .contents = blob.sharedView(),
                         };
                     }

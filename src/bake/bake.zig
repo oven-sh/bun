@@ -319,6 +319,7 @@ pub const Framework = struct {
         // out.options.minify_whitespace = mode == .production;
 
         out.options.experimental_css = true;
+        out.options.css_chunking = true;
 
         out.options.framework = framework;
 
@@ -449,14 +450,12 @@ pub fn addImportMetaDefines(
 
 pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
-    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
-    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.bake_client_data,
 };

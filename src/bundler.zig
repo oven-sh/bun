@@ -865,8 +865,9 @@ pub const Bundler = struct {
             .src_path = file_path,
             .loader = loader,
             .value = undefined,
-            .side = .client,
+            .side = null,
             .entry_point_index = null,
+            .output_kind = .chunk,
         };
 
         switch (loader) {
@@ -950,8 +951,6 @@ pub const Bundler = struct {
                         bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                         return null;
                     };
-                    const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                    _ = source; //
                     var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| v,
                         .err => |e| {
@@ -964,7 +963,7 @@ pub const Bundler = struct {
                         return null;
                     }
                     const result = sheet.toCss(alloc, bun.css.PrinterOptions{
-                        .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
+                        .minify = bundler.options.minify_whitespace,
                     }, null) catch |e| {
                         bun.handleErrorReturnTrace(e, @errorReturnTrace());
                         return null;
@@ -1058,9 +1057,6 @@ pub const Bundler = struct {
                     },
                 };
             },
-
-            // // TODO:
-            // else => {},
         }
 
         return output_file;

@@ -282,6 +282,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
         clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
+        clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     } ++ if (FeatureFlags.bake) [_]ParamType{
@@ -796,6 +797,7 @@ pub const Arguments = struct {
 
             const experimental_css = args.flag("--experimental-css");
             ctx.bundler_options.experimental_css = experimental_css;
+            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
 
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
@@ -1430,6 +1432,7 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             experimental_css: bool = false,
+            css_chunking: bool = false,
 
             bake: bool = false,
         };

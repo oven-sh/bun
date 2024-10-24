@@ -3932,6 +3932,11 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return a.get() < b.get();
         }
 
+        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            comptime bun.assert(strings.eql(f, "d"));
+            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
+        }
+
         pub const Optional = enum(backing_int) {
             none = std.math.maxInt(backing_int),
             _,

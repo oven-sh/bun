@@ -7224,7 +7224,7 @@ pub const BundledAst = struct {
         unique_key: ?[]const u8,
     ) void {
         if (css_enabled) {
-            const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
+            const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable
             const COPY_THRESHOLD = 128 * 1024; // 128kb

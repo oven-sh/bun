@@ -278,6 +278,8 @@ pub const RunCommand = struct {
         use_system_shell: bool,
     ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        env.map.put("npm_lifecycle_event", name) catch unreachable;
+        env.map.put("npm_lifecycle_script", original_script) catch unreachable;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -1452,9 +1454,6 @@ pub const RunCommand = struct {
                     defer ctx.allocator.free(temp_script_buffer);
 
                     if (scripts.get(temp_script_buffer[1..])) |prescript| {
-                        this_bundler.env.map.put("npm_lifecycle_event", temp_script_buffer[1..]) catch unreachable;
-                        this_bundler.env.map.put("npm_lifecycle_script", prescript) catch unreachable;
-
                         try runPackageScriptForeground(
                             ctx,
                             ctx.allocator,
@@ -1469,9 +1468,6 @@ pub const RunCommand = struct {
                     }
 
                     {
-                        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
-                        this_bundler.env.map.put("npm_lifecycle_script", script_content) catch unreachable;
-
                         try runPackageScriptForeground(
                             ctx,
                             ctx.allocator,
@@ -1488,9 +1484,6 @@ pub const RunCommand = struct {
                     temp_script_buffer[0.."post".len].* = "post".*;
 
                     if (scripts.get(temp_script_buffer)) |postscript| {
-                        this_bundler.env.map.put("npm_lifecycle_event", temp_script_buffer) catch unreachable;
-                        this_bundler.env.map.put("npm_lifecycle_script", postscript) catch unreachable;
-
                         try runPackageScriptForeground(
                             ctx,
                             ctx.allocator,

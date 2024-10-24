@@ -1711,13 +1711,9 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime !@hasField(SinkType, "signal"))
                 return;
 
-            const ptr = this.sink.signal.ptr;
             if (this.sink.signal.isDead())
                 return;
             this.sink.signal.clear();
-            const value = @as(JSValue, @enumFromInt(@as(JSC.JSValueReprInt, @bitCast(@intFromPtr(ptr)))));
-            value.unprotect();
-            detachPtr(value);
         }
 
         pub fn detachPtr(ptr: JSValue) callconv(.C) void {

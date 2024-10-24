@@ -1253,10 +1253,10 @@ pub const HTTPThread = struct {
             }
             Output.flush();
 
-            requests_this_tick = 0;
             this.loop.loop.inc();
             this.loop.loop.tick();
             this.loop.loop.dec();
+            requests_this_tick = 0;
 
             // this.loop.run();
             if (comptime Environment.isDebug) {

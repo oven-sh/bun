@@ -2585,7 +2585,10 @@ pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
 
 pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     if (comptime Environment.isPosix) {
-        return faccessat(fd, subpath).result;
+        return switch (faccessat(fd, subpath)) {
+            .err => false,
+            .result => |result| result,
+        };
     }
 
     if (comptime Environment.isWindows) {

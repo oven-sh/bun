@@ -4,6 +4,7 @@ import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs
 import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative } from "path";
 import {
+  check_npm_auth_type,
   dummyAfterAll,
   dummyAfterEach,
   dummyBeforeAll,
@@ -509,6 +510,93 @@ it("should add exact version with -E", async () => {
       2,
     ),
   );
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should add dependency with package.json in it and http tarball", async () => {
+  check_npm_auth_type.check = false;
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.headers.get("Authorization")) {
+        return new Response("bad request", { status: 400 });
+      }
+
+      return new Response(Bun.file(join(__dirname, "baz-0.0.3.tgz")));
+    },
+  });
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+      "0.0.5": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+
+      dependencies: {
+        booop: `${server.url.href}/booop-0.0.1.tgz`,
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "bap@npm:baz@0.0.5"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      "BUN_CONFIG_TOKEN": "npm_******",
+    },
+  });
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    expect.stringContaining("+ booop@http://"),
+    "",
+    "installed bap@0.0.5 with binaries:",
+    " - baz-run",
+    "",
+    "2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bap", "booop"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bap"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bap", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.5",
+    bin: {
+      "baz-exec": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      bap: "npm:baz@0.0.5",
+      booop: `${server.url.href}/booop-0.0.1.tgz`,
+    },
+  });
   await access(join(package_dir, "bun.lockb"));
 });
 

@@ -1673,9 +1673,6 @@ describe("optionalDependencies", () => {
       expect(err).toMatch(`warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry - 404`);
     });
   }
-});
-
-describe("optionalDependencies", () => {
   test("should not install optional deps if false in bunfig", async () => {
     await writeFile(
       join(packageDir, "bunfig.toml"),
@@ -1725,11 +1722,37 @@ describe("optionalDependencies", () => {
       "",
       "1 package installed",
     ]);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      "no-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps"]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  });
+
+  test("lifecycle scripts failures from transitive dependencies are ignored", async () => {
+    // Dependency with a transitive optional dependency that fails during its preinstall script.
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "2.2.2",
+        dependencies: {
+          "optional-lifecycle-fail": "1.1.1",
+        },
+        trustedDependencies: ["lifecycle-fail"],
+      }),
+    );
+
+    const { err, exited } = await runBunInstall(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "optional-lifecycle-fail", "package.json")),
+        exists(join(packageDir, "node_modules", "lifecycle-fail", "package.json")),
+      ]),
+    ).toEqual([true, false]);
   });
 });
 
@@ -11847,4 +11870,3 @@ registry = "http://localhost:${port}/"
     });
   }
 });
-

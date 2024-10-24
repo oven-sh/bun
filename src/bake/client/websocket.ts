@@ -2,22 +2,35 @@ const isLocal = location.host === "localhost" || location.host === "127.0.0.1";
 
 function wait() {
   return new Promise<void>(done => {
-    let timer;
+    let timer: Timer | null = null;
+
+    const onBlur = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
 
     const onTimeout = () => {
       if (timer !== null) clearTimeout(timer);
-      document.removeEventListener("focus", onTimeout);
+      window.removeEventListener("focus", onTimeout);
+      window.removeEventListener("blur", onBlur);
       done();
     };
 
-    document.addEventListener("focus", onTimeout);
-    timer = setTimeout(
-      () => {
-        timer = null;
-        onTimeout();
-      },
-      isLocal ? 2_500 : 30_000,
-    );
+    window.addEventListener("focus", onTimeout);
+
+    if (document.hasFocus()) {
+      timer = setTimeout(
+        () => {
+          timer = null;
+          onTimeout();
+        },
+        isLocal ? 2_500 : 2_500,
+      );
+
+      window.addEventListener("blur", onBlur);
+    }
   });
 }
 

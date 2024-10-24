@@ -3,14 +3,11 @@ import { resolve } from "node:path";
 
 // @ts-ignore
 export async function css(file: string, is_development: boolean): string {
-  // TODO: CI does not have `experimentalCss`
-  // const { success, stdout, stderr } = await Bun.spawnSync({
-  //   cmd: [process.execPath, "build", file, "--experimental-css", ...(is_development ? [] : ["--minify"])],
-  //   cwd: import.meta.dir,
-  //   stdio: ["ignore", "pipe", "pipe"],
-  // });
-  // if (!success) throw new Error(stderr.toString("utf-8"));
-  // return stdout.toString("utf-8");
-
-  return readFileSync(resolve(import.meta.dir, file)).toString('utf-8');
+  const { success, stdout, stderr } = await Bun.spawnSync({
+    cmd: [process.execPath, "build", file, "--experimental-css", ...(is_development ? [] : ["--minify"])],
+    cwd: import.meta.dir,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (!success) throw new Error(stderr.toString("utf-8"));
+  return stdout.toString("utf-8");
 }

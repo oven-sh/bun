@@ -1,6 +1,8 @@
 declare module "bun" {
   declare function wipDevServerExpectHugeBreakingChanges(options: Bake.Options): never;
 
+  type Awaitable<T> = T | Promise<T>;
+
   declare namespace Bake {
     interface Options {
       /**
@@ -145,7 +147,13 @@ declare module "bun" {
        * The framework implementation decides and enforces the shape
        * of the route module. Bun passes it as an opaque value.
        */
-      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Response;
+      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
+      /**
+       * Static rendering does not take a response in, and can generate
+       * multiple output files. Note that `import.meta.env.STATIC` will
+       * be inlined to true during a static build.
+       */
+      staticRender: (routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Record<string, Blob | ArrayBuffer>>;
     }
 
     interface ClientEntryPoint {
@@ -158,11 +166,25 @@ declare module "bun" {
       onServerSideReload?: () => void;
     }
 
+    /**
+     * This object and it's children may be re-used between invocations, so it
+     * is not safe to mutate it at all.
+     */
     interface RouteMetadata {
-      /** A list of css files that the route will need to be styled */
-      styles: string[];
-      /** A list of js files that the route will need to be interactive */
-      scripts: string[];
+      /**
+       * A list of js files that the route will need to be interactive.
+       */
+      readonly scripts: ReadonlyArray<string>;
+      /**
+       * A list of css files that the route will need to be styled.
+       */
+      readonly styles: ReadonlyArray<string>;
+      /**
+       * Can be used by the framework to mention the route file. Only provided in
+       * development mode to prevent leaking these details into production
+       * builds.
+       */
+      devRoutePath?: string;
     }
   }
 

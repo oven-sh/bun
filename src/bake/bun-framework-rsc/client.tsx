@@ -24,7 +24,7 @@ const root = hydrateRoot(document, <Async />, {
 });
 
 export async function onServerSideReload() {
-  const response = await fetch(location.href, {
+  const response = await fetch(location.href + '/index.rsc', {
     headers: {
       Accept: "text/x-component",
     },

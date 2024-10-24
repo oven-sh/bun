@@ -865,6 +865,8 @@ pub const Bundler = struct {
             .src_path = file_path,
             .loader = loader,
             .value = undefined,
+            .side = .client,
+            .entry_point_index = null,
         };
 
         switch (loader) {

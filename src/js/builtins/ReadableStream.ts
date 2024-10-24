@@ -108,6 +108,7 @@ export function initializeReadableStream(
 
 $linkTimeConstant;
 export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]> {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -119,6 +120,7 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
 
 $linkTimeConstant;
 export function readableStreamToText(stream: ReadableStream): Promise<string> {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -137,6 +139,7 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
 
 $linkTimeConstant;
 export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>): Promise<ArrayBuffer> | ArrayBuffer {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -216,6 +219,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
 
 $linkTimeConstant;
 export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Promise<Uint8Array> | Uint8Array {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
@@ -297,6 +301,7 @@ export function readableStreamToFormData(
   stream: ReadableStream<ArrayBuffer>,
   contentType: string | ArrayBuffer | ArrayBufferView,
 ): Promise<FormData> {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
   return Bun.readableStreamToBlob(stream).then(blob => {
     return FormData.from(blob, contentType);
@@ -305,6 +310,7 @@ export function readableStreamToFormData(
 
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
   let result = $tryUseReadableStreamBufferedFastPath(stream, "json");
   if (result) {
@@ -326,6 +332,7 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
 
   return (
@@ -422,7 +429,15 @@ export function pipeThrough(this, streams, options) {
 
   if ($isWritableStreamLocked(internalWritable)) throw $makeTypeError("WritableStream is locked");
 
-  $readableStreamPipeToWritableStream(this, internalWritable, preventClose, preventAbort, preventCancel, signal);
+  const promise = $readableStreamPipeToWritableStream(
+    this,
+    internalWritable,
+    preventClose,
+    preventAbort,
+    preventCancel,
+    signal,
+  );
+  $markPromiseAsHandled(promise);
 
   return readable;
 }

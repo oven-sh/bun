@@ -51,6 +51,7 @@ class GlobalInternals;
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
+#include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
 
 namespace WebCore {
@@ -191,8 +192,7 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
-    void formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStack = JSC::jsUndefined());
+    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -374,6 +374,8 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    double INSPECT_MAX_BYTES = 50;
+    bool isInsideErrorPrepareStackTraceCallback = false;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -395,9 +397,8 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
 
-    // This is set when doing `require('module')._resolveFilename = ...`
-    // a hack used by Next.js to inject their versions of webpack and react
-    mutable WriteBarrier<JSFunction> m_nodeModuleOverriddenResolveFilename;
+    LazyProperty<JSGlobalObject, JSCell> m_moduleResolveFilenameFunction;
+    LazyProperty<JSGlobalObject, JSObject> m_nodeModuleConstructor;
 
     mutable WriteBarrier<Unknown> m_nextTickQueue;
 
@@ -484,7 +485,7 @@ public:
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
-
+    Bun::Http2CommonStrings& http2CommonStrings() { return m_http2_commongStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
@@ -500,6 +501,7 @@ private:
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
     Bun::CommonStrings m_commonStrings;
+    Bun::Http2CommonStrings m_http2_commongStrings;
     RefPtr<WebCore::Performance> m_performance { nullptr };
 
     // JSC's hashtable code-generator tries to access these properties, so we make them public.
@@ -585,6 +587,9 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
+
+    bool hasOverridenModuleResolveFilenameFunction = false;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

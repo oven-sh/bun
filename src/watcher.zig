@@ -510,6 +510,31 @@ pub const WatchEvent = struct {
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
+
+        pub fn merge(before: Op, after: Op) Op {
+            return .{
+                .delete = before.delete or after.delete,
+                .write = before.write or after.write,
+                .metadata = before.metadata or after.metadata,
+                .rename = before.rename or after.rename,
+                .move_to = before.move_to or after.move_to,
+            };
+        }
+
+        pub fn format(op: Op, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+            try w.writeAll("{");
+            var first = true;
+            inline for (comptime std.meta.fieldNames(Op)) |name| {
+                if (@field(op, name)) {
+                    if (!first) {
+                        try w.writeAll(",");
+                    }
+                    first = false;
+                    try w.writeAll(name);
+                }
+            }
+            try w.writeAll("}");
+        }
     };
 };
 
@@ -541,6 +566,10 @@ pub fn getHash(filepath: string) HashType {
 pub const NewWatcher = if (true)
     struct {
         const Watcher = @This();
+
+        pub const Event = WatchEvent;
+        pub const Item = WatchItem;
+        pub const ItemList = WatchList;
 
         watchlist: WatchList,
         watched_count: usize = 0,
@@ -575,7 +604,11 @@ pub const NewWatcher = if (true)
                     T.onFileUpdate(@alignCast(@ptrCast(ctx_opaque)), events, changed_files, watchlist);
                 }
                 fn onErrorWrapped(ctx_opaque: *anyopaque, err: bun.sys.Error) void {
-                    T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    if (@hasDecl(T, "onWatchError")) {
+                        T.onWatchError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    } else {
+                        T.onError(@alignCast(@ptrCast(ctx_opaque)), err);
+                    }
                 }
             };
 
@@ -1218,20 +1251,17 @@ pub const NewWatcher = if (true)
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
-        ) bun.JSC.Maybe(void) {
+        ) bun.JSC.Maybe(WatchItemIndex) {
             this.mutex.lock();
             defer this.mutex.unlock();
 
-            if (this.indexOf(hash) != null) {
-                return .{ .result = {} };
+            if (this.indexOf(hash)) |idx| {
+                return .{ .result = @truncate(idx) };
             }
 
             this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
 
-            return switch (this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path)) {
-                .err => |err| .{ .err = err },
-                .result => .{ .result = {} },
-            };
+            return this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
         }
 
         pub fn addFile(

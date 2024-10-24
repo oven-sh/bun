@@ -30,10 +30,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * glob
     auto name = callFrame->argument(1);
     auto min = callFrame->argument(2);
     auto max = callFrame->argument(3);
-
+    return Bun::V::validateInteger(scope, globalObject, value, name, min, max);
+}
+JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max)
+{
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
-    if (min.isUndefined()) min = jsNumber(-9007199254740991); // Number.MIN_SAFE_INTEGER
-    if (max.isUndefined()) max = jsNumber(9007199254740991); // Number.MAX_SAFE_INTEGER
+    if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
+    if (max.isUndefined()) max = jsDoubleNumber(JSC::maxSafeInteger());
 
     auto value_num = value.asNumber();
     auto min_num = min.toNumber(globalObject);
@@ -430,7 +433,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto ty = buffer.asCell()->type();
 
     if (JSC::typedArrayType(ty) == NotTypedArray) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer, true);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
     }
     return JSValue::encode(jsUndefined());
 }

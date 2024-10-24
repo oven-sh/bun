@@ -1,8 +1,7 @@
 import { describe, test } from "bun:test";
+import { isWindows } from "harness";
 import assert from "node:assert";
 import url from "node:url";
-
-const isWindows = process.platform === "win32";
 
 describe("url.pathToFileURL", () => {
   // TODO: Fix these asserts on Windows.

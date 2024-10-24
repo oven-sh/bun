@@ -14,10 +14,11 @@
     "packages",
     "bench",
     "examples/*/*",
+    "build",
+    ".zig-cache",
     "test",
     "vendor",
     "bun-webkit",
-    "vendor/WebKit",
     "src/api/demo",
     "node_modules"
   ],

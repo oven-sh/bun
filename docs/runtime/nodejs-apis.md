@@ -65,7 +65,7 @@ Some methods are not optimized yet.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
-🟡 Client is supported, but server isn't yet.
+🟡 Client & server are implemented (95.25% of gRPC's test suite passes). Missing `options.allowHTTP1`, `options.enableConnectProtocol`, ALTSVC extension, and `http2stream.pushStream`.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 

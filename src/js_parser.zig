@@ -530,7 +530,8 @@ const JSXTag = struct {
     };
     data: Data,
     range: logger.Range,
-    name: string = "",
+    /// Empty string for fragments.
+    name: string,
 
     pub fn parse(comptime P: type, p: *P) anyerror!JSXTag {
         const loc = p.lexer.loc();
@@ -547,7 +548,7 @@ const JSXTag = struct {
         // The tag is an identifier
         var name = p.lexer.identifier;
         var tag_range = p.lexer.range();
-        try p.lexer.expectInsideJSXElement(.t_identifier);
+        try p.lexer.expectInsideJSXElementWithName(.t_identifier, "JSX element name");
 
         // Certain identifiers are strings
         // <div
@@ -559,6 +560,7 @@ const JSXTag = struct {
                     .data = name,
                 }, loc) },
                 .range = tag_range,
+                .name = name,
             };
         }
 
@@ -1574,26 +1576,15 @@ pub const ImportScanner = struct {
 /// one file, and user symbols from different files may collide with each
 /// other).
 ///
-/// The solution: For every generated symbol, we reserve two backup symbol names:
-/// - If any usages of `.primary`, fall back to `.backup`
-/// - If any usages of `.backup`, fall back to `.internal`
-/// - We *assume* the internal name is never used. In practice, it is possible. But, the
-///   internal names are so crazy long you'd have to be deliberately trying to use them.
-const StaticSymbolName = struct {
-    primary: string,
-    backup: string,
-    internal: string,
-
-    fn init(comptime basename: string) StaticSymbolName {
-        const hash_value = bun.hash(basename);
-        return comptime .{
-            .internal = std.fmt.comptimePrint("{s}_{}", .{ basename, bun.fmt.hexIntLower(hash_value) }),
-            .primary = basename,
-            .backup = "_" ++ basename ++ "$",
-        };
+/// This makes sure that there's the lowest possible chance of having a generated name
+/// collide with a user's name. This is the easiest way to do so
+pub inline fn generatedSymbolName(name: []const u8) []const u8 {
+    comptime {
+        const hash = std.hash.Wyhash.hash(0, name);
+        const hash_str = std.fmt.comptimePrint("_{}", .{bun.fmt.truncatedHash32(@intCast(hash))});
+        return name ++ hash_str;
     }
-};
-const GeneratedSymbol = @import("./runtime.zig").Runtime.GeneratedSymbol;
+}
 
 pub const SideEffects = enum(u1) {
     could_have_side_effects,
@@ -2509,12 +2500,8 @@ const ExprIn = struct {
     // Currently this is only used when unwrapping a call to `require()`
     // with `__toESM()`.
     is_immediately_assigned_to_decl: bool = false,
-};
 
-const ExprOut = struct {
-    // True if the child node is an optional chain node (EDot, EIndex, or ECall
-    // with an IsOptionalChain value of true)
-    child_contains_optional_chain: bool = false,
+    property_access_for_method_call_maybe_should_replace_with_undefined: bool = false,
 };
 
 const Tup = std.meta.Tuple;
@@ -3451,28 +3438,6 @@ pub const Parser = struct {
                         try p.appendPart(parts_list, sliced.items);
                     },
 
-                    // Hoist functions to the top in the output
-                    // This is normally done by the JS parser, but we need to do it here
-                    // incase we have CommonJS exports converted to ESM exports there are assignments
-                    // to the exports object that need to be hoisted.
-                    .s_function => {
-                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
-                        sliced.items.len = 1;
-                        sliced.items[0] = stmt;
-                        // since we convert top-level function statements to look like this:
-                        //
-                        //   let foo = function () { ... }
-                        //
-                        // we have to hoist them to the top of the file, even when not bundling
-                        //
-                        // we might also need to do this for classes but i'm not sure yet.
-                        try p.appendPart(&parts, sliced.items);
-
-                        if (parts.items.len > 0) {
-                            before.append(parts.getLast()) catch unreachable;
-                            parts.items.len -= 1;
-                        }
-                    },
                     .s_class => |class| {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
@@ -3664,7 +3629,6 @@ pub const Parser = struct {
         }
 
         if (parts.items.len < 4 and parts.items.len > 0 and p.options.features.unwrap_commonjs_to_esm) {
-
             // Specially handle modules shaped like this:
             //
             //   CommonJS:
@@ -4823,13 +4787,6 @@ fn NewParser_(
         // "visit" pass.
         enclosing_namespace_arg_ref: ?Ref = null,
 
-        // TODO: remove all these
-        jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_fragment: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_automatic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsxs_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_imports: JSXImport.Symbols = .{},
 
         // only applicable when `.options.features.react_fast_refresh` is set.
@@ -4893,6 +4850,8 @@ fn NewParser_(
 
         /// We must be careful to avoid revisiting nodes that have scopes.
         is_revisit_for_substitution: bool = false,
+
+        method_call_must_be_replaced_with_undefined: bool = false,
 
         // Inside a TypeScript namespace, an "export declare" statement can be used
         // to cause a namespace to be emitted even though it has no other observable
@@ -6059,6 +6018,19 @@ fn NewParser_(
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
                 declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
+
+                // ensure every e_import_identifier holds the namespace
+                if (p.options.features.hot_module_reloading) {
+                    const symbol = &p.symbols.items[ref.inner_index];
+                    if (symbol.namespace_alias == null) {
+                        symbol.namespace_alias = .{
+                            .namespace_ref = namespace_ref,
+                            .alias = alias_name,
+                            .import_record_index = import_record_i,
+                        };
+                    }
+                }
+
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(allocator, ref, js_ast.NamedImport{
                     .alias = alias_name,
@@ -6777,64 +6749,15 @@ fn NewParser_(
             }
 
             if (p.options.features.react_fast_refresh) {
-                // this is .. obviously.. not correct
-                p.react_refresh.create_signature_ref = (try p.declareGeneratedSymbol(.other, "$RefreshSig$")).primary;
-                p.react_refresh.register_ref = (try p.declareGeneratedSymbol(.other, "$RefreshReg$")).primary;
-            }
-
-            //  "React.createElement" and "createElement" become:
-            //      import { createElement } from 'react';
-            //  "Foo.Bar.createElement" becomes:
-            //      import { Bar } from 'foo';
-            //      Usages become Bar.createElement
-            switch (comptime jsx_transform_type) {
-                .react => {
-                    if (!p.options.bundle) {
-                        p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
-                        p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
-                        if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
-                            p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
-                        p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
-
-                        if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
-                            p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
-                        }
-
-                        p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
-                    }
-                },
-
-                else => {},
-            }
-        }
-
-        // This won't work for adversarial cases
-        pub fn resolveGeneratedSymbol(p: *P, generated_symbol: *GeneratedSymbol) void {
-            if (generated_symbol.ref.isNull() or p.options.bundle) return;
-
-            if (p.symbols.items[generated_symbol.primary.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.primary.innerIndex()].hasLink())
-            {
-                p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.primary.innerIndex()].original_name;
-                return;
-            }
-
-            if (p.symbols.items[generated_symbol.backup.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.backup.innerIndex()].hasLink())
-            {
-                p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.backup.innerIndex()].original_name;
-                return;
+                p.react_refresh.create_signature_ref = (try p.declareGeneratedSymbol(.other, "$RefreshSig$"));
+                p.react_refresh.register_ref = (try p.declareGeneratedSymbol(.other, "$RefreshReg$"));
             }
         }
 
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
-            const static_symbol = comptime StaticSymbolName.init("__require");
-            p.runtime_imports.__require = .{
-                .backup = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol.backup, true) catch bun.outOfMemory(),
-                .primary = p.require_ref,
-                .ref = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol.internal, true) catch bun.outOfMemory(),
-            };
+            const static_symbol = generatedSymbolName("__require");
+            p.runtime_imports.__require = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true) catch bun.outOfMemory();
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -6842,37 +6765,7 @@ fn NewParser_(
             if (!p.options.features.allow_runtime)
                 return;
 
-            if (p.runtime_imports.__require) |*require| {
-                p.resolveGeneratedSymbol(require);
-            }
-
             p.ensureRequireSymbol();
-        }
-
-        pub fn resolveBundlingSymbols(p: *P) void {
-            p.resolveGeneratedSymbol(&p.runtime_imports.__export.?);
-            p.resolveGeneratedSymbol(&p.runtime_imports.__exportValue.?);
-            p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
-        }
-
-        pub fn resolveStaticJSXSymbols(p: *P) void {
-            if (p.options.bundle)
-                return;
-
-            if (p.options.features.jsx_optimization_inline) {
-                if (p.runtime_imports.__merge) |*merge| {
-                    p.resolveGeneratedSymbol(merge);
-                }
-            }
-
-            p.resolveGeneratedSymbol(&p.jsx_runtime);
-            if (FeatureFlags.support_jsxs_in_jsx_transform)
-                p.resolveGeneratedSymbol(&p.jsxs_runtime);
-            p.resolveGeneratedSymbol(&p.jsx_factory);
-            p.resolveGeneratedSymbol(&p.jsx_fragment);
-            p.resolveGeneratedSymbol(&p.jsx_classic);
-            p.resolveGeneratedSymbol(&p.jsx_automatic);
-            // p.resolveGeneratedSymbol(&p.jsx_filename);
         }
 
         fn willUseRenamer(p: *P) bool {
@@ -9208,7 +9101,7 @@ fn NewParser_(
                         }
                     }
                 }
-            } else if (import_tag == .kit_resolve_to_ssr_graph) {
+            } else if (import_tag == .bake_resolve_to_ssr_graph) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
             }
         }
@@ -9640,7 +9533,6 @@ fn NewParser_(
                             if (p.lexer.isContextualKeyword("async")) {
                                 const async_range = p.lexer.range();
                                 try p.lexer.next();
-                                var defaultName: js_ast.LocRef = undefined;
                                 if (p.lexer.token == T.t_function and !p.lexer.has_newline_before) {
                                     try p.lexer.next();
                                     var stmtOpts = ParseStatementOptions{
@@ -9653,16 +9545,16 @@ fn NewParser_(
                                         return stmt;
                                     }
 
-                                    if (stmt.data.s_function.func.name) |name| {
-                                        defaultName = js_ast.LocRef{ .loc = name.loc, .ref = name.ref };
-                                    } else {
-                                        defaultName = try p.createDefaultName(defaultLoc);
-                                    }
+                                    const defaultName = if (stmt.data.s_function.func.name) |name|
+                                        js_ast.LocRef{ .loc = name.loc, .ref = name.ref }
+                                    else
+                                        try p.createDefaultName(defaultLoc);
+
                                     const value = js_ast.StmtOrExpr{ .stmt = stmt };
                                     return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                                 }
 
-                                defaultName = try createDefaultName(p, loc);
+                                const defaultName = try createDefaultName(p, loc);
 
                                 const prefix_expr = try p.parseAsyncPrefixExpr(async_range, Level.comma);
                                 const expr = try p.parseSuffix(prefix_expr, Level.comma, null, Expr.EFlags.none);
@@ -12219,7 +12111,7 @@ fn NewParser_(
                 const SupportedAttribute = enum {
                     type,
                     embed,
-                    bunKitGraph,
+                    bunBakeGraph,
                 };
 
                 var has_seen_embed_true = false;
@@ -12282,11 +12174,11 @@ fn NewParser_(
                                         }
                                     }
                                 },
-                                .bunKitGraph => {
+                                .bunBakeGraph => {
                                     if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
-                                        path.import_tag = .kit_resolve_to_ssr_graph;
+                                        path.import_tag = .bake_resolve_to_ssr_graph;
                                     } else {
-                                        try p.lexer.addRangeError(p.lexer.range(), "'bunKitGraph' can only be set to 'ssr'", .{}, true);
+                                        try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
                                     }
                                 },
                             }
@@ -12512,22 +12404,14 @@ fn NewParser_(
             return ref;
         }
 
-        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !GeneratedSymbol {
-            const static = comptime StaticSymbolName.init(name);
+        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
+            const genName = generatedSymbolName(name);
             if (p.options.bundle) {
-                const ref = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true);
-                return .{
-                    .backup = ref,
-                    .primary = ref,
-                    .ref = ref,
-                };
+                const ref = try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, genName, true);
+                return ref;
             }
 
-            return .{
-                .backup = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.backup, true),
-                .primary = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true),
-                .ref = try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, static.internal, true),
-            };
+            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, genName, true);
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
@@ -15804,10 +15688,16 @@ fn NewParser_(
                         const end_tag = try JSXTag.parse(P, p);
 
                         if (!strings.eql(end_tag.name, tag.name)) {
-                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag \\</{s}> to match opening tag \\<{s}>", .{
-                                end_tag.name,
-                                tag.name,
-                            });
+                            try p.log.addRangeErrorFmtWithNote(
+                                p.source,
+                                end_tag.range,
+                                p.allocator,
+                                "Expected closing JSX tag to match opening tag \"\\<{s}\\>\"",
+                                .{tag.name},
+                                "Opening tag here:",
+                                .{},
+                                tag.range,
+                            );
                             return error.SyntaxError;
                         }
 
@@ -16341,6 +16231,11 @@ fn NewParser_(
                             }
                             if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
                                 e_.call_can_be_unwrapped_if_unused = true;
+                            }
+
+                            // If the user passed --drop=console, drop all property accesses to console.
+                            if (def.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined and in.assign_target == .none) {
+                                p.method_call_must_be_replaced_with_undefined = true;
                             }
                         }
 
@@ -17012,6 +16907,10 @@ fn NewParser_(
                                     if (!define.data.valueless) {
                                         return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                     }
+
+                                    if (define.data.method_call_must_be_replaced_with_undefined and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
+                                        p.method_call_must_be_replaced_with_undefined = true;
+                                    }
                                 }
 
                                 // Copy the side effect flags over in case this expression is unused
@@ -17043,7 +16942,9 @@ fn NewParser_(
                         }
                     }
 
-                    e_.target = p.visitExpr(e_.target);
+                    e_.target = p.visitExprInOut(e_.target, .{
+                        .property_access_for_method_call_maybe_should_replace_with_undefined = in.property_access_for_method_call_maybe_should_replace_with_undefined,
+                    });
 
                     // 'require.resolve' -> .e_require_resolve_call_target
                     if (e_.target.data == .e_require_call_target and
@@ -17315,6 +17216,7 @@ fn NewParser_(
                     const target_was_identifier_before_visit = e_.target.data == .e_identifier;
                     e_.target = p.visitExprInOut(e_.target, .{
                         .has_chain_parent = e_.optional_chain == .continuation,
+                        .property_access_for_method_call_maybe_should_replace_with_undefined = true,
                     });
 
                     // Copy the call side effect flag over if this is a known target
@@ -17370,6 +17272,7 @@ fn NewParser_(
                         defer p.options.ignore_dce_annotations = old_ce;
                         const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
                         defer p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+                        const old_is_control_flow_dead = p.is_control_flow_dead;
 
                         // We want to forcefully fold constants inside of
                         // certain calls even when minification is disabled, so
@@ -17386,8 +17289,28 @@ fn NewParser_(
                             p.should_fold_typescript_constant_expressions = true;
                         }
 
+                        var method_call_should_be_replaced_with_undefined = p.method_call_must_be_replaced_with_undefined;
+
+                        if (method_call_should_be_replaced_with_undefined) {
+                            p.method_call_must_be_replaced_with_undefined = false;
+                            switch (e_.target.data) {
+                                // If we're removing this call, don't count any arguments as symbol uses
+                                .e_index, .e_dot => {
+                                    p.is_control_flow_dead = true;
+                                },
+                                else => {
+                                    method_call_should_be_replaced_with_undefined = false;
+                                },
+                            }
+                        }
+
                         for (e_.args.slice()) |*arg| {
                             arg.* = p.visitExpr(arg.*);
+                        }
+
+                        if (method_call_should_be_replaced_with_undefined) {
+                            p.is_control_flow_dead = old_is_control_flow_dead;
+                            return .{ .data = .{ .e_undefined = .{} }, .loc = expr.loc };
                         }
                     }
 
@@ -18317,7 +18240,7 @@ fn NewParser_(
 
                             const loc_ref = LocRef{
                                 .loc = loc,
-                                .ref = p.newSymbol(.other, symbol_name) catch unreachable,
+                                .ref = (p.declareGeneratedSymbol(.other, symbol_name) catch unreachable),
                             };
 
                             p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
@@ -18972,7 +18895,13 @@ fn NewParser_(
 
             switch (stmt.data) {
                 // These don't contain anything to traverse
-                .s_debugger, .s_empty, .s_comment => {
+                .s_debugger => {
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+                    if (p.define.drop_debugger) {
+                        return;
+                    }
+                },
+                .s_empty, .s_comment => {
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                 },
                 .s_type_script => {
@@ -19158,7 +19087,7 @@ fn NewParser_(
                     }
 
                     switch (data.value) {
-                        .expr => |expr| brk_expr: {
+                        .expr => |expr| {
                             const was_anonymous_named_expr = expr.isAnonymousNamed();
 
                             data.value.expr = p.visitExpr(expr);
@@ -19193,6 +19122,10 @@ fn NewParser_(
                                 }
                             }
 
+                            if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
+                            }
+
                             // If there are lowered "using" declarations, change this into a "var"
                             if (p.current_scope.parent == null and p.will_wrap_module_in_try_catch_for_using) {
                                 try stmts.ensureUnusedCapacity(2);
@@ -19200,7 +19133,7 @@ fn NewParser_(
                                 const decls = p.allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
                                 decls[0] = .{
                                     .binding = p.b(B.Identifier{ .ref = data.default_name.ref.? }, data.default_name.loc),
-                                    .value = expr,
+                                    .value = data.value.expr,
                                 };
                                 stmts.appendAssumeCapacity(p.s(S.Local{
                                     .decls = G.Decl.List.init(decls),
@@ -19214,7 +19147,6 @@ fn NewParser_(
                                 stmts.appendAssumeCapacity(p.s(S.ExportClause{
                                     .items = items,
                                 }, stmt.loc));
-                                break :brk_expr;
                             }
 
                             if (mark_for_replace) {
@@ -19225,10 +19157,6 @@ fn NewParser_(
                                     _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
                                     return;
                                 }
-                            }
-
-                            if (data.default_name.ref.?.isSourceContentsSlice()) {
-                                data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
                             }
                         },
 
@@ -19455,6 +19383,7 @@ fn NewParser_(
                         }
                     }
 
+                    data.kind = kind;
                     try stmts.append(stmt.*);
 
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
@@ -20858,30 +20787,8 @@ fn NewParser_(
                         // TODO: prop.kind == .declare and prop.value == null
 
                         if (prop.ts_decorators.len > 0) {
-                            const loc = prop.key.?.loc;
-                            const _descriptor_key = switch (prop.key.?.data) {
-                                .e_identifier => |k| p.newExpr(E.Identifier{ .ref = k.ref }, loc),
-                                .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
-                                .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
-                                .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
-                                .e_private_identifier => |k| p.newExpr(E.PrivateIdentifier{ .ref = k.ref }, loc),
-
-                                // This should be unreachable. Due to zig bug using `unreachable` keyword or `noreturn` type will
-                                // result in a segfault at runtime with a release build. Minimum repro:
-                                //
-                                // class Foo {
-                                //   foo;
-                                // }
-                                //
-                                // Workaround: assign to null and say the orelse branch is unreachable. The cause
-                                // of this bug seems to be a combination of release build optimizations with switch expression
-                                // and unreachable or noreturn else.
-                                //
-                                // TODO: when zig is upgraded check if this workaround is still needed. The bug happens
-                                // on macos aarch64
-                                else => null,
-                            };
-                            const descriptor_key = _descriptor_key orelse unreachable;
+                            const descriptor_key = prop.key.?;
+                            const loc = descriptor_key.loc;
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.
@@ -21888,17 +21795,16 @@ fn NewParser_(
                 if (!p.options.bundle) {
                     const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
                     p.runtime_imports.put(name, generated_symbol);
-                    return generated_symbol.ref;
+                    return generated_symbol;
                 } else {
                     const loc_ref = js_ast.LocRef{
                         .loc = loc,
                         .ref = p.newSymbol(.other, name) catch unreachable,
                     };
-                    p.runtime_imports.put(name, .{
-                        .primary = loc_ref.ref.?,
-                        .backup = loc_ref.ref.?,
-                        .ref = loc_ref.ref.?,
-                    });
+                    p.runtime_imports.put(
+                        name,
+                        loc_ref.ref.?,
+                    );
                     p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
                     return loc_ref.ref.?;
                 }
@@ -22202,29 +22108,37 @@ fn NewParser_(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
-                                if (!local.is_export and local.kind == .k_const and !local.was_commonjs_export) {
+                                if (!local.is_export and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
+                                    var any_decl_in_const_values = local.kind == .k_const;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
-                                            const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
-                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref) and symbol.use_count_estimate == 0) {
-                                                continue;
+                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                                                any_decl_in_const_values = true;
+                                                const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
+                                                if (symbol.use_count_estimate == 0) {
+                                                    // Skip declarations that are constants with zero usage
+                                                    continue;
+                                                }
                                             }
                                         }
                                         decls[end] = decl;
                                         end += 1;
                                     }
                                     local.decls.len = @as(u32, @truncate(end));
-                                    if (end == 0) {
-                                        stmt.* = stmt.*.toEmpty();
+                                    if (any_decl_in_const_values) {
+                                        if (end == 0) {
+                                            stmt.* = stmt.*.toEmpty();
+                                        }
+                                        continue;
                                     }
-                                    continue;
                                 }
                             },
                             else => {},
                         }
 
+                        // Break after processing relevant statements
                         break;
                     }
                 }
@@ -22865,14 +22779,22 @@ fn NewParser_(
                 var end: u32 = 0;
                 for (stmts) |stmt| {
                     switch (stmt.data) {
-                        .s_directive,
-                        .s_import,
-                        .s_export_from,
-                        .s_export_star,
-                        => {
+                        .s_directive, .s_import, .s_export_from, .s_export_star => {
                             // These can't go in a try/catch block
                             result.append(stmt) catch bun.outOfMemory();
                             continue;
+                        },
+
+                        .s_class => {
+                            if (stmt.data.s_class.is_export) {
+                                // can't go in try/catch; hoist out
+                                result.append(stmt) catch bun.outOfMemory();
+                                continue;
+                            }
+                        },
+
+                        .s_export_default => {
+                            continue; // this prevents re-exporting default since we already have it as an .s_export_clause
                         },
 
                         .s_export_clause => |data| {
@@ -23267,7 +23189,7 @@ fn NewParser_(
                 });
 
                 for (parts) |part| {
-                    // Kit does not care about 'import =', as it handles it on it's own
+                    // Bake does not care about 'import =', as it handles it on it's own
                     _ = try ImportScanner.scan(P, p, part.stmts, wrap_mode != .none, true, &hmr_transform_ctx);
                 }
 
@@ -23528,7 +23450,7 @@ fn NewParser_(
                     js_ast.SlotCounts{},
 
                 .require_ref = if (p.runtime_imports.__require != null)
-                    p.runtime_imports.__require.?.ref
+                    p.runtime_imports.__require.?
                 else
                     p.require_ref,
 
@@ -23536,7 +23458,7 @@ fn NewParser_(
                 .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
                 .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
                 .uses_require_ref = p.runtime_imports.__require != null and
-                    p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
+                    p.symbols.items[p.runtime_imports.__require.?.inner_index].use_count_estimate > 0,
                 .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,

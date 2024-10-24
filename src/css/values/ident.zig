@@ -25,6 +25,10 @@ pub const DashedIdentReference = struct {
     /// Only enabled when the CSS modules `dashed_idents` option is turned on.
     from: ?Specifier,
 
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn parseWithOptions(input: *css.Parser, options: *const css.ParserOptions) Result(DashedIdentReference) {
         const ident = switch (DashedIdentFns.parse(input)) {
             .result => |vv| vv,
@@ -55,6 +59,10 @@ pub const DashedIdentReference = struct {
 
         return dest.writeDashedIdent(&this.ident, false);
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
 };
 
 pub const DashedIdentFns = DashedIdent;
@@ -64,6 +72,22 @@ pub const DashedIdentFns = DashedIdent;
 /// Author defined idents must start with two dash characters ("--") or parsing will fail.
 pub const DashedIdent = struct {
     v: []const u8,
+
+    pub fn HashMap(comptime V: type) type {
+        return std.ArrayHashMapUnmanaged(
+            DashedIdent,
+            V,
+            struct {
+                pub fn hash(_: @This(), s: DashedIdent) u32 {
+                    return std.array_hash_map.hashString(s.v);
+                }
+                pub fn eql(_: @This(), a: DashedIdent, b: DashedIdent, _: usize) bool {
+                    return bun.strings.eql(a, b);
+                }
+            },
+            false,
+        );
+    }
 
     pub fn parse(input: *css.Parser) Result(DashedIdent) {
         const location = input.currentSourceLocation();
@@ -80,6 +104,14 @@ pub const DashedIdent = struct {
 
     pub fn toCss(this: *const DashedIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return dest.writeDashedIdent(this, true);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -98,6 +130,14 @@ pub const Ident = struct {
 
     pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.serializer.serializeIdentifier(this.v, dest) catch return dest.addFmtError();
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 
@@ -142,6 +182,14 @@ pub const CustomIdent = struct {
         else
             false;
         return dest.writeIdent(this.v, css_module_custom_idents_enabled);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };
 

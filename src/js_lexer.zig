@@ -257,7 +257,11 @@ fn NewLexer_(
         pub fn syntaxError(self: *LexerType) !void {
             @setCold(true);
 
-            self.addError(self.start, "Syntax Error!!", .{}, true);
+            // Only add this if there is not already an error.
+            // It is possible that there is a more descriptive error already emitted.
+            if (!self.log.hasErrors())
+                self.addError(self.start, "Syntax Error", .{}, true);
+
             return Error.SyntaxError;
         }
 
@@ -2723,6 +2727,18 @@ fn NewLexer_(
 
             if (lexer.token != token) {
                 try lexer.expected(token);
+                return Error.SyntaxError;
+            }
+
+            try lexer.nextInsideJSXElement();
+        }
+
+        pub fn expectInsideJSXElementWithName(lexer: *LexerType, token: T, name: string) !void {
+            lexer.assertNotJSON();
+
+            if (lexer.token != token) {
+                try lexer.expectedString(name);
+                return Error.SyntaxError;
             }
 
             try lexer.nextInsideJSXElement();

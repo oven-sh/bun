@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                bun.fmt.formatJSONStringUTF8(specifier),
+                bun.fmt.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -436,7 +436,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -1587,7 +1587,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -2143,7 +2143,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
-                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.slice());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
@@ -2158,23 +2158,9 @@ pub const ModuleLoader = struct {
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-        var was_http = false;
-        if (jsc_vm.bundler.options.serve) {
-            if (strings.hasPrefixComptime(slice, "https://")) {
-                slice = slice["https://".len..];
-                was_http = true;
-            } else if (strings.hasPrefixComptime(slice, "http://")) {
-                slice = slice["http://".len..];
-                was_http = true;
-            }
-        }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
         }
 
         if (jsc_vm.origin.path.len > 1) {

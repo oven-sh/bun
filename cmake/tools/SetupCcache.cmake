@@ -11,8 +11,12 @@ find_command(
   COMMAND
     ccache
   REQUIRED
-    ON
+    ${CI}
 )
+
+if(NOT CCACHE_PROGRAM)
+  return()
+endif()
 
 set(CCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
 foreach(arg ${CCACHE_ARGS})

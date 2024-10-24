@@ -37,6 +37,17 @@ const b = await launch({
   ],
 });
 
+process.on("beforeExit", async reason => {
+  await b?.close?.();
+});
+
+process.once("SIGTERM", () => {
+  b?.close?.();
+  setTimeout(() => {
+    process.exit(0);
+  }, 100);
+});
+
 async function main() {
   const p = await b.newPage();
   console.error("Loaded puppeteer");

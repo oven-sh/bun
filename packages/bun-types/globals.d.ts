@@ -1838,14 +1838,6 @@ declare global {
     withCredentials?: boolean;
   }
 
-  interface EventSource extends Bun.EventSource {}
-  var EventSource: typeof globalThis extends {
-    onerror: any;
-    EventSource: infer T;
-  }
-    ? T
-    : EventSource;
-
   interface PromiseConstructor {
     /**
      * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called

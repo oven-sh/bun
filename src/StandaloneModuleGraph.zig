@@ -1039,7 +1039,7 @@ pub const StandaloneModuleGraph = struct {
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.ParseJSON(&json_src, &log, arena, false) catch
+        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse

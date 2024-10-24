@@ -30,7 +30,7 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+$ sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
 ```
 
 {% /codetabs %}
@@ -77,8 +77,8 @@ $ sudo pacman -S llvm clang lld
 
 ```bash#Fedora
 $ sudo dnf install 'dnf-command(copr)'
-$ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
-$ sudo dnf install llvm clang lld
+$ sudo dnf copr enable -y @fedora-llvm-team/llvm17
+$ sudo dnf install llvm16 clang16 lld16-devel
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -133,9 +133,9 @@ x.y.z_debug
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
 
-If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig.exe`. The filename is `zig.exe` so that it works as expected on Windows, but it still works on macOS/Linux (it just has a surprising file extension).
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./vendor/zig/zig.exe`. The filename is `zig.exe` so that it works as expected on Windows, but it still works on macOS/Linux (it just has a surprising file extension).
 
-We recommend adding `./build` to your `$PATH` so that you can run `bun-debug` in your terminal:
+We recommend adding `./build/debug` to your `$PATH` so that you can run `bun-debug` in your terminal:
 
 ```sh
 $ bun-debug
@@ -164,7 +164,7 @@ To compile a release build of Bun, run:
 $ bun run build:release
 ```
 
-The binary will be located at `./build-release/bun` and `./build-release/bun-profile`.
+The binary will be located at `./build/release/bun` and `./build/release/bun-profile`.
 
 ### Download release build from pull requests
 
@@ -173,8 +173,8 @@ To save you time spent building a release build locally, we provide a way to run
 To run a release build from a pull request, you can use the `bun-pr` npm package:
 
 ```sh
-bunx bun-pr pr-number
-bunx bun-pr branch/branch-name
+bunx bun-pr <pr-number>
+bunx bun-pr <branch-name>
 bunx bun-pr "https://github.com/oven-sh/bun/pull/1234566"
 ```
 
@@ -206,24 +206,18 @@ $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 
 ## Building WebKit locally + Debug mode of JSC
 
-{% callout %}
-
-**TODO**: This is out of date. TLDR is pass `-DUSE_DEBUG_JSC=1` or `-DWEBKIT_DIR=...` to CMake. it will probably need more fiddling. ask @paperdave if you need this.
-
-{% /callout %}
-
 WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
 
 ```bash
-# once you run this, `make submodule` can be used to automatically
-# update WebKit and the other submodules
-$ git submodule update --init --depth 1 --checkout src/bun.js/WebKit
-# to make a jsc release build
-$ make jsc
-# JSC debug build does not work perfectly with Bun yet, this is actively being
-# worked on and will eventually become the default.
-$ make jsc-build-linux-compile-debug cpp
-$ make jsc-build-mac-compile-debug cpp
+# Clone WebKit into ./vendor/WebKit
+$ git clone https://github.com/oven-sh/WebKit vendor/WebKit
+
+# Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
+# Optionally, you can use `make jsc` for a release build
+$ make jsc-debug
+
+# Build bun with the local JSC build
+$ bun run build:local
 ```
 
 Note that the WebKit folder, including build artifacts, is 8GB+ in size.

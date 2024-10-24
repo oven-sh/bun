@@ -23,6 +23,7 @@ const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
+const validators = @import("./util/validators.zig");
 
 pub const Path = @import("./path.zig");
 
@@ -69,7 +70,13 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         err: ErrorType,
         result: ReturnType,
 
-        pub const Tag = enum { err, result };
+        /// NOTE: this has to have a well defined layout (e.g. setting to `u8`)
+        /// experienced a bug with a Maybe(void, void)
+        /// creating the `err` variant of this type
+        /// resulted in Zig incorrectly setting the tag, leading to a switch
+        /// statement to just not work.
+        /// we (Zack, Dylan, Dave, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
+        pub const Tag = enum(u8) { err, result };
 
         pub const retry: @This() = if (hasRetry) .{ .err = ErrorType.retry } else .{ .err = ErrorType{} };
 
@@ -1204,13 +1211,15 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber()) brk: {
-        if (!value.isUInt32AsAnyInt()) {
-            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
-            return null;
-        }
-        break :brk @as(Mode, @truncate(value.to(Mode)));
+        const m = validators.validateUint32(ctx, value, "mode", .{}, false) catch return null;
+        break :brk @as(Mode, @as(u24, @truncate(m)));
     } else brk: {
         if (value.isUndefinedOrNull()) return null;
+
+        if (!value.isString()) {
+            _ = ctx.throwInvalidArgumentTypeValue("mode", "number", value);
+            return null;
+        }
 
         //        An easier method of constructing the mode is to use a sequence of
         //        three octal digits (e.g. 765). The left-most digit (7 in the example),
@@ -1226,15 +1235,11 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         }
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
-            JSC.throwInvalidArguments("Invalid mode string: must be an octal number", .{}, ctx, exception);
+            var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+            exception.* = ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS().asObjectRef();
             return null;
         };
     };
-
-    if (mode_int < 0) {
-        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
-        return null;
-    }
 
     return mode_int & 0o777;
 }

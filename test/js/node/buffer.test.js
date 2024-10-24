@@ -17,7 +17,6 @@ afterEach(() => gc());
  * 1. First we run them with native Buffer.write
  * 2. Then we run them with Node.js' implementation of Buffer.write, calling out to Bun's implementation of utf8Write, asciiWrite, latin1Write, base64Write, base64urlWrite, ucs2Write, utf16leWrite, utf16beWrite, etc.
  *
- *
  */
 const NumberIsInteger = Number.isInteger;
 class ERR_INVALID_ARG_TYPE extends TypeError {
@@ -308,8 +307,6 @@ for (let withOverridenBufferWrite of [false, true]) {
         // Try to copy 0 bytes past the end of the target buffer
         b.copy(Buffer.alloc(0), 1, 1, 1);
         b.copy(Buffer.alloc(1), 1, 1, 1);
-        // Try to copy 0 bytes from past the end of the source buffer
-        b.copy(Buffer.alloc(1), 0, 2048, 2048);
       });
 
       it("smart defaults and ability to pass string values as offset", () => {
@@ -1153,11 +1150,9 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("ParseArrayIndex() should reject values that don't fit in a 32 bits size_t", () => {
-        expect(() => {
-          const a = Buffer.alloc(1);
-          const b = Buffer.alloc(1);
-          a.copy(b, 0, 0x100000000, 0x100000001);
-        }).toThrow(RangeError);
+        const a = Buffer.alloc(1);
+        const b = Buffer.alloc(1);
+        expect(() => a.copy(b, 0, 0x100000000, 0x100000001)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
       });
 
       it("unpooled buffer (replaces SlowBuffer)", () => {
@@ -2921,3 +2916,27 @@ export function fillRepeating(dstBuffer, start, end) {
     sLen <<= 1; // double length for next segment
   }
 }
+
+describe("serialization", () => {
+  it("json", () => {
+    expect(JSON.stringify(Buffer.alloc(0))).toBe('{"type":"Buffer","data":[]}');
+    expect(JSON.stringify(Buffer.from([1, 2, 3, 4]))).toBe('{"type":"Buffer","data":[1,2,3,4]}');
+  });
+
+  it("and deserialization", () => {
+    const buf = Buffer.from("test");
+    const json = JSON.stringify(buf);
+    const obj = JSON.parse(json);
+    const copy = Buffer.from(obj);
+    expect(copy).toEqual(buf);
+  });
+
+  it("custom", () => {
+    const buffer = Buffer.from("test");
+    const string = JSON.stringify(buffer);
+    expect(string).toBe('{"type":"Buffer","data":[116,101,115,116]}');
+
+    const receiver = (key, value) => (value && value.type === "Buffer" ? Buffer.from(value.data) : value);
+    expect(JSON.parse(string, receiver)).toEqual(buffer);
+  });
+});

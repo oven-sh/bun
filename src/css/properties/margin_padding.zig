@@ -36,7 +36,8 @@ pub const Inset = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.inset);
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.inset);
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -45,6 +46,14 @@ pub const Inset = struct {
         .bottom = css.PropertyIdTag.bottom,
         .left = css.PropertyIdTag.left,
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [inset-block](https://drafts.csswg.org/css-logical/#propdef-inset-block) shorthand property.
@@ -54,13 +63,22 @@ pub const InsetBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"inset-block-start",
         .block_end = css.PropertyIdTag.@"inset-block-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [inset-inline](https://drafts.csswg.org/css-logical/#propdef-inset-inline) shorthand property.
@@ -75,8 +93,17 @@ pub const InsetInline = struct {
         .inline_end = css.PropertyIdTag.@"inset-inline-end",
     };
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"inset-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [margin-block](https://drafts.csswg.org/css-logical/#propdef-margin-block) shorthand property.
@@ -86,13 +113,22 @@ pub const MarginBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"margin-block-start",
         .block_end = css.PropertyIdTag.@"margin-block-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [margin-inline](https://drafts.csswg.org/css-logical/#propdef-margin-inline) shorthand property.
@@ -102,13 +138,22 @@ pub const MarginInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"margin-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"margin-inline-start",
         .inline_end = css.PropertyIdTag.@"margin-inline-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [margin](https://drafts.csswg.org/css-box-4/#propdef-margin) shorthand property.
@@ -118,7 +163,8 @@ pub const Margin = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.margin);
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.margin);
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -127,6 +173,14 @@ pub const Margin = struct {
         .bottom = css.PropertyIdTag.@"margin-bottom",
         .left = css.PropertyIdTag.@"margin-left",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [padding-block](https://drafts.csswg.org/css-logical/#propdef-padding-block) shorthand property.
@@ -136,13 +190,22 @@ pub const PaddingBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"padding-block-start",
         .block_end = css.PropertyIdTag.@"padding-block-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [padding-inline](https://drafts.csswg.org/css-logical/#propdef-padding-inline) shorthand property.
@@ -152,13 +215,22 @@ pub const PaddingInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"padding-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"padding-inline-start",
         .inline_end = css.PropertyIdTag.@"padding-inline-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [padding](https://drafts.csswg.org/css-box-4/#propdef-padding) shorthand property.
@@ -168,7 +240,8 @@ pub const Padding = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.padding);
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.padding);
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -177,6 +250,14 @@ pub const Padding = struct {
         .bottom = css.PropertyIdTag.@"padding-bottom",
         .left = css.PropertyIdTag.@"padding-left",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [scroll-margin-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-block) shorthand property.
@@ -186,13 +267,22 @@ pub const ScrollMarginBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"scroll-margin-block-start",
         .block_end = css.PropertyIdTag.@"scroll-margin-block-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [scroll-margin-inline](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-margin-inline) shorthand property.
@@ -202,13 +292,22 @@ pub const ScrollMarginInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"scroll-margin-inline-start",
         .inline_end = css.PropertyIdTag.@"scroll-margin-inline-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [scroll-margin](https://drafts.csswg.org/css-scroll-snap/#scroll-margin) shorthand property.
@@ -218,7 +317,8 @@ pub const ScrollMargin = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-margin");
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -227,6 +327,14 @@ pub const ScrollMargin = struct {
         .bottom = css.PropertyIdTag.@"scroll-margin-bottom",
         .left = css.PropertyIdTag.@"scroll-margin-left",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [scroll-padding-block](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-padding-block) shorthand property.
@@ -236,13 +344,22 @@ pub const ScrollPaddingBlock = struct {
     /// The block end value.
     block_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-block");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .block_start = css.PropertyIdTag.@"scroll-padding-block-start",
         .block_end = css.PropertyIdTag.@"scroll-padding-block-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [scroll-padding-inline](https://drafts.csswg.org/css-scroll-snap/#propdef-scroll-padding-inline) shorthand property.
@@ -252,13 +369,22 @@ pub const ScrollPaddingInline = struct {
     /// The inline end value.
     inline_end: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding-inline");
     pub usingnamespace css.DefineSizeShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
         .inline_start = css.PropertyIdTag.@"scroll-padding-inline-start",
         .inline_end = css.PropertyIdTag.@"scroll-padding-inline-end",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [scroll-padding](https://drafts.csswg.org/css-scroll-snap/#scroll-padding) shorthand property.
@@ -268,7 +394,8 @@ pub const ScrollPadding = struct {
     bottom: LengthPercentageOrAuto,
     left: LengthPercentageOrAuto,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"scroll-padding");
     pub usingnamespace css.DefineRectShorthand(@This(), LengthPercentageOrAuto);
 
     pub const PropertyFieldMap = .{
@@ -277,4 +404,12 @@ pub const ScrollPadding = struct {
         .bottom = css.PropertyIdTag.@"scroll-padding-bottom",
         .left = css.PropertyIdTag.@"scroll-padding-left",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };

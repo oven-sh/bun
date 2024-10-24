@@ -24,6 +24,7 @@
 #include "LoopData.h"
 #include <libusockets.h>
 #include <iostream>
+#include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
 
@@ -146,6 +147,10 @@ public:
 
         /* Reset lazyLoop */
         getLazyLoop().loop = nullptr;
+    }
+
+    static LoopData* data(struct us_loop_t *loop) {
+        return (LoopData *) us_loop_ext(loop);
     }
 
     void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {

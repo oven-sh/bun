@@ -628,7 +628,7 @@ pub const Listener = struct {
 
                     this.listener = .{
                         // we need to add support for the backlog parameter on listen here we use the default value of nodejs
-                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, ssl, this) catch {
+                        .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, &ssl.?, this) catch {
                             exception.* = JSC.toInvalidArguments("Failed to listen at {s}", .{pipe_name}, globalObject).asObjectRef();
                             this.deinit();
                             return .zero;
@@ -644,7 +644,7 @@ pub const Listener = struct {
             }
         }
         const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
-            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+            JSC.API.ServerConfig.SSLConfig.asUSockets(&ssl.?)
         else
             .{};
 
@@ -1057,13 +1057,13 @@ pub const Listener = struct {
         }
         const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
+        var socket_config: SocketConfig = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
             return .zero;
         };
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
-        var ssl = socket_config.ssl;
+        var ssl = if (socket_config.ssl) |*ssl_config| ssl_config else null;
         var handlers = socket_config.handlers;
         var default_data = socket_config.default_data;
 
@@ -1178,8 +1178,8 @@ pub const Listener = struct {
             }
         }
 
-        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl != null)
-            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl.?)
+        const ctx_opts: uws.us_bun_socket_context_options_t = if (ssl) |ssl_config|
+            JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_config)
         else
             .{};
 
@@ -3577,10 +3577,14 @@ pub const DuplexUpgradeContext = struct {
     fn onError(this: *DuplexUpgradeContext, err_value: JSC.JSValue) void {
         if (this.is_open) {
             if (this.tls) |tls| {
+                this.tls = null;
+                defer tls.deref();
                 tls.handleError(err_value);
             }
         } else {
             if (this.tls) |tls| {
+                this.tls = null;
+                defer tls.deref();
                 tls.handleConnectError(@intFromEnum(bun.C.SystemErrno.ECONNREFUSED));
             }
         }
@@ -3598,6 +3602,8 @@ pub const DuplexUpgradeContext = struct {
         const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
 
         if (this.tls) |tls| {
+            defer tls.deref();
+            this.tls = null;
             tls.onClose(socket, 0, null);
         }
 
@@ -3607,28 +3613,31 @@ pub const DuplexUpgradeContext = struct {
     fn runEvent(this: *DuplexUpgradeContext) void {
         switch (this.task_event) {
             .StartTLS => {
-                if (this.ssl_config) |config| {
-                    this.upgrade.startTLS(config, true) catch |err| {
-                        switch (err) {
-                            error.OutOfMemory => {
-                                bun.outOfMemory();
-                            },
-                            else => {
-                                const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
-                                if (this.tls) |tls| {
-                                    const socket = TLSSocket.Socket.fromDuplex(&this.upgrade);
+                const tls = this.tls.?;
+                defer tls.deref();
+                var config = this.ssl_config orelse return;
+                defer config.deinit();
+                this.ssl_config = null;
 
-                                    tls.handleConnectError(errno);
-                                    tls.onClose(socket, errno, null);
-                                }
-                            },
-                        }
-                    };
-                    this.ssl_config.?.deinit();
-                    this.ssl_config = null;
-                }
+                this.upgrade.startTLS(&config, true) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => {
+                            bun.outOfMemory();
+                        },
+                        else => {
+                            const errno = @intFromEnum(bun.C.SystemErrno.ECONNREFUSED);
+                            tls.handleConnectError(errno);
+                        },
+                    }
+                };
             },
             .Close => {
+                defer {
+                    if (this.tls) |tls| {
+                        tls.deref();
+                    }
+                }
+
                 this.upgrade.close();
             },
         }
@@ -3636,15 +3645,27 @@ pub const DuplexUpgradeContext = struct {
 
     fn deinitInNextTick(this: *DuplexUpgradeContext) void {
         this.task_event = .Close;
+        if (this.tls) |tls| {
+            tls.ref();
+        }
         this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
     fn startTLS(this: *DuplexUpgradeContext) void {
         this.task_event = .StartTLS;
+        if (this.tls) |tls| {
+            tls.ref();
+        }
+
         this.vm.enqueueTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *DuplexUpgradeContext) void {
+        if (this.ssl_config) |*config| {
+            config.deinit();
+            this.ssl_config = null;
+        }
+
         if (this.tls) |tls| {
             this.tls = null;
             tls.deref();
@@ -3695,7 +3716,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         this.uvPipe.close(onPipeClosed);
     }
 
-    pub fn listen(globalThis: *JSC.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?JSC.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
+    pub fn listen(globalThis: *JSC.JSGlobalObject, path: []const u8, backlog: i32, ssl_config: ?*const JSC.API.ServerConfig.SSLConfig, listener: *Listener) !*WindowsNamedPipeListeningContext {
         const this = WindowsNamedPipeListeningContext.new(.{
             .globalThis = globalThis,
             .vm = globalThis.bunVM(),
@@ -3751,7 +3772,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
     fn deinitInNextTick(this: *WindowsNamedPipeListeningContext) void {
         bun.assert(this.task_event != .deinit);
         this.task_event = .deinit;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn deinit(this: *WindowsNamedPipeListeningContext) void {
@@ -3931,7 +3952,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
         bun.assert(this.task_event != .deinit);
         this.task_event = .deinit;
-        this.vm.enqueueTask(JSC.Task.init(&this.task));
+        this.vm.enqueueImmediateTask(JSC.Task.init(&this.task));
     }
 
     fn create(globalThis: *JSC.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {
@@ -3971,7 +3992,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         return this;
     }
 
-    pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+    pub fn open(globalThis: *JSC.JSGlobalObject, fd: bun.FileDescriptor, ssl_config: ?*const JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
         // TODO: reuse the same context for multiple connections when possibles
 
         const this = WindowsNamedPipeContext.create(globalThis, socket);
@@ -3992,7 +4013,7 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
         return &this.named_pipe;
     }
 
-    pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
+    pub fn connect(globalThis: *JSC.JSGlobalObject, path: []const u8, ssl_config: ?*const JSC.API.ServerConfig.SSLConfig, socket: SocketType) !*uws.WindowsNamedPipe {
         // TODO: reuse the same context for multiple connections when possibles
 
         const this = WindowsNamedPipeContext.create(globalThis, socket);

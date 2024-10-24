@@ -414,7 +414,7 @@ pub const UpgradedDuplex = struct {
         return array;
     }
 
-    pub fn startTLS(this: *UpgradedDuplex, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+    pub fn startTLS(this: *UpgradedDuplex, ssl_options: *const JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
         this.wrapper = try WrapperType.init(ssl_options, is_client, .{
             .ctx = this,
             .onOpen = UpgradedDuplex.onOpen,
@@ -525,25 +525,26 @@ pub const UpgradedDuplex = struct {
         }
 
         this.origin.deinit();
-        if (this.onDataCallback.get()) |callback| {
+        if (this.onDataCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onDataCallback.deinit();
         }
-        if (this.onEndCallback.get()) |callback| {
+        if (this.onEndCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onEndCallback.deinit();
         }
-        if (this.onWritableCallback.get()) |callback| {
+        if (this.onWritableCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onWritableCallback.deinit();
         }
-        if (this.onCloseCallback.get()) |callback| {
+        if (this.onCloseCallback.trySwap()) |callback| {
             JSC.setFunctionData(callback, null);
-            this.onCloseCallback.deinit();
         }
         var ssl_error = this.ssl_error;
         ssl_error.deinit();
         this.ssl_error = .{};
+
+        this.onDataCallback.deinit();
+        this.onEndCallback.deinit();
+        this.onWritableCallback.deinit();
+        this.onCloseCallback.deinit();
     }
 };
 
@@ -856,7 +857,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         }
         return .{ .result = {} };
     }
-    pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+    pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?*const JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;
 
@@ -892,7 +893,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         return .{ .result = {} };
     }
 
-    pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
+    pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?*const JSC.API.ServerConfig.SSLConfig) JSC.Maybe(void) {
         bun.assert(this.pipe != null);
         this.flags.disconnected = true;
         // ref because we are connecting
@@ -924,7 +925,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         this.connect_req.data = this;
         return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
     }
-    pub fn startTLS(this: *WindowsNamedPipe, ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
+    pub fn startTLS(this: *WindowsNamedPipe, ssl_options: *const JSC.API.ServerConfig.SSLConfig, is_client: bool) !void {
         this.flags.is_ssl = true;
         if (this.start(is_client)) {
             this.wrapper = try WrapperType.init(ssl_options, is_client, .{
@@ -2372,6 +2373,10 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
+
     pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
@@ -3483,6 +3488,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
 
+            pub fn isClosed(res: *Response) bool {
+                return uws_res_is_closed(ssl_flag, res.downcast()) != 0;
+            }
+
             pub fn tryEnd(res: *Response, data: []const u8, total: usize, close_: bool) bool {
                 return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
             }
@@ -4105,6 +4114,10 @@ pub const WindowsLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
+
     pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
     }
@@ -4420,3 +4433,5 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+extern fn uws_res_clear_corked_socket(loop: *Loop) void;
+extern fn uws_res_is_closed(ssl_flag: c_int, res: *anyopaque) i32;

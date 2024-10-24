@@ -36,7 +36,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments(3);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
@@ -112,6 +112,9 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                     .minify => true,
                     .normal => false,
                     .prefix => false,
+                },
+                .targets = .{
+                    .browsers = if (test_kind == .prefix) minify_options.targets.browsers else null,
                 },
             }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());

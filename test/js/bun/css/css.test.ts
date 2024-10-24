@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import "harness";
 import path from "path";
-import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
+import { attrTest, cssTest, indoc, indoc, minify_test, minifyTest, prefix_test } from "./util";
 
 describe("css tests", () => {
   describe("border_spacing", () => {
@@ -1822,5 +1822,111 @@ describe("css tests", () => {
     //     }
     //   `,
     // );
+  });
+
+  describe("margin", () => {
+    cssTest(
+      `
+      .foo {
+        margin-left: 10px;
+        margin-right: 10px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+      }`,
+      indoc`
+      .foo {
+        margin: 20px 10px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin-block-start: 15px;
+        margin-block-end: 15px;
+      }`,
+      indoc`
+      .foo {
+        margin-block: 15px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin-left: 10px;
+        margin-right: 10px;
+        margin-inline-start: 15px;
+        margin-inline-end: 15px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+      }`,
+      indoc`
+      .foo {
+        margin-left: 10px;
+        margin-right: 10px;
+        margin-inline: 15px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin: 10px;
+        margin-top: 20px;
+      }`,
+      indoc`
+      .foo {
+        margin: 20px 10px 10px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin: 10px;
+        margin-top: var(--top);
+      }`,
+      indoc`
+      .foo {
+        margin: 10px;
+        margin-top: var(--top);
+      }
+`,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
   });
 });

@@ -74,8 +74,8 @@ pub fn StyleRule(comptime R: type) type {
                 try this.toCssBase(W, dest);
             } else {
                 var first_rule = true;
-                inline for (std.meta.fields(css.VendorPrefix)) |field| {
-                    if (field.type == bool and @field(this.vendor_prefix, field.name)) {
+                inline for (css.VendorPrefix.FIELDS) |field| {
+                    if (@field(this.vendor_prefix, field)) {
                         if (first_rule) {
                             first_rule = false;
                         } else {
@@ -85,7 +85,7 @@ pub fn StyleRule(comptime R: type) type {
                             try dest.newline();
                         }
 
-                        const prefix = css.VendorPrefix.fromName(field.name);
+                        const prefix = css.VendorPrefix.fromName(field);
                         dest.vendor_prefix = prefix;
                         try this.toCssBase(W, dest);
                     }

@@ -220,20 +220,20 @@ pub const PropertyHandlerContext = struct {
                     .dir = .{ .direction = @field(css.selector.parser.Direction, dir) },
                 },
             });
-
-            const rule = css.StyleRule(T){
-                .selectors = selectors,
-                .vendor_prefix = css.VendorPrefix{ .none = true },
-                .declarations = css.DeclarationBlock{
-                    .declarations = css.deepClone(css.Property, this.allocator, &@field(this, decls)),
-                    .important_declarations = .{},
-                },
-                .rules = .{},
-                .loc = sty.loc,
-            };
-
-            dest.append(this.allocator, .{ .style = rule }) catch bun.outOfMemory();
         }
+
+        const rule = css.StyleRule(T){
+            .selectors = selectors,
+            .vendor_prefix = css.VendorPrefix{ .none = true },
+            .declarations = css.DeclarationBlock{
+                .declarations = css.deepClone(css.Property, this.allocator, &@field(this, decls)),
+                .important_declarations = .{},
+            },
+            .rules = .{},
+            .loc = sty.loc,
+        };
+
+        dest.append(this.allocator, .{ .style = rule }) catch bun.outOfMemory();
     }
 
     pub fn reset(this: *@This()) void {

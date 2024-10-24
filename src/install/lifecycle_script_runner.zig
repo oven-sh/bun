@@ -434,6 +434,12 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {
+        if (this.manager.options.log_level.isVerbose()) {
+            Output.warn("deleting optional dependency '{s}' due to failed '{s}' script", .{
+                this.package_name,
+                this.scriptName(),
+            });
+        }
         try_delete_dir: {
             const dirname = std.fs.path.dirname(this.scripts.cwd) orelse break :try_delete_dir;
             const basename = std.fs.path.basename(this.scripts.cwd);

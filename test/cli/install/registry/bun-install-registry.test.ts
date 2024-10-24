@@ -1750,7 +1750,7 @@ describe("optionalDependencies", () => {
     expect(
       await Promise.all([
         exists(join(packageDir, "node_modules", "optional-lifecycle-fail", "package.json")),
-        exists(join(packageDir, "node_modules", "lifecycle-fail", "postinstall.txt")),
+        exists(join(packageDir, "node_modules", "lifecycle-fail", "package.json")),
       ]),
     ).toEqual([true, false]);
   });

@@ -304,7 +304,7 @@ pub const LifecycleScriptSubprocess = struct {
                 if (exit.code > 0) {
                     if (this.optional) {
                         _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
-                        this.deinit();
+                        this.deinitAndDeletePackage();
                         return;
                     }
                     this.printOutput();
@@ -372,7 +372,7 @@ pub const LifecycleScriptSubprocess = struct {
             .err => |err| {
                 if (this.optional) {
                     _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
-                    this.deinit();
+                    this.deinitAndDeletePackage();
                     return;
                 }
 
@@ -431,6 +431,17 @@ pub const LifecycleScriptSubprocess = struct {
         }
 
         this.destroy();
+    }
+
+    pub fn deinitAndDeletePackage(this: *LifecycleScriptSubprocess) void {
+        try_delete_dir: {
+            const dirname = std.fs.path.dirname(this.scripts.cwd) orelse break :try_delete_dir;
+            const basename = std.fs.path.basename(this.scripts.cwd);
+            const dir = bun.openDirAbsolute(dirname) catch break :try_delete_dir;
+            dir.deleteTree(basename) catch break :try_delete_dir;
+        }
+
+        this.deinit();
     }
 
     pub fn spawnPackageScripts(

@@ -286,6 +286,9 @@ pub fn migrateNPMLockfile(
                     // If it's a folder or workspace, pessimistically assume we will need a maximum path
                     switch (Dependency.Version.Tag.infer(version_string)) {
                         .folder, .workspace => builder.cap += bun.MAX_PATH_BYTES,
+                        .npm => {
+                            builder.count(version_string);
+                        },
                         else => {},
                     }
                 }

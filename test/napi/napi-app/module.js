@@ -238,9 +238,9 @@ nativeTests.test_create_array_with_length = () => {
 };
 
 nativeTests.test_throw_functions_exhaustive = () => {
-  for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
-    for (const code of [undefined, "", "error code"]) {
-      for (const msg of [undefined, "", "error message"]) {
+  for (const code of [undefined, "", "error code"]) {
+    for (const msg of [undefined, "", "error message"]) {
+      for (const errorKind of ["error", "type_error", "range_error", "syntax_error"]) {
         try {
           nativeTests.throw_error(code, msg, errorKind);
           console.log(`napi_throw_${errorKind}(${code ?? "nullptr"}, ${msg ?? "nullptr"}) did not throw`);

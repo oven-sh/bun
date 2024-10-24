@@ -163,3 +163,7 @@ scripts/env.local
 /src/deps/zstd
 /src/deps/zlib
 /src/deps/zig
+
+# Generated files
+
+.buildkite/ci.yml

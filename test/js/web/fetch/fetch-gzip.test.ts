@@ -47,6 +47,57 @@ it("many concurrent decompression tasks that read to completion", async () => {
   );
 });
 
+it("many concurrent decompression tasks that ignore the body", async () => {
+  const arrayBuffer = await gzippedBlob.arrayBuffer();
+  let promises: Promise<void>[] = [];
+  let allPromises = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await Bun.sleep(0);
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            const defer = Promise.withResolvers();
+            promises.push(defer.promise);
+            await Bun.sleep(1);
+            await controller.write(arrayBuffer);
+            await controller.end();
+            defer.resolve();
+            if (promises.length === 40) {
+              allPromises.resolve();
+            }
+          },
+        }),
+        {
+          headers: {
+            "Content-Encoding": "gzip",
+            "Content-Type": "text/html; charset=utf-8",
+          },
+        },
+      );
+    },
+  });
+
+  for (let j = 0; j < 10; j++) {
+    const count = 40;
+    promises = [];
+    allPromises = Promise.withResolvers();
+
+    function wrap() {
+      for (let i = 0; i < count; i++) {
+        fetch(server.url).then(r => {});
+      }
+    }
+
+    wrap();
+    Bun.gc(true);
+    await allPromises.promise;
+    await Promise.all(promises);
+  }
+});
+
 it("fetch() with a buffered gzip response works (one chunk)", async () => {
   using server = Bun.serve({
     port: 0,

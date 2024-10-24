@@ -475,3 +475,48 @@ it("--ignore-dce-annotations ignores DCE annotations", () => {
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toBe("Hello, world!\n");
 });
+
+it("$npm_command is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "sample": "echo $npm_command",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_command\n`);
+  expect(await new Response(p.stdout).text()).toBe(`run-script\n`);
+});
+
+it("$npm_lifecycle_event is accurate", async () => {
+  await writeFile(
+    join(run_dir, "package.json"),
+    `{
+      "scripts": {
+        "presample": "echo $npm_lifecycle_event",
+        "sample": "echo $npm_lifecycle_event",
+        "postsample": "echo $npm_lifecycle_event",
+      },
+    }
+    `,
+  );
+  const p = spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: run_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(await p.exited).toBe(0);
+  // prettier-ignore
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n$ echo $npm_lifecycle_event\n`,);
+  expect(await new Response(p.stdout).text()).toBe(`presample\nsample\npostsample\n`);
+});

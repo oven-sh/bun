@@ -69,7 +69,7 @@ var shared_request_headers_buf: [256]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
-
+var requests_this_tick: usize = 0;
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 pub const Signals = struct {
@@ -1253,6 +1253,7 @@ pub const HTTPThread = struct {
             }
             Output.flush();
 
+            requests_this_tick = 0;
             this.loop.loop.inc();
             this.loop.loop.tick();
             this.loop.loop.dec();
@@ -1941,7 +1942,7 @@ pub const InternalState = struct {
             // It needs to be a large enough buffer to make it worthwhile.
             buffer.len > 1024 * 2 and
             // If this is the only active request, there's really no point in paying the cost of concurrency.
-            AsyncHTTP.active_requests_count.load(.monotonic) > 1;
+            (requests_this_tick > 1 or AsyncHTTP.active_requests_count.load(.monotonic) > 1);
 
         if (should_defer_decompression_to_another_thread) {
             log("Deferring decompression of {d} bytes to another thread\n", .{buffer.len});
@@ -2887,6 +2888,8 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         this.fail(error.ConnectionClosed);
         return;
     }
+
+    requests_this_tick +|= 1;
 }
 
 const Task = ThreadPool.Task;

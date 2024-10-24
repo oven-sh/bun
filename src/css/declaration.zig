@@ -16,6 +16,7 @@ pub const DeclarationList = ArrayList(css.Property);
 
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
 const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
+const MarginHandler = css.css_properties.margin_padding.MarginHandler;
 
 /// A CSS declaration block.
 ///
@@ -304,6 +305,7 @@ pub fn parse_declaration(
 
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
+    margin: MarginHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
@@ -322,12 +324,14 @@ pub const DeclarationHandler = struct {
 
         // TODO:
         this.background.finalize(&this.decls, context);
+        this.margin.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
 
     pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
         // return this.background.handleProperty(property, &this.decls, context);
         return this.background.handleProperty(property, &this.decls, context) or
+            this.margin.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }
 

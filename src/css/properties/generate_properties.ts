@@ -70,6 +70,19 @@ function generatePropertyIdTag(property_defs: Record<string, PropertyDef>): stri
         .all => false,
       };
     }
+
+    /// Helper function used in comptime code to know whether to access the underlying value
+    /// with tuple indexing syntax because it may have a VendorPrefix associated with it.
+    pub fn valueType(this: PropertyIdTag) type {
+      return switch (this) {
+        ${Object.entries(property_defs)
+          .map(([name, meta]) => `.${escapeIdent(name)} => ${meta.ty},`)
+          .join("\n")}
+        .all => CSSWideKeyword,
+        .unparsed => UnparsedProperty,
+        .custom => CustomProperty,
+      };
+    }
 };`;
 }
 

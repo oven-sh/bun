@@ -81,6 +81,19 @@ pub const PropertyHandlerContext = struct {
         };
     }
 
+    pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
+        this.ltr.append(allocator, ltr) catch unreachable;
+        this.rtl.append(allocator, rtl) catch unreachable;
+    }
+
+    pub fn shouldCompileLogical(this: *const @This(), feature: css.compat.Feature) bool {
+        // Don't convert logical properties in style attributes because
+        // our fallbacks rely on extra rules to define --ltr and --rtl.
+        if (this.context == DeclarationContext.style_attribute) return false;
+
+        return this.targets.shouldCompileLogical(feature);
+    }
+
     pub fn getSupportsRules(
         this: *const @This(),
         comptime T: type,

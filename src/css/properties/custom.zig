@@ -1425,6 +1425,11 @@ pub const UnparsedProperty = struct {
         return .{ .result = .{ .property_id = property_id, .value = value } };
     }
 
+    /// Returns a new UnparsedProperty with the same value and the given property id.
+    pub fn withPropertyId(this: *const @This(), allocator: Allocator, property_id: css.PropertyId) UnparsedProperty {
+        return UnparsedProperty{ .property_id = property_id, .value = this.value.deepClone(allocator) };
+    }
+
     pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }

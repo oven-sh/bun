@@ -143,26 +143,6 @@ pub fn DimensionPercentage(comptime D: type) type {
 
         const This = @This();
 
-        pub fn eql(this: *const This, other: *const This) bool {
-            return css.implementEql(@This(), this, other);
-        }
-
-        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
-            return switch (this.*) {
-                .dimension => |d| if (comptime needs_deepclone) .{ .dimension = d.deepClone(allocator) } else this.*,
-                .percentage => return this.*,
-                .calc => |calc| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), calc.deepClone(allocator)) },
-            };
-        }
-
-        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
-            return switch (this.*) {
-                .dimension => |d| if (comptime @hasDecl(D, "deinit")) d.deinit(allocator),
-                .percentage => {},
-                .calc => |calc| calc.deinit(allocator),
-            };
-        }
-
         pub fn parse(input: *css.Parser) Result(@This()) {
             if (input.tryParse(Calc(This).parse, .{}).asValue()) |calc_value| {
                 if (calc_value == .value) return .{ .result = calc_value.value.* };
@@ -187,6 +167,34 @@ pub fn DimensionPercentage(comptime D: type) type {
                 .dimension => |*length| length.toCss(W, dest),
                 .percentage => |*per| per.toCss(W, dest),
                 .calc => |calc| calc.toCss(W, dest),
+            };
+        }
+
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            return switch (this.*) {
+                .dimension => |*d| d.isCompatible(browsers),
+                .calc => |c| c.isCompatible(browsers),
+                .percentage => true,
+            };
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return css.implementEql(@This(), this, other);
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
+            return switch (this.*) {
+                .dimension => |d| if (comptime needs_deepclone) .{ .dimension = d.deepClone(allocator) } else this.*,
+                .percentage => return this.*,
+                .calc => |calc| .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), calc.deepClone(allocator)) },
+            };
+        }
+
+        pub fn deinit(this: *const @This(), allocator: std.mem.Allocator) void {
+            return switch (this.*) {
+                .dimension => |d| if (comptime @hasDecl(D, "deinit")) d.deinit(allocator),
+                .percentage => {},
+                .calc => |calc| calc.deinit(allocator),
             };
         }
 

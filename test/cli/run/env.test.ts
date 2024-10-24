@@ -704,7 +704,7 @@ console.log(dynamic().NODE_ENV);
 test("NODE_ENV default is not propogated in bun run", () => {
   const getenv =
     process.platform !== "win32"
-      ? "env | grep NODE_ENV && exit 1 || true"
+      ? "env | grep -v npm_lifecycle_script | grep NODE_ENV && exit 1 || true"
       : "node -e 'if(process.env.NODE_ENV)throw(1)'";
   const tmp = tempDirWithFiles("default-node-env", {
     "package.json": '{"scripts":{"show-env":' + JSON.stringify(getenv) + "}}",

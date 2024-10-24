@@ -1005,3 +1005,65 @@ test("unicode", async () => {
   const tarball = readTarball(join(packageDir, "pack-unicode-1.1.1.tgz"));
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/äöüščří.js" }]);
 });
+
+test("$npm_command is accurate", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "pack-command",
+      version: "1.1.1",
+      scripts: {
+        postpack: "echo $npm_command",
+      },
+    }),
+  );
+  const p = await pack(packageDir, bunEnv);
+  expect(p.out.split("\n")).toEqual([
+    `bun pack ${Bun.version_with_sha}`,
+    ``,
+    `packed 94B package.json`,
+    ``,
+    `pack-command-1.1.1.tgz`,
+    ``,
+    `Total files: 1`,
+    expect.stringContaining(`Shasum: `),
+    expect.stringContaining(`Integrity: sha512-`),
+    `Unpacked size: 94B`,
+    expect.stringContaining(`Packed size: `),
+    ``,
+    `pack`,
+    ``,
+  ]);
+  expect(p.err).toEqual(`$ echo $npm_command\n`);
+});
+
+test("$npm_lifecycle_event is accurate", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "pack-lifecycle",
+      version: "1.1.1",
+      scripts: {
+        postpack: "echo $npm_lifecycle_event",
+      },
+    }),
+  );
+  const p = await pack(packageDir, bunEnv);
+  expect(p.out.split("\n")).toEqual([
+    `bun pack ${Bun.version_with_sha}`,
+    ``,
+    `packed 104B package.json`,
+    ``,
+    `pack-lifecycle-1.1.1.tgz`,
+    ``,
+    `Total files: 1`,
+    expect.stringContaining(`Shasum: `),
+    expect.stringContaining(`Integrity: sha512-`),
+    `Unpacked size: 104B`,
+    expect.stringContaining(`Packed size: `),
+    ``,
+    `postpack`,
+    ``,
+  ]);
+  expect(p.err).toEqual(`$ echo $npm_lifecycle_event\n`);
+});

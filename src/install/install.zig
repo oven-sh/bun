@@ -267,11 +267,53 @@ const NetworkTask = struct {
     };
     pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
 
-    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
+    const NetworkTaskDecompressor = struct {
+        task: bun.ThreadPool.Task = .{ .callback = &runFromThreadPool },
+        temporary_http: AsyncHTTP = undefined,
+        http_client_result: HTTP.HTTPClientResult,
+        network_task: *NetworkTask,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn deinit(this: *NetworkTaskDecompressor) void {
+            this.http_client_result.decompression_task.compressed_body.deinit();
+            this.destroy();
+        }
+
+        pub fn runFromThreadPool(task: *bun.ThreadPool.Task) void {
+            const this: *NetworkTaskDecompressor = @fieldParentPtr("task", task);
+            const network_task = this.network_task;
+            defer this.deinit();
+            this.http_client_result.decompression_task.decompress(this.temporary_http.response_buffer) catch |err| {
+                this.temporary_http.err = err;
+                this.temporary_http.response = null;
+            };
+
+            network_task.onHTTPNetworkTaskComplete(&this.temporary_http);
+        }
+    };
+
+    pub fn onHTTPNetworkTaskComplete(this: *NetworkTask, async_http: *AsyncHTTP) void {
         defer this.package_manager.wake();
         async_http.real.?.* = async_http.*;
         async_http.real.?.response_buffer = async_http.response_buffer;
         this.package_manager.async_network_task_queue.push(this);
+    }
+
+    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: HTTP.HTTPClientResult) void {
+        if (result.decompression_task.pending) {
+            async_http.real.?.* = async_http.*;
+            async_http.real.?.response_buffer = async_http.response_buffer;
+
+            const network_task_decompressor = NetworkTaskDecompressor.new(.{
+                .network_task = this,
+                .temporary_http = async_http.*,
+                .http_client_result = result,
+            });
+            this.package_manager.thread_pool.schedule(ThreadPool.Batch.from(&network_task_decompressor.task));
+        } else {
+            this.onHTTPNetworkTaskComplete(async_http);
+        }
     }
 
     pub const Authorization = enum {
@@ -8777,6 +8819,7 @@ pub const PackageManager = struct {
             break :brk default_max_simultaneous_requests_for_bun_install;
         }, .monotonic);
 
+        bun.http.allow_multithreaded_decompression = true;
         HTTP.HTTPThread.init(&.{
             .ca = ca,
             .abs_ca_file_name = abs_ca_file_name,

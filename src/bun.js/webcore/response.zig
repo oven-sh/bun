@@ -1000,7 +1000,7 @@ pub const Fetch = struct {
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
-            var buffer_reset = true;
+            var buffer_reset = !this.result.decompression_task.pending;
             defer {
                 if (buffer_reset) {
                     this.scheduled_response_buffer.reset();
@@ -1038,7 +1038,7 @@ pub const Fetch = struct {
             }
 
             if (this.readable_stream_ref.get()) |readable| {
-                if (readable.ptr == .Bytes) {
+                if (readable.ptr == .Bytes and !this.result.decompression_task.pending) {
                     readable.ptr.Bytes.size_hint = this.getSizeHint();
                     // body can be marked as used but we still need to pipe the data
                     const scheduled_response_buffer = this.scheduled_response_buffer.list;
@@ -1078,7 +1078,7 @@ pub const Fetch = struct {
 
             if (this.getCurrentResponse()) |response| {
                 var body = &response.body;
-                if (body.value == .Locked) {
+                if (body.value == .Locked and !this.result.decompression_task.pending) {
                     if (body.value.Locked.readable.get()) |readable| {
                         if (readable.ptr == .Bytes) {
                             readable.ptr.Bytes.size_hint = this.getSizeHint();
@@ -1149,7 +1149,7 @@ pub const Fetch = struct {
             log("onProgressUpdate", .{});
             this.mutex.lock();
             this.has_schedule_callback.store(false, .monotonic);
-            const is_done = !this.result.has_more;
+            const is_done = this.result.hasCompleteResponseBody();
 
             const vm = this.javascript_vm;
             // vm is shutting down we cannot touch JS
@@ -1564,7 +1564,7 @@ pub const Fetch = struct {
             // at this point we always should have metadata
             const metadata = this.metadata.?;
             const http_response = metadata.response;
-            this.is_waiting_body = this.result.has_more;
+            this.is_waiting_body = !this.result.hasCompleteResponseBody();
             return Response{
                 .url = bun.String.createAtomIfPossible(metadata.url),
                 .redirected = this.result.redirected,
@@ -1816,10 +1816,84 @@ pub const Fetch = struct {
             return node;
         }
 
+        fn onDecompressFromThreadPool(task: *bun.ThreadPool.Task) void {
+            const input_decompression_task: *http.HTTPClientResult.DecompressionTask = @fieldParentPtr("task", task);
+            const client_result: *http.HTTPClientResult = @fieldParentPtr("decompression_task", input_decompression_task);
+            var this: *FetchTasklet = @fieldParentPtr("result", client_result);
+
+            var response_buffer: MutableString = undefined;
+            defer response_buffer.deinit();
+            // Avoid potential data races by moving this to the stack
+            var decompression_task: http.HTTPClientResult.DecompressionTask = brk: {
+                this.mutex.lock();
+                defer this.mutex.unlock();
+                response_buffer = this.response_buffer;
+                this.response_buffer = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
+                const old = this.result.decompression_task;
+                this.result.decompression_task = .{
+                    .compressed_body = MutableString{ .allocator = bun.default_allocator, .list = .{} },
+                    // keep it marked as pending so the other thread if it receives an update simultaneously, doesn't think we had an e
+                    .pending = true,
+                    .encoding = .identity,
+                };
+                break :brk old;
+            };
+            defer decompression_task.compressed_body.deinit();
+
+            var fail: ?anyerror = null;
+
+            // Do not lock the mutex on this thread while decompressing!
+            decompression_task.decompress(&response_buffer) catch |err| {
+                // if decompression fails, we mark it as an error
+                fail = err;
+            };
+
+            this.mutex.lock();
+            const has_only_one_ref = this.ref_count.load(.monotonic) == 1;
+            defer if (!has_only_one_ref) this.mutex.unlock();
+            defer this.deref();
+
+            _ = this.scheduled_response_buffer.write(response_buffer.list.items) catch bun.outOfMemory();
+
+            this.result.fail = fail;
+            this.result.decompression_task.pending = false;
+
+            scheduleMainThreadTask(this);
+        }
+
+        fn scheduleMainThreadTask(task: *FetchTasklet) void {
+            if (task.ref_count.load(.monotonic) == 1) {
+                // If the JS side already rejected the Promise, or it was otherwise already finalized.
+                // We can skip enqueuing and rely on the caller to deinit immediately.
+                log("deinit early due to only one ref", .{});
+                return;
+            }
+
+            if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
+                if (has_schedule_callback) {
+                    return;
+                }
+            }
+
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+        }
+
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+            var is_done = !result.has_more;
+
             task.mutex.lock();
-            defer task.mutex.unlock();
-            const is_done = !result.has_more;
+            const has_only_one_ref = task.ref_count.load(.monotonic) == 1;
+            var should_unlock_mutex = !has_only_one_ref;
+
+            // Prevent a use-after-free of this mutex if
+            defer if (should_unlock_mutex) task.mutex.unlock();
+
             // we are done with the http client so we can deref our side
             defer if (is_done) task.deref();
 
@@ -1857,6 +1931,16 @@ pub const Fetch = struct {
             if (task.ignore_data) {
                 task.response_buffer.reset();
 
+                // If we ignored the response body and it is compressed, immediately free it before we start decompressing it
+                if (task.result.decompression_task.pending) {
+                    var compressed_body = &task.result.decompression_task.compressed_body;
+                    compressed_body.deinit();
+                    task.result.decompression_task.pending = false;
+
+                    // if we have more data, we should not have had a decompression task.
+                    bun.debugAssert(!result.has_more);
+                }
+
                 if (task.scheduled_response_buffer.list.capacity > 0) {
                     task.scheduled_response_buffer.deinit();
                     task.scheduled_response_buffer = .{
@@ -1873,19 +1957,26 @@ pub const Fetch = struct {
                 }
             } else {
                 if (success) {
+                    if (task.result.decompression_task.pending) {
+                        bun.debugAssert(task.result.decompression_task.compressed_body.list.items.len > 0);
+                        task.result.decompression_task.task = .{ .callback = &onDecompressFromThreadPool };
+                        is_done = false;
+                        should_unlock_mutex = false;
+                        // Ensure we don't block the other thread on this mutex.
+                        task.mutex.unlock();
+
+                        JSC.WorkPool.schedule(&task.result.decompression_task.task);
+
+                        return;
+                    }
+
                     _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch bun.outOfMemory();
                 }
                 // reset for reuse
                 task.response_buffer.reset();
             }
 
-            if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
-                if (has_schedule_callback) {
-                    return;
-                }
-            }
-
-            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+            scheduleMainThreadTask(task);
         }
     };
 

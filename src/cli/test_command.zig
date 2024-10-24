@@ -741,6 +741,7 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         bun.JSC.initialize(false);
+        bun.http.allow_multithreaded_decompression = !ctx.runtime_options.smol;
         HTTPThread.init(&.{});
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);

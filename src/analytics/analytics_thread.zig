@@ -124,6 +124,18 @@ pub const Features = struct {
         return Formatter{};
     }
 
+    const JSC = bun.JSC;
+    pub fn toJS(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObjectWithNullPrototype(globalThis);
+        inline for (comptime std.meta.declarations(Features)) |decl| {
+            if (@typeInfo(@TypeOf(@field(Features, decl.name))) == .Int) {
+                object.put(globalThis, decl.name, JSC.JSValue.jsNumber(@field(Features, decl.name)));
+            }
+        }
+        object.put(globalThis, "concurrentDecompressionCount", JSC.JSValue.jsNumber(bun.http.HTTPClientResult.DecompressionTask.count.load(.monotonic)));
+        return object;
+    }
+
     pub const Formatter = struct {
         pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const fields = comptime brk: {
@@ -353,3 +365,5 @@ pub const GenerateHeader = struct {
         }
     };
 };
+
+pub const createInternalStatsObject = Features.toJS;

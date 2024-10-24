@@ -40,8 +40,8 @@ const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
 // This becomes Arena.allocator
-pub var default_allocator: std.mem.Allocator = undefined;
-var default_arena: Arena = undefined;
+
+const default_allocator = bun.default_allocator;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
@@ -53,6 +53,7 @@ var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSock
 var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+pub var allow_multithreaded_decompression: bool = false;
 
 pub var max_http_header_size: usize = 16 * 1024;
 comptime {
@@ -1100,8 +1101,6 @@ pub const HTTPThread = struct {
 
     pub fn onStart(opts: InitOpts) void {
         Output.Source.configureNamedThread("HTTP Client");
-        default_arena = Arena.init() catch unreachable;
-        default_allocator = default_arena.allocator();
 
         const loop = bun.JSC.MiniEventLoop.initGlobal(null);
 
@@ -1543,7 +1542,7 @@ pub inline fn getAllocator() std.mem.Allocator {
 }
 
 pub inline fn cleanup(force: bool) void {
-    default_arena.gc(force);
+    _ = force; // autofix
 }
 
 pub const Headers = @import("./http/headers.zig");
@@ -1805,8 +1804,10 @@ pub const InternalState = struct {
         received_last_chunk: bool = false,
         did_set_content_encoding: bool = false,
         is_redirect_pending: bool = false,
-        is_libdeflate_fast_path_disabled: bool = false,
+        has_streamed_response_body: bool = false,
         resend_request_body_on_redirect: bool = false,
+        is_libdeflate_fast_path_disabled: bool = true,
+        should_defer_decompression_to_another_thread: bool = false,
     };
 
     pub fn init(body: HTTPRequestBody, body_out_str: *MutableString) InternalState {
@@ -1877,8 +1878,9 @@ pub const InternalState = struct {
         return this.flags.received_last_chunk;
     }
 
-    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString, is_final_chunk: bool) !void {
-        defer this.compressed_body.reset();
+    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString, is_final_chunk: bool, owns_buffer: bool) !void {
+        var should_reset_compressed_body = true;
+        defer if (should_reset_compressed_body) this.compressed_body.reset();
         var gzip_timer: std.time.Timer = undefined;
 
         if (extremely_verbose)
@@ -1888,7 +1890,7 @@ pub const InternalState = struct {
 
         if (FeatureFlags.isLibdeflateEnabled()) {
             // Fast-path: use libdeflate
-            if (is_final_chunk and !this.flags.is_libdeflate_fast_path_disabled and this.encoding.canUseLibDeflate() and this.isDone()) libdeflate: {
+            if (is_final_chunk and !this.flags.has_streamed_response_body and !this.flags.is_libdeflate_fast_path_disabled and this.encoding.canUseLibDeflate() and this.isDone()) libdeflate: {
                 this.flags.is_libdeflate_fast_path_disabled = true;
 
                 log("Decompressing {d} bytes with libdeflate\n", .{buffer.len});
@@ -1929,6 +1931,28 @@ pub const InternalState = struct {
             }
         }
 
+        const should_defer_decompression_to_another_thread = still_needs_to_decompress and
+            is_final_chunk and
+            // This is only supported when not streaming the response body.
+            !this.flags.has_streamed_response_body and
+            !this.flags.should_defer_decompression_to_another_thread and
+            owns_buffer and
+            allow_multithreaded_decompression and
+            // It needs to be a large enough buffer to make it worthwhile.
+            buffer.len > 1024 * 2 and
+            // If this is the only active request, there's really no point in paying the cost of concurrency.
+            AsyncHTTP.active_requests_count.load(.monotonic) > 1;
+
+        if (should_defer_decompression_to_another_thread) {
+            log("Deferring decompression of {d} bytes to another thread\n", .{buffer.len});
+            if (!this.compressed_body.owns(buffer)) {
+                this.compressed_body.appendSlice(buffer) catch bun.outOfMemory();
+            }
+            this.flags.should_defer_decompression_to_another_thread = true;
+            should_reset_compressed_body = false;
+            return;
+        }
+
         // Slow path, or brotli: use the .decompressor
         if (still_needs_to_decompress) {
             log("Decompressing {d} bytes\n", .{buffer.len});
@@ -1952,18 +1976,22 @@ pub const InternalState = struct {
             this.gzip_elapsed = gzip_timer.read();
     }
 
-    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString, is_final_chunk: bool) !void {
-        try this.decompressBytes(buffer.list.items, body_out_str, is_final_chunk);
+    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString, is_final_chunk: bool, owns_buffer: bool) !void {
+        try this.decompressBytes(buffer.list.items, body_out_str, is_final_chunk, owns_buffer);
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_chunk: bool) !bool {
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_chunk: bool, owns_buffer: bool) !bool {
         if (this.flags.is_redirect_pending) return false;
 
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
             Encoding.brotli, Encoding.gzip, Encoding.deflate => {
-                try this.decompress(buffer, body_out_str, is_final_chunk);
+                bun.debugAssert(!this.flags.should_defer_decompression_to_another_thread);
+                try this.decompress(buffer, body_out_str, is_final_chunk, owns_buffer);
+                if (this.flags.should_defer_decompression_to_another_thread) {
+                    return true;
+                }
             },
             else => {
                 if (!body_out_str.owns(buffer.list.items)) {
@@ -3507,12 +3535,13 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             }
             return;
         }
+
         const out_str = this.state.body_out_str.?;
         const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
 
-        log("progressUpdate {}", .{is_done});
+        log("progressUpdate is_done={}", .{is_done});
 
         const callback = this.result_callback;
 
@@ -3527,6 +3556,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                     this.connected_url.getPortAuto(),
                 );
             } else if (!socket.isClosed()) {
+                // closeSocket detaches the pointer, so this will not close the socket
                 NewHTTPContext(is_ssl).closeSocket(socket);
             }
 
@@ -3545,7 +3575,6 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             if (print_every_i % print_every == 0) {
                 Output.prettyln("Heap stats for HTTP thread\n", .{});
                 Output.flush();
-                default_arena.dumpThreadStats();
                 print_every_i = 0;
             }
         }
@@ -3553,6 +3582,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 }
 
 pub const HTTPClientResult = struct {
+    decompression_task: DecompressionTask = .{},
     body: ?*MutableString = null,
     has_more: bool = false,
     redirected: bool = false,
@@ -3568,6 +3598,37 @@ pub const HTTPClientResult = struct {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
     certificate_info: ?CertificateInfo = null,
+
+    pub fn hasCompleteResponseBody(this: *const HTTPClientResult) bool {
+        return !this.has_more and !this.decompression_task.pending;
+    }
+
+    pub const DecompressionTask = struct {
+        compressed_body: MutableString = .{
+            .allocator = undefined,
+            .list = .{},
+        },
+        encoding: Encoding = .identity,
+        pending: bool = false,
+        task: bun.ThreadPool.Task = .{ .callback = &runFromThreadPool },
+
+        pub var count = std.atomic.Value(u32).init(0);
+
+        pub fn decompress(this: *DecompressionTask, out: *MutableString) !void {
+            bun.assert(this.encoding.isCompressed());
+            var decompressor = Decompressor{ .none = {} };
+            defer decompressor.deinit();
+            try decompressor.updateBuffers(this.encoding, this.compressed_body.list.items, out);
+            try decompressor.readAll(true);
+            log("decompress({s}, {d} bytes) = {d} bytes", .{ @tagName(this.encoding), this.compressed_body.list.items.len, out.list.items.len });
+            _ = count.fetchAdd(1, .monotonic);
+        }
+
+        pub fn runFromThreadPool(task: *bun.ThreadPool.Task) void {
+            _ = task; // autofix
+            @panic("This should never be called");
+        }
+    };
 
     pub fn abortReason(this: *const HTTPClientResult) ?JSC.CommonAbortReason {
         if (this.isTimeout()) {
@@ -3635,6 +3696,27 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
     else
         .{ .unknown = {} };
 
+    const decompression_task: HTTPClientResult.DecompressionTask = brk: {
+        if (!this.state.flags.should_defer_decompression_to_another_thread) {
+            break :brk HTTPClientResult.DecompressionTask{
+                .pending = false,
+                .compressed_body = MutableString{ .allocator = bun.default_allocator, .list = .{} },
+                .encoding = .identity,
+            };
+        }
+        const compressed_body = this.state.compressed_body;
+        this.state.compressed_body = .{
+            .allocator = bun.default_allocator,
+            .list = .{},
+        };
+        this.state.flags.should_defer_decompression_to_another_thread = false;
+        break :brk HTTPClientResult.DecompressionTask{
+            .pending = true,
+            .compressed_body = compressed_body,
+            .encoding = this.state.encoding,
+        };
+    };
+
     var certificate_info: ?CertificateInfo = null;
     if (this.state.certificate_info) |info| {
         // transfer owner ship of the certificate info here
@@ -3652,6 +3734,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
             .body_size = body_size,
             .certificate_info = null,
+            .decompression_task = decompression_task,
         };
     }
     return HTTPClientResult{
@@ -3663,6 +3746,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
         .body_size = body_size,
         .certificate_info = certificate_info,
+        .decompression_task = decompression_task,
     };
 }
 
@@ -3699,7 +3783,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.flags.is_redirect_pending) return;
 
     if (this.state.encoding.isCompressed()) {
-        try this.state.decompressBytes(incoming_data, this.state.body_out_str.?, true);
+        try this.state.decompressBytes(incoming_data, this.state.body_out_str.?, true, !this.state.flags.has_streamed_response_body);
     } else {
         try this.state.getBodyBuffer().appendSliceExact(incoming_data);
     }
@@ -3748,11 +3832,11 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const is_final_chunk = is_done;
-        const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk);
+        const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk, is_final_chunk and !this.state.flags.has_streamed_response_body);
 
         // We can only use the libdeflate fast path when we are not streaming
         // If we ever call processBodyBuffer again, it cannot go through the fast path.
-        this.state.flags.is_libdeflate_fast_path_disabled = true;
+        this.state.flags.has_streamed_response_body = true;
 
         if (this.progress_node) |progress| {
             progress.activate();
@@ -3813,8 +3897,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
                 // If we're streaming, we cannot use the libdeflate fast path
-                this.state.flags.is_libdeflate_fast_path_disabled = true;
-                return try this.state.processBodyBuffer(buffer, false);
+                this.state.flags.has_streamed_response_body = true;
+                return try this.state.processBodyBuffer(buffer, false, false);
             }
 
             return false;
@@ -3825,6 +3909,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             _ = try this.state.processBodyBuffer(
                 buffer,
                 true,
+                !this.state.flags.has_streamed_response_body,
             );
 
             if (this.progress_node) |progress| {
@@ -3894,9 +3979,9 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
                 // If we're streaming, we cannot use the libdeflate fast path
-                this.state.flags.is_libdeflate_fast_path_disabled = true;
+                this.state.flags.has_streamed_response_body = true;
 
-                return try this.state.processBodyBuffer(body_buffer.*, true);
+                return try this.state.processBodyBuffer(body_buffer.*, true, false);
             }
 
             return false;

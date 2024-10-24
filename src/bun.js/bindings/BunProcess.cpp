@@ -26,6 +26,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
+#include "NodeValidator.h"
 
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -44,6 +45,9 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <sys/utsname.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <grp.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -219,13 +223,10 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     auto* release = JSC::constructEmptyObject(globalObject);
 
-    // SvelteKit compatibility hack
-    release->putDirect(vm, vm.propertyNames->name, jsString(vm, WTF::String("node"_s)), 0);
+    release->putDirect(vm, vm.propertyNames->name, jsString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
 
-    release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
-    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsEmptyString(vm), 0);
-    release->putDirect(vm, Identifier::fromString(vm, "libUrl"_s), jsEmptyString(vm), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), 0);
 
     return release;
 }
@@ -452,7 +453,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
 
     double number = numberValue.toNumber(globalObject);
     int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (newUmask < 0 || newUmask > 4294967295) {
         return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, 0, 4294967295, numberValue);
     }
@@ -496,21 +497,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
     return JSC::JSValue::encode(JSC::jsNumber(result));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
         int extiCode32 = arg0.toInt32(globalObject) % 256;
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         exitCode = static_cast<uint8_t>(extiCode32);
         Bun__setExitCode(bunVM(globalObject), exitCode);
     } else if (!arg0.isUndefinedOrNull()) {
-        throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "code"_s, "number"_s, arg0);
     } else {
         exitCode = Bun__getExitCode(bunVM(globalObject));
     }
@@ -520,7 +521,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     process->m_isExitCodeObservable = true;
 
     Process__dispatchOnExit(zigGlobal, exitCode);
-    Bun__Process__exit(zigGlobal, exitCode);
+
+    // process.reallyExit(exitCode);
+    auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    MarkedArgumentBuffer args;
+    args.append(jsNumber(exitCode));
+    JSC::call(globalObject, reallyExitVal, args, ""_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -552,12 +561,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback,
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
-    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
-
-    Zig::GlobalObject* globalObject
-        = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -565,29 +571,25 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     int64_t seconds = static_cast<int64_t>(time / 1000000000);
     int64_t nanoseconds = time % 1000000000;
 
-    if (callFrame->argumentCount() > 0) {
-        JSC::JSValue arg0 = callFrame->uncheckedArgument(0);
-        if (!arg0.isUndefinedOrNull()) {
-            JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
-            if ((!relativeArray && !arg0.isUndefinedOrNull()) || relativeArray->length() < 2) {
-                JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array or undefined"_s);
-                return {};
-            }
-            JSValue relativeSecondsValue = relativeArray->getIndexQuickly(0);
-            JSValue relativeNanosecondsValue = relativeArray->getIndexQuickly(1);
-            if (!relativeSecondsValue.isNumber() || !relativeNanosecondsValue.isNumber()) {
-                JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array of 2 integers"_s);
-                return {};
-            }
+    auto arg0 = callFrame->argument(0);
+    if (callFrame->argumentCount() > 0 && !arg0.isUndefined()) {
+        JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
+        if (!relativeArray) {
+            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "time"_s, "Array"_s, arg0);
+        }
+        Bun::V::validateInteger(throwScope, globalObject, jsNumber(relativeArray->length()), jsString(vm, String("time"_s)), jsNumber(2), jsNumber(2));
+        RETURN_IF_EXCEPTION(throwScope, {});
 
-            int64_t relativeSeconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeSecondsValue));
-            int64_t relativeNanoseconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeNanosecondsValue));
-            seconds -= relativeSeconds;
-            nanoseconds -= relativeNanoseconds;
-            if (nanoseconds < 0) {
-                seconds--;
-                nanoseconds += 1000000000;
-            }
+        JSValue relativeSecondsValue = relativeArray->getIndexQuickly(0);
+        JSValue relativeNanosecondsValue = relativeArray->getIndexQuickly(1);
+
+        int64_t relativeSeconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeSecondsValue));
+        int64_t relativeNanoseconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeNanosecondsValue));
+        seconds -= relativeSeconds;
+        nanoseconds -= relativeNanoseconds;
+        if (nanoseconds < 0) {
+            seconds--;
+            nanoseconds += 1000000000;
         }
     }
 
@@ -612,8 +614,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
-    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
@@ -625,11 +626,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ZigString str = ZigString { nullptr, 0 };
-    if (callFrame->argumentCount() > 0) {
-        str = Zig::toZigString(callFrame->uncheckedArgument(0).toWTFString(globalObject));
-    }
+    auto value = callFrame->argument(0);
+    Bun::V::validateString(scope, globalObject, value, jsString(vm, String("directory"_s)));
+    RETURN_IF_EXCEPTION(scope, {});
 
+    ZigString str = Zig::toZigString(value.toWTFString(globalObject));
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1818,11 +1819,9 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
-        String("hrtime"_s), Process_functionHRTime, ImplementationVisibility::Public);
+    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0, String("hrtime"_s), Process_functionHRTime, ImplementationVisibility::Public);
 
-    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0,
-        String("bigint"_s), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
+    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0, String("bigint"_s), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
 
@@ -2104,6 +2103,166 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
 
     return JSValue::encode(groups);
 }
+
+static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isString()) return value;
+
+    auto str = value.getString(globalObject);
+    if (!str.is8Bit()) {
+        auto message = makeString("User identifier does not exist: "_s, str);
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+        return {};
+    }
+
+    auto name = (const char*)(str.span8().data());
+    struct passwd pwd;
+    struct passwd* pp = nullptr;
+    char buf[8192];
+
+    if (getpwnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+        return jsNumber(pp->pw_uid);
+    }
+
+    auto message = makeString("User identifier does not exist: "_s, str);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    return {};
+}
+
+static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isString()) return value;
+
+    auto str = value.getString(globalObject);
+    if (!str.is8Bit()) {
+        auto message = makeString("Group identifier does not exist: "_s, str);
+        throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+        return {};
+    }
+
+    auto name = (const char*)(str.span8().data());
+    struct group pwd;
+    struct group* pp = nullptr;
+    char buf[8192];
+
+    if (getgrnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+        return jsNumber(pp->gr_gid);
+    }
+
+    auto message = makeString("Group identifier does not exist: "_s, str);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_uid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = setuid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "setuid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionseteuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_uid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = seteuid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "seteuid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetegid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_gid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = setegid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "setegid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetgid, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = callFrame->argument(0);
+    auto is_number = value.isNumber();
+    value = maybe_gid_by_name(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (is_number) Bun::V::validateInteger(scope, globalObject, value, jsString(vm, String("id"_s)), jsNumber(0), jsNumber(std::pow(2, 31) - 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto id = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto result = setgid(id);
+    if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto groups = callFrame->argument(0);
+    Bun::V::validateArray(scope, globalObject, groups, jsString(vm, String("groups"_s)), jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    auto count = groupsArray->length();
+    gid_t groupsStack[64];
+    if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
+
+    for (unsigned i = 0; i < count; i++) {
+        auto item = groupsArray->getIndexQuickly(i);
+        auto name = makeString("groups["_s, i, "]"_s);
+
+        if (item.isNumber()) {
+            Bun::V::validateUint32(scope, globalObject, item, jsString(vm, name), jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+            groupsStack[i] = item.toUInt32(globalObject);
+            continue;
+        } else if (item.isString()) {
+            item = maybe_gid_by_name(scope, globalObject, item);
+            RETURN_IF_EXCEPTION(scope, {});
+            groupsStack[i] = item.toUInt32(globalObject);
+            continue;
+        }
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number or string"_s, item);
+    }
+
+    auto result = setgroups(count, groupsStack);
+    if (result != 0) throwSystemError(scope, globalObject, "setgid"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(result));
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -2125,6 +2284,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject,
     error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, makeString("ERR_ASSERTION"_s)));
     throwException(globalObject, throwScope, error);
     return {};
+}
+
+extern "C" uint64_t Bun__Os__getFreeMemory(void);
+JSC_DEFINE_HOST_FUNCTION(Process_availableMemory, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsDoubleNumber(Bun__Os__getFreeMemory()));
 }
 
 #define PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE(str, issue)                                                                                                                                                                                \
@@ -2220,12 +2385,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {
         exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
-        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-    } else if (!arg0.isUndefinedOrNull()) {
-        throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return {};
-    } else {
-        exitCode = Bun__getExitCode(bunVM(globalObject));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
@@ -2322,14 +2482,9 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     return process;
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-#if OS(LINUX) || OS(FREEBSD)
     return JSValue::encode(jsDoubleNumber(static_cast<double>(WTF::ramSize())));
-#else
-    return JSValue::encode(jsUndefined());
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
@@ -2365,8 +2520,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
         if (!comparatorValue.isUndefined()) {
             JSC::JSObject* comparator = comparatorValue.getObject();
             if (UNLIKELY(!comparator)) {
-                throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "previousValue"_s, "object"_s, comparatorValue);
             }
 
             JSValue userValue;
@@ -2376,34 +2530,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
                 userValue = comparator->getDirect(0);
                 systemValue = comparator->getDirect(1);
             } else {
-                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
-                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+                userValue = comparator->get(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
 
-                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
-                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+                systemValue = comparator->get(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
             }
 
-            if (UNLIKELY(!userValue || !userValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the 'user' property"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
-            }
+            Bun::V::validateNumber(throwScope, globalObject, userValue, jsString(vm, String("prevValue.user"_s)), jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
 
-            if (UNLIKELY(!systemValue || !systemValue.isNumber())) {
-                throwTypeError(globalObject, throwScope, "Expected a number for the 'system' property"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
-            }
+            Bun::V::validateNumber(throwScope, globalObject, systemValue, jsString(vm, String("prevValue.system"_s)), jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
 
             double userComparator = userValue.toNumber(globalObject);
             double systemComparator = systemValue.toNumber(globalObject);
 
-            if (userComparator > JSC::maxSafeInteger() || userComparator < 0 || std::isnan(userComparator)) {
-                throwRangeError(globalObject, throwScope, "The 'user' property must be a number between 0 and 2^53"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+            if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.user"_s, userValue, "must be a number between 0 and 2^53"_s);
             }
 
-            if (systemComparator > JSC::maxSafeInteger() || systemComparator < 0 || std::isnan(systemComparator)) {
-                throwRangeError(globalObject, throwScope, "The 'system' property must be a number between 0 and 2^53"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+            if (!(systemComparator >= 0 && systemComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "prevValue.system"_s, systemValue, "must be a number between 0 and 2^53"_s);
             }
 
             user -= userComparator;
@@ -2520,7 +2668,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
 
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure());
     if (UNLIKELY(throwScope.exception())) {
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     // Node.js:
@@ -2995,6 +3143,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   argv                             constructArgv                                       PropertyCallback
   argv0                            constructArgv0                                      PropertyCallback
   assert                           Process_functionAssert                              Function 1
+  availableMemory                  Process_availableMemory                             Function 0
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
   chdir                            Process_functionChdir                               Function 1
@@ -3054,12 +3203,19 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   _kill                            Process_functionReallyKill                          Function 2
+
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0
   geteuid                          Process_functiongeteuid                             Function 0
   getgid                           Process_functiongetgid                              Function 0
   getgroups                        Process_functiongetgroups                           Function 0
   getuid                           Process_functiongetuid                              Function 0
+
+  setegid                          Process_functionsetegid                             Function 1
+  seteuid                          Process_functionseteuid                             Function 1
+  setgid                           Process_functionsetgid                              Function 1
+  setgroups                        Process_functionsetgroups                           Function 1
+  setuid                           Process_functionsetuid                              Function 1
 #endif
 @end
 */

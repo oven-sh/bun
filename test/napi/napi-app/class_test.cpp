@@ -28,6 +28,7 @@ static napi_value constructor(napi_env env, napi_callback_info info) {
   NODE_API_CALL(env, napi_strict_equals(env, this_value, global, &equal));
   printf("this == global = %s\n", equal ? "true" : "false");
 
+  // define a property with a normal value
   napi_value property_value = Napi::String::New(env, "meow");
   napi_set_named_property(env, this_value, "foo", property_value);
 
@@ -49,6 +50,24 @@ static napi_value getData_callback(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+static napi_value getStaticData_callback(napi_env env,
+                                         napi_callback_info info) {
+  void *data;
+
+  NODE_API_CALL(env,
+                napi_get_cb_info(env, info, nullptr, nullptr, nullptr, &data));
+  const char *str_data = reinterpret_cast<const char *>(data);
+
+  napi_value ret;
+  if (data) {
+    NODE_API_CALL(
+        env, napi_create_string_utf8(env, str_data, NAPI_AUTO_LENGTH, &ret));
+  } else {
+    NODE_API_CALL(env, napi_get_undefined(env, &ret));
+  }
+  return ret;
+}
+
 static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
   static char constructor_data[] = "constructor data";
   static char method_data[] = "method data";
@@ -57,7 +76,7 @@ static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value napi_class;
 
-  const napi_property_descriptor properties[] = {{
+  const napi_property_descriptor property = {
       .utf8name = "getData",
       .name = nullptr,
       .method = getData_callback,
@@ -66,12 +85,27 @@ static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
       .value = nullptr,
       .attributes = napi_default_method,
       .data = reinterpret_cast<void *>(method_data),
-  }};
+  };
+
+  const napi_property_descriptor static_property = {
+      .utf8name = "getStaticData",
+      .name = nullptr,
+      .method = getStaticData_callback,
+      .getter = nullptr,
+      .setter = nullptr,
+      .value = nullptr,
+      .attributes = napi_default_method,
+      // the class's data pointer should not be used instead -- it should stay
+      // nullptr
+      .data = nullptr,
+  };
 
   NODE_API_CALL(
       env, napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,
                              reinterpret_cast<void *>(constructor_data), 1,
-                             properties, &napi_class));
+                             &property, &napi_class));
+  NODE_API_CALL(env,
+                napi_define_properties(env, napi_class, 1, &static_property));
   NODE_API_CALL(env,
                 napi_wrap(env, napi_class, reinterpret_cast<void *>(wrap_data),
                           nullptr, nullptr, nullptr));

@@ -1,13 +1,12 @@
 const tests = require("./build/Debug/napitests.node");
 
-tests.eval_wrapper(globalThis, global);
-
 const NapiClass = tests.get_class_with_constructor();
 
 console.group("\nnew NapiClass()");
 let instance = new NapiClass();
+console.log("static data =", NapiClass.getStaticData());
 console.log("foo =", instance.foo);
-console.log("data =", instance.getData(1, 2, 3, 4, 5, 6, 7, 8));
+console.log("data =", instance.getData());
 console.groupEnd();
 
 class Subclass extends NapiClass {}

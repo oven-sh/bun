@@ -601,13 +601,10 @@ Structure* Zig::createNAPIFunctionStructure(VM& vm, JSC::JSGlobalObject* globalO
     return NAPIFunction::createStructure(vm, globalObject, prototype);
 }
 
-static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* to, void* inheritedDataPtr, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
+static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* to, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
 {
     JSC::VM& vm = globalObject->vm();
     void* dataPtr = property.data;
-    if (!dataPtr) {
-        dataPtr = inheritedDataPtr;
-    }
 
     auto getPropertyName = [&]() -> JSC::Identifier {
         if (property.utf8name != nullptr) {
@@ -1233,13 +1230,8 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    void* inheritedDataPtr = nullptr;
-    if (NapiClass* class_ = jsDynamicCast<NapiClass*>(objectValue)) {
-        inheritedDataPtr = class_->dataPtr;
-    }
-
     for (size_t i = 0; i < property_count; i++) {
-        defineNapiProperty(globalObject, objectObject, inheritedDataPtr, properties[i], true, throwScope);
+        defineNapiProperty(globalObject, objectObject, properties[i], true, throwScope);
 
         RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
     }
@@ -1814,9 +1806,9 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned le
         const napi_property_descriptor& property = properties[i];
 
         if (property.attributes & napi_static) {
-            defineNapiProperty(globalObject, this, nullptr, property, true, throwScope);
+            defineNapiProperty(globalObject, this, property, true, throwScope);
         } else {
-            defineNapiProperty(globalObject, prototype, nullptr, property, false, throwScope);
+            defineNapiProperty(globalObject, prototype, property, false, throwScope);
         }
 
         if (throwScope.exception())

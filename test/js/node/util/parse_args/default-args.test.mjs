@@ -12,11 +12,15 @@ describe("parseArgs default args", () => {
     temp_dir = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "bun-run.test." + Math.trunc(Math.random() * 9999999).toString(32))),
     );
+    await fs.mkdir(path.join(temp_dir, "script-test")); // folder to act as false target for script test
+    await fs.mkdir(path.join(temp_dir, "script-test-bun"));
+
     await fs.writeFile(
       path.join(temp_dir, "package.json"),
       `{
                 "scripts": {
-                    "script-test": "file-test.js"
+                    "script-test": "bun file-test.js",
+                    "script-test-bun": "bun --bun file-test.js"
                 }
             }`,
     );
@@ -64,6 +68,8 @@ describe("parseArgs default args", () => {
     ["--bun run --env-file='' file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun", "--env-file=''"]], // explicit run, multiple bun args
     ["run file-test.js --bun", ["bun"], [], []], // passing --bun only to the program
     ["--bun run file-test.js --foo asdf -- --foo2 -- --foo3", ["foo"], ["asdf", "--foo2", "--", "--foo3"], ["--bun"]],
+    ["run script-test --foo asdf", ["foo"], ["asdf"], []], // run script
+    ["run --bun script-test-bun --foo asdf", ["foo"], ["asdf"], ["--bun"]], // run script, with bun "--bun" arg
     //[`--bun -e ${evalSrc} --foo asdf`, ["foo"], ["asdf"]], // eval seems to crash when triggered from tests
     //[`--bun --eval ${evalSrc} --foo asdf`, ["foo"], ["asdf"]],
     //[`--eval "require('./file-test.js')" -- --foo asdf -- --bar`, ["foo"], ["asdf"]],

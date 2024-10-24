@@ -1194,6 +1194,20 @@ pub const Map = struct {
         });
     }
 
+    pub fn ensureUnusedCapacity(this: *Map, additional_count: usize) !void {
+        return this.map.ensureUnusedCapacity(additional_count);
+    }
+
+    pub fn putAssumeCapacity(this: *Map, key: string, value: string) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            bun.assert(bun.strings.indexOfChar(key, '\x00') == null);
+        }
+        this.map.putAssumeCapacity(key, .{
+            .value = value,
+            .conditional = false,
+        });
+    }
+
     pub inline fn putAllocKeyAndValue(this: *Map, allocator: std.mem.Allocator, key: string, value: string) !void {
         const gop = try this.map.getOrPut(key);
         gop.value_ptr.* = .{

@@ -106,6 +106,7 @@ pub const PackageJSON = struct {
     hash: u32 = 0xDEADBEEF,
 
     scripts: ?*ScriptsMap = null,
+    config: ?*bun.StringArrayHashMap(string) = null,
 
     arch: Architecture = Architecture.all,
     os: OperatingSystem = OperatingSystem.all,
@@ -1032,6 +1033,35 @@ pub const PackageJSON = struct {
 
                         package_json.scripts = allocator.create(ScriptsMap) catch unreachable;
                         package_json.scripts.?.* = scripts;
+                    }
+                }
+            }
+            read_config: {
+                if (json.asProperty("config")) |config_prop| {
+                    if (config_prop.expr.data == .e_object) {
+                        const StringMap = bun.StringArrayHashMap(string);
+                        const config_obj = config_prop.expr.data.e_object;
+
+                        var count: usize = 0;
+                        for (config_obj.properties.slice()) |prop| {
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            const value = prop.value.?.asString(allocator) orelse continue;
+                            count += @as(usize, @intFromBool(key.len > 0 and value.len > 0));
+                        }
+
+                        if (count == 0) break :read_config;
+                        var config = StringMap.init(allocator);
+                        config.ensureUnusedCapacity(count) catch break :read_config;
+
+                        for (config_obj.properties.slice()) |prop| {
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            const value = prop.value.?.asString(allocator) orelse continue;
+                            if (!(key.len > 0 and value.len > 0)) continue;
+                            config.putAssumeCapacity(key, value);
+                        }
+
+                        package_json.config = allocator.create(StringMap) catch unreachable;
+                        package_json.config.?.* = config;
                     }
                 }
             }

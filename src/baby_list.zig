@@ -13,7 +13,6 @@ pub fn BabyList(comptime Type: type) type {
         cap: u32 = 0,
 
         pub const Elem = Type;
-
         pub fn parse(input: *bun.css.Parser) bun.css.Result(ListType) {
             return switch (input.parseCommaSeparated(Type, bun.css.generic.parseFor(Type))) {
                 .result => |v| return .{ .result = ListType{
@@ -36,7 +35,6 @@ pub fn BabyList(comptime Type: type) type {
             }
             return true;
         }
-
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
             this.len = @as(u32, @truncate(slice_.len));

@@ -214,9 +214,9 @@ const json = struct {
                     kind = 1;
                 },
                 else => {
-                    std.log.warn("{d} {d} {d}", .{ kind, json_data.len, idx });
-                    std.log.warn("{d}", .{json_data});
-                    @panic("ipc: invalid json");
+                    // definitely invalid json
+                    // exception will be thrown by toJSByParseJSON below
+                    kind = 1;
                 },
             }
 
@@ -238,7 +238,7 @@ const json = struct {
             }
 
             const deserialized = str.toJSByParseJSON(globalThis);
-            // if (deserialized == .zero) return error.JSError;
+            if (deserialized == .zero) return error.InvalidFormat;
 
             return switch (kind) {
                 1 => .{

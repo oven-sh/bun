@@ -1529,6 +1529,8 @@ pub const BundleOptions = struct {
     /// So we have a list of packages which we know are safe to do this with.
     unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
 
+    supports_multiple_outputs: bool = true,
+
     pub fn isTest(this: *const BundleOptions) bool {
         return this.rewrite_jest_for_tests;
     }

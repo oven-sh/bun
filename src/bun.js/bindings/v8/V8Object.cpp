@@ -45,21 +45,20 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     JSValue v = value->localToJSValue();
     auto& vm = globalObject->vm();
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PutPropertySlot slot(object, false);
 
     Identifier identifier = k.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
-    if (!object->put(object, globalObject, identifier, v, slot)) {
-        scope.clearExceptionExceptTermination();
-        return Nothing<bool>();
+    if (!object->methodTable()->put(object, globalObject, identifier, v, slot)) {
+        // ProxyObject::performPut returns false if the JS handler returned a falsy value no matter
+        // the mode. V8 native functions run as if they are in sloppy mode, so we only consider a
+        // failure if the handler function actually threw, not if it returned false without
+        // throwing.
+        RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     }
-    if (scope.exception()) {
-        scope.clearException();
-        return Nothing<bool>();
-    }
-    return Just(true);
+    RELEASE_AND_RETURN(scope, Just(true));
 }
 
 void Object::SetInternalField(int index, Local<Data> data)
@@ -88,6 +87,31 @@ Local<Data> Object::SlowGetInternalField(int index)
         return handleScope->createLocal<Data>(globalObject->vm(), field.get());
     }
     return handleScope->createLocal<Data>(globalObject->vm(), JSC::jsUndefined());
+}
+
+MaybeLocal<Value> Object::Get(Local<Context> context, Local<Value> key)
+{
+    V8_UNIMPLEMENTED();
+    return MaybeLocal<Value>();
+}
+
+MaybeLocal<Value> Object::Get(Local<Context> context, uint32_t index)
+{
+    V8_UNIMPLEMENTED();
+    return MaybeLocal<Value>();
+}
+
+void Object::SetAlignedPointerInInternalField(int index, void* value)
+{
+    V8_UNIMPLEMENTED();
+    (void)index;
+    (void)value;
+}
+
+void* Object::SlowGetAlignedPointerFromInternalField(int index)
+{
+    V8_UNIMPLEMENTED();
+    return nullptr;
 }
 
 } // namespace v8

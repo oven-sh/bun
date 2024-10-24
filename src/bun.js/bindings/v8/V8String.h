@@ -1,7 +1,7 @@
 #pragma once
 
 #include "v8.h"
-#include "V8Primitive.h"
+#include "V8Name.h"
 #include "V8MaybeLocal.h"
 #include "V8Isolate.h"
 
@@ -12,7 +12,7 @@ enum class NewStringType {
     kInternalized,
 };
 
-class String : Primitive {
+class String : public Name {
 public:
     enum WriteOptions {
         NO_OPTIONS = 0,

@@ -122,16 +122,34 @@ describe("primitives", () => {
   });
 });
 
-describe("Number", () => {
+describe("Number & Integer", () => {
   it("can create small integer", () => {
     checkSameOutput("test_v8_number_int", []);
   });
-  // non-i32 v8::Number is not implemented yet
   it("can create large integer", () => {
     checkSameOutput("test_v8_number_large_int", []);
   });
   it("can create fraction", () => {
     checkSameOutput("test_v8_number_fraction", []);
+  });
+});
+
+describe("Value", () => {
+  describe("Uint32Value & NumberValue", () => {
+    it("coerces correctly", () => {
+      checkSameOutput("test_v8_value_uint32value_and_numbervalue", []);
+    });
+    it("throws in the right cases", () => {
+      checkSameOutput("test_v8_value_uint32value_and_numbervalue_throw", []);
+    });
+  });
+  describe("ToString", () => {
+    it("returns the right result", () => {
+      checkSameOutput("test_v8_value_to_string", []);
+    });
+    it("handles exceptions", () => {
+      checkSameOutput("test_v8_value_to_string_exceptions", []);
+    });
   });
 });
 
@@ -166,6 +184,12 @@ describe("Object", () => {
   it("can create an object and set properties", () => {
     checkSameOutput("test_v8_object", []);
   });
+  it("uses proxies properly", () => {
+    checkSameOutput("test_v8_object_set_proxy", []);
+  });
+  it("can handle failure in Set()", () => {
+    checkSameOutput("test_v8_object_set_failure", []);
+  });
 });
 describe("Array", () => {
   // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
@@ -184,16 +208,26 @@ describe("FunctionTemplate", () => {
   it("keeps the data parameter alive", () => {
     checkSameOutput("test_v8_function_template", []);
   });
+  // calls tons of functions we don't implement yet
+  it.skip("can create an object with prototype properties, instance properties, and an accessor", () => {
+    checkSameOutput("test_v8_function_template_instance", []);
+  });
 });
 
 describe("Function", () => {
+  // TODO call native from native and napi from native
   it("correctly receives all its arguments from JS", () => {
-    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}]);
+    // this will print out all the values we pass it
+    checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}, [5, 6]]);
     checkSameOutput("print_native_function", []);
   });
 
   it("correctly receives the this value from JS", () => {
     checkSameOutput("call_function_with_weird_this_values", []);
+  });
+
+  it("can call a JS function from native code", () => {
+    checkSameOutput("call_js_functions_from_native", []);
   });
 });
 

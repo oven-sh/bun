@@ -607,6 +607,7 @@ EXPORTS
   ?IsObject@Value@v8@@QEBA_NXZ
   ?IsNumber@Value@v8@@QEBA_NXZ
   ?IsUint32@Value@v8@@QEBA_NXZ
+  ?IsInt32@Value@v8@@QEBA_NXZ
   ?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z
   ?IsUndefined@Value@v8@@QEBA_NXZ
   ?IsNull@Value@v8@@QEBA_NXZ
@@ -628,3 +629,20 @@ EXPORTS
   ?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z
   ?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ
   ?IsFunction@Value@v8@@QEBA_NXZ
+  ?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV52@@Z
+  ?HasInstance@FunctionTemplate@v8@@QEAA_NV?$Local@VValue@v8@@@2@@Z
+  ?SetClassName@FunctionTemplate@v8@@QEAAXV?$Local@VString@v8@@@2@@Z
+  ?InstanceTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ
+  ?PrototypeTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ
+  ?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z
+  ?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z
+  ?SetAlignedPointerInInternalField@Object@v8@@QEAAXHPEAX@Z
+  ?SlowGetAlignedPointerFromInternalField@Object@v8@@AEAAPEAXH@Z
+  ?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z
+  ?Value@Integer@v8@@QEBA_JXZ
+  ?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z
+  ?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z
+  ?FromJustIsNothing@api_internal@v8@@YAXXZ
+  ?NumberValue@Value@v8@@QEBA?AV?$Maybe@N@2@V?$Local@VContext@v8@@@2@@Z
+  ?IsArray@Value@v8@@QEBA_NXZ
+  ?ToString@Value@v8@@QEBA?AV?$MaybeLocal@VString@v8@@@2@V?$Local@VContext@v8@@@2@@Z

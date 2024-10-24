@@ -1,4 +1,4 @@
-name: clang-tidy
+name: clang-format
 
 permissions:
   contents: write
@@ -15,8 +15,8 @@ env:
   LLVM_VERSION_MAJOR: "18"
 
 jobs:
-  clang-tidy:
-    name: clang-tidy
+  clang:
+    name: clang-format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,6 +30,11 @@ jobs:
       - name: Install LLVM
         run: |
           curl -fsSL https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION_MAJOR }} all
+      - name: Clang Format
+        env:
+          LLVM_VERSION: ${{ env.LLVM_VERSION }}
+        run: |
+          bun run clang-format
       - name: Clang Tidy
         env:
           LLVM_VERSION: ${{ env.LLVM_VERSION }}
@@ -38,4 +43,4 @@ jobs:
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "`bun run clang-tidy`"
+          commit_message: "`bun run clang-format`"

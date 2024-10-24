@@ -848,7 +848,7 @@ class BunWebSocketMocked extends EventEmitter {
       // 0 - dropped due to backpressure (not sent)
       // -1 - enqueue the data internaly
       // we dont need to do anything with the return value here
-      const written = this.#ws.send(data, compress);
+      const written = this.#ws?.send?.(data, compress) || 0;
       if (written === 0) {
         // dropped
         this.#enquedMessages.push([data, compress, cb]);
@@ -867,7 +867,7 @@ class BunWebSocketMocked extends EventEmitter {
   close(code, reason) {
     if (this.#state === 1) {
       this.#state = 2;
-      this.#ws.close(code, reason);
+      this.#ws?.close?.(code, reason);
     }
   }
 

@@ -603,7 +603,7 @@ describe("certificate authority", () => {
       env,
     });
     let out = await Bun.readableStreamToText(stdout);
-    let err = await Bun.readableStreamToText(stderr);
+    let err = stderrForInstall(await Bun.readableStreamToText(stderr));
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(await exited).toBe(1);
 
@@ -756,7 +756,7 @@ export async function publish(
   });
 
   const out = await Bun.readableStreamToText(stdout);
-  const err = await Bun.readableStreamToText(stderr);
+  const err = stderrForInstall(await Bun.readableStreamToText(stderr));
   const exitCode = await exited;
   return { out, err, exitCode };
 }
@@ -7512,7 +7512,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -7745,7 +7745,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8002,7 +8002,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8844,7 +8844,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = await Bun.readableStreamToText(stderr);
+        let err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8893,7 +8893,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = await Bun.readableStreamToText(stderr);
+        err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8939,7 +8939,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8978,7 +8978,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -9008,7 +9008,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9038,7 +9038,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("bun pm untrusted");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9088,7 +9088,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = await Bun.readableStreamToText(stderr);
+          let err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -9118,7 +9118,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
@@ -9145,7 +9145,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
               env: testEnv,
             }));
 
-            err = await Bun.readableStreamToText(stderr);
+            err = stderrForInstall(await Bun.readableStreamToText(stderr));
             expect(err).toContain("Saved lockfile");
             expect(err).not.toContain("not found");
             expect(err).not.toContain("error:");
@@ -9173,7 +9173,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -9208,7 +9208,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -9236,7 +9236,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
@@ -9348,7 +9348,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(err.split(/\r?\n/)).toEqual([
@@ -9401,7 +9401,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(err.split(/\r?\n/)).toEqual([
@@ -9448,7 +9448,7 @@ describe("pm trust", async () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = stderrForInstall(await Bun.readableStreamToText(stderr));
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -9475,7 +9475,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("error: Lockfile not found");
       let out = await Bun.readableStreamToText(stdout);
       expect(out).toBeEmpty();
@@ -9501,7 +9501,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9528,7 +9528,7 @@ describe("pm trust", async () => {
         env,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");

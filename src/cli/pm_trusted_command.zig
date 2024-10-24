@@ -169,16 +169,17 @@ pub const TrustCommand = struct {
         Global.crash();
     }
 
-    fn printErrorZeroUntrustedDependenciesFound(trust_all: bool, packages_to_trust: []const string) void {
+    fn printErrorZeroUntrustedDependenciesFound(trust_all: bool, packages_to_trust: []const string) noreturn {
         Output.print("\n", .{});
         if (trust_all) {
-            Output.errGeneric("0 scripts ran. This means all dependencies are already trusted or none have scripts.", .{});
+            Output.warn("0 scripts ran. This means all dependencies are already trusted or none have scripts.", .{});
         } else {
-            Output.errGeneric("0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n", .{});
+            Output.warn("0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n", .{});
             for (packages_to_trust) |arg| {
                 Output.prettyError(" <d>-<r> {s}\n", .{arg});
             }
         }
+        Global.exit(0);
     }
 
     pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) !void {
@@ -225,7 +226,6 @@ pub const TrustCommand = struct {
 
         if (untrusted_dep_ids.count() == 0) {
             printErrorZeroUntrustedDependenciesFound(trust_all, packages_to_trust.items);
-            Global.crash();
         }
 
         // Instead of running them right away, we group scripts by depth in the node_modules
@@ -314,7 +314,6 @@ pub const TrustCommand = struct {
 
         if (scripts_at_depth.count() == 0 or package_names_to_add.count() == 0) {
             printErrorZeroUntrustedDependenciesFound(trust_all, packages_to_trust.items);
-            Global.crash();
         }
 
         var root_node: *Progress.Node = undefined;

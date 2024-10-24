@@ -41,6 +41,8 @@ expect.extend({
 var verdaccioServer: ChildProcess;
 var port: number = randomPort();
 var packageDir: string;
+/** packageJson = join(packageDir, "package.json"); */
+var packageJson: string;
 
 let users: Record<string, string> = {};
 
@@ -90,6 +92,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   packageDir = tmpdirSync();
+  packageJson = join(packageDir, "package.json");
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
@@ -1619,6 +1622,19 @@ describe("package.json indentation", async () => {
     expect(await file(join(packageDir, "package.json")).text()).toBe(rootPackageJson);
     const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
     expect(workspacePackageJson).toBe(`{\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}`);
+  });
+
+  test("install maintains indentation", async () => {
+    await write(packageJson, `{\n  "dependencies": {}\n  }\n`);
+    let { exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+    expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
   });
 });
 

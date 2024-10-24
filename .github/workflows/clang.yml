@@ -1,4 +1,4 @@
-name: clang-format
+name: clang
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ env:
 
 jobs:
   clang:
-    name: clang-format
+    name: clang
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -32,6 +32,7 @@ pub const LifecycleScriptSubprocess = struct {
     has_incremented_alive_count: bool = false,
 
     foreground: bool = false,
+    optional: bool = false,
 
     pub usingnamespace bun.New(@This());
 
@@ -301,6 +302,11 @@ pub const LifecycleScriptSubprocess = struct {
                 const maybe_duration = if (this.timer) |*t| t.read() else null;
 
                 if (exit.code > 0) {
+                    if (this.optional) {
+                        _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                        this.deinit();
+                        return;
+                    }
                     this.printOutput();
                     Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {d}<r>", .{
                         this.scriptName(),
@@ -364,6 +370,12 @@ pub const LifecycleScriptSubprocess = struct {
                 Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {
+                if (this.optional) {
+                    _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
+                    this.deinit();
+                    return;
+                }
+
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
                     this.scriptName(),
                     this.package_name,
@@ -425,6 +437,7 @@ pub const LifecycleScriptSubprocess = struct {
         manager: *PackageManager,
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]u8,
+        optional: bool,
         comptime log_level: PackageManager.Options.LogLevel,
         comptime foreground: bool,
     ) !void {
@@ -434,6 +447,7 @@ pub const LifecycleScriptSubprocess = struct {
             .scripts = list,
             .package_name = list.package_name,
             .foreground = foreground,
+            .optional = optional,
         });
 
         if (comptime log_level.isVerbose()) {

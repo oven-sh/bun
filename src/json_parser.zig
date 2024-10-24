@@ -115,7 +115,6 @@ fn JSONLikeParser(comptime opts: js_lexer.JSONOptions) type {
         opts.ignore_trailing_escape_sequences,
         opts.json_warn_duplicate_keys,
         opts.was_originally_macro,
-        opts.always_decode_escape_sequences,
         opts.guess_indentation,
     );
 }
@@ -128,7 +127,6 @@ fn JSONLikeParser_(
     comptime opts_ignore_trailing_escape_sequences: bool,
     comptime opts_json_warn_duplicate_keys: bool,
     comptime opts_was_originally_macro: bool,
-    comptime opts_always_decode_escape_sequences: bool,
     comptime opts_guess_indentation: bool,
 ) type {
     const opts = js_lexer.JSONOptions{
@@ -139,7 +137,6 @@ fn JSONLikeParser_(
         .ignore_trailing_escape_sequences = opts_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = opts_json_warn_duplicate_keys,
         .was_originally_macro = opts_was_originally_macro,
-        .always_decode_escape_sequences = opts_always_decode_escape_sequences,
         .guess_indentation = opts_guess_indentation,
     };
     return struct {
@@ -770,7 +767,6 @@ pub fn parsePackageJSONUTF8(
 
     var parser = try JSONLikeParser(.{
         .is_json = true,
-        .always_decode_escape_sequences = false,
         .allow_comments = true,
         .allow_trailing_commas = true,
     }).init(allocator, source.*, log);
@@ -806,7 +802,6 @@ pub fn parsePackageJSONUTF8AlwaysDecode(
 
     var parser = try JSONLikeParser(.{
         .is_json = true,
-        .always_decode_escape_sequences = true,
         .allow_comments = true,
         .allow_trailing_commas = true,
     }).init(allocator, source.*, log);

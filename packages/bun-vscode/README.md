@@ -23,7 +23,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 
 ### `.vscode/launch.json`
 
-You can use the following configurations to debug JavaScript and TypeScript files using Bun.
+You can use the following configurations to debug & test JavaScript and TypeScript files using Bun.
 
 ```jsonc
 {
@@ -91,8 +91,11 @@ You can use the following configurations to customize the behavior of the Bun ex
 
   // If support for Bun should be added to the default "JavaScript Debug Terminal".
   "bun.debugTerminal.enabled": true,
-  
+
   // If the debugger should stop on the first line of the program.
   "bun.debugTerminal.stopOnEntry": false,
+
+  // Glob pattern to match test files, defaults to `**/*.test.{js,ts,tsx,jsx}`.
+  "bun.test.filePattern": "**/*.test.{js,ts,tsx,jsx}",
 }
 ```

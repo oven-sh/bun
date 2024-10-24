@@ -1,9 +1,9 @@
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
-// if a proxy IS specified, default to 16
+// if a proxy IS specified, default to 64. We have different values because we might change this in the future.
 // https://github.com/npm/cli/issues/7072
 // https://pnpm.io/npmrc#network-concurrency (pnpm defaults to 16)
 // https://yarnpkg.com/configuration/yarnrc#networkConcurrency (defaults to 50)
-const default_max_simultaneous_requests_for_bun_install = 48;
+const default_max_simultaneous_requests_for_bun_install = 64;
 const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
 
 const bun = @import("root").bun;

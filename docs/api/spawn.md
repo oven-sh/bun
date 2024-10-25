@@ -179,7 +179,7 @@ proc.kill(); // specify an exit code
 
 The parent `bun` process will not terminate until all child processes have exited. Use `proc.unref()` to detach the child process from the parent.
 
-```
+```ts
 const proc = Bun.spawn(["bun", "--version"]);
 proc.unref();
 ```

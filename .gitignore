@@ -164,3 +164,7 @@ src/bake/generated.ts
 /src/deps/zstd
 /src/deps/zlib
 /src/deps/zig
+
+# Generated files
+
+.buildkite/ci.yml

@@ -300,32 +300,23 @@ pub const Runtime = struct {
         pub const ActivateFunction = "activate";
     };
 
-    /// See js_parser.StaticSymbolName
-    pub const GeneratedSymbol = struct {
-        primary: Ref,
-        backup: Ref,
-        ref: Ref,
-
-        pub const empty: GeneratedSymbol = .{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None };
-    };
-
     // If you change this, remember to update "runtime.js"
     pub const Imports = struct {
-        __name: ?GeneratedSymbol = null,
-        __require: ?GeneratedSymbol = null,
-        __export: ?GeneratedSymbol = null,
-        __reExport: ?GeneratedSymbol = null,
-        __exportValue: ?GeneratedSymbol = null,
-        __exportDefault: ?GeneratedSymbol = null,
+        __name: ?Ref = null,
+        __require: ?Ref = null,
+        __export: ?Ref = null,
+        __reExport: ?Ref = null,
+        __exportValue: ?Ref = null,
+        __exportDefault: ?Ref = null,
         // __refreshRuntime: ?GeneratedSymbol = null,
         // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
-        __merge: ?GeneratedSymbol = null,
-        __legacyDecorateClassTS: ?GeneratedSymbol = null,
-        __legacyDecorateParamTS: ?GeneratedSymbol = null,
-        __legacyMetadataTS: ?GeneratedSymbol = null,
-        @"$$typeof": ?GeneratedSymbol = null,
-        __using: ?GeneratedSymbol = null,
-        __callDispose: ?GeneratedSymbol = null,
+        __merge: ?Ref = null,
+        __legacyDecorateClassTS: ?Ref = null,
+        __legacyDecorateParamTS: ?Ref = null,
+        __legacyMetadataTS: ?Ref = null,
+        @"$$typeof": ?Ref = null,
+        __using: ?Ref = null,
+        __callDispose: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -390,7 +381,7 @@ pub const Runtime = struct {
                     switch (this.i) {
                         inline 0...all.len - 1 => |t| {
                             if (@field(this.runtime_imports, all[t])) |val| {
-                                return Entry{ .key = t, .value = val.ref };
+                                return Entry{ .key = t, .value = val };
                             }
                         },
                         else => {
@@ -421,15 +412,15 @@ pub const Runtime = struct {
             return false;
         }
 
-        pub fn put(imports: *Imports, comptime key: string, generated_symbol: GeneratedSymbol) void {
-            @field(imports, key) = generated_symbol;
+        pub fn put(imports: *Imports, comptime key: string, ref: Ref) void {
+            @field(imports, key) = ref;
         }
 
         pub fn at(
             imports: *Imports,
             comptime key: string,
         ) ?Ref {
-            return (@field(imports, key) orelse return null).ref;
+            return (@field(imports, key) orelse return null);
         }
 
         pub fn get(
@@ -437,7 +428,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null).ref,
+                inline 0...all.len - 1 => |t| (@field(imports, all[t]) orelse return null),
                 else => null,
             };
         }

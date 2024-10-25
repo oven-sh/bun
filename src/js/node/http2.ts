@@ -2208,7 +2208,7 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   return obj;
 }
 class ServerHttp2Session extends Http2Session {
-  [kServer]: Http2Server = null;
+  [kServer]: Http2Server | null = null;
   /// close indicates that we called closed
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
@@ -2421,7 +2421,7 @@ class ServerHttp2Session extends Http2Session {
     // throwNotImplemented("ServerHttp2Stream.prototype.origin()");
   }
 
-  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server) {
+  constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server: Http2Server | null = null) {
     super();
     this[kServer] = server;
     this.#connected = true;

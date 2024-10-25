@@ -1,0 +1,15 @@
+# compiled code
+bench/react-hello-world/react-hello-world.node.js
+
+# Test fixtures, many of which intentionally have invalid syntax
+test/**/fixtures
+
+# Test fixtures that should be in a `fixtures` folder but aren't
+test/bundler/transpiler/decorators.test.ts
+test/js/bun/util/inspect-error-fixture-bad.js
+test/regression/issue/14477/builtin-mismatch.tsx
+test/regression/issue/14477/component-mismatch.tsx
+test/regression/issue/14477/non-identifier-mismatch.tsx
+
+# `with` statements are not supported
+test/bundler/transpiler/with-statement-works.js

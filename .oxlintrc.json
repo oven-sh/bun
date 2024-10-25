@@ -1,0 +1,10 @@
+{
+  "plugins": ["react", "unicorn", "typescript", "oxc", "import"],
+  "categories": {
+    "correctness": "warn"
+  },
+  "rules": {
+    "no-this-alias": "off",
+    "no-new-array": "off"
+  }
+}

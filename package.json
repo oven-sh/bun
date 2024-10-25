@@ -6,25 +6,26 @@
     "./packages/bun-types"
   ],
   "devDependencies": {
+    "@mdn/browser-compat-data": "~5.5.28",
     "@types/bun": "^1.1.3",
     "@types/react": "^18.3.3",
     "@typescript-eslint/eslint-plugin": "^7.11.0",
     "@typescript-eslint/parser": "^7.11.0",
     "@vscode/debugadapter": "^1.65.0",
+    "autoprefixer": "^10.4.19",
+    "caniuse-lite": "^1.0.30001620",
     "esbuild": "^0.21.4",
     "eslint": "^9.4.0",
     "eslint-config-prettier": "^9.1.0",
     "mitata": "^0.1.11",
+    "oxlint": "^0.10.2",
     "peechy": "0.4.34",
     "prettier": "^3.2.5",
     "prettier-plugin-organize-imports": "^4.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.0",
-    "typescript": "^5.4.5",
-    "caniuse-lite": "^1.0.30001620",
-    "autoprefixer": "^10.4.19",
-    "@mdn/browser-compat-data": "~5.5.28"
+    "typescript": "^5.4.5"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types"
@@ -49,8 +50,8 @@
     "fmt": "bun run prettier",
     "fmt:cpp": "bun run clang-format",
     "fmt:zig": "bun run zig-format",
-    "lint": "eslint './**/*.d.ts' --cache",
-    "lint:fix": "eslint './**/*.d.ts' --cache --fix",
+    "lint": "oxlint --ignore-path .oxlintignore -c .oxlintrc.json",
+    "lint:fix": "oxlint --ignore-path .oxlintignore -c .oxlintrc.json --fix",
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
     "banned": "bun packages/bun-internal-test/src/linter.ts",

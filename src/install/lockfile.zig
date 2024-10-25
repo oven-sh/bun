@@ -206,7 +206,7 @@ pub const Scripts = struct {
 };
 
 pub fn isEmpty(this: *const Lockfile) bool {
-    return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
+    return this.packages.len == 0 or (this.packages.len == 1 and this.packages.get(0).resolutions.len == 0);
 }
 
 pub const LoadFromDiskResult = union(enum) {

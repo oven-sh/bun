@@ -73,7 +73,7 @@ test("migrate package with dependency on root package", async () => {
     cwd: join(testDir),
   });
 
-  expect(fs.existsSync(join(testDir, "node_modules", "test-pkg"))).toBeTrue();
+  expect(fs.existsSync(join(testDir, "node_modules", "test-pkg", "package.json"))).toBeTrue();
 });
 
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {

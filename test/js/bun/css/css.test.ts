@@ -1928,5 +1928,155 @@ describe("css tests", () => {
         safari: 8 << 16,
       },
     );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 4px;
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+        margin-right: 4px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+        margin-right: 4px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-left: 4px;
+        margin-right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-left: 4px;
+        margin-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-left: 2px;
+        margin-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-block-start: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-top: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-block-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-bottom: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      {
+        safari: 13 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      {
+        safari: 13 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      {
+        safari: 15 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      {
+        safari: 15 << 16,
+      },
+    );
   });
 });

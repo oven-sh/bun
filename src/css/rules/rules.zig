@@ -240,7 +240,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         const Selector = css.selector.Selector;
                         const SelectorList = css.selector.SelectorList;
                         const Component = css.selector.Component;
-                        debug("Input style selectors: {}\n", .{sty.selectors.debug()});
+                        debug("Input style:\n  Selectors: {}\n  Decls: {}\n", .{ sty.selectors.debug(), sty.declarations.debug() });
                         if (parent_is_unused or try sty.minify(context, parent_is_unused)) {
                             continue;
                         }

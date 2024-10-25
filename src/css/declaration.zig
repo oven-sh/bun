@@ -34,6 +34,26 @@ pub const DeclarationBlock = struct {
 
     const This = @This();
 
+    const DebugFmt = struct {
+        self: *const DeclarationBlock,
+
+        pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = fmt; // autofix
+            _ = options; // autofix
+            var arraylist = ArrayList(u8){};
+            const w = arraylist.writer(bun.default_allocator);
+            defer arraylist.deinit(bun.default_allocator);
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, .{}, null);
+            defer printer.deinit();
+            this.self.toCss(@TypeOf(w), &printer) catch @panic("Damn");
+            try writer.writeAll(arraylist.items);
+        }
+    };
+
+    pub fn debug(this: *const @This()) DebugFmt {
+        return DebugFmt{ .self = this };
+    }
+
     pub fn isEmpty(this: *const This) bool {
         return this.declarations.items.len == 0 and this.important_declarations.items.len == 0;
     }

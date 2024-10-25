@@ -71,14 +71,12 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
 
     const parser_options = parser_options: {
         const opts = bun.css.ParserOptions.default(alloc, &log);
-        if (test_kind == .prefix) break :parser_options opts;
+        // if (test_kind == .prefix) break :parser_options opts;
 
         if (options_arg) |optargs| {
-            _ = optargs; // autofix
-            // if (optargs.isObject()) {
-            //     if (optargs.getStr
-            // }
-            std.debug.panic("ZACK: suppor this lol", .{});
+            if (optargs.isObject()) {
+                // minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+            }
         }
 
         break :parser_options opts;
@@ -94,16 +92,10 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
-            switch (test_kind) {
-                .minify => {},
-                .normal => {},
-                .prefix => {
-                    if (options_arg) |optarg| {
-                        if (optarg.isObject()) {
-                            minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
-                        }
-                    }
-                },
+            if (options_arg) |optarg| {
+                if (optarg.isObject()) {
+                    minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+                }
             }
             _ = stylesheet.minify(alloc, minify_options).assert();
 
@@ -114,7 +106,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                     .prefix => false,
                 },
                 .targets = .{
-                    .browsers = if (test_kind == .prefix) minify_options.targets.browsers else null,
+                    .browsers = minify_options.targets.browsers,
                 },
             }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());

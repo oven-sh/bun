@@ -437,6 +437,60 @@ pub const MarginHandler = NewSizeHandler(
     },
 );
 
+pub const PaddingHandler = NewSizeHandler(
+    PropertyIdTag.@"padding-top",
+    PropertyIdTag.@"padding-bottom",
+    PropertyIdTag.@"padding-left",
+    PropertyIdTag.@"padding-right",
+    PropertyIdTag.@"padding-block-start",
+    PropertyIdTag.@"padding-block-end",
+    PropertyIdTag.@"padding-inline-start",
+    PropertyIdTag.@"padding-inline-end",
+    PropertyIdTag.padding,
+    PropertyIdTag.@"padding-block",
+    PropertyIdTag.@"padding-inline",
+    PropertyCategory.physical,
+    .{
+        .feature = css.Feature.logical_padding,
+        .shorthand_feature = css.Feature.logical_padding_shorthand,
+    },
+);
+
+pub const ScrollMarginHandler = NewSizeHandler(
+    PropertyIdTag.@"scroll-margin-top",
+    PropertyIdTag.@"scroll-margin-bottom",
+    PropertyIdTag.@"scroll-margin-left",
+    PropertyIdTag.@"scroll-margin-right",
+    PropertyIdTag.@"scroll-margin-block-start",
+    PropertyIdTag.@"scroll-margin-block-end",
+    PropertyIdTag.@"scroll-margin-inline-start",
+    PropertyIdTag.@"scroll-margin-inline-end",
+    PropertyIdTag.@"scroll-margin",
+    PropertyIdTag.@"scroll-margin-block",
+    PropertyIdTag.@"scroll-margin-inline",
+    PropertyCategory.physical,
+    null,
+);
+
+pub const InsetHandler = NewSizeHandler(
+    PropertyIdTag.top,
+    PropertyIdTag.bottom,
+    PropertyIdTag.left,
+    PropertyIdTag.right,
+    PropertyIdTag.@"inset-block-start",
+    PropertyIdTag.@"inset-block-end",
+    PropertyIdTag.@"inset-inline-start",
+    PropertyIdTag.@"inset-inline-end",
+    PropertyIdTag.inset,
+    PropertyIdTag.@"inset-block",
+    PropertyIdTag.@"inset-inline",
+    PropertyCategory.physical,
+    .{
+        .feature = css.Feature.logical_inset,
+        .shorthand_feature = css.Feature.logical_inset,
+    },
+);
+
 pub fn NewSizeHandler(
     comptime top_prop: css.PropertyIdTag,
     comptime bottom_prop: css.PropertyIdTag,
@@ -677,7 +731,7 @@ pub fn NewSizeHandler(
                     this.prop(&inline_end, inline_end_prop, right_prop, dest, context);
                 } else {
                     this.logicalPropHelper(&inline_start, inline_start_prop, left_prop, right_prop, dest, context);
-                    this.logicalPropHelper(&inline_end, inline_end_prop, left_prop, right_prop, dest, context);
+                    this.logicalPropHelper(&inline_end, inline_end_prop, right_prop, left_prop, dest, context);
                 }
             }
         }

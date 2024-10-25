@@ -8,11 +8,11 @@
 
 #if defined __has_attribute
 #if __has_attribute(__format__)
-__attribute__((__format__(__printf__, 3, 4))) static inline void napi_log(long line, const char* function, const char* fmt, ...)
+__attribute__((__format__(__printf__, 4, 5))) static inline void napi_log(const char* file, long line, const char* function, const char* fmt, ...)
 #endif
 #endif
 {
-    printf("[napi.cpp:%ld] %s: ", line, function);
+    printf("[%s:%ld] %s: ", file, line, function);
 
     va_list ap;
     va_start(ap, fmt);
@@ -22,8 +22,8 @@ __attribute__((__format__(__printf__, 3, 4))) static inline void napi_log(long l
     printf("\n");
 }
 
-#define NAPI_LOG_CURRENT_FUNCTION printf("[napi.cpp:%d] %s\n", __LINE__, __PRETTY_FUNCTION__)
-#define NAPI_LOG(fmt, ...) napi_log(__LINE__, __PRETTY_FUNCTION__, fmt __VA_OPT__(, ) __VA_ARGS__)
+#define NAPI_LOG_CURRENT_FUNCTION printf("[%s:%d] %s\n", __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define NAPI_LOG(fmt, ...) napi_log(__FILE__, __LINE__, __PRETTY_FUNCTION__, fmt __VA_OPT__(, ) __VA_ARGS__)
 #else
 #define NAPI_LOG_CURRENT_FUNCTION
 #define NAPI_LOG(fmt, ...)

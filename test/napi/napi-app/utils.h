@@ -1,5 +1,6 @@
 #pragma once
 #include "napi_with_version.h"
+#include <climits>
 
 // e.g NODE_API_CALL(env, napi_create_int32(env, 5, &my_napi_integer))
 #define NODE_API_CALL(env, call) NODE_API_CALL_CUSTOM_RETURN(env, NULL, call)

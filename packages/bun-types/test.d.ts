@@ -301,6 +301,21 @@ declare module "bun:test" {
    * @param milliseconds the number of milliseconds for the default timeout
    */
   export function setDefaultTimeout(milliseconds: number): void;
+
+  // TODO: the usages below can be replaced with `Test` once https://github.com/oven-sh/bun/issues/10885 is resolved.
+  type TestFunc = (
+    label: string,
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    /**
+     * - If a `number`, sets the timeout for the test in milliseconds.
+     * - If an `object`, sets the options for the test.
+     *   - `timeout` sets the timeout for the test in milliseconds.
+     *   - `retry` sets the number of times to retry the test if it fails.
+     *   - `repeats` sets the number of times to repeat the test, regardless of whether it passed or failed.
+     */
+    options?: number | TestOptions,
+  ) => void;
+
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.
@@ -326,6 +341,7 @@ declare module "bun:test" {
      */
     repeats?: number;
   }
+
   /**
    * Runs a test.
    *
@@ -367,11 +383,7 @@ declare module "bun:test" {
      * @param fn the test function
      * @param options the test timeout or options
      */
-    only(
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    only: TestFunc;
     /**
      * Skips this test.
      *
@@ -379,11 +391,7 @@ declare module "bun:test" {
      * @param fn the test function
      * @param options the test timeout or options
      */
-    skip(
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    skip: TestFunc;
     /**
      * Marks this test as to be written or to be fixed.
      *
@@ -396,11 +404,7 @@ declare module "bun:test" {
      * @param fn the test function
      * @param options the test timeout or options
      */
-    todo(
-      label: string,
-      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ): void;
+    todo: TestFunc;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -408,37 +412,19 @@ declare module "bun:test" {
      *
      * @param condition if the test should run
      */
-    if(
-      condition: boolean,
-    ): (
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
+    if(condition: boolean): TestFunc;
     /**
      * Skips this test, if `condition` is true.
      *
      * @param condition if the test should be skipped
      */
-    skipIf(
-      condition: boolean,
-    ): (
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
+    skipIf(condition: boolean): TestFunc;
     /**
      * Marks this test as to be written or to be fixed, if `condition` is true.
      *
      * @param condition if the test should be marked TODO
      */
-    todoIf(
-      condition: boolean,
-    ): (
-      label: string,
-      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
-      options?: number | TestOptions,
-    ) => void;
+    todoIf(condition: boolean): TestFunc;
     /**
      * Returns a function that runs for each item in `table`.
      *
@@ -457,7 +443,7 @@ declare module "bun:test" {
      * Use `test.failing` when you are writing a test and expecting it to fail.
      * If `failing` test will throw any errors then it will pass. If it does not throw it will fail.
      */
-    failing: Test;
+    failing: TestFunc;
   }
   /**
    * Runs a test.

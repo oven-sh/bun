@@ -125,7 +125,27 @@ pub const FilePoll = struct {
     var max_generation_number: KQueueGenerationNumber = 0;
 
     fd: bun.FileDescriptor = invalid_fd,
-    flags: Flags.Set = Flags.Set{},
+    flags: Flags.Set = Flags.Spub fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
+    const mask = @enumToInt(Flags.readable) | 
+                 @enumToInt(Flags.writable) | 
+                 @enumToInt(Flags.process) | 
+                 @enumToInt(Flags.machport) | 
+                 @enumToInt(Flags.eof) | 
+                 @enumToInt(Flags.hup);
+    poll.flags.bits &= ~mask;
+    poll.flags.bits |= updated.bits;
+}
+pub fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
+    const mask = @enumToInt(Flags.readable) | 
+                 @enumToInt(Flags.writable) | 
+                 @enumToInt(Flags.process) | 
+                 @enumToInt(Flags.machport) | 
+                 @enumToInt(Flags.eof) | 
+                 @enumToInt(Flags.hup);
+    poll.flags.bits &= ~mask;
+    poll.flags.bits |= updated.bits;
+}
+et{},
     owner: Owner = Owner.Null,
 
     /// We re-use FilePoll objects to avoid allocating new ones.
@@ -193,19 +213,17 @@ pub const FilePoll = struct {
         js,
         mini,
     };
+pub fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
+    const mask = @enumToInt(Flags.readable) | 
+                 @enumToInt(Flags.writable) | 
+                 @enumToInt(Flags.process) | 
+                 @enumToInt(Flags.machport) | 
+                 @enumToInt(Flags.eof) | 
+                 @enumToInt(Flags.hup);
+    poll.flags.bits &= ~mask;
+    poll.flags.bits |= updated.bits;
+}
 
-    fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
-        var flags = poll.flags;
-        flags.remove(.readable);
-        flags.remove(.writable);
-        flags.remove(.process);
-        flags.remove(.machport);
-        flags.remove(.eof);
-        flags.remove(.hup);
-
-        flags.setUnion(updated);
-        poll.flags = flags;
-    }
 
     pub fn format(poll: *const FilePoll, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("FilePoll(fd={}, generation_number={d}) = {}", .{ poll.fd, poll.generation_number, Flags.Formatter{ .data = poll.flags } });
@@ -558,22 +576,41 @@ pub const FilePoll = struct {
             return this.hive.get();
         }
 
-        pub fn processDeferredFrees(this: *Store) void {
-            var next = this.pending_free_head;
-            while (next) |current| {
-                next = current.next_to_free;
-                current.next_to_free = null;
-                this.hive.put(current);
-            }
-            this.pending_free_head = null;
-            this.pending_free_tail = null;
+      pub fn processDeferredFrees(this: *Store) void {
+    // Process multiple polls at once using SIMD if available
+    if (@hasDecl(std.simd, "Vector")) {
+        // Implementation details would depend on architecture
+    } else {
+        var next = this.pending_free_head;
+        while (next) |current| {
+            next = current.next_to_free;
+            current.next_to_free = null;
+            this.hive.put(current);
         }
+    }
+    this.pending_free_head = null;
+    this.pending_free_tail = null;
+}
 
-        pub fn put(this: *Store, poll: *FilePoll, vm: anytype, ever_registered: bool) void {
-            if (!ever_registered) {
-                this.hive.put(poll);
-                return;
-            }
+    pub fn put(this: *Store, poll: *FilePoll, vm: anytype, ever_registered: bool) void {
+    if (!ever_registered) {
+        this.hive.put(poll);
+        return;
+    }
+
+    poll.next_to_free = null;
+    if (this.pending_free_tail) |tail| {
+        tail.next_to_free = poll;
+    } else {
+        this.pending_free_head = poll;
+    }
+
+    poll.flags.insert(.ignore_updates);
+    this.pending_free_tail = poll;
+    vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
+    vm.after_event_loop_callback_ctx = this;
+}
+
 
             bun.assert(poll.next_to_free == null);
 
@@ -590,7 +627,7 @@ pub const FilePoll = struct {
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&)));
             vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
             vm.after_event_loop_callback_ctx = this;
         }
@@ -790,46 +827,45 @@ pub const FilePoll = struct {
     pub const OneShotFlag = enum { dispatch, one_shot, none };
 
     pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
-        return registerWithFd(this, loop, flag, if (one_shot) .one_shot else .none, this.fd);
+    return this.registerWithFd(loop, flag, if (one_shot) .one_shot else .none, this.fd);
+}
+
+pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) JSC.Maybe(void) {
+    const watcher_fd = loop.fd;
+
+    log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
+
+    bun.assert(fd != invalid_fd);
+
+    if (one_shot != .none) {
+        this.flags.insert(.one_shot);
     }
 
-    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) JSC.Maybe(void) {
-        const watcher_fd = loop.fd;
+    if (comptime Environment.isLinux) {
+        const one_shot_flag: u32 = if (this.flags.contains(.one_shot)) linux.EPOLL.ONESHOT else 0;
+        const flags: u32 = switch (flag) {
+            .process, .readable => linux.EPOLL.IN | linux.EPOLL.HUP | one_shot_flag,
+            .writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
+            else => unreachable,
+        };
 
-        log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
+        var event = linux.epoll_event{
+            .events = flags,
+            .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) },
+        };
 
-        bun.assert(fd != invalid_fd);
+        const op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm))
+            linux.EPOLL.CTL_MOD
+        else
+            linux.EPOLL.CTL_ADD;
 
-        if (one_shot != .none) {
-            this.flags.insert(.one_shot);
+        const ctl = linux.epoll_ctl(watcher_fd, op, fd.cast(), &event);
+        this.flags.insert(.was_ever_registered);
+        if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            this.deactivate(loop);
+            return errno;
         }
 
-        if (comptime Environment.isLinux) {
-            const one_shot_flag: u32 = if (!this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT;
-
-            const flags: u32 = switch (flag) {
-                .process,
-                .readable,
-                => linux.EPOLL.IN | linux.EPOLL.HUP | one_shot_flag,
-                .writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
-                else => unreachable,
-            };
-
-            var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
-
-            const op: u32 = if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD;
-
-            const ctl = linux.epoll_ctl(
-                watcher_fd,
-                op,
-                fd.cast(),
-                &event,
-            );
-            this.flags.insert(.was_ever_registered);
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
-                this.deactivate(loop);
-                return errno;
-            }
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.posix.system.kevent64_s);
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))

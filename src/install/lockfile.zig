@@ -4980,6 +4980,21 @@ pub const Package = extern struct {
             };
         }
 
+        if (json.asProperty("patchedDependencies")) |patched_deps| {
+            const obj = patched_deps.expr.data.e_object;
+            lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                if (key.isString() and value.isString()) {
+                    var sfb = std.heap.stackFallback(1024, allocator);
+                    const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                    const patch_path = string_builder.append(String, value.asString(allocator).?);
+                    lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
+                }
+            }
+        }
+
         bin: {
             if (json.asProperty("bin")) |bin| {
                 switch (bin.expr.data) {
@@ -5039,21 +5054,6 @@ pub const Package = extern struct {
                         }
                     },
                     else => {},
-                }
-            }
-
-            if (json.asProperty("patchedDependencies")) |patched_deps| {
-                const obj = patched_deps.expr.data.e_object;
-                lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
-                for (obj.properties.slice()) |prop| {
-                    const key = prop.key.?;
-                    const value = prop.value.?;
-                    if (key.isString() and value.isString()) {
-                        var sfb = std.heap.stackFallback(1024, allocator);
-                        const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
-                        const patch_path = string_builder.append(String, value.asString(allocator).?);
-                        lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
-                    }
                 }
             }
 

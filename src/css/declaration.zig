@@ -17,6 +17,9 @@ pub const DeclarationList = ArrayList(css.Property);
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
 const FallbackHandler = css.css_properties.prefix_handler.FallbackHandler;
 const MarginHandler = css.css_properties.margin_padding.MarginHandler;
+const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
+const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
+const InsetHandler = css.css_properties.margin_padding.InsetHandler;
 
 /// A CSS declaration block.
 ///
@@ -326,6 +329,9 @@ pub fn parse_declaration(
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
     margin: MarginHandler = .{},
+    padding: PaddingHandler = .{},
+    scroll_margin: ScrollMarginHandler = .{},
+    inset: InsetHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
@@ -345,6 +351,9 @@ pub const DeclarationHandler = struct {
         // TODO:
         this.background.finalize(&this.decls, context);
         this.margin.finalize(&this.decls, context);
+        this.padding.finalize(&this.decls, context);
+        this.scroll_margin.finalize(&this.decls, context);
+        this.inset.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
 
@@ -352,6 +361,9 @@ pub const DeclarationHandler = struct {
         // return this.background.handleProperty(property, &this.decls, context);
         return this.background.handleProperty(property, &this.decls, context) or
             this.margin.handleProperty(property, &this.decls, context) or
+            this.padding.handleProperty(property, &this.decls, context) or
+            this.scroll_margin.handleProperty(property, &this.decls, context) or
+            this.inset.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }
 

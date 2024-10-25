@@ -2079,4 +2079,92 @@ describe("css tests", () => {
       },
     );
   });
+
+  describe("length", () => {
+    const properties = [
+      "margin-right",
+      "margin",
+      "padding-right",
+      "padding",
+      // TODO: bring this back once we implement SizeHandler
+      // "width",
+      // "height",
+      // "min-height",
+      // "max-height",
+      // "line-height",
+      // "border-radius",
+    ];
+
+    for (const prop of properties) {
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        {
+          safari: 10 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        {
+          safari: 14 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        {
+          safari: 14 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        {
+          safari: 16 << 16,
+        },
+      );
+    }
+  });
 });

@@ -409,7 +409,7 @@ pub const LengthValue = union(enum) {
         }
 
         const a = this.toPx();
-        const b = this.toPx();
+        const b = other.toPx();
         if (a != null and b != null) {
             return css.generic.partialCmpF32(&a.?, &b.?);
         }

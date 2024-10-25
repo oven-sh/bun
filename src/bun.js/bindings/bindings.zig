@@ -4597,8 +4597,7 @@ pub const JSValue = enum(JSValueReprInt) {
         message_type: ConsoleObject.MessageType,
         message_level: ConsoleObject.MessageLevel,
     ) void {
-        JSC.ConsoleObject.messageWithTypeAndLevel(
-            undefined,
+        globalObject.bunVM().console.messageWithTypeAndLevel(
             message_type,
             message_level,
             globalObject,

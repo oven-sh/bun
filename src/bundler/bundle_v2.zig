@@ -816,7 +816,7 @@ pub const BundleV2 = struct {
 
     pub fn init(
         bundler: *ThisBundler,
-        kit_options: ?BakeOptions,
+        bake_options: ?BakeOptions,
         allocator: std.mem.Allocator,
         event_loop: EventLoop,
         enable_reloading: bool,
@@ -852,14 +852,15 @@ pub const BundleV2 = struct {
             .completion = null,
             .source_code_length = 0,
         };
-        if (kit_options) |ko| {
-            this.client_bundler = ko.client_bundler;
-            this.ssr_bundler = ko.ssr_bundler;
-            this.framework = ko.framework;
+        if (bake_options) |bo| {
+            this.client_bundler = bo.client_bundler;
+            this.ssr_bundler = bo.ssr_bundler;
+            this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
             bun.assert(bundler.options.server_components);
             bun.assert(this.client_bundler.options.server_components);
-            bun.assert(this.ssr_bundler.options.server_components);
+            if (bo.framework.server_components.?.separate_ssr_graph)
+                bun.assert(this.ssr_bundler.options.server_components);
         }
         this.linker.graph.allocator = this.graph.heap.allocator();
         this.graph.allocator = this.linker.graph.allocator;
@@ -1873,7 +1874,7 @@ pub const BundleV2 = struct {
                         path.namespace = result.namespace;
                     }
 
-                    const existing = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch unreachable;
+                    const existing = this.pathToSourceIndexMap(resolve.import_record.original_target).getOrPut(this.graph.allocator, path.hashKey()) catch unreachable;
                     if (!existing.found_existing) {
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
 
@@ -2859,8 +2860,6 @@ pub const BundleV2 = struct {
                 {
                     if (result.use_directive == .server)
                         bun.todoPanic(@src(), "\"use server\"", .{});
-                    if (!this.framework.?.server_components.?.separate_ssr_graph)
-                        bun.todoPanic(@src(), "implement 'separate_ssr_graph = false'", .{});
 
                     const reference_source_index = this.enqueueServerComponentGeneratedFile(
                         .{ .client_reference_proxy = .{
@@ -2876,14 +2875,16 @@ pub const BundleV2 = struct {
                         reference_source_index,
                     ) catch bun.outOfMemory();
 
-                    var ssr_source = result.source;
-                    ssr_source.path.pretty = ssr_source.path.text;
-                    ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .kit_server_components_ssr) catch bun.outOfMemory();
-                    const ssr_index = this.enqueueParseTask2(
-                        ssr_source,
-                        .tsx,
-                        .kit_server_components_ssr,
-                    ) catch bun.outOfMemory();
+                    const ssr_index = if (this.framework.?.server_components.?.separate_ssr_graph) ssr_index: {
+                        var ssr_source = result.source;
+                        ssr_source.path.pretty = ssr_source.path.text;
+                        ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .kit_server_components_ssr) catch bun.outOfMemory();
+                        break :ssr_index this.enqueueParseTask2(
+                            ssr_source,
+                            .tsx,
+                            .kit_server_components_ssr,
+                        ) catch bun.outOfMemory();
+                    } else Index.invalid.get();
 
                     graph.server_component_boundaries.put(
                         graph.allocator,
@@ -3729,6 +3730,18 @@ pub const ParseTask = struct {
             bundler.options.react_fast_refresh and
             loader.isJSX() and
             !source.path.isNodeModule();
+
+        opts.features.server_components = if (bundler.options.server_components) switch (target) {
+            .browser => .client_side,
+            else => switch (use_directive) {
+                .none => .wrap_anon_server_functions,
+                .client => if (bundler.options.framework.?.server_components.?.separate_ssr_graph)
+                    .wrap_exports_for_client_reference
+                else
+                    .client_side,
+                .server => .wrap_exports_for_server_reference,
+            },
+        } else .none;
 
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 

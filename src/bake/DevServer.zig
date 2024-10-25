@@ -1145,8 +1145,9 @@ pub fn finalizeBundle(
         scbs.list.items(.reference_source_index),
     ) |source_index, ssr_index, ref_index| {
         scb_bitset.set(source_index);
-        scb_bitset.set(ssr_index);
         scb_bitset.set(ref_index);
+        if (ssr_index < scb_bitset.bit_length)
+            scb_bitset.set(ssr_index);
     }
 
     const resolved_index_cache = try bv2.graph.allocator.alloc(u32, input_file_sources.len * 2);

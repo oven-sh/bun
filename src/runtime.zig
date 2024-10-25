@@ -170,6 +170,8 @@ pub const Runtime = struct {
         /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
 
+        server_components: ServerComponentsMode = .none,
+
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
         auto_import_jsx: bool = false,
@@ -272,6 +274,25 @@ pub const Runtime = struct {
             },
 
             pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
+        };
+
+        pub const ServerComponentsMode = enum {
+            /// Server components is disabled, strings "use client" and "use server" mean nothing.
+            none,
+            /// This is a server-side file outside of the SSR graph, but not a "use server" file.
+            /// - Handle functions with "use server", creating secret exports for them.
+            wrap_anon_server_functions,
+            /// This is a "use client" file on the server, and separate_ssr_graph is off.
+            /// - Wrap all exports in a call to `registerClientReference`
+            /// - Ban "use server" functions???
+            wrap_exports_for_client_reference,
+            /// This is a "use server" file on the server
+            /// - Wrap all exports in a call to `registerServerReference`
+            /// - Ban "use server" functions, since this directive is already applied.
+            wrap_exports_for_server_reference,
+            /// This is a client side file.
+            /// - Ban "use server" functions since it is on the client-side
+            client_side,
         };
     };
 

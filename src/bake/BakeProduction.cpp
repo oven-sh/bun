@@ -10,6 +10,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProd(
     JSC::JSGlobalObject* global,
     BunString outbase,
     JSC::JSValue renderStaticCallback,
+    JSC::JSValue clientEntryUrl,
     JSC::JSValue files,
     JSC::JSValue patterns,
     JSC::JSValue styles)
@@ -21,6 +22,7 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProd(
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsString(vm, outbase.toWTFString()));
     args.append(renderStaticCallback);
+    args.append(clientEntryUrl);
     args.append(files);
     args.append(patterns);
     args.append(styles);

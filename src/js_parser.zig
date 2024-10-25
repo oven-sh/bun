@@ -6771,6 +6771,14 @@ fn NewParser_(
                 p.react_refresh.register_ref = (try p.declareGeneratedSymbol(.other, "$RefreshReg$")).primary;
             }
 
+            switch (p.options.features.server_components) {
+                .none, .client_side => {},
+                .wrap_anon_server_functions, .wrap_exports_for_server_reference => |tag| bun.todoPanic(@src(), "server_components=.{s}", .{@tagName(tag)}),
+                .wrap_exports_for_client_reference => {
+                    p.server_components_wrap_ref = 1;
+                },
+            }
+
             //  "React.createElement" and "createElement" become:
             //      import { createElement } from 'react';
             //  "Foo.Bar.createElement" becomes:
@@ -19490,6 +19498,22 @@ fn NewParser_(
                     data.kind = kind;
                     try stmts.append(stmt.*);
 
+                    if (data.is_export and p.options.features.server_components.wrapsExports()) {
+                        for (data.decls.slice()) |*decl| try_annotate: {
+                            const val = decl.value orelse break :try_annotate;
+                            switch (val.data) {
+                                .e_arrow, .e_function => {},
+                                else => break :try_annotate,
+                            }
+                            const id = switch (decl.binding.data) {
+                                .b_identifier => |id| id.ref,
+                                else => break :try_annotate,
+                            };
+                            const original_name = p.symbols.items[id.innerIndex()].original_name;
+                            decl.value = try p.wrapValueForServerComponentReference(val, original_name);
+                        }
+                    }
+
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
                         for (data.decls.slice()) |decl| try_register: {
                             const val = decl.value orelse break :try_register;
@@ -23120,6 +23144,30 @@ fn NewParser_(
 
                 p.react_refresh.register_used = true;
             }
+        }
+
+        pub fn wrapValueForServerComponentReference(p: *P, val: Expr, original_name: []const u8) !Expr {
+            bun.assert(p.options.features.server_components != .none);
+            bun.assert(p.current_scope == p.module_scope);
+
+            // registerClientReference(
+            //   () => { throw new Error(...) },
+            //   "src/filepath.tsx",
+            //   "Comp"
+            // );
+            const value = b.newExpr(E.Call{
+                .target = register_server_components_reference,
+                .args = try js_ast.ExprNodeList.fromSlice(b.allocator, &.{
+                    b.newExpr(E.Arrow{ .body = .{
+                        .stmts = try b.allocator.dupe(Stmt, &.{
+                            b.newStmt(S.Throw{ .value = err_msg }),
+                        }),
+                        .loc = Logger.Loc.Empty,
+                    } }),
+                    module_path,
+                    b.newExpr(E.String{ .data = key }),
+                }),
+            });
         }
 
         pub fn handleReactRefreshHookCall(p: *P, hook_call: *E.Call, original_name: []const u8) void {

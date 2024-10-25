@@ -210,7 +210,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     var root_dir = try std.fs.cwd().makeOpenPath("dist", .{});
     defer root_dir.close();
 
-    var chunk_id_client_entry: u32 = std.math.maxInt(u32);
+    var client_entry_id: u32 = std.math.maxInt(u32);
 
     var server_entry_module_key: JSValue = .undefined;
     const route_module_keys = JSValue.createEmptyArray(vm.global, options.routes.len);
@@ -237,7 +237,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
                 if (file.entry_point_index) |entry_point| {
                     switch (entry_point) {
-                        1 => chunk_id_client_entry = @intCast(i),
+                        1 => client_entry_id = @intCast(i),
                         else => {},
                     }
                 }
@@ -293,7 +293,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         }
     }
 
-    bun.assert(chunk_id_client_entry != std.math.maxInt(u32));
+    bun.assert(client_entry_id != std.math.maxInt(u32));
     bun.assert(server_entry_module_key != .undefined);
 
     // HACK: react-server-dom-webpack assigns to `__webpack_require__.u`
@@ -307,7 +307,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     for (bundled_outputs.items[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
         bun.assert(output_file.loader == .css);
-        str.* = bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path }).toJS(vm.global);
+        str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(vm.global);
     }
 
     for (
@@ -333,10 +333,16 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         bun.Global.crash();
     };
 
+    const client_entry_url = (try bun.String.createFormat("{s}{s}", .{
+        public_path,
+        bundled_outputs.items[client_entry_id].dest_path,
+    })).toJS(vm.global);
+
     const render_promise = BakeRenderRoutesForProd(
         vm.global,
         bun.String.init(root_dir_path),
         server_render_func,
+        client_entry_url,
         route_module_keys,
         route_patterns,
         route_style_references,
@@ -399,6 +405,7 @@ extern fn BakeRenderRoutesForProd(
     *JSC.JSGlobalObject,
     out_base: bun.String,
     render_static_cb: JSValue,
+    client_entry_url: JSValue,
     arr: JSValue,
     patterns: JSValue,
     styles: JSValue,

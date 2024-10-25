@@ -1,3 +1,11 @@
+// Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
+// if a proxy IS specified, default to 64. We have different values because we might change this in the future.
+// https://github.com/npm/cli/issues/7072
+// https://pnpm.io/npmrc#network-concurrency (pnpm defaults to 16)
+// https://yarnpkg.com/configuration/yarnrc#networkConcurrency (defaults to 50)
+const default_max_simultaneous_requests_for_bun_install = 64;
+const default_max_simultaneous_requests_for_bun_install_for_proxies = 64;
+
 const bun = @import("root").bun;
 const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
@@ -266,6 +274,11 @@ const NetworkTask = struct {
         this.package_manager.async_network_task_queue.push(this);
     }
 
+    pub const Authorization = enum {
+        no_authorization,
+        allow_authorization,
+    };
+
     // We must use a less restrictive Accept header value
     // https://github.com/oven-sh/bun/issues/341
     // https://www.jfrog.com/jira/browse/RTFACT-18398
@@ -467,6 +480,7 @@ const NetworkTask = struct {
         allocator: std.mem.Allocator,
         tarball_: *const ExtractTarball,
         scope: *const Npm.Registry.Scope,
+        authorization: NetworkTask.Authorization,
     ) !void {
         this.callback = .{ .extract = tarball_.* };
         const tarball = &this.callback.extract;
@@ -496,14 +510,18 @@ const NetworkTask = struct {
         this.allocator = allocator;
 
         var header_builder = HeaderBuilder{};
-
-        countAuth(&header_builder, scope);
-
         var header_buf: string = "";
+
+        if (authorization == .allow_authorization) {
+            countAuth(&header_builder, scope);
+        }
+
         if (header_builder.header_count > 0) {
             try header_builder.allocate(allocator);
 
-            appendAuth(&header_builder, scope);
+            if (authorization == .allow_authorization) {
+                appendAuth(&header_builder, scope);
+            }
 
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
@@ -4248,6 +4266,8 @@ pub const PackageManager = struct {
                         dependency_id,
                         package,
                         name_and_version_hash,
+                        // its npm.
+                        .allow_authorization,
                     ) orelse unreachable,
                 },
             },
@@ -4305,8 +4325,8 @@ pub const PackageManager = struct {
         is_required: bool,
         dependency_id: DependencyID,
         package: Lockfile.Package,
-        /// if patched then we need to do apply step after network task is done
         patch_name_and_version_hash: ?u64,
+        authorization: NetworkTask.Authorization,
     ) !?*NetworkTask {
         if (this.hasCreatedNetworkTask(task_id, is_required)) {
             return null;
@@ -4350,6 +4370,7 @@ pub const PackageManager = struct {
                 ),
             },
             scope,
+            authorization,
         );
 
         return network_task;
@@ -5457,6 +5478,7 @@ pub const PackageManager = struct {
                         .resolution = res,
                     },
                     null,
+                    .no_authorization,
                 )) |network_task| {
                     this.enqueueNetworkTask(network_task);
                 }
@@ -5658,6 +5680,7 @@ pub const PackageManager = struct {
                                 .resolution = res,
                             },
                             null,
+                            .no_authorization,
                         )) |network_task| {
                             this.enqueueNetworkTask(network_task);
                         }
@@ -7232,7 +7255,7 @@ pub const PackageManager = struct {
             {
                 const token_keys = [_]string{
                     "BUN_CONFIG_TOKEN",
-                    "NPM_CONFIG_token",
+                    "NPM_CONFIG_TOKEN",
                     "npm_config_token",
                 };
                 var did_set = false;
@@ -8741,6 +8764,19 @@ pub const PackageManager = struct {
             }
         }
 
+        AsyncHTTP.max_simultaneous_requests.store(brk: {
+            if (cli.network_concurrency) |network_concurrency| {
+                break :brk @max(network_concurrency, 1);
+            }
+
+            // If any HTTP proxy is set, use a diferent limit
+            if (env.has("http_proxy") or env.has("https_proxy") or env.has("HTTPS_PROXY") or env.has("HTTP_PROXY")) {
+                break :brk default_max_simultaneous_requests_for_bun_install_for_proxies;
+            }
+
+            break :brk default_max_simultaneous_requests_for_bun_install;
+        }, .monotonic);
+
         HTTP.HTTPThread.init(&.{
             .ca = ca,
             .abs_ca_file_name = abs_ca_file_name,
@@ -9290,6 +9326,7 @@ pub const PackageManager = struct {
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+        clap.parseParam("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
@@ -9373,7 +9410,7 @@ pub const PackageManager = struct {
         token: string = "",
         global: bool = false,
         config: ?string = null,
-
+        network_concurrency: ?u16 = null,
         backend: ?PackageInstall.Method = null,
 
         positionals: []const string = &[_]string{},
@@ -9761,6 +9798,13 @@ pub const PackageManager = struct {
 
             if (args.option("--cafile")) |ca_file_name| {
                 cli.ca_file_name = ca_file_name;
+            }
+
+            if (args.option("--network-concurrency")) |network_concurrency| {
+                cli.network_concurrency = std.fmt.parseInt(u16, network_concurrency, 10) catch {
+                    Output.errGeneric("Expected --network-concurrency to be a number between 0 and 65535: {s}", .{network_concurrency});
+                    Global.crash();
+                };
             }
 
             // commands that support --filter
@@ -12049,6 +12093,7 @@ pub const PackageManager = struct {
         pending_lifecycle_scripts: std.ArrayListUnmanaged(struct {
             list: Lockfile.Package.Scripts.List,
             tree_id: Lockfile.Tree.Id,
+            optional: bool,
         }) = .{},
 
         trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
@@ -12213,10 +12258,17 @@ pub const PackageManager = struct {
                 const entry = this.pending_lifecycle_scripts.items[i];
                 const name = entry.list.package_name;
                 const tree_id = entry.tree_id;
+                const optional = entry.optional;
                 if (this.canRunScripts(tree_id)) {
                     _ = this.pending_lifecycle_scripts.swapRemove(i);
                     const output_in_foreground = false;
-                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
+                    this.manager.spawnPackageLifecycleScripts(
+                        this.command_ctx,
+                        entry.list,
+                        optional,
+                        log_level,
+                        output_in_foreground,
+                    ) catch |err| {
                         if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
@@ -12299,8 +12351,9 @@ pub const PackageManager = struct {
                     PackageManager.instance.sleep();
                 }
 
+                const optional = entry.optional;
                 const output_in_foreground = false;
-                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, output_in_foreground) catch |err| {
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, optional, log_level, output_in_foreground) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                         const args = .{ package_name, @errorName(err) };
@@ -12935,7 +12988,8 @@ pub const PackageManager = struct {
                             this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
                         }
 
-                        const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
+                        const dep = this.lockfile.buffers.dependencies.items[dependency_id];
+                        const name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
                         const is_trusted, const is_trusted_through_update_request = brk: {
                             if (this.trusted_dependencies_from_update_requests.contains(name_hash)) break :brk .{ true, true };
                             if (this.lockfile.hasTrustedDependency(alias)) break :brk .{ true, false };
@@ -12948,6 +13002,7 @@ pub const PackageManager = struct {
                                 log_level,
                                 destination_dir,
                                 package_id,
+                                dep.behavior.optional,
                                 resolution,
                             )) {
                                 if (is_trusted_through_update_request) {
@@ -13071,7 +13126,8 @@ pub const PackageManager = struct {
 
                 defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
 
-                const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
+                const dep = this.lockfile.buffers.dependencies.items[dependency_id];
+                const name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
                 const is_trusted, const is_trusted_through_update_request, const add_to_lockfile = brk: {
                     // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                     if (this.trusted_dependencies_from_update_requests.contains(name_hash)) break :brk .{ true, true, true };
@@ -13089,6 +13145,7 @@ pub const PackageManager = struct {
                         log_level,
                         destination_dir,
                         package_id,
+                        dep.behavior.optional,
                         resolution,
                     )) {
                         if (is_trusted_through_update_request) {
@@ -13114,6 +13171,7 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
             node_modules_folder: std.fs.Dir,
             package_id: PackageID,
+            optional: bool,
             resolution: *const Resolution,
         ) bool {
             var scripts: Package.Scripts = this.lockfile.packages.items(.scripts)[package_id];
@@ -13165,6 +13223,7 @@ pub const PackageManager = struct {
                 this.pending_lifecycle_scripts.append(this.manager.allocator, .{
                     .list = scripts_list.?,
                     .tree_id = this.current_tree_id,
+                    .optional = optional,
                 }) catch bun.outOfMemory();
 
                 return true;
@@ -13302,6 +13361,7 @@ pub const PackageManager = struct {
             dependency_id,
             this.lockfile.packages.get(package_id),
             patch_name_and_version_hash,
+            .allow_authorization,
         ) catch unreachable) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {
@@ -13338,6 +13398,7 @@ pub const PackageManager = struct {
             dependency_id,
             this.lockfile.packages.get(package_id),
             patch_name_and_version_hash,
+            .no_authorization,
         ) catch unreachable) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {
@@ -14593,8 +14654,9 @@ pub const PackageManager = struct {
                 }
                 // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
                 // have finished, and lockfiles have been saved
+                const optional = false;
                 const output_in_foreground = true;
-                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, output_in_foreground);
+                try manager.spawnPackageLifecycleScripts(ctx, scripts, optional, log_level, output_in_foreground);
 
                 while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                     if (PackageManager.verbose_install) {
@@ -14778,6 +14840,7 @@ pub const PackageManager = struct {
         this: *PackageManager,
         ctx: Command.Context,
         list: Lockfile.Package.Scripts.List,
+        optional: bool,
         comptime log_level: PackageManager.Options.LogLevel,
         comptime foreground: bool,
     ) !void {
@@ -14827,7 +14890,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level, foreground);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, optional, log_level, foreground);
     }
 };
 

@@ -9,6 +9,8 @@
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
 #include "napi_handle_scope.h"
+#include "napi_macros.h"
+#include "napi_finalizer.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -71,31 +73,6 @@
 // #include <iostream>
 using namespace JSC;
 using namespace Zig;
-
-#define NAPI_VERBOSE 0
-
-#if NAPI_VERBOSE
-#include <stdio.h>
-#include <stdarg.h>
-
-void napi_log(long line, const char* function, const char* fmt, ...)
-{
-    printf("[napi.cpp:%ld] %s: ", line, function);
-
-    va_list ap;
-    va_start(ap, fmt);
-    vprintf(fmt, ap);
-    va_end(ap);
-
-    printf("\n");
-}
-
-#define NAPI_LOG_CURRENT_FUNCTION printf("[napi.cpp:%d] %s\n", __LINE__, __PRETTY_FUNCTION__)
-#define NAPI_LOG(fmt, ...) napi_log(__LINE__, __PRETTY_FUNCTION__, fmt __VA_OPT__(, ) __VA_ARGS__)
-#else
-#define NAPI_LOG_CURRENT_FUNCTION
-#define NAPI_LOG(fmt, ...)
-#endif
 
 // Every NAPI function should use this at the start. It does the following:
 // - if NAPI_VERBOSE is 1, log that the function was called
@@ -262,11 +239,9 @@ public:
     {
         auto* weakValue = reinterpret_cast<NapiRef*>(context);
 
-        auto finalizer = weakValue->finalizer;
-        if (finalizer.finalize_cb) {
-            weakValue->finalizer.finalize_cb = nullptr;
-            finalizer.call(weakValue->globalObject.get(), weakValue->data);
-        }
+        weakValue->finalizer.call(weakValue->globalObject.get(), weakValue->data);
+        // TODO(@190n) check if this is really needed (create many refs to one object?)
+        weakValue->finalizer = Bun::NapiFinalizer {};
     }
 };
 
@@ -274,14 +249,6 @@ static NapiRefWeakHandleOwner& weakValueHandleOwner()
 {
     static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
     return jscWeakValueHandleOwner;
-}
-
-void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
-{
-    if (this->finalize_cb) {
-        NAPI_LOG_CURRENT_FUNCTION;
-        this->finalize_cb(toNapi(globalObject), data, this->finalize_hint);
-    }
 }
 
 void NapiRef::ref()
@@ -317,10 +284,6 @@ void NapiRef::clear()
     this->weakValueRef.clear();
     this->strongRef.clear();
 }
-
-// namespace Napi {
-// class Reference
-// }
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
@@ -1036,43 +999,10 @@ extern "C" void napi_module_register(napi_module* mod)
 
 void finalizeRefInsideExternalForNapiWrap(napi_env env, void* opaque_ref, void* hint)
 {
-    auto* ref = reinterpret_cast<NapiRef*>(opaque_ref);
-    ref->finalizer.call(toJS(env), ref->data);
-    delete ref;
-}
-
-// Returns a pointer to the NapiRef pointer used for a value, or nullptr if the value cannot have an
-// associated ref
-// Possible cases:
-// - returns nullptr: the value cannot be wrapped
-// - returns a pointer to nullptr: the value can be wrapped, but has not yet been wrapped
-// - returns a pointer to non-null: the value has been wrapped
-NapiRef** getRefToWrapValue(Zig::GlobalObject* globalObject, JSValue value, Bun::NapiExternal** new_external_ptr)
-{
-    if (new_external_ptr) {
-        *new_external_ptr = nullptr;
-    }
-
-    if (!value.isCell()) {
-        return nullptr;
-    } else {
-        // TODO this probably leaks in napi_unwrap on an object that isn't wrapped
-        if (auto* found_external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()))) {
-            // object has already been wrapped, so return the place where the ref is stored in that wrapping
-            return reinterpret_cast<NapiRef**>(&found_external->m_value);
-        } else {
-            // no finalizer, because napi_wrap will add it
-            auto* new_external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(),
-                nullptr, nullptr, nullptr);
-            if (new_external_ptr) {
-                *new_external_ptr = new_external;
-            }
-            // associate the external value with the object
-            globalObject->napiWraps()->set(globalObject->vm(), value.asCell(), new_external);
-            // return a pointer to where the external stores the ref
-            return reinterpret_cast<NapiRef**>(&new_external->m_value);
-        }
-    }
+    // auto* ref = reinterpret_cast<NapiRef*>(opaque_ref);
+    // if (ref) {
+    //     ref->unref();
+    // }
 }
 
 extern "C" napi_status napi_wrap(napi_env env,
@@ -1092,30 +1022,27 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto* globalObject = toJS(env);
     JSValue value = toJS(js_object);
-    Bun::NapiExternal* new_external;
-    NapiRef** refPtr = getRefToWrapValue(globalObject, value, &new_external);
-    NAPI_RETURN_EARLY_IF_FALSE(env, refPtr, napi_object_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, value.isCell(), napi_object_expected);
+    JSCell* cell = value.asCell();
 
-    if (new_external) {
-        new_external->finalizer = reinterpret_cast<void*>(finalizeRefInsideExternalForNapiWrap);
+    if (globalObject->napiWraps()->has(cell)) {
+        // Calling napi_wrap() a second time on an object will return an error.
+        // To associate another native instance with the object, use
+        // napi_remove_wrap() first.
+        return napi_set_last_error(env, napi_invalid_arg);
     }
 
-    // Calling napi_wrap() a second time on an object will return an error.
-    // To associate another native instance with the object, use
-    // napi_remove_wrap() first.
-    NAPI_RETURN_EARLY_IF_FALSE(env, *refPtr == nullptr, napi_invalid_arg);
-
-    auto* ref = new NapiRef(globalObject, 0);
-    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
-
-    if (finalize_cb) {
-        ref->finalizer.finalize_cb = finalize_cb;
-        ref->finalizer.finalize_hint = finalize_hint;
-    }
-
+    // create a new weak reference (refcount 0)
+    auto* ref = new NapiRef(globalObject, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
     ref->data = native_object;
-
-    *refPtr = ref;
+    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
+    // wrap the ref in an external so that it can serve as a JSValue
+    auto* external = Bun::NapiExternal::create(globalObject->vm(),
+        globalObject->NapiExternalStructure(),
+        reinterpret_cast<void*>(ref),
+        nullptr,
+        finalizeRefInsideExternalForNapiWrap);
+    globalObject->napiWraps()->set(globalObject->vm(), cell, external);
 
     if (result) {
         *result = toNapi(ref);
@@ -1131,23 +1058,27 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     NAPI_CHECK_ARG(env, js_object);
 
     JSValue value = toJS(js_object);
+    NAPI_RETURN_EARLY_IF_FALSE(env, value.isCell(), napi_object_expected);
     Zig::GlobalObject* globalObject = toJS(env);
-    NapiRef** refPtr = getRefToWrapValue(globalObject, value, nullptr);
-    NAPI_RETURN_EARLY_IF_FALSE(env, refPtr, napi_object_expected);
+    auto* external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()));
 
-    if (*refPtr == nullptr) {
+    if (!external) {
         // object had not been wrapped, so there is nothing to do
         NAPI_RETURN_SUCCESS(env);
     }
 
-    auto* ref = *refPtr;
-
+    auto* ref = reinterpret_cast<NapiRef*>(external->m_value);
     if (result) {
         *result = ref->data;
     }
+    external->m_value = nullptr;
 
-    // don't delete the ref
+    ref->finalizer = Bun::NapiFinalizer {};
+    globalObject->napiWraps()->remove(value.asCell());
 
+    // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
+    // if strong, native addon needs to clean it up.
+    // the external is garbage collected.
     NAPI_RETURN_SUCCESS(env);
 }
 
@@ -1159,12 +1090,13 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     NAPI_CHECK_ARG(env, result);
 
     JSValue value = toJS(js_object);
+    NAPI_RETURN_EARLY_IF_FALSE(env, value.isCell(), napi_object_expected);
     Zig::GlobalObject* globalObject = toJS(env);
-    NapiRef** refPtr = getRefToWrapValue(globalObject, value, nullptr);
-    NAPI_RETURN_EARLY_IF_FALSE(env, refPtr && *refPtr, napi_invalid_arg);
-    NapiRef* ref = *refPtr;
+    auto* external = jsDynamicCast<Bun::NapiExternal*>(globalObject->napiWraps()->get(value.asCell()));
+    NAPI_RETURN_EARLY_IF_FALSE(env, external && external->m_value, napi_invalid_arg);
+    auto* ref = reinterpret_cast<NapiRef*>(external->m_value);
 
-    *result = ref ? ref->data : nullptr;
+    *result = ref->data;
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1321,7 +1253,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    auto* ref = new NapiRef(globalObject, initial_refcount);
+    auto* ref = new NapiRef(globalObject, initial_refcount, Bun::NapiFinalizer {});
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
     }
@@ -2313,7 +2245,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     JSC::VM& vm = globalObject->vm();
 
     auto* structure = globalObject->NapiExternalStructure();
-    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, reinterpret_cast<void*>(finalize_cb));
+    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb);
     JSC::EnsureStillAliveScope ensureStillAlive(value);
     *result = toNapi(value, globalObject);
     NAPI_RETURN_SUCCESS(env);

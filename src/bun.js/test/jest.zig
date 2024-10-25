@@ -1857,8 +1857,8 @@ inline fn createScope(
 inline fn createIfScope(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
-    comptime property: [:0]const u8,
     comptime signature: string,
+    comptime property: [:0]const u8,
     comptime Scope: type,
     comptime tag: Tag,
 ) JSValue {
@@ -2151,8 +2151,8 @@ fn eachBind(
 fn createEach(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
-    comptime property: [:0]const u8,
     comptime signature: string,
+    comptime property: [:0]const u8,
     comptime is_test: bool,
 ) JSValue {
     const arguments = callframe.arguments(1);

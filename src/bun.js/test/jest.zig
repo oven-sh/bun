@@ -50,7 +50,7 @@ const is_bindgen: bool = false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 
-pub const Tag = enum(u3) {
+pub const Tag = enum {
     pass,
     fail,
     only,
@@ -257,12 +257,12 @@ pub const TestRunner = struct {
     };
 
     pub const Test = struct {
-        status: Status = Status.pending,
+        status: Status = .pending,
 
         pub const ID = u32;
         pub const List = std.MultiArrayList(Test);
 
-        pub const Status = enum(u3) {
+        pub const Status = enum {
             pending,
             pass,
             fail,
@@ -601,7 +601,7 @@ pub const TestScope = struct {
     snapshot_count: usize = 0,
 
     // null if the test does not set a timeout
-    timeout_millis: u32 = std.math.maxInt(u32),
+    timeout_millis: u32,
 
     retry_count: u32 = 0, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
@@ -752,7 +752,7 @@ pub const TestScope = struct {
             _ = vm.uncaughtException(vm.global, initial_value, true);
 
             if (this.tag == .todo) {
-                return .{ .todo = {} };
+                return .todo;
             }
 
             return .{ .fail = expect.active_test_expectation_counter.actual };
@@ -845,27 +845,26 @@ pub const DescribeScope = struct {
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
-        if (this.parent != null) return this.parent.?.isWithinOnlyScope();
+        if (this.parent) |p| return p.isWithinOnlyScope();
         return false;
     }
 
     fn isWithinSkipScope(this: *const DescribeScope) bool {
         if (this.tag == .skip) return true;
-        if (this.parent != null) return this.parent.?.isWithinSkipScope();
+        if (this.parent) |p| return p.isWithinSkipScope();
         return false;
     }
 
     fn isWithinTodoScope(this: *const DescribeScope) bool {
         if (this.tag == .todo) return true;
-        if (this.parent != null) return this.parent.?.isWithinTodoScope();
+        if (this.parent) |p| return p.isWithinTodoScope();
         return false;
     }
 
     pub fn shouldEvaluateScope(this: *const DescribeScope) bool {
-        if (this.tag == .skip or
-            this.tag == .todo) return false;
+        if (this.tag == .skip or this.tag == .todo) return false;
         if (Jest.runner.?.only and this.tag == .only) return true;
-        if (this.parent != null) return this.parent.?.shouldEvaluateScope();
+        if (this.parent) |p| return p.shouldEvaluateScope();
         return true;
     }
 
@@ -2149,7 +2148,7 @@ fn eachBind(
     return .undefined;
 }
 
-inline fn createEach(
+fn createEach(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
     comptime property: [:0]const u8,

@@ -385,7 +385,7 @@ pub const Target = enum {
     node,
 
     /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
-    kit_server_components_ssr,
+    bake_server_components_ssr,
 
     pub const Map = bun.ComptimeStringMap(Target, .{
         .{ "browser", .browser },
@@ -408,21 +408,21 @@ pub const Target = enum {
         return switch (this) {
             .node => .node,
             .browser => .browser,
-            .bun, .kit_server_components_ssr => .bun,
+            .bun, .bake_server_components_ssr => .bun,
             .bun_macro => .bun_macro,
         };
     }
 
     pub inline fn isServerSide(this: Target) bool {
         return switch (this) {
-            .bun_macro, .node, .bun, .kit_server_components_ssr => true,
+            .bun_macro, .node, .bun, .bake_server_components_ssr => true,
             else => false,
         };
     }
 
     pub inline fn isBun(this: Target) bool {
         return switch (this) {
-            .bun_macro, .bun, .kit_server_components_ssr => true,
+            .bun_macro, .bun, .bake_server_components_ssr => true,
             else => false,
         };
     }
@@ -444,7 +444,7 @@ pub const Target = enum {
     pub fn bakeGraph(target: Target) bun.bake.Graph {
         return switch (target) {
             .browser => .client,
-            .kit_server_components_ssr => .ssr,
+            .bake_server_components_ssr => .ssr,
             .bun_macro, .bun, .node => .server,
         };
     }
@@ -523,7 +523,7 @@ pub const Target = enum {
         array.set(Target.browser, &listc);
         array.set(Target.bun, &listd);
         array.set(Target.bun_macro, &listd);
-        array.set(Target.kit_server_components_ssr, &listd);
+        array.set(Target.bake_server_components_ssr, &listd);
 
         // Original comment:
         // The neutral target is for people that don't want esbuild to try to
@@ -548,7 +548,7 @@ pub const Target = enum {
             "bun",
             "node",
         });
-        array.set(Target.kit_server_components_ssr, &.{
+        array.set(Target.bake_server_components_ssr, &.{
             "bun",
             "node",
         });

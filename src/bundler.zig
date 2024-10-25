@@ -919,7 +919,7 @@ pub const Bundler = struct {
                         &writer,
                         .esm,
                     ),
-                    .bun, .bun_macro, .kit_server_components_ssr => try bundler.print(
+                    .bun, .bun_macro, .bake_server_components_ssr => try bundler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
@@ -1369,9 +1369,6 @@ pub const Bundler = struct {
                 opts.tree_shaking = bundler.options.tree_shaking;
                 opts.features.inlining = bundler.options.inlining;
 
-                opts.features.react_fast_refresh = opts.features.hot_module_reloading and
-                    jsx.parse and
-                    bundler.options.react_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();

@@ -206,8 +206,22 @@ pub const Framework = struct {
                     global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
                     return error.JSError;
                 }
-                // in addition to here, this import isnt actually wired up to js_parser where the default is hardcoded.
-                bun.todoPanic(@src(), "custom react-fast-refresh import source", .{});
+
+                const prop = rfr.get(global, "importSource") orelse {
+                    global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
+                    return error.JSError;
+                };
+
+                const str = prop.toBunString(global);
+                defer str.deref();
+
+                if (global.hasException())
+                    return error.JSError;
+
+                // Leak
+                break :brk .{
+                    .import_source = str.toUTF8(bun.default_allocator).slice(),
+                };
             },
             .server_components = sc: {
                 const sc: JSValue = opts.get(global, "serverComponents") orelse {

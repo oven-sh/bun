@@ -162,14 +162,13 @@ pub const Runtime = struct {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
-
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
-
+        /// Control how the parser handles server components and server functions.
         server_components: ServerComponentsMode = .none,
 
         is_macro_runtime: bool = false,
@@ -293,6 +292,15 @@ pub const Runtime = struct {
             /// This is a client side file.
             /// - Ban "use server" functions since it is on the client-side
             client_side,
+
+            pub fn wrapsExports(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_client_reference,
+                    .wrap_exports_for_server_reference,
+                    => true,
+                    else => false,
+                };
+            }
         };
     };
 

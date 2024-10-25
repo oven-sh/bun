@@ -397,7 +397,7 @@ pub const BundleV2 = struct {
         else switch (target) {
             else => this.bundler,
             .browser => this.client_bundler,
-            .kit_server_components_ssr => this.ssr_bundler,
+            .bake_server_components_ssr => this.ssr_bundler,
         };
     }
 
@@ -408,7 +408,7 @@ pub const BundleV2 = struct {
         else switch (target) {
             else => &this.graph.path_to_source_index_map,
             .browser => &this.graph.client_path_to_source_index_map,
-            .kit_server_components_ssr => &this.graph.ssr_path_to_source_index_map,
+            .bake_server_components_ssr => &this.graph.ssr_path_to_source_index_map,
         };
     }
 
@@ -739,7 +739,7 @@ pub const BundleV2 = struct {
                 const a, const b = switch (target) {
                     else => .{ &this.graph.client_path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
                     .browser => .{ &this.graph.path_to_source_index_map, &this.graph.ssr_path_to_source_index_map },
-                    .kit_server_components_ssr => .{ &this.graph.path_to_source_index_map, &this.graph.client_path_to_source_index_map },
+                    .bake_server_components_ssr => .{ &this.graph.path_to_source_index_map, &this.graph.client_path_to_source_index_map },
                 };
                 a.put(this.graph.allocator, entry.key_ptr.*, entry.value_ptr.*) catch bun.outOfMemory();
                 if (this.framework.?.server_components.?.separate_ssr_graph)
@@ -994,7 +994,7 @@ pub const BundleV2 = struct {
                         const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
                             .client => .browser,
                             .server => this.bundler.options.target,
-                            .ssr => .kit_server_components_ssr,
+                            .ssr => .bake_server_components_ssr,
                         }) orelse continue;
 
                         try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
@@ -1024,7 +1024,7 @@ pub const BundleV2 = struct {
                             const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, switch (entry_point.graph) {
                                 .client => .browser,
                                 .server => this.bundler.options.target,
-                                .ssr => .kit_server_components_ssr,
+                                .ssr => .bake_server_components_ssr,
                             }) orelse continue;
                             try this.graph.entry_points.append(this.graph.allocator, Index.source(source_index));
                         }
@@ -1261,7 +1261,10 @@ pub const BundleV2 = struct {
                 .contents = source.contents,
             },
             .side_effects = .has_side_effects,
-            .jsx = this.bundlerForTarget(known_target).options.jsx,
+            .jsx = if (known_target == .bake_server_components_ssr and !this.framework.?.server_components.?.separate_ssr_graph)
+                this.bundler.options.jsx
+            else
+                this.bundlerForTarget(known_target).options.jsx,
             .source_index = source_index,
             .module_type = .unknown,
             .emit_decorator_metadata = false, // TODO
@@ -2271,7 +2274,7 @@ pub const BundleV2 = struct {
         var path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
-        if (target == .kit_server_components_ssr) {
+        if (target == .bake_server_components_ssr) {
             // the SSR graph needs different pretty names or else HMR mode will
             // confuse the two modules.
             path_clone.pretty = std.fmt.bufPrint(&buf, "ssr:{s}", .{rel}) catch buf[0..];
@@ -2464,7 +2467,7 @@ pub const BundleV2 = struct {
                 break :brk .{
                     this.ssr_bundler,
                     .ssr,
-                    .kit_server_components_ssr,
+                    .bake_server_components_ssr,
                 };
             } else .{
                 this.bundlerForTarget(ast.target),
@@ -2861,30 +2864,45 @@ pub const BundleV2 = struct {
                     if (result.use_directive == .server)
                         bun.todoPanic(@src(), "\"use server\"", .{});
 
-                    const reference_source_index = this.enqueueServerComponentGeneratedFile(
-                        .{ .client_reference_proxy = .{
-                            .other_source = result.source,
-                            .named_exports = result.ast.named_exports,
-                        } },
-                        result.source,
-                    ) catch bun.outOfMemory();
+                    const reference_source_index, const ssr_index = if (this.framework.?.server_components.?.separate_ssr_graph) brk: {
+                        // Enqueue two files, one in server graph, one in ssr graph.
+                        const reference_source_index = this.enqueueServerComponentGeneratedFile(
+                            .{ .client_reference_proxy = .{
+                                .other_source = result.source,
+                                .named_exports = result.ast.named_exports,
+                            } },
+                            result.source,
+                        ) catch bun.outOfMemory();
+
+                        var ssr_source = result.source;
+                        ssr_source.path.pretty = ssr_source.path.text;
+                        ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .bake_server_components_ssr) catch bun.outOfMemory();
+                        const ssr_index = this.enqueueParseTask2(
+                            ssr_source,
+                            input_file_loaders[result.source.index.get()],
+                            .bake_server_components_ssr,
+                        ) catch bun.outOfMemory();
+
+                        break :brk .{ reference_source_index, ssr_index };
+                    } else brk: {
+                        // Enqueue only one file
+                        var server_source = result.source;
+                        server_source.path.pretty = server_source.path.text;
+                        server_source.path = this.pathWithPrettyInitialized(server_source.path, this.bundler.options.target) catch bun.outOfMemory();
+                        const server_index = this.enqueueParseTask2(
+                            server_source,
+                            input_file_loaders[result.source.index.get()],
+                            .bake_server_components_ssr,
+                        ) catch bun.outOfMemory();
+
+                        break :brk .{ server_index, Index.invalid.get() };
+                    };
 
                     this.graph.path_to_source_index_map.put(
                         graph.allocator,
                         result.source.path.hashKey(),
                         reference_source_index,
                     ) catch bun.outOfMemory();
-
-                    const ssr_index = if (this.framework.?.server_components.?.separate_ssr_graph) ssr_index: {
-                        var ssr_source = result.source;
-                        ssr_source.path.pretty = ssr_source.path.text;
-                        ssr_source.path = this.pathWithPrettyInitialized(ssr_source.path, .kit_server_components_ssr) catch bun.outOfMemory();
-                        break :ssr_index this.enqueueParseTask2(
-                            ssr_source,
-                            .tsx,
-                            .kit_server_components_ssr,
-                        ) catch bun.outOfMemory();
-                    } else Index.invalid.get();
 
                     graph.server_component_boundaries.put(
                         graph.allocator,
@@ -3683,7 +3701,7 @@ pub const ParseTask = struct {
         else
             .none;
 
-        if ((use_directive == .client and task.known_target != .kit_server_components_ssr) or
+        if ((use_directive == .client and task.known_target != .bake_server_components_ssr) or
             (bundler.options.server_components and task.known_target == .browser))
         {
             bundler = this.ctx.client_bundler;
@@ -3699,8 +3717,8 @@ pub const ParseTask = struct {
         };
 
         const target = (if (task.source_index.get() == 1) targetFromHashbang(entry.contents) else null) orelse
-            if (task.known_target == .kit_server_components_ssr)
-            .kit_server_components_ssr
+            if (task.known_target == .bake_server_components_ssr and bundler.options.framework.?.server_components.?.separate_ssr_graph)
+            .bake_server_components_ssr
         else
             bundler.options.target;
 
@@ -3736,12 +3754,14 @@ pub const ParseTask = struct {
             else => switch (use_directive) {
                 .none => .wrap_anon_server_functions,
                 .client => if (bundler.options.framework.?.server_components.?.separate_ssr_graph)
-                    .wrap_exports_for_client_reference
+                    .client_side
                 else
-                    .client_side,
+                    .wrap_exports_for_client_reference,
                 .server => .wrap_exports_for_server_reference,
             },
         } else .none;
+
+        opts.framework = bundler.options.framework;
 
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 

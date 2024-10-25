@@ -475,3 +475,34 @@ it("--ignore-dce-annotations ignores DCE annotations", () => {
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toBe("Hello, world!\n");
 });
+
+it("should preserve '--' in process.argv", async () => {
+  await mkdir(join(run_dir, "subdir"));
+  await writeFile(
+    join(run_dir, "subdir", "test.js"),
+    `
+    console.log(process.argv);
+  `,
+  );
+
+  const {stdout} = spawn({
+    cmd: [bunExe(), "run", "subdir/test.js", "--", "rest", "--foo=bar", ],
+    cwd: run_dir,
+    env: {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
+    },
+  });
+
+  const text = await Bun.readableStreamToText(stdout);
+
+  const cleanedText = text.replace(/\n/g, '');
+  const argv = JSON.parse(cleanedText); 
+
+  // the first argv is bun exe path
+  // the second argv is the script name
+  expect(argv[2]).toBe("--");
+  expect(argv[3]).toBe("rest");
+  expect(argv[4]).toBe("--foo=bar");
+});
+ 

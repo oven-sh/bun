@@ -7,6 +7,7 @@ const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = bun.http;
 const Environment = bun.Environment;
+const validators = @import("./../node/util/validators.zig");
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
@@ -57,6 +58,7 @@ pub const Tag = enum {
     skip,
     todo,
     failing,
+    retry,
 };
 const debug = Output.scoped(.jest, false);
 pub const TestRunner = struct {
@@ -271,6 +273,7 @@ pub const TestRunner = struct {
             fail_because_todo_passed,
             fail_because_expected_has_assertions,
             fail_because_expected_assertion_count,
+            retry,
         };
     };
 };
@@ -603,7 +606,7 @@ pub const TestScope = struct {
     // null if the test does not set a timeout
     timeout_millis: u32,
 
-    retry_count: u32 = 0, // retry, on fail
+    retry_count: u32, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
 
     pub const Counter = struct {
@@ -704,16 +707,6 @@ pub const TestScope = struct {
         if (comptime is_bindgen) return undefined;
 
         var vm = VirtualMachine.get();
-        const func = this.func;
-        defer {
-            for (this.func_arg) |arg| {
-                arg.unprotect();
-            }
-            func.unprotect();
-            this.func = .zero;
-            this.func_has_callback = false;
-            vm.autoGarbageCollect();
-        }
         JSC.markBinding(@src());
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
@@ -754,6 +747,9 @@ pub const TestScope = struct {
             if (this.tag == .todo) {
                 return .todo;
             }
+            if (this.tag == .retry) {
+                return .retry;
+            }
 
             return .{ .fail = expect.active_test_expectation_counter.actual };
         }
@@ -778,6 +774,9 @@ pub const TestScope = struct {
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
+                    }
+                    if (this.tag == .retry) {
+                        return .retry;
                     }
 
                     return .{ .fail = expect.active_test_expectation_counter.actual };
@@ -1173,7 +1172,6 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.tests.clearAndFree(allocator);
                 this.pending_tests.deinit(allocator);
                 return;
             }
@@ -1231,7 +1229,6 @@ pub const DescribeScope = struct {
         }
 
         this.pending_tests.deinit(getAllocator(globalThis));
-        this.tests.clearAndFree(getAllocator(globalThis));
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
@@ -1388,7 +1385,7 @@ pub const TestRunnerTask = struct {
             return false;
         }
 
-        var test_: TestScope = this.describe.tests.items[test_id];
+        var test_: *TestScope = &this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
         if (test_.func == .zero or !describe.shouldEvaluateScope() or (test_.tag != .only and Jest.runner.?.only)) {
@@ -1422,26 +1419,37 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
         jsc_vm.auto_killer.enable();
-        var result = TestScope.run(&test_, this);
+        var result = blk: while (true) {
+            var result = TestScope.run(test_, this);
 
-        if (this.describe.tests.items.len > test_id) {
-            this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
-        }
-
-        // rejected promises should fail the test
-        if (!result.isFailure())
-            globalThis.handleRejectedPromises();
-
-        if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
-            this.sync_state = .fulfilled;
-
-            if (this.reported and this.promise_state != .pending) {
-                // An unhandled error was reported.
-                // Let's allow any pending work to run, and then move on to the next test.
-                this.continueRunningTestsAfterMicrotasksRun();
+            if (this.describe.tests.items.len > test_id) {
+                test_.timeout_millis = test_.timeout_millis;
             }
-            return true;
-        }
+
+            // rejected promises should fail the test
+            if (!result.isFailure())
+                globalThis.handleRejectedPromises();
+
+            if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
+                this.sync_state = .fulfilled;
+
+                if (this.reported and this.promise_state != .pending) {
+                    // An unhandled error was reported.
+                    // Let's allow any pending work to run, and then move on to the next test.
+                    this.continueRunningTestsAfterMicrotasksRun();
+                }
+                return true;
+            }
+
+            if ((result == .retry or result == .fail) and test_.retry_count > 0) {
+                test_.retry_count -= 1;
+                test_.ran = false;
+                this.reported = false;
+                jsc_vm.onUnhandledRejectionCtx = this;
+                continue;
+            }
+            break :blk result;
+        };
 
         this.handleResultPtr(&result, .sync);
 
@@ -1552,13 +1560,10 @@ pub const TestRunnerTask = struct {
         this.reported = true;
 
         const test_id = this.test_id;
-        var test_ = this.describe.tests.items[test_id];
+        var test_ = &this.describe.tests.items[test_id];
         if (from == .timeout) {
             test_.timeout_millis = @truncate(from.timeout);
         }
-
-        var describe = this.describe;
-        describe.tests.items[test_id] = test_;
 
         if (from == .timeout) {
             const vm = this.globalThis.bunVM();
@@ -1580,10 +1585,10 @@ pub const TestRunnerTask = struct {
         }
 
         checkAssertionsCounter(result);
-        processTestResult(this, this.globalThis, result.*, test_, test_id, describe);
+        processTestResult(this, this.globalThis, result.*, test_, test_id, this.describe);
     }
 
-    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result_original: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
+    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result_original: Result, test_: *TestScope, test_id: u32, describe: *DescribeScope) void {
         var result = result_original.forceTODO(test_.tag == .todo);
         const test_dot_failing = test_.tag == .failing;
         switch (result) {
@@ -1594,6 +1599,10 @@ pub const TestRunnerTask = struct {
                 if (test_dot_failing) result = .{ .pass = actual };
             },
             else => {},
+        }
+        if (result == .fail and test_.retry_count > 0) {
+            test_.tag = .retry;
+            return;
         }
         switch (result) {
             .pass => |count| Jest.runner.?.reportPass(
@@ -1653,6 +1662,17 @@ pub const TestRunnerTask = struct {
                 );
             },
             .pending => @panic("Unexpected pending test"),
+            .retry => {
+                bun.assert(test_.retry_count == 0);
+                Jest.runner.?.reportFailure(
+                    test_id,
+                    this.source_file_path,
+                    test_.label,
+                    expect.active_test_expectation_counter.actual,
+                    this.started_at.sinceNow(),
+                    describe,
+                );
+            },
         }
         describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
 
@@ -1690,6 +1710,7 @@ pub const Result = union(TestRunner.Test.Status) {
     fail_because_todo_passed: u32,
     fail_because_expected_has_assertions: void,
     fail_because_expected_assertion_count: Counter,
+    retry: void,
 
     pub fn isFailure(this: *const Result) bool {
         return this.* == .fail or this.* == .fail_because_expected_has_assertions or this.* == .fail_because_expected_assertion_count;
@@ -1717,7 +1738,7 @@ fn appendParentLabel(
     try buffer.append(" ");
 }
 
-inline fn createScope(
+fn createScope(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
     comptime signature: string,
@@ -1750,6 +1771,8 @@ inline fn createScope(
     }
 
     var timeout_ms: u32 = std.math.maxInt(u32);
+    var retry_count: u32 = 0;
+
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
@@ -1761,11 +1784,7 @@ inline fn createScope(
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (options.get(globalThis, "retry")) |retries| {
-            if (!retries.isNumber()) {
-                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                return .zero;
-            }
-            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+            retry_count = validators.validateUint32(globalThis, retries, "{s}", .{"options.retry"}, false) catch return .zero;
         }
         if (options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
@@ -1838,6 +1857,7 @@ inline fn createScope(
             .func_arg = function_args,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
+            .retry_count = retry_count,
         }) catch unreachable;
     } else {
         var scope = allocator.create(DescribeScope) catch unreachable;
@@ -1854,7 +1874,7 @@ inline fn createScope(
     return this;
 }
 
-inline fn createIfScope(
+fn createIfScope(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
     comptime signature: string,
@@ -1880,6 +1900,7 @@ inline fn createIfScope(
         .skip => .{ Scope.call, Scope.skip },
         .todo => .{ Scope.call, Scope.todo },
         .failing => @compileError("unreachable"),
+        .retry => @compileError("unreachable"),
     };
 
     switch (@intFromBool(value)) {
@@ -2126,6 +2147,7 @@ fn eachBind(
                         .func_arg = function_args,
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
+                        .retry_count = 0,
                     }) catch unreachable;
                 }
             } else {

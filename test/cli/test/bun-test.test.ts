@@ -932,6 +932,53 @@ describe("bun test", () => {
       expect(stderr).toContain(` 1 pass\n 0 fail\nRan 1 tests across 1 files. `);
     });
   });
+  describe("{ retry }", () => {
+    test("basic", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          let j = 0;
+          test("the", async () => {
+            expect(j++).toEqual(1);
+          }, { retry: 1 });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 1 pass\n 0 fail\n 2 expect() calls\nRan 1 tests across 1 files. `);
+    });
+    test("not enough", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          let j = 0;
+          test("the", async () => {
+            expect(j++).toEqual(1);
+          }, { retry: 0 });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 0 pass\n 1 fail\n 1 expect() calls\nRan 1 tests across 1 files. `);
+    });
+    test("not enough again", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          let j = 0;
+          test("the", async () => {
+            expect(j++).toEqual(5);
+          }, { retry: 3 });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 0 pass\n 1 fail\n 4 expect() calls\nRan 1 tests across 1 files. `);
+    });
+  });
 
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({

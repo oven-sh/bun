@@ -6,16 +6,7 @@ function assert(ok) {
   if (!ok) throw new Error("assertion failed");
 }
 
-// try to clobber anything left over on the stack
-function recurse(n) {
-  if (n == 0) {
-    return "";
-  }
-  return n.toString() + recurse(n - 1);
-}
-
 async function reallyGC() {
-  recurse(1000);
   for (let i = 0; i < 5; i++) {
     await new Promise(resolve => setTimeout(resolve, 1));
     if (typeof global.gc == "function") {
@@ -36,12 +27,6 @@ async function noRefTest() {
 
   // still alive as we have object
   assert(tests.get_wrap_data(object) === 42);
-
-  // this frees it
-  object = undefined;
-  await reallyGC();
-
-  console.log("\\ noRefTest /");
 }
 
 async function weakRefTest() {
@@ -55,12 +40,6 @@ async function weakRefTest() {
 
   // still alive as we have object
   assert(tests.get_wrap_data(object) === 42);
-
-  // this frees it
-  object = undefined;
-  await reallyGC();
-
-  console.log("\\ weakRefTest /");
 }
 
 async function strongRefTest() {
@@ -85,9 +64,9 @@ async function strongRefTest() {
   // this frees it
   tests.unref_wrapped_value();
   await reallyGC();
-
-  console.log("\\ strongRefTest /");
 }
+
+async function removeWrapTest() {}
 
 async function removeWrapWeakTest() {
   console.log("/ removeWrapWeakTest \\");
@@ -113,8 +92,6 @@ async function removeWrapWeakTest() {
   object = undefined;
   console.log("JS reference gone");
   await reallyGC();
-
-  console.log("\\ removeWrapWeakTest /");
 
   // no finalizer called :(
 }
@@ -149,14 +126,16 @@ async function removeWrapStrongTest() {
 
   tests.unref_wrapped_value();
   await reallyGC();
-
   // no finalizer called :(
-
-  console.log("\\ removeWrapStrongTest /");
 }
 
-// await noRefTest();
-// await weakRefTest();
-// await strongRefTest();
+await noRefTest();
+await reallyGC();
+await weakRefTest();
+await reallyGC();
+await strongRefTest();
+await reallyGC();
 await removeWrapWeakTest();
+await reallyGC();
 await removeWrapStrongTest();
+await reallyGC();

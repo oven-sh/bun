@@ -5,6 +5,7 @@ const NapiClass = tests.get_class_with_constructor();
 console.group("\nnew NapiClass()");
 let instance = new NapiClass();
 console.log("static data =", NapiClass.getStaticData());
+console.log("static getter =", NapiClass.getter);
 console.log("foo =", instance.foo);
 console.log("data =", instance.getData());
 console.groupEnd();

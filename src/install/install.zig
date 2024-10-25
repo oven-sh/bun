@@ -12931,7 +12931,7 @@ pub const PackageManager = struct {
                 }
 
                 const install_result = switch (resolution.tag) {
-                    .symlink, .workspace, .root => installer.installFromLink(this.skip_delete, destination_dir),
+                    .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => result: {
                         if (resolution.tag == .root or (resolution.tag == .folder and !this.lockfile.isWorkspaceTreeId(this.current_tree_id))) {
                             // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
@@ -12941,7 +12941,10 @@ pub const PackageManager = struct {
                             installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch |err|
                                 break :result PackageInstall.Result.fail(err, .opening_cache_dir);
 
-                            const result = installer.install(this.skip_delete, destination_dir, resolution.tag);
+                            const result = if (resolution.tag == .root)
+                                installer.installFromLink(this.skip_delete, destination_dir)
+                            else
+                                installer.install(this.skip_delete, destination_dir, resolution.tag);
 
                             if (result.isFail() and (result.fail.err == error.ENOENT or result.fail.err == error.FileNotFound))
                                 break :result PackageInstall.Result.success();

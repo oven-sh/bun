@@ -4,6 +4,7 @@
 #include "class_test.h"
 #include "conversion_tests.h"
 #include "js_test_helpers.h"
+#include "leak_tests.h"
 #include "standalone_tests.h"
 #include "wrap_tests.h"
 
@@ -36,6 +37,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   register_js_test_helpers(env, exports);
   register_wrap_tests(env, exports);
   register_conversion_tests(env, exports);
+  register_leak_tests(env, exports);
 
   return exports;
 }

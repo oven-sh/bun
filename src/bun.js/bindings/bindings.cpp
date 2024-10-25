@@ -2298,8 +2298,7 @@ extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object
     // This is a redundant check, but we add it to make the error message clearer.
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 
-    if (UNLIKELY(!object))
-        return JSC::JSValue::encode(JSC::JSValue());
+    ASSERT(object);
 
     JSC::JSValue jsObject = JSValue::decode(object);
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);

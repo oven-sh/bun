@@ -453,6 +453,11 @@ declare module "bun:test" {
     each<T>(
       table: T[],
     ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    /**
+     * Use `test.failing` when you are writing a test and expecting it to fail.
+     * If `failing` test will throw any errors then it will pass. If it does not throw it will fail.
+     */
+    failing: Test;
   }
   /**
    * Runs a test.

@@ -846,6 +846,92 @@ describe("bun test", () => {
     });
     test.todo("check formatting for %p", () => {});
   });
+  describe(".failing", () => {
+    test("expect good fail", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          test.failing("the", () => {
+            expect(6).toBe(6);
+          });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 0 pass\n 1 fail\n 1 expect() calls\nRan 1 tests across 1 files. `);
+    });
+    test("expect bad pass", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          test.failing("the", () => {
+            expect(5).toBe(6);
+          });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 1 pass\n 0 fail\n 1 expect() calls\nRan 1 tests across 1 files. `);
+    });
+    test("done good fail", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          test.failing("the", done => {
+            done();
+          });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 0 pass\n 1 fail\nRan 1 tests across 1 files. `);
+    });
+    test("done bad pass", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          test.failing("the", done => {
+            done(42);
+          });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 1 pass\n 0 fail\nRan 1 tests across 1 files. `);
+    });
+    test("async good fail", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          test.failing("the", async () => {
+            await Promise.resolve(42);
+          });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 0 pass\n 1 fail\nRan 1 tests across 1 files. `);
+    });
+    test("aysnc bad pass", () => {
+      const stderr = runTest({
+        args: [],
+        input: [
+          `
+          import { test, expect } from "bun:test";
+          test.failing("the", async () => {
+            await Promise.reject(42);
+          });
+          `,
+        ],
+      });
+      expect(stderr).toContain(` 1 pass\n 0 fail\nRan 1 tests across 1 files. `);
+    });
+  });
 
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({

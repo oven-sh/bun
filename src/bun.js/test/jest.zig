@@ -56,6 +56,7 @@ pub const Tag = enum(u3) {
     only,
     skip,
     todo,
+    failing,
 };
 const debug = Output.scoped(.jest, false);
 pub const TestRunner = struct {
@@ -372,6 +373,11 @@ pub const Jest = struct {
             ZigString.static("each"),
             JSC.NewFunction(globalObject, ZigString.static("each"), 2, ThisTestScope.each, false),
         );
+        test_fn.put(
+            globalObject,
+            ZigString.static("failing"),
+            JSC.NewFunction(globalObject, ZigString.static("failing"), 2, ThisTestScope.failing, false),
+        );
 
         module.put(
             globalObject,
@@ -637,13 +643,15 @@ pub const TestScope = struct {
         return createIfScope(globalThis, callframe, "test.todoIf()", "todoIf", TestScope, .todo);
     }
 
+    pub fn failing(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
+        return createScope(globalThis, callframe, "test.failing()", true, .failing);
+    }
+
     pub fn onReject(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         debug("onReject", .{});
         const arguments = callframe.arguments(2);
         const err = arguments.ptr[0];
         _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-        var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
         return JSValue.jsUndefined();
     }
@@ -679,7 +687,6 @@ pub const TestScope = struct {
                 } else {
                     debug("done(err)", .{});
                     _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
-                    task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .callback);
                 }
             } else {
                 debug("done()", .{});
@@ -1274,6 +1281,7 @@ pub const WrappedTestScope = struct {
     pub const skipIf = wrapTestFunction("test", TestScope.skipIf);
     pub const todoIf = wrapTestFunction("test", TestScope.todoIf);
     pub const each = wrapTestFunction("test", TestScope.each);
+    pub const failing = wrapTestFunction("test", TestScope.failing);
 };
 
 pub const WrappedDescribeScope = struct {
@@ -1576,8 +1584,19 @@ pub const TestRunnerTask = struct {
         processTestResult(this, this.globalThis, result.*, test_, test_id, describe);
     }
 
-    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
-        switch (result.forceTODO(test_.tag == .todo)) {
+    fn processTestResult(this: *TestRunnerTask, globalThis: *JSGlobalObject, result_original: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
+        var result = result_original.forceTODO(test_.tag == .todo);
+        const test_dot_failing = test_.tag == .failing;
+        switch (result) {
+            .pass => |actual| {
+                if (test_dot_failing) result = .{ .fail = actual };
+            },
+            .fail => |actual| {
+                if (test_dot_failing) result = .{ .pass = actual };
+            },
+            else => {},
+        }
+        switch (result) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
                 this.source_file_path,
@@ -1861,6 +1880,7 @@ inline fn createIfScope(
         .only => @compileError("unreachable"),
         .skip => .{ Scope.call, Scope.skip },
         .todo => .{ Scope.call, Scope.todo },
+        .failing => @compileError("unreachable"),
     };
 
     switch (@intFromBool(value)) {

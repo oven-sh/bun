@@ -238,10 +238,7 @@ public:
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final
     {
         auto* weakValue = reinterpret_cast<NapiRef*>(context);
-
         weakValue->finalizer.call(weakValue->globalObject.get(), weakValue->data);
-        // TODO(@190n) check if this is really needed (create many refs to one object?)
-        weakValue->finalizer = Bun::NapiFinalizer {};
     }
 };
 
@@ -997,14 +994,6 @@ extern "C" void napi_module_register(napi_module* mod)
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
-void finalizeRefInsideExternalForNapiWrap(napi_env env, void* opaque_ref, void* hint)
-{
-    // auto* ref = reinterpret_cast<NapiRef*>(opaque_ref);
-    // if (ref) {
-    //     ref->unref();
-    // }
-}
-
 extern "C" napi_status napi_wrap(napi_env env,
     napi_value js_object,
     void* native_object,
@@ -1041,7 +1030,7 @@ extern "C" napi_status napi_wrap(napi_env env,
         globalObject->NapiExternalStructure(),
         reinterpret_cast<void*>(ref),
         nullptr,
-        finalizeRefInsideExternalForNapiWrap);
+        nullptr);
     globalObject->napiWraps()->set(globalObject->vm(), cell, external);
 
     if (result) {
@@ -1353,13 +1342,6 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     NapiRef* napiRef = toJS(ref);
     delete napiRef;
     NAPI_RETURN_SUCCESS(env);
-}
-
-extern "C" void napi_delete_reference_internal(napi_ref ref)
-{
-    NAPI_LOG_CURRENT_FUNCTION;
-    NapiRef* napiRef = toJS(ref);
-    delete napiRef;
 }
 
 extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,

@@ -146,7 +146,7 @@ describe("napi", () => {
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);
-      expect(result).toStartWith("data: nullptr");
+      expect(result).toStartWith("data = 1234, context = 42");
     });
   });
 
@@ -198,6 +198,9 @@ describe("napi", () => {
     });
     it("exists while calling a napi_async_complete_callback", () => {
       checkSameOutput("create_promise", [false]);
+    });
+    it("keeps arguments moved off the stack alive", () => {
+      checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
   });
 
@@ -262,18 +265,18 @@ describe("napi", () => {
 
   describe("napi_run_script", () => {
     it("evaluates a basic expression", () => {
-      checkSameOutput("eval_wrapper", ["5 * (1 + 2)"]);
+      checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);
     });
     it("provides the right this value", () => {
-      checkSameOutput("eval_wrapper", ["this === global"]);
+      checkSameOutput("test_napi_run_script", ["this === global"]);
     });
     it("propagates exceptions", () => {
-      checkSameOutput("eval_wrapper", ["(()=>{ throw new TypeError('oops'); })()"]);
+      checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
     it("cannot see locals from around its invocation", () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use checkSameOutput because V8 and JSC use different error messages for a missing variable
-      let bunResult = runOn(bunExe(), "eval_wrapper", ["shouldNotExist"]);
+      let bunResult = runOn(bunExe(), "test_napi_run_script", ["shouldNotExist"]);
       // remove all debug logs
       bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
       expect(bunResult).toBe(

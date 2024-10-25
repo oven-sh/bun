@@ -56,14 +56,17 @@ const PathOrBlob = union(enum) {
             };
         }
 
-        const arg = args.nextEat() orelse return null;
-
+        const arg = args.nextEat() orelse {
+            _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", .undefined);
+            return null;
+        };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
                 .blob = blob.*,
             };
         }
 
+        _ = ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);
         return null;
     }
 };
@@ -973,8 +976,6 @@ pub const Blob = struct {
         var path_or_blob = PathOrBlob.fromJSNoCopy(globalThis, &args, exception) orelse {
             if (exception[0] != null) {
                 globalThis.throwValue(exception[0].?.value());
-            } else {
-                globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
             }
             return .zero;
         };

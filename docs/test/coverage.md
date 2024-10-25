@@ -38,7 +38,7 @@ By default coverage reports will _include_ test files and _exclude_ sourcemaps. 
 
 ```toml
 [test]
-coverageSkipTestFiles = true       # default false
+coverageSkipTestFiles = false       # default true
 ```
 
 ### Coverage thresholds

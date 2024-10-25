@@ -2767,6 +2767,10 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
+    m_JSNodeHTTPServerSocketStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
+        });
 
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
@@ -3705,6 +3709,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSNodeHTTPServerSocketStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
@@ -4200,6 +4205,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)
 {
+
     if (handler == Bun__HTTPRequestContext__onReject) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onReject;
     } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
@@ -4252,6 +4258,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == Bun__NodeHTTPRequest__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
+    } else if (handler == Bun__NodeHTTPRequest__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

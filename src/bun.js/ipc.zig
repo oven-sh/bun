@@ -203,19 +203,9 @@ const json = struct {
                 2 => {
                     json_data = data[1..idx];
                 },
-                '{', //object
-                '[', //array
-                '"', //string
-                '0'...'9', //number
-                't', //true
-                'f', //false
-                'n', //null
-                => {
-                    kind = 1;
-                },
                 else => {
-                    // definitely invalid json
-                    // exception will be thrown by toJSByParseJSON below
+                    // assume it's valid json with no header
+                    // any error will be thrown by toJSByParseJSON below
                     kind = 1;
                 },
             }

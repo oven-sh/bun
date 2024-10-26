@@ -15,7 +15,7 @@ if (!sentryId) {
   throw new Error("Missing sentry_id");
 }
 
-const response = await fetch(`https://sentry.io/api/0/organizations/4507155222364160/events/${sentryId}/`, {
+const response = await fetch(`https://sentry.io/api/0/organizations/4507155222364160/eventids/${sentryId}/`, {
   headers: {
     Authorization: `Bearer ${SENTRY_AUTH_TOKEN}`,
   },

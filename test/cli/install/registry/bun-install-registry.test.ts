@@ -11742,7 +11742,7 @@ registry = "http://localhost:${port}/"
   );
 
   await writeFile(
-    packageJson,
+    join(packageDir, "package.json"),
     JSON.stringify({
       name: "foo",
       version: "1.0.0",

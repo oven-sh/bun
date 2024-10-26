@@ -601,3 +601,60 @@ describe("relative tarballs", async () => {
     });
   });
 });
+
+test("$npm_package_config_ works in root", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["pkgs/*"],
+      config: { foo: "bar" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  await write(
+    join(packageDir, "pkgs", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      config: { qux: "tab" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  const p = Bun.spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: packageDir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
+  expect(await new Response(p.stdout).text()).toBe(`bar\n`);
+});
+test("$npm_package_config_ works in root in subpackage", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["pkgs/*"],
+      config: { foo: "bar" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  await write(
+    join(packageDir, "pkgs", "pkg1", "package.json"),
+    JSON.stringify({
+      name: "pkg1",
+      config: { qux: "tab" },
+      scripts: { sample: "echo $npm_package_config_foo $npm_package_config_qux" },
+    }),
+  );
+  const p = Bun.spawn({
+    cmd: [bunExe(), "run", "sample"],
+    cwd: join(packageDir, "pkgs", "pkg1"),
+    stdio: ["ignore", "pipe", "pipe"],
+    env,
+  });
+  expect(await p.exited).toBe(0);
+  expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
+  expect(await new Response(p.stdout).text()).toBe(`tab\n`);
+});

@@ -11,5 +11,5 @@ child.on("message", message => {
   process.exit(0);
 });
 
-setTimeout(() => child.send("I am your father"), 500);
+child.send("I am your father");
 console.log("p end");

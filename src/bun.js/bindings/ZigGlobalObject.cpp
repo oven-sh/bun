@@ -285,23 +285,21 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     size_t framesCount = callSites->length();
 
     WTF::StringBuilder sb;
-    {
 
-        if (JSC::JSValue errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message)) {
+    if (JSC::JSValue errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message)) {
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* str = errorMessage.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (str->length() > 0) {
+            auto value = str->value(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            auto* str = errorMessage.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (str->length() > 0) {
-                auto value = str->value(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                sb.append("Error: "_s);
-                sb.append(value.data);
-            } else {
-                sb.append("Error"_s);
-            }
+            sb.append("Error: "_s);
+            sb.append(value.data);
         } else {
             sb.append("Error"_s);
         }
+    } else {
+        sb.append("Error"_s);
     }
 
     for (size_t i = 0; i < framesCount; i++) {

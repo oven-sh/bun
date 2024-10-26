@@ -10,5 +10,5 @@ const child = Bun.spawn(["node", path.resolve(import.meta.dir, "ipc-child-node.j
   serialization: "json",
 });
 
-setTimeout(() => child.send("I am your father"), 500);
+child.send("I am your father");
 console.log("p end");

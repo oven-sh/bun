@@ -305,25 +305,23 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     }
 
     for (size_t i = 0; i < framesCount; i++) {
+        sb.append("\n    at "_s);
 
         JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue)) {
-            sb.append("\n    at "_s);
             callSite->formatAsString(vm, lexicalGlobalObject, sb);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // This matches Node.js / V8's behavior
             // It can become "at [object Object]" if the object is not a CallSite
-            sb.append("\n    at "_s);
             auto* str = callSiteValue.toString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto value = str->value(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             sb.append(value.data);
         }
-
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return jsString(vm, sb.toString());

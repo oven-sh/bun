@@ -418,16 +418,28 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSSQLStatement* create(JSDOMGlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
+    static JSSQLStatement* create(JSC::VM& vm, JSC::Structure* structure, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
     {
-        Structure* structure = globalObject->JSSQLStatementStructure();
-        JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
+        JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(vm)) JSSQLStatement(vm, structure, stmt, version_db, memorySizeChange);
         if (version_db) {
             ++version_db->reference_count;
         }
-        ptr->finishCreation(globalObject->vm());
+        ptr->finishCreation(vm);
         return ptr;
     }
+
+    static JSSQLStatement* create(JSC::VM& vm, Zig::GlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
+    {
+        Structure* structure = globalObject->JSSQLStatementStructure();
+        return JSSQLStatement::create(vm, structure, stmt, version_db, memorySizeChange);
+    }
+
+    static JSSQLStatement* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
+    {
+        auto* domGlobalObject = defaultGlobalObject(globalObject);
+        return JSSQLStatement::create(vm, domGlobalObject, stmt, version_db, memorySizeChange);
+    }
+
     static void destroy(JSC::JSCell*);
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -474,11 +486,11 @@ public:
     bool useBigInt64 : 1 = false;
 
 protected:
-    JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
-        : Base(globalObject.vm(), structure)
+    JSSQLStatement(JSC::VM& vm, JSC::Structure* structure, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
+        : Base(vm, structure)
         , stmt(stmt)
         , version_db(version_db)
-        , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
+        , columnNames(new PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
         , extraMemorySize(memorySizeChange > 0 ? memorySizeChange : 0)
     {
     }
@@ -1533,7 +1545,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
+        vm, lexicalGlobalObject, statement, databases()[handle], memoryChange);
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -1774,35 +1786,37 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
-/* Hash table for constructor */
-static const HashTableValue JSSQLStatementConstructorTableValues[] = {
-    { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementOpenStatementFunction, 2 } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementCloseStatementFunction, 1 } },
-    { "prepare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementPrepareStatementFunction, 2 } },
-    { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteFunction, 3 } },
-    { "isInTransaction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementIsInTransactionFunction, 1 } },
-    { "loadExtension"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementLoadExtensionFunction, 2 } },
-    { "setCustomSQLite"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetCustomSQLite, 1 } },
-    { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
-    { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
-    { "fcntl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFcntlFunction, 2 } },
-};
+static JSValue jsSQLStatementPrototypeGetter(VM& vm, JSObject* object)
+{
+    auto* zigGlobalObject = defaultGlobalObject(object->globalObject());
+    auto* instanceStructure = zigGlobalObject->JSSQLStatementStructure();
+    auto* prototypeObject = instanceStructure->storedPrototypeObject();
+    return prototypeObject;
+}
 
-const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
+/* Source for JSSQLStatement.lut.h
+@begin jsSQLStatementConstructorTable
+open                    jsSQLStatementOpenStatementFunction       Function 2
+close                   jsSQLStatementCloseStatementFunction      Function 1
+prepare                 jsSQLStatementPrepareStatementFunction    Function 2
+run                     jsSQLStatementExecuteFunction             Function 3
+isInTransaction         jsSQLStatementIsInTransactionFunction     Function 1
+loadExtension           jsSQLStatementLoadExtensionFunction       Function 2
+setCustomSQLite         jsSQLStatementSetCustomSQLite             Function 1
+serialize               jsSQLStatementSerialize                   Function 1
+deserialize             jsSQLStatementDeserialize                 Function 2
+fcntl                   jsSQLStatementFcntlFunction               Function 2
+prototype               jsSQLStatementPrototypeGetter             PropertyCallback
+@end
+*/
+#include "JSSQLStatement.lut.h"
+const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, &jsSQLStatementConstructorTable, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
 
 void JSSQLStatementConstructor::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
 
-    // TODO: use LazyClassStructure?
-    auto* instanceObject = JSSQLStatement::create(reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
-    JSValue proto = instanceObject->getPrototype(vm, globalObject());
-
-    this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-
-    reifyStaticProperties(vm, JSSQLStatementConstructor::info(), JSSQLStatementConstructorTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-
     ASSERT(inherits(info()));
 }
 

@@ -373,6 +373,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
+  ${CWD}/src/bun.js/bindings/sqlite/JSSQLStatement.cpp
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -383,6 +384,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
+  ${CODEGEN_PATH}/JSSQLStatement.lut.h
 )
 
 

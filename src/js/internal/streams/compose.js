@@ -1,7 +1,7 @@
 "use strict";
 const primordials = require("internal/primordials");
 const { ArrayPrototypeSlice } = primordials;
-
+const { AbortError } = require("../../node/events");
 const { pipeline } = require("internal/streams/pipeline");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");

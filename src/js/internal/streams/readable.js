@@ -67,17 +67,18 @@ const {
   kConstructed,
   kOnConstructed,
 } = require("./utils");
-
+const { AbortError } = require("../../node/events");
 const {
-  AbortError,
-  aggregateTwoErrors,
+  //aggregateTwoErrors,
   /*$ERR_INVALID_ARG_TYPE,
   $ERR_METHOD_NOT_IMPLEMENTED,
   $ERR_OUT_OF_RANGE,
-  $ERR_STREAM_PUSH_AFTER_EOF,
   $ERR_STREAM_UNSHIFT_AFTER_END_EVENT,
   $ERR_UNKNOWN_ENCODING,*/
 } = require("../errors");
+const aggregateTwoErrors = (inner, outer) => {
+  return new AggregateError([inner, outer]);
+};
 const { validateObject } = require("../validators");
 
 const FastBuffer = Buffer[SymbolSpecies];
@@ -342,6 +343,7 @@ function Readable(options) {
   }
 
   Stream.$call(this, options);
+  this.compose = Stream.compose;
 
   if (this._construct != null) {
     destroyImpl.construct(this, () => {
@@ -477,7 +479,6 @@ function readableAddChunkPushByteMode(stream, state, chunk, encoding) {
   }
 
   if ((state[kState] & kEnded) !== 0) {
-    errorOrDestroy(stream, /*new $ERR_STREAM_PUSH_AFTER_EOF()*/ new Error("god dammit"));
     return false;
   }
 
@@ -506,7 +507,6 @@ function readableAddChunkPushObjectMode(stream, state, chunk, encoding) {
   }
 
   if ((state[kState] & kEnded) !== 0) {
-    errorOrDestroy(stream, /*new $ERR_STREAM_PUSH_AFTER_EOF()*/ new Error("god dammit"));
     return false;
   }
 
@@ -868,7 +868,7 @@ function maybeReadMore_(stream, state) {
 // for virtual (non-string, non-buffer) streams, "length" is somewhat
 // arbitrary, and perhaps not very meaningful.
 Readable.prototype._read = function (n) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED("_read()");
+  throw /*$ERR_METHOD_NOT_IMPLEMENTED*/ new Error("_read()");
 };
 
 Readable.prototype.pipe = function (dest, pipeOpts) {

@@ -164,18 +164,17 @@ function lazyWebStreams() {
 }
 
 Duplex.fromWeb = function (pair, options) {
-  return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
+  throw new Error("Not implemented");
 };
 
 Duplex.toWeb = function (duplex) {
-  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex);
+  throw new Error("Not implemented");
 };
 
 let duplexify;
 
 Duplex.from = function (body) {
   const duplexify = require("internal/streams/duplexify");
-  console.log("duplexify", duplexify);
   return duplexify(body, "body");
 };
 

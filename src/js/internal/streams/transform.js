@@ -66,9 +66,10 @@ const primordials = require("internal/primordials");
 const { ObjectSetPrototypeOf, Symbol } = primordials;
 
 export default Transform;
-const { ERR_METHOD_NOT_IMPLEMENTED } = require("internal/errors").codes;
+//const { ERR_METHOD_NOT_IMPLEMENTED } = require("internal/errors").codes;
 const Duplex = require("internal/streams/duplex");
 const { getHighWaterMark } = require("internal/streams/state");
+Transform.prototype = {};
 ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
 ObjectSetPrototypeOf(Transform, Duplex);
 
@@ -152,7 +153,7 @@ function prefinish() {
 Transform.prototype._final = final;
 
 Transform.prototype._transform = function (chunk, encoding, callback) {
-  throw new ERR_METHOD_NOT_IMPLEMENTED("_transform()");
+  throw new /*ERR_METHOD_NOT_IMPLEMENTED*/ Error("_transform()");
 };
 
 Transform.prototype._write = function (chunk, encoding, callback) {

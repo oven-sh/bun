@@ -11,7 +11,7 @@ const {
   PromiseReject,
   PromiseResolve,
 } = primordials;
-
+const { AbortError } = require("../../node/events");
 //const { AbortController, AbortSignal } = require('internal/abort_controller');
 var operators;
 const { validateAbortSignal, validateInteger, validateObject } = require("internal/validators");

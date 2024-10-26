@@ -27,7 +27,7 @@
 const primordials = require("internal/primordials");
 const {
   ArrayPrototypeSlice,
-  Error,
+  //Error,
   FunctionPrototypeSymbolHasInstance,
   ObjectDefineProperties,
   ObjectDefineProperty,
@@ -49,18 +49,17 @@ const destroyImpl = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
 
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
-
+const { AbortError } = require("../../node/events");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const {
-  AbortError,
-  ERR_INVALID_ARG_TYPE,
+  /*ERR_INVALID_ARG_TYPE,
   ERR_METHOD_NOT_IMPLEMENTED,
   ERR_STREAM_ALREADY_FINISHED,
   ERR_STREAM_CANNOT_PIPE,
   ERR_STREAM_DESTROYED,
   ERR_STREAM_NULL_VALUES,
   ERR_STREAM_WRITE_AFTER_END,
-  ERR_UNKNOWN_ENCODING,
+  ERR_UNKNOWN_ENCODING,*/
 } = require("internal/errors");
 const {
   kState,
@@ -484,9 +483,9 @@ function _write(stream, chunk, encoding, cb) {
 
   let err;
   if ((state[kState] & kEnding) !== 0) {
-    err = new ERR_STREAM_WRITE_AFTER_END();
+    err = $ERR_STREAM_WRITE_AFTER_END("write");
   } else if ((state[kState] & kDestroyed) !== 0) {
-    err = new ERR_STREAM_DESTROYED("write");
+    err = $ERR_STREAM_DESTROYED("write");
   }
 
   if (err) {
@@ -541,6 +540,8 @@ Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
 // in the queue, and wait our turn.  Otherwise, call _write
 // If we return false, then we need a drain event, so set that flag.
 function writeOrBuffer(stream, state, chunk, encoding, callback) {
+  console.info(state);
+
   const len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length;
 
   state.length += len;
@@ -793,7 +794,7 @@ Writable.prototype._write = function (chunk, encoding, cb) {
   if (this._writev) {
     this._writev([{ chunk, encoding }], cb);
   } else {
-    throw new ERR_METHOD_NOT_IMPLEMENTED("_write()");
+    throw new /*$ERR_METHOD_NOT_IMPLEMENTED*/ Error("_write()");
   }
 };
 
@@ -839,9 +840,9 @@ Writable.prototype.end = function (chunk, encoding, cb) {
     finishMaybe(this, state, true);
     state[kState] |= kEnded;
   } else if ((state[kState] & kFinished) !== 0) {
-    err = new ERR_STREAM_ALREADY_FINISHED("end");
+    err = $ERR_STREAM_ALREADY_FINISHED("end");
   } else if ((state[kState] & kDestroyed) !== 0) {
-    err = new ERR_STREAM_DESTROYED("end");
+    err = $ERR_STREAM_DESTROYED("end");
   }
 
   if (typeof cb === "function") {
@@ -1134,16 +1135,16 @@ let webStreamsAdapters;
 
 // Lazy to avoid circular references
 function lazyWebStreams() {
-  if (webStreamsAdapters === undefined) webStreamsAdapters = /*require("internal/webstreams/adapters")*/ {};
+  if (webStreamsAdapters === undefined) webStreamsAdapters = {};
   return webStreamsAdapters;
 }
 
 Writable.fromWeb = function (writableStream, options) {
-  return lazyWebStreams().newStreamWritableFromWritableStream(writableStream, options);
+  throw new Error("Not implemented");
 };
 
 Writable.toWeb = function (streamWritable) {
-  return lazyWebStreams().newWritableStreamFromStreamWritable(streamWritable);
+  throw new Error("Not implemented");
 };
 
 Writable.prototype[SymbolAsyncDispose] = function () {

@@ -2,7 +2,7 @@
 const primordials = require("internal/primordials");
 const { Symbol } = primordials;
 
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const assert = _ => $assert(_);
 
 const kCallback = Symbol("Callback");

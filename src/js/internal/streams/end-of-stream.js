@@ -4,8 +4,8 @@
 "use strict";
 const primordials = require("internal/primordials");
 const { Promise, PromisePrototypeThen, SymbolDispose } = primordials;
-
-const { AbortError, ERR_INVALID_ARG_TYPE, ERR_STREAM_PREMATURE_CLOSE } = require("internal/errors");
+const { AbortError } = require("../../node/events");
+const { ERR_INVALID_ARG_TYPE, ERR_STREAM_PREMATURE_CLOSE } = require("internal/errors");
 const { kEmptyObject, once } = require("../../node/util");
 const { validateAbortSignal, validateFunction, validateObject, validateBoolean } = require("internal/validators");
 

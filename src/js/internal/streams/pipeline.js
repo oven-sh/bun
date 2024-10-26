@@ -9,9 +9,11 @@ const eos = require("internal/streams/end-of-stream");
 const { once } = require("../../node/util");
 const destroyImpl = require("internal/streams/destroy");
 const Duplex = require("internal/streams/duplex");
+const aggregateTwoErrors = (inner, outer) => {
+  return new AggregateError([inner, outer]);
+};
 const {
-  AbortError,
-  aggregateTwoErrors,
+  //  aggregateTwoErrors,
   ERR_INVALID_ARG_TYPE,
   ERR_INVALID_RETURN_VALUE,
   ERR_MISSING_ARGS,
@@ -19,7 +21,7 @@ const {
   ERR_STREAM_PREMATURE_CLOSE,
   ERR_STREAM_UNABLE_TO_PIPE,
 } = require("internal/errors");
-
+const { AbortError } = require("../../node/events");
 const { validateFunction, validateAbortSignal } = require("internal/validators");
 
 const {

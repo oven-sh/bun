@@ -30,6 +30,7 @@ const { ObjectSetPrototypeOf } = primordials;
 export default PassThrough;
 
 const Transform = require("internal/streams/transform");
+PassThrough.prototype = {};
 ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
 ObjectSetPrototypeOf(PassThrough, Transform);
 

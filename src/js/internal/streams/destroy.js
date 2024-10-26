@@ -1,7 +1,7 @@
 "use strict";
 const primordials = require("internal/primordials");
 const { Symbol } = primordials;
-
+const { AbortError } = require("../../node/events");
 const {
   kIsDestroyed,
   isDestroyed,
@@ -17,6 +17,9 @@ const {
   kAutoDestroy,
   kErrored,
 } = require("internal/streams/utils");
+const aggregateTwoErrors = (inner, outer) => {
+  return new AggregateError([inner, outer]);
+};
 
 const kDestroy = Symbol("kDestroy");
 const kConstruct = Symbol("kConstruct");

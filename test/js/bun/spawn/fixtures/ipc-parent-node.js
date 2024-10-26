@@ -1,5 +1,5 @@
-import path from "node:path";
-import child_process from "node:child_process";
+const path = require("node:path");
+const child_process = require("node:child_process");
 
 console.log("p start");
 

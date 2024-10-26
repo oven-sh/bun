@@ -1172,6 +1172,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
+                this.tests.clearAndFree(allocator);
                 this.pending_tests.deinit(allocator);
                 return;
             }

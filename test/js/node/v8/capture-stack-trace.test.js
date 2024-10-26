@@ -663,3 +663,37 @@ test("calling .stack on a non-materialized Error updates the stack properly", fu
   expect(stack).toContain("hey");
   expect(stack).toContain("wrapped");
 });
+
+test("Error.prepareStackTrace on an array with non-CallSite objects doesn't crash", () => {
+  const result = Error.prepareStackTrace(new Error("ok"), [{ a: 1 }, { b: 2 }, { c: 3 }]);
+  expect(result).toBe("Error: ok\n    at [object Object]\n    at [object Object]\n    at [object Object]");
+});
+
+test("Error.prepareStackTrace calls toString()", () => {
+  const result = Error.prepareStackTrace(new Error("ok"), [
+    { a: 1 },
+    { b: 2 },
+    {
+      c: 3,
+      toString() {
+        return "potato";
+      },
+    },
+  ]);
+  expect(result).toBe("Error: ok\n    at [object Object]\n    at [object Object]\n    at potato");
+});
+
+test("Error.prepareStackTrace propagates exceptions", () => {
+  expect(() =>
+    Error.prepareStackTrace(new Error("ok"), [
+      { a: 1 },
+      { b: 2 },
+      {
+        c: 3,
+        toString() {
+          throw new Error("hi");
+        },
+      },
+    ]),
+  ).toThrow("hi");
+});

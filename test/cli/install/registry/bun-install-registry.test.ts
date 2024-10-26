@@ -422,7 +422,7 @@ registry = http://localhost:${port}/
             .join("\n")
         : "";
 
-      const ini = /* ini */ `
+      const ini = `
 registry = http://localhost:${port}/
 ${Object.keys(opts)
   .map(

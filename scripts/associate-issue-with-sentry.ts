@@ -47,3 +47,5 @@ console.log(`Sentry permalink: ${permalink}`);
 
 await Bun.write("sentry-id.txt", shortId);
 await Bun.write("sentry-link.txt", permalink);
+
+export {};

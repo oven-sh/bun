@@ -90,7 +90,7 @@ jobs:
         id: generate-comment-text
         env:
           GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_EVENTS_SECRET }}
         shell: bash
         run: |
           bun scripts/associate-issue-with-sentry.ts

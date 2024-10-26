@@ -20,6 +20,7 @@ const MarginHandler = css.css_properties.margin_padding.MarginHandler;
 const PaddingHandler = css.css_properties.margin_padding.PaddingHandler;
 const ScrollMarginHandler = css.css_properties.margin_padding.ScrollMarginHandler;
 const InsetHandler = css.css_properties.margin_padding.InsetHandler;
+const SizeHandler = css.css_properties.size.SizeHandler;
 
 /// A CSS declaration block.
 ///
@@ -48,7 +49,7 @@ pub const DeclarationBlock = struct {
             defer arraylist.deinit(bun.default_allocator);
             var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, .{}, null);
             defer printer.deinit();
-            this.self.toCss(@TypeOf(w), &printer) catch @panic("Damn");
+            this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
             try writer.writeAll(arraylist.items);
         }
     };
@@ -328,6 +329,7 @@ pub fn parse_declaration(
 
 pub const DeclarationHandler = struct {
     background: BackgroundHandler = .{},
+    size: SizeHandler = .{},
     margin: MarginHandler = .{},
     padding: PaddingHandler = .{},
     scroll_margin: ScrollMarginHandler = .{},
@@ -348,8 +350,8 @@ pub const DeclarationHandler = struct {
         //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch bun.outOfMemory();
         // }
 
-        // TODO:
         this.background.finalize(&this.decls, context);
+        this.size.finalize(&this.decls, context);
         this.margin.finalize(&this.decls, context);
         this.padding.finalize(&this.decls, context);
         this.scroll_margin.finalize(&this.decls, context);
@@ -360,6 +362,7 @@ pub const DeclarationHandler = struct {
     pub fn handleProperty(this: *DeclarationHandler, property: *const css.Property, context: *css.PropertyHandlerContext) bool {
         // return this.background.handleProperty(property, &this.decls, context);
         return this.background.handleProperty(property, &this.decls, context) or
+            this.size.handleProperty(property, &this.decls, context) or
             this.margin.handleProperty(property, &this.decls, context) or
             this.padding.handleProperty(property, &this.decls, context) or
             this.scroll_margin.handleProperty(property, &this.decls, context) or

@@ -297,10 +297,10 @@ pub const CssColor = union(enum) {
             .current_color => {},
             .rgba => {},
             .lab => {
-                allocator.destroy(this.float);
+                allocator.destroy(this.lab);
             },
             .predefined => {
-                allocator.destroy(this.float);
+                allocator.destroy(this.predefined);
             },
             .float => {
                 allocator.destroy(this.float);
@@ -3406,9 +3406,6 @@ pub fn gamSrgb(r: f32, g: f32, b: f32) struct { f32, f32, f32 } {
                 const sign: f32 = if (c < 0.0) @as(f32, -1.0) else @as(f32, 1.0);
                 // const x: f32 = bun.powf( abs,  1.0 / 2.4);
                 const x: f32 = powf(abs, 1.0 / 2.4);
-                const xx: f32 = bun.powf(abs, @floatCast(@as(f64, 1.0) / @as(f64, 2.4)));
-                const xxx: f32 = bun.powf(abs, @as(f32, 1.0) / @as(f32, 2.4));
-                std.debug.print("XX: {d} {d}\n", .{ xx, xxx });
                 const y: f32 = 1.055 * x;
                 const z: f32 = y - 0.055;
                 // return sign * (1.055 * bun.powf( abs,  1.0 / 2.4) - 0.055);
@@ -3476,7 +3473,8 @@ pub fn polarToRectangular(l: f32, c: f32, h: f32) struct { f32, f32, f32 } {
     return .{ l, a, b };
 }
 
-const D50: []const f32 = &.{ 0.3457 / 0.3585, 1.00000, (1.0 - 0.3457 - 0.3585) / 0.3585 };
+const D50: []const f32 = &.{ @floatCast(@as(f64, 0.3457) / @as(f64, 0.3585)), 1.00000, @floatCast((@as(f64, 1.0) - @as(f64, 0.3457) - @as(f64, 0.3585)) / @as(f64, 0.3585)) };
+// const D50: []const f32 = &.{ 0.9642956, 1.0, 0.82510453 };
 
 const color_conversions = struct {
     const generated = @import("./color_generated.zig").generated_color_conversions;
@@ -3509,8 +3507,8 @@ const color_conversions = struct {
 
         pub fn intoXYZd50(_lab: *const LAB) XYZd50 {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L352
-            const K: f32 = 24389.0 / 27.0; // 29^3/3^3
-            const E: f32 = 216.0 / 24389.0; // 6^3/29^3
+            const K: f32 = @floatCast(@as(f64, 24389.0) / @as(f64, 27.0)); // 29^3/3^3
+            const E: f32 = @floatCast(@as(f64, 216.0) / @as(f64, 24389.0)); // 6^3/29^3
 
             const lab = _lab.resolveMissing();
             const l = lab.l * 100.0;
@@ -3518,9 +3516,9 @@ const color_conversions = struct {
             const b = lab.b;
 
             // compute f, starting with the luminance-related term
-            const f1 = (l + 16.0) / 116.0;
-            const f0 = a / 500.0 + f1;
-            const f2 = f1 - b / 200.0;
+            const f1: f32 = (l + 16.0) / 116.0;
+            const f0: f32 = a / 500.0 + f1;
+            const f2: f32 = f1 - b / 200.0;
 
             // compute xyz
             const x = if (bun.powf(f0, 3) > E)
@@ -3531,15 +3529,19 @@ const color_conversions = struct {
             const y = if (l > K * E) bun.powf((l + 16.0) / 116.0, 3) else l / K;
 
             const z = if (bun.powf(f2, 3) > E)
-                bun.powf(f0, 3)
+                bun.powf(f2, 3)
             else
-                (116.0 * f2 - 16.0) / K;
+                (@as(f32, 116.0) * f2 - 16.0) / K;
+
+            const final_x = x * D50[0];
+            const final_y = y * D50[1];
+            const final_z = z * D50[2];
 
             // Compute XYZ by scaling xyz by reference white
             return XYZd50{
-                .x = x * D50[0],
-                .y = y * D50[1],
-                .z = z * D50[2],
+                .x = final_x,
+                .y = final_y,
+                .z = final_z,
                 .alpha = lab.alpha,
             };
         }
@@ -4039,15 +4041,15 @@ const color_conversions = struct {
         pub fn intoXYZd65(_xyz: *const XYZd50) XYZd65 {
             // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L105
             const MATRIX: [9]f32 = .{
-                2.493496911941425,
-                -0.9313836179191239,
-                -0.40271078445071684,
-                -0.8294889695615747,
-                1.7626640603183463,
-                0.023624685841943577,
-                0.03584583024378447,
-                -0.07617238926804182,
-                0.9568845240076872,
+                0.9554734527042182,
+                -0.023098536874261423,
+                0.0632593086610217,
+                -0.028369706963208136,
+                1.0099954580058226,
+                0.021041398966943008,
+                0.012314001688319899,
+                -0.020507696433477912,
+                1.3303659366080753,
             };
 
             const xyz = _xyz.resolveMissing();

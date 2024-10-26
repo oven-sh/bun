@@ -59,6 +59,7 @@ pub fn Bitflags(comptime T: type) type {
 
         pub inline fn all() T {
             var ret: T = @bitCast(@as(IntType, 0));
+            @setEvalBranchQuota(5000);
             inline for (std.meta.fields(T)) |field| {
                 if (comptime !std.mem.eql(u8, field.name, "__unused")) {
                     @field(ret, field.name) = true;

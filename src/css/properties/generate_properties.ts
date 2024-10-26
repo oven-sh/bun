@@ -452,7 +452,7 @@ function generatePropertyIdImplFromNameAndPrefix(property_defs: Record<string, P
 
 function constructVendorPrefix(prefixes: VendorPrefixes[] | undefined): string {
   if (prefixes === undefined) return `VendorPrefix{ .none = true }`;
-  return `VendorPrefix{ ${prefixes.map(prefix => `.${prefix} = true`).join(", ")} }`;
+  return `VendorPrefix{ ${[`.none = true`, ...prefixes.map(prefix => `.${prefix} = true`)].join(", ")} }`;
 }
 
 function needsEscaping(name: string): boolean {

@@ -677,6 +677,7 @@ pub const BackgroundHandler = struct {
                 }
                 this.backgroundHelper(allocator, SmallList(Image, 1), &images, property, dest, context);
                 const color = val.last().?.color.deepClone(allocator);
+                this.flushHelper(allocator, "color", CssColor, &color, dest, context);
                 var clips = SmallList(BackgroundClip, 1).initCapacity(allocator, val.len());
                 for (val.slice()) |*b| {
                     clips.appendAssumeCapacity(b.clip.deepClone(allocator));

@@ -165,6 +165,10 @@ pub const VendorPrefix = packed struct(u8) {
     o: bool = false,
     __unused: u3 = 0,
 
+    pub const NONE = VendorPrefix{ .none = true };
+    pub const WEBKIT = VendorPrefix{ .webkit = true };
+    pub const MOZ = VendorPrefix{ .moz = true };
+
     /// Fields listed here so we can iterate them in the order we want
     pub const FIELDS: []const []const u8 = &.{ "webkit", "moz", "ms", "o", "none" };
 

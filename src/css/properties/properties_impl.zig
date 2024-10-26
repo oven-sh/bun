@@ -112,7 +112,6 @@ pub fn PropertyImpl() type {
                         try dest.whitespace();
                         try dest.writeStr("!important");
                     }
-                    return;
                 }
             }
         }

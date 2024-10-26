@@ -7462,7 +7462,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"background-attachment";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-clip")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"background-clip" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "background-origin")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7471,7 +7471,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .background;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-shadow")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-shadow" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "opacity")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7522,7 +7522,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"max-inline-size";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-sizing")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-sizing" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "aspect-ratio")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7537,7 +7537,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"overflow-y";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-overflow")) {
-            const allowed_prefixes = VendorPrefix{ .o = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .o = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"text-overflow" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "position")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7651,16 +7651,16 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-inline-end-width";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-left-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"border-top-left-radius" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-top-right-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"border-top-right-radius" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-left-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-left-radius" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-bottom-right-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"border-bottom-right-radius" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-start-start-radius")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7675,7 +7675,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-end-end-radius";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-radius")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"border-radius" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image-source")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7693,7 +7693,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"border-image-slice";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-image")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true, .o = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true, .o = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"border-image" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "border-color")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7768,40 +7768,40 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"outline-width";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-direction")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-direction" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-wrap")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-wrap" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-flow")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-flow" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-grow")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-grow" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-shrink")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-shrink" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-basis")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-basis" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .flex = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "order")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .order = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-content")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"align-content" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-content")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"justify-content" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "place-content")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"place-content";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-self")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"align-self" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-self")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7810,7 +7810,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"place-self";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "align-items")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"align-items" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "justify-items")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -7828,52 +7828,52 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .gap;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-orient")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-orient" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-direction")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-direction" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-ordinal-group")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-ordinal-group" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-align")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-align" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-flex")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-flex" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-flex-group")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-flex-group" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-pack")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-pack" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "box-lines")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"box-lines" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-pack")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-pack" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-order")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-order" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-align")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-align" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-item-align")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-item-align" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-line-pack")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-line-pack" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-positive")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-positive" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-negative")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-negative" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "flex-preferred-size")) {
-            const allowed_prefixes = VendorPrefix{ .ms = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .ms = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"flex-preferred-size" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "margin-top")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -8032,10 +8032,10 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .font;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-decoration-color")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true, .moz = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true, .moz = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"text-decoration-color" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-emphasis-color")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"text-emphasis-color" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "text-shadow")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -8047,13 +8047,13 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .composes;
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-image")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-image" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-mode")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"mask-mode";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-repeat" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position-x")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -8062,16 +8062,16 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"mask-position-y";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-position")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-position" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-clip")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-clip" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-origin")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-origin" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-size")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-size" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-composite")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -8080,7 +8080,7 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"mask-type";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .mask = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-border-source")) {
             const allowed_prefixes = VendorPrefix{ .none = true };
@@ -8107,25 +8107,25 @@ pub const PropertyId = union(PropertyIdTag) {
             const allowed_prefixes = VendorPrefix{ .none = true };
             if (allowed_prefixes.contains(pre)) return .@"-webkit-mask-composite";
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-source-type")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-source-type" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-source")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-source" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-slice")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-slice" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-width")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-width" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-outset")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-outset" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "mask-box-image-repeat")) {
-            const allowed_prefixes = VendorPrefix{ .webkit = true };
+            const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
             if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
         } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "all")) {} else {
             return null;

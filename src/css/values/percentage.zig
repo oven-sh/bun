@@ -407,9 +407,13 @@ pub fn DimensionPercentage(comptime D: type) type {
         }
 
         pub fn partialCmp(this: *const This, other: *const This) ?std.math.Order {
-            _ = this; // autofix
-            _ = other; // autofix
-            @panic(css.todo_stuff.depth);
+            if (this.* == .dimension and other.* == .dimension) {
+                return this.dimension.partialCmp(&other.dimension);
+            } else if (this.* == .percentage and other.* == .percentage) {
+                return this.percentage.partialCmp(&other.percentage);
+            } else {
+                return null;
+            }
         }
 
         pub fn trySign(this: *const This) ?f32 {

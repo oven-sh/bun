@@ -1693,7 +1693,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 defer arraylist.deinit(bun.default_allocator);
                 var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, .{}, null);
                 defer printer.deinit();
-                css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch @panic("Damn");
+                css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
                 try writer.writeAll(arraylist.items);
             }
         };

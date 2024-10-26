@@ -14,6 +14,12 @@
 #define NODE_API_ASSERT(env, expr)                                             \
   NODE_API_ASSERT_CUSTOM_RETURN(env, NULL, expr)
 
+#ifdef _MSC_VER
+#define CURRENT_FUNCTION_NAME __FUNCSIG__
+#else
+#define CURRENT_FUNCTION_NAME __PRETTY_FUNCTION__
+#endif
+
 // Version of NODE_API_ASSERT for functions not returning napi_value
 #define NODE_API_ASSERT_CUSTOM_RETURN(ENV, VALUE_TO_RETURN_IF_THREW, EXPR)     \
   do {                                                                         \
@@ -24,7 +30,7 @@
       if (!is_pending) {                                                       \
         char buf[4096] = {0};                                                  \
         snprintf(buf, sizeof(buf) - 1, "%s (%s:%d): Assertion failed: %s",     \
-                 __PRETTY_FUNCTION__, __FILE__, __LINE__, #EXPR);              \
+                 CURRENT_FUNCTION_NAME, __FILE__, __LINE__, #EXPR);            \
         napi_throw_error((ENV), NULL, buf);                                    \
       }                                                                        \
       return (VALUE_TO_RETURN_IF_THREW);                                       \

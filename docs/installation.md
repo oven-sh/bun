@@ -50,6 +50,10 @@ To install, paste this into a terminal:
 > scoop install bun
 ```
 
+```powershell#Chocolatey
+> choco install bun
+```
+
 {% /codetabs %}
 
 {% callout %}

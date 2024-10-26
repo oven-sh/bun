@@ -2071,7 +2071,6 @@ pub const OutputFile = struct {
 
     /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
     pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
-        bun.assert(std.fs.path.isAbsolute(root_dir_path));
         switch (f.value) {
             .saved => {
                 var rel_path = f.dest_path;

@@ -1,7 +1,6 @@
-// TODO: rename to BakeSourceProvider.cpp
 // clang-format off
-#include "BakeDevSourceProvider.h"
-#include "BakeDevGlobalObject.h"
+#include "BakeSourceProvider.h"
+#include "BakeGlobalObject.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -14,7 +13,7 @@
 
 namespace Bake {
 
-extern "C" LoadServerCodeResult BakeLoadInitialServerCode(DevGlobalObject* global, BunString source) {
+extern "C" LoadServerCodeResult BakeLoadInitialServerCode(GlobalObject* global, BunString source) {
   JSC::VM& vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -38,12 +37,12 @@ extern "C" LoadServerCodeResult BakeLoadInitialServerCode(DevGlobalObject* globa
   return { internalPromise, key };
 }
 
-extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(DevGlobalObject* global, JSC::JSString* key) {
+extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
   return global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(DevGlobalObject* global, BunString source) {
-  JSC::VM&vm=global->vm();
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
+  JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = "bake://server.patch.js"_s;
@@ -105,7 +104,7 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
 }
 
 extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* global, BunString virtualPathName, BunString source) {
-  JSC::VM&vm=global->vm();
+  JSC::VM& vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = virtualPathName.toWTFString();

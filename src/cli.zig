@@ -289,6 +289,7 @@ pub const Arguments = struct {
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
         clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
+        clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
     } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
@@ -775,7 +776,11 @@ pub const Arguments = struct {
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
-            ctx.bundler_options.bake = args.flag("--app");
+
+            if (args.flag("--app")) {
+                ctx.bundler_options.bake = true;
+                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+            }
 
             // TODO: support --format=esm
             if (ctx.bundler_options.bytecode) {
@@ -1392,18 +1397,18 @@ pub const Command = struct {
         args: Api.TransformOptions,
         log: *logger.Log,
         allocator: std.mem.Allocator,
-        positionals: []const string = &[_]string{},
-        passthrough: []const string = &[_]string{},
+        positionals: []const string = &.{},
+        passthrough: []const string = &.{},
         install: ?*Api.BunInstall = null,
 
-        debug: DebugOptions = DebugOptions{},
-        test_options: TestOptions = TestOptions{},
-        bundler_options: BundlerOptions = BundlerOptions{},
-        runtime_options: RuntimeOptions = RuntimeOptions{},
+        debug: DebugOptions = .{},
+        test_options: TestOptions = .{},
+        bundler_options: BundlerOptions = .{},
+        runtime_options: RuntimeOptions = .{},
 
-        filters: []const []const u8 = &[_][]const u8{},
+        filters: []const []const u8 = &.{},
 
-        preloads: []const string = &[_]string{},
+        preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
@@ -1435,6 +1440,7 @@ pub const Command = struct {
             css_chunking: bool = false,
 
             bake: bool = false,
+            bake_debug_dump_server: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

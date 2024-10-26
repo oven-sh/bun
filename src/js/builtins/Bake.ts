@@ -6,11 +6,12 @@ type RenderStatic = Bake.ServerEntryPoint['staticRender'];
 
 /**
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
- * and 
+ * as well as use the async primitives provided by the language.
  */
 export function renderRoutesForProd(
   outBase: string,
   renderStatic: RenderStatic,
+  clientEntryUrl: string,
   files: string[],
   patterns: string[],
   styles: string[][],
@@ -21,7 +22,7 @@ export function renderRoutesForProd(
     const pattern = patterns[i];
     const route = await import(file);
     const results = await renderStatic(route, {
-      scripts: [],
+      scripts: [clientEntryUrl],
       styles: styles[i],
     });
     if (!results || typeof results !== 'object') {

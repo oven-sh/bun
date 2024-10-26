@@ -797,7 +797,7 @@ pub const BundleV2 = struct {
         task.tree_shaking = this.linker.options.tree_shaking;
         task.is_entry_point = is_entry_point;
         task.known_target = target;
-        task.jsx = this.bundlerForTarget(target).options.jsx;
+        task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -2633,7 +2633,8 @@ pub const BundleV2 = struct {
             resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = target;
-            resolve_task.jsx = this.bundlerForTarget(target).options.jsx;
+            resolve_task.jsx = resolve_result.jsx;
+            resolve_task.jsx.development = this.bundlerForTarget(target).options.jsx.development;
 
             if (import_record.tag.loader()) |loader| {
                 resolve_task.loader = loader;
@@ -5377,8 +5378,6 @@ pub const LinkerContext = struct {
                 }
             }
         }
-
-        bun.assert(js_chunks.count() > 0);
 
         // Sort the chunks for determinism. This matters because we use chunk indices
         // as sorting keys in a few places.

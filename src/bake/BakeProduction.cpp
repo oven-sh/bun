@@ -29,8 +29,9 @@ extern "C" JSC::JSPromise* BakeRenderRoutesForProd(
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::call(global, cb, callData, JSC::jsUndefined(), args, returnedException);
-    if (returnedException) {
-        BUN_PANIC("bakeRenderRoutesForProd threw an exception. This should be impossible because it returns a promise.");
+    if (UNLIKELY(returnedException)) {
+        // This should be impossible because it returns a promise.
+        return JSC::JSPromise::rejectedPromise(global, returnedException->value());
     }
     return JSC::jsCast<JSC::JSPromise*>(result);
 }

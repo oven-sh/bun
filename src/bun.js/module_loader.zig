@@ -2812,7 +2812,7 @@ pub const HardcodedModule = enum {
     );
 
     pub const Alias = struct {
-        path: string,
+        path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
     };
 

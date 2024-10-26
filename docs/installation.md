@@ -283,6 +283,10 @@ $ rm -rf ~/.bun # for macOS, Linux, and WSL
 > scoop uninstall bun
 ```
 
+```powershell#Chocolatey
+> choco uninstall bun
+```
+
 ```bash#npm
 $ npm uninstall -g bun
 ```

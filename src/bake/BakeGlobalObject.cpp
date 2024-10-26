@@ -21,10 +21,13 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* jsGlobalObject,
 {
     // TODO: forward this to the runtime?
     JSC::VM& vm = jsGlobalObject->vm();
+    WTF::String keyString = moduleNameValue->getString(jsGlobalObject);
     auto err = JSC::createTypeError(
         jsGlobalObject,
         WTF::makeString(
-            "Dynamic import should have been replaced with a hook into the module runtime"_s));
+            "Dynamic import to '"_s, keyString, 
+            "' should have been replaced with a hook into the module runtime"_s
+        ));
     auto* promise = JSC::JSInternalPromise::create(
         vm, jsGlobalObject->internalPromiseStructure());
     promise->reject(jsGlobalObject, err);
@@ -55,10 +58,8 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     }
 }
 
-// #define INHERIT_HOOK_METHOD(name) \
-//     Zig::GlobalObject::s_globalObjectMethodTable.name
 #define INHERIT_HOOK_METHOD(name) \
-    nullptr
+    Zig::GlobalObject::s_globalObjectMethodTable.name
 
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     INHERIT_HOOK_METHOD(supportsRichSourceInfo),
@@ -144,7 +145,6 @@ extern "C" GlobalObject* BakeCreateDevGlobal(DevServer* owner,
 extern "C" GlobalObject* BakeCreateProdGlobal(JSC::VM* vm, void* console) {
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(vm, bunVM);
 
     JSC::Structure* structure = GlobalObject::createStructure(*vm);
     GlobalObject* global = GlobalObject::create(*vm, structure, &GlobalObject::s_globalObjectMethodTable); 
@@ -152,15 +152,13 @@ extern "C" GlobalObject* BakeCreateProdGlobal(JSC::VM* vm, void* console) {
         BUN_PANIC("Failed to create BakeGlobalObject");
 
     global->m_devServer = nullptr;
-    // global->m_bunVM = bunVM;
+    global->m_bunVM = bunVM;
 
     JSC::gcProtect(global);
 
 
     global->setConsole(console);
     global->setStackTraceLimit(10); // Node.js defaults to 10
-
-    global->resetPrototype(*vm, JSC::jsNull());
 
     return global;
 }

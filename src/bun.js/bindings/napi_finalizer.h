@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "js_native_api_types.h"
+#include "js_native_api.h"
 
 namespace Bun {
 

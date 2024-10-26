@@ -53,7 +53,7 @@ class GlobalInternals;
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
-#include <js_native_api_types.h>
+#include <js_native_api.h>
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -289,6 +289,7 @@ public:
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
+    Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
@@ -479,11 +480,16 @@ public:
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 
-    // Used by napi_wrap to associate native objects with JS values that are not NapiPrototype or NapiClass
-    // Should only use JSCell* keys and NapiExternal values that contain NapiRefs
+    // Used by napi_wrap to associate native objects with JS values.
+    // Should only use JSCell* keys and NapiExternal values that contain NapiRefs.
     LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiWraps;
+    // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
+    // Should only use JSCell* keys and NapiTypeTag values.
+    LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
 
     JSC::JSWeakMap* napiWraps() const { return m_napiWraps.getInitializedOnMainThread(this); }
+
+    JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
 
     Bun::JSMockModule mockModule;
 
@@ -585,6 +591,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NapiTypeTagStructure;
 
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
     LazyProperty<JSGlobalObject, v8::shim::GlobalInternals> m_V8GlobalInternals;

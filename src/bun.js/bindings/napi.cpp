@@ -7,10 +7,11 @@
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
-#include "js_native_api_types.h"
+#include "js_native_api.h"
 #include "napi_handle_scope.h"
 #include "napi_macros.h"
 #include "napi_finalizer.h"
+#include "napi_type_tag.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -2551,4 +2552,39 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
         }
     }
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+}
+
+extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, const napi_type_tag* type_tag)
+{
+    NAPI_PREAMBLE(env);
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSObject* js_object = toJS(value).getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
+
+    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    // cannot tag an object that is already tagged
+    NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
+
+    // TODO(@190n) maybe use a BigInt?
+    auto* new_tag = Bun::NapiTypeTag::create(globalObject->vm(), globalObject->NapiTypeTagStructure(), *type_tag);
+    globalObject->napiTypeTags()->set(globalObject->vm(), js_object, new_tag);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value, const napi_type_tag* type_tag, bool* result)
+{
+    NAPI_PREAMBLE(env);
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSObject* js_object = toJS(value).getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
+
+    bool match = false;
+    auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    if (found_tag && found_tag->matches(*type_tag)) {
+        match = true;
+    }
+    if (result) {
+        *result = match;
+    }
+    NAPI_RETURN_SUCCESS(env);
 }

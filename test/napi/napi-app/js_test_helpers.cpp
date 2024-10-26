@@ -213,6 +213,34 @@ static napi_value make_empty_array(const Napi::CallbackInfo &info) {
   return array;
 }
 
+// add_tag(object, lower, upper)
+static napi_value add_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[1], &lower));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[2], &upper));
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+  NODE_API_CALL(env, napi_type_tag_object(env, object, &tag));
+  return env.Undefined();
+}
+
+// check_tag(object, lower, upper): bool
+static napi_value check_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[1], &lower));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[2], &upper));
+
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+  bool matches;
+  NODE_API_CALL(env, napi_check_object_type_tag(env, object, &tag, &matches));
+  return Napi::Boolean::New(env, matches);
+}
+
 void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_ref_with_finalizer);
   REGISTER_FUNCTION(env, exports, was_finalize_called);
@@ -221,6 +249,8 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, make_empty_array);
+  REGISTER_FUNCTION(env, exports, add_tag);
+  REGISTER_FUNCTION(env, exports, check_tag);
 }
 
 } // namespace napitests

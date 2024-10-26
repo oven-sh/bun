@@ -688,16 +688,8 @@ pub export fn napi_escape_handle(env: napi_env, scope_: napi_escapable_handle_sc
     result.* = escapee;
     return env.ok();
 }
-pub export fn napi_type_tag_object(env: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status {
-    log("napi_type_tag_object", .{});
-    notImplementedYet("napi_type_tag_object");
-    return env.genericFailure();
-}
-pub export fn napi_check_object_type_tag(env: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status {
-    log("napi_check_object_type_tag", .{});
-    notImplementedYet("napi_check_object_type_tag");
-    return env.genericFailure();
-}
+pub extern fn napi_type_tag_object(env: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status;
+pub extern fn napi_check_object_type_tag(env: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status;
 
 // do nothing for both of these
 pub export fn napi_open_callback_scope(env: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {

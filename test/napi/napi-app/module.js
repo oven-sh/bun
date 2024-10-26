@@ -243,4 +243,22 @@ nativeTests.test_create_error_functions_exhaustive = () => {
   }
 };
 
+nativeTests.test_type_tag = () => {
+  const o1 = {};
+  const o2 = {};
+
+  nativeTests.add_tag(o1, 1, 2);
+  try {
+    // re-tag
+    nativeTests.add_tag(o1, 1, 2);
+  } catch (e) {
+    console.log("tagging already-tagged object threw", e.toString());
+  }
+  nativeTests.add_tag(o2, 3, 4);
+  console.log("o1 matches o1:", nativeTests.check_tag(o1, 1, 2));
+  console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
+  console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
+  console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+};
+
 module.exports = nativeTests;

@@ -285,11 +285,16 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     size_t framesCount = callSites->length();
 
     WTF::StringBuilder sb;
+
     if (JSC::JSValue errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message)) {
+        RETURN_IF_EXCEPTION(scope, {});
         auto* str = errorMessage.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (str->length() > 0) {
+            auto value = str->value(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             sb.append("Error: "_s);
-            sb.append(str->value(lexicalGlobalObject).data);
+            sb.append(value.data);
         } else {
             sb.append("Error"_s);
         }
@@ -297,18 +302,23 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         sb.append("Error"_s);
     }
 
-    if (framesCount > 0) {
-        sb.append("\n"_s);
-    }
-
     for (size_t i = 0; i < framesCount; i++) {
+        sb.append("\n    at "_s);
+
         JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
-        CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
-        sb.append("    at "_s);
-        callSite->formatAsString(vm, lexicalGlobalObject, sb);
         RETURN_IF_EXCEPTION(scope, {});
-        if (i != framesCount - 1) {
-            sb.append("\n"_s);
+
+        if (CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue)) {
+            callSite->formatAsString(vm, lexicalGlobalObject, sb);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            // This matches Node.js / V8's behavior
+            // It can become "at [object Object]" if the object is not a CallSite
+            auto* str = callSiteValue.toString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto value = str->value(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            sb.append(value.data);
         }
     }
 
@@ -684,8 +694,8 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
         for (size_t i = 0; i < framesCount; i++) {
             JSC::JSValue callSiteValue = callSites.at(i);
-            CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
             if (remappedFrames[i].remapped) {
+                CallSite* callSite = JSC::jsCast<CallSite*>(callSiteValue);
                 callSite->setColumnNumber(remappedFrames[i].position.column());
                 callSite->setLineNumber(remappedFrames[i].position.line());
             }

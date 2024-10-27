@@ -726,7 +726,10 @@ pub const BackgroundHandler = struct {
                     this.flush(allocator, dest, context);
                     var unparsed = val.deepClone(allocator);
                     context.addUnparsedFallbacks(&unparsed);
-                    this.flushed_properties.insert(BackgroundProperty.fromPropertyId(val.property_id).?);
+                    if (BackgroundProperty.fromPropertyId(val.property_id)) |prop| {
+                        this.flushed_properties.insert(prop);
+                    }
+
                     dest.append(allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
                 } else return false;
             },

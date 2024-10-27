@@ -136,6 +136,16 @@ const testCases: TestCase[] = [
     expectedStatus: [[200, 299]],
   },
   {
+    request: "GET HTTPZ://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Invalid GET request for an HTTPS proxy URL",
+    expectedStatus: [[400, 499]],
+  },
+  {
+    request: "GET H-TTP://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Invalid GET request for an HTTPS proxy URL",
+    expectedStatus: [[400, 499]],
+  },
+  {
     request: "GET HTTP://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
     description: "Valid GET request for an HTTP proxy URL",
     expectedStatus: [[200, 299]],

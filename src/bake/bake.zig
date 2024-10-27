@@ -3,6 +3,11 @@
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
 
+/// Zig version of TS definition 'Bake.Options' in 'bake.d.ts'
+pub const UserOptions = struct {
+    framework: Framework,
+};
+
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -19,7 +24,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     , .{});
     bun.Output.flush();
 
-    const options = devServerOptionsFromJs(global, callframe.argument(0)) catch {
+    const options = bakeOptionsFromJs(global, callframe.argument(0)) catch {
         if (!global.hasException())
             global.throwInvalidArguments("invalid arguments", .{});
         return .zero;
@@ -149,6 +154,9 @@ pub const Framework = struct {
             if (str.eqlComptime("react-server-components")) {
                 return Framework.react();
             }
+            if (str.eqlComptime("react")) {
+                return Framework.react();
+            }
         }
 
         if (!opts.isObject()) {
@@ -198,8 +206,22 @@ pub const Framework = struct {
                     global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
                     return error.JSError;
                 }
-                // in addition to here, this import isnt actually wired up to js_parser where the default is hardcoded.
-                bun.todoPanic(@src(), "custom react-fast-refresh import source", .{});
+
+                const prop = rfr.get(global, "importSource") orelse {
+                    global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
+                    return error.JSError;
+                };
+
+                const str = prop.toBunString(global);
+                defer str.deref();
+
+                if (global.hasException())
+                    return error.JSError;
+
+                // Leak
+                break :brk .{
+                    .import_source = str.toUTF8(bun.default_allocator).slice(),
+                };
             },
             .server_components = sc: {
                 const sc: JSValue = opts.get(global, "serverComponents") orelse {
@@ -256,11 +278,86 @@ pub const Framework = struct {
             },
         };
     }
+
+    pub fn initBundler(
+        framework: *Framework,
+        allocator: std.mem.Allocator,
+        log: *bun.logger.Log,
+        mode: Mode,
+        comptime renderer: Graph,
+        out: *bun.bundler.Bundler,
+    ) !void {
+        out.* = try bun.Bundler.init(
+            allocator, // TODO: this is likely a memory leak
+            log,
+            std.mem.zeroes(bun.Schema.Api.TransformOptions),
+            null,
+        );
+
+        out.options.target = switch (renderer) {
+            .client => .browser,
+            .server, .ssr => .bun,
+        };
+        out.options.public_path = switch (renderer) {
+            .client => DevServer.client_prefix,
+            .server, .ssr => "",
+        };
+        out.options.entry_points = &.{};
+        out.options.log = log;
+        out.options.output_format = switch (mode) {
+            .development => .internal_bake_dev,
+            .production => .esm,
+        };
+        out.options.out_extensions = bun.StringHashMap([]const u8).init(out.allocator);
+        out.options.hot_module_reloading = mode == .development;
+        out.options.code_splitting = mode == .production;
+
+        // force disable filesystem output, even though bundle_v2
+        // is special cased to return before that code is reached.
+        out.options.output_dir = "";
+
+        // framework configuration
+        out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
+        out.options.server_components = framework.server_components != null;
+
+        out.options.conditions = try bun.options.ESMConditions.init(allocator, out.options.target.defaultConditions());
+        if (renderer == .server and framework.server_components != null) {
+            try out.options.conditions.appendSlice(&.{"react-server"});
+        }
+
+        out.options.production = mode == .production;
+
+        out.options.tree_shaking = mode == .production;
+        out.options.minify_syntax = true; // required for DCE
+        // out.options.minify_identifiers = mode == .production;
+        // out.options.minify_whitespace = mode == .production;
+
+        out.options.experimental_css = true;
+        out.options.css_chunking = true;
+
+        out.options.framework = framework;
+
+        out.configureLinker();
+        try out.configureDefines();
+
+        out.options.jsx.development = mode == .development;
+
+        try addImportMetaDefines(allocator, out.options.define, mode, switch (renderer) {
+            .client => .client,
+            .server, .ssr => .server,
+        });
+
+        if (mode == .production) {
+            out.options.entry_naming = "[name]-[hash].[ext]";
+            out.options.chunk_naming = "chunk-[name]-[hash].[ext]";
+        }
+
+        out.resolver.opts = out.options;
+    }
 };
 
 // TODO: this function leaks memory and bad error handling, but that is OK since
-// this API is not finalized.
-fn devServerOptionsFromJs(global: *JSC.JSGlobalObject, options: JSValue) !DevServer.Options {
+pub fn bakeOptionsFromJs(global: *JSC.JSGlobalObject, options: JSValue) !DevServer.Options {
     if (!options.isObject()) return error.Invalid;
     const routes_js = try options.getArray(global, "routes") orelse return error.Invalid;
 
@@ -367,18 +464,17 @@ pub fn addImportMetaDefines(
 
 pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
-    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.bake_server_data,
 };
 
 pub const client_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
-    .key_path = bun.fs.Path.initForKitBuiltIn("bun", "bake/client"),
     .contents = "", // Virtual
     .index = bun.JSAst.Index.bake_client_data,
 };
 
+pub const production = @import("./production.zig");
 pub const DevServer = @import("./DevServer.zig");
 
 const std = @import("std");

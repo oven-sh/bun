@@ -122,6 +122,7 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
+pub const bun_js = @import("./bun_js.zig");
 
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
@@ -3877,7 +3878,7 @@ pub const DebugThreadLock = if (Environment.allow_assert)
             if (impl.owning_thread) |thread| {
                 Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
                 crash_handler.dumpStackTrace(impl.locked_at.trace());
-                @panic("Safety lock violated");
+                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
             }
             impl.owning_thread = std.Thread.getCurrentId();
             impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
@@ -3942,6 +3943,11 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
         pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
             return a.get() < b.get();
+        }
+
+        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            comptime bun.assert(strings.eql(f, "d"));
+            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 
         pub const Optional = enum(backing_int) {
@@ -4064,4 +4070,20 @@ pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
 
 pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
     return 0 -% val;
+}
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        inline .Struct, .Union => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
 }

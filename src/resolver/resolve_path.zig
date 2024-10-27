@@ -1237,10 +1237,8 @@ pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, p
     return slice;
 }
 
-pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
-    const parts = [_][]const u8{part};
-    const slice = joinAbsString(_cwd, &parts, _platform);
-    return slice;
+pub fn joinAbs(cwd: []const u8, comptime _platform: Platform, part: []const u8) []const u8 {
+    return joinAbsString(cwd, &.{part}, _platform);
 }
 
 // Convert parts of potentially invalid file paths into a single valid filpeath

@@ -1074,7 +1074,6 @@ it("should let you add the same package twice", async () => {
       "baz-run": "index.js",
     },
   });
-  //TODO: fix JSON formatting
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
       {
@@ -1086,7 +1085,7 @@ it("should let you add the same package twice", async () => {
       },
       null,
       2,
-    ).replace(/\r?\n\s*/g, " "),
+    ),
   );
   await access(join(package_dir, "bun.lockb"));
   // re-add as dev
@@ -1126,7 +1125,6 @@ it("should let you add the same package twice", async () => {
       "baz-run": "index.js",
     },
   });
-  //TODO: fix JSON formatting
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
       {
@@ -1138,7 +1136,7 @@ it("should let you add the same package twice", async () => {
       },
       null,
       2,
-    ).replace(/\r?\n\s*/g, " "),
+    ),
   );
   await access(join(package_dir, "bun.lockb"));
 });

@@ -115,6 +115,10 @@ describe("url.pathToFileURL", () => {
         { path: "C:\\🚀", expected: "file:///C:/%F0%9F%9A%80" },
         // UNC path (see https://docs.microsoft.com/en-us/archive/blogs/ie/file-uris-in-windows)
         { path: "\\\\nas\\My Docs\\File.doc", expected: "file://nas/My%20Docs/File.doc" },
+        // POSIX-style absolute paths #14816
+        { path: "/foo", expected: "file:///C:/foo" },
+        // POSIX-style root #14816
+        { path: "/", expected: "file:///C:/" },
       ];
     } else {
       testCases = [

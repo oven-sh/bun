@@ -2976,7 +2976,7 @@ pub const Resolver = struct {
     pub fn loadPackageImports(r: *ThisResolver, import_path: string, dir_info: *DirInfo, kind: ast.ImportKind, global_cache: GlobalCache) MatchResult.Union {
         const package_json = dir_info.package_json.?;
         if (r.debug_logs) |*debug| {
-            debug.addNoteFmt("Looking for {s} in \"imports\" map in {s}", .{ import_path, package_json.source.key_path.text });
+            debug.addNoteFmt("Looking for {s} in \"imports\" map in {s}", .{ import_path, package_json.source.path.text });
             debug.increaseIndent();
             defer debug.decreaseIndent();
         }
@@ -3602,7 +3602,7 @@ pub const Resolver = struct {
                             // If it doesn't exist, the "module" field will be used.
                             if (r.prefer_module_field and kind != ast.ImportKind.require) {
                                 if (r.debug_logs) |*debug| {
-                                    debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.key_path.text });
+                                    debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.path.text });
 
                                     debug.addNoteFmt("The fallback path in case of \"require\" is {s}", .{auto_main_result.path_pair.primary.text});
                                 }
@@ -3622,7 +3622,7 @@ pub const Resolver = struct {
                                     debug.addNoteFmt("Resolved to \"{s}\" using the \"{s}\" field in \"{s}\"", .{
                                         auto_main_result.path_pair.primary.text,
                                         key,
-                                        pkg_json.source.key_path.text,
+                                        pkg_json.source.path.text,
                                     });
                                 }
                                 var _auto_main_result = auto_main_result;

@@ -314,6 +314,46 @@ namespace uWS
             return (void *)p;
         }
 
+        static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
+            // We can check 8 because:
+            // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
+            // 2. If it's "https://" that's 8 bytes exactly.
+            if (data + 8 >= end) [[unlikely]] {
+                // if it's not at least 8 bytes, let's try again later
+                return -1;
+            }
+
+            uint64_t http;
+            __builtin_memcpy(&http, data, sizeof(uint64_t));
+            
+            uint32_t first_four_bytes = http & static_cast<uint32_t>(0xFFFFFFFF);
+            // check if any of the first four bytes are > non-ascii
+            if ((first_four_bytes & 0x80808080) != 0) [[unlikely]] {
+                return 0;
+            }
+            first_four_bytes |= 0x20202020; // Lowercase the first four bytes
+            
+            static constexpr char http_lowercase_bytes[4] = {'h', 't', 't', 'p'};
+            static constexpr uint32_t http_lowercase_bytes_int = __builtin_bit_cast(uint32_t, http_lowercase_bytes);
+            if (first_four_bytes == http_lowercase_bytes_int) [[likely]] {
+                if (__builtin_memcmp(reinterpret_cast<char *>(&http) + 4, "://", 3) == 0) [[likely]] {
+                    return 1;
+                }
+
+                static constexpr char s_colon_slash_slash[4] = {'s', ':', '/', '/'};
+                static constexpr uint32_t s_colon_slash_slash_int = __builtin_bit_cast(uint32_t, s_colon_slash_slash);
+
+                static constexpr char S_colon_slash_slash[4] = {'S', ':', '/', '/'};
+                static constexpr uint32_t S_colon_slash_slash_int = __builtin_bit_cast(uint32_t, S_colon_slash_slash);
+              
+                // Extract the last four bytes from the uint64_t
+                const uint32_t last_four_bytes = (http >> 32) & static_cast<uint32_t>(0xFFFFFFFF);
+                return (last_four_bytes == s_colon_slash_slash_int) || (last_four_bytes == S_colon_slash_slash_int);
+            }
+
+            return 0;
+        }
+
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
         static inline char *consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool &isAncientHTTP) {
             /* Scan until single SP, assume next is / (origin request) */
@@ -323,7 +363,8 @@ namespace uWS
             if (&data[1] == end) [[unlikely]] {
                 return nullptr;
             }
-            if (data[0] == 32 && data[1] == '/') [[likely]] {
+            
+            if (data[0] == 32 && (__builtin_expect(data[1] == '/', 1) || isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1)) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 /* Scan for less than 33 (catches post padded CR and fails) */
@@ -361,10 +402,23 @@ namespace uWS
                     }
                 }
             }
+
             /* If we stand at the post padded CR, we have fragmented input so try again later */
             if (data[0] == '\r') {
                 return nullptr;
             }
+
+            if (data[0] == 32) {
+                switch (isHTTPorHTTPSPrefixForProxies(data + 1, end)) {
+                    // If we haven't received enough data to check if it's http:// or https://, let's try again later
+                    case -1:
+                        return nullptr;
+                    // Otherwise, if it's not http:// or https://, return 400
+                    default:
+                        return (char *) 0x2;
+                }
+            }
+
             return (char *) 0x1;
         }
 
@@ -414,10 +468,21 @@ namespace uWS
             * which is then removed, and our counters to flip due to overflow and we end up with a crash */
 
             /* The request line is different from the field names / field values */
-            if ((char *) 2 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
+            if ((char *) 3 > (postPaddedBuffer = consumeRequestLine(postPaddedBuffer, end, headers[0], isAncientHTTP))) {
                 /* Error - invalid request line */
                 /* Assuming it is 505 HTTP Version Not Supported */
-                err = postPaddedBuffer ? HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED : 0;
+                switch (reinterpret_cast<uintptr_t>(postPaddedBuffer)) {
+                    case 0x1:
+                        err = HTTP_ERROR_505_HTTP_VERSION_NOT_SUPPORTED;;
+                        break;
+                    case 0x2:
+                        err = HTTP_ERROR_400_BAD_REQUEST;
+                        break;
+                    default: {
+                        err = 0;
+                        break;
+                    }
+                }
                 return 0;
             }
             headers++;

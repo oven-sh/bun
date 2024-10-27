@@ -121,6 +121,36 @@ const testCases: TestCase[] = [
     expectedStatus: [[200, 299]],
   },
   {
+    request: "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Valid GET request for a proxy URL",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "GET https://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Valid GET request for an https proxy URL",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "GET HTTPS://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Valid GET request for an HTTPS proxy URL",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "GET HTTP://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Valid GET request for an HTTP proxy URL",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "GET   HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Invalid GET request target (space)",
+    expectedStatus: [[400, 499]],
+  },
+  {
+    request: "GET ^ HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Invalid GET request target (caret)",
+    expectedStatus: [[400, 499]],
+  },
+  {
     request: "GET / HTTP/1.1\r\nhoSt:\texample.com\r\nempty:\r\n\r\n",
     description: "Valid GET request with edge cases",
     expectedStatus: [[200, 299]],
@@ -196,6 +226,14 @@ const testCases: TestCase[] = [
   },
 ];
 
+export async function runTestsStandalone(host: string, port: number) {
+  const results = await Promise.all(testCases.map(testCase => runTestCase(testCase, host, parseInt(port, 10))));
+
+  const passedCount = results.filter(result => result).length;
+  console.log(`\n${passedCount} out of ${testCases.length} tests passed.`);
+  return passedCount === testCases.length;
+}
+
 // Run all test cases in parallel
 export async function runTests() {
   let host, port;
@@ -209,12 +247,7 @@ export async function runTests() {
 
   host = server.url.hostname;
   port = server.url.port;
-
-  const results = await Promise.all(testCases.map(testCase => runTestCase(testCase, host, parseInt(port, 10))));
-
-  const passedCount = results.filter(result => result).length;
-  console.log(`\n${passedCount} out of ${testCases.length} tests passed.`);
-  return passedCount === testCases.length;
+  return await runTestsStandalone(host, port);
 }
 
 // Run a single test case with a 3-second timeout on reading
@@ -253,7 +286,9 @@ async function runTestCase(testCase: TestCase, host: string, port: number): Prom
         const statusCode = parseStatusCode(response);
 
         const isSuccess = testCase.expectedStatus.some(([min, max]) => statusCode >= min && statusCode <= max);
-
+        if (!isSuccess) {
+          console.log(JSON.stringify(response, null, 2));
+        }
         console.log(
           `${isSuccess ? "✅" : "❌"} ${
             testCase.description
@@ -286,5 +321,9 @@ function parseStatusCode(response: string): number {
 }
 
 if (import.meta.main) {
-  await runTests();
+  if (process.argv.length > 2) {
+    await runTestsStandalone(process.argv[2], parseInt(process.argv[3], 10));
+  } else {
+    await runTests();
+  }
 }

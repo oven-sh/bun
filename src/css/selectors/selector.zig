@@ -152,8 +152,14 @@ pub fn downlevelComponent(allocator: Allocator, component: *Component, targets: 
             // Downlevel :not(.a, .b) -> :not(:is(.a, .b)) if not list is unsupported.
             // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
             // https://drafts.csswg.org/selectors/#specificity-rules
-            if (selectors.len == 1 and css.targets.Targets.shouldCompileSame(&targets, .not_selector_list)) {
-                const is: Selector = Selector.fromComponent(allocator, Component{ .is = selectors });
+            if (selectors.len > 1 and css.targets.Targets.shouldCompileSame(&targets, .not_selector_list)) {
+                const is: Selector = Selector.fromComponent(allocator, Component{ .is = selectors: {
+                    const new_selectors = allocator.alloc(Selector, selectors.len) catch bun.outOfMemory();
+                    for (new_selectors, selectors) |*new, *sel| {
+                        new.* = sel.deepClone(allocator);
+                    }
+                    break :selectors new_selectors;
+                } });
                 var list = ArrayList(Selector).initCapacity(allocator, 1) catch bun.outOfMemory();
                 list.appendAssumeCapacity(is);
                 component.* = .{ .negation = list.items };
@@ -181,7 +187,7 @@ const RTL_LANGS: []const []const u8 = &.{
 fn downlevelDir(allocator: Allocator, dir: parser.Direction, targets: css.targets.Targets) Component {
     // Convert :dir to :lang. If supported, use a list of languages in a single :lang,
     // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
-    if (targets.shouldCompileSame(.lang_selector_list)) {
+    if (!targets.shouldCompileSame(.lang_selector_list)) {
         const c = Component{
             .non_ts_pseudo_class = PseudoClass{
                 .lang = .{ .languages = lang: {
@@ -1178,7 +1184,7 @@ pub const serialize = struct {
     }
 };
 
-const tocss_servo = struct {
+pub const tocss_servo = struct {
     pub fn toCss_SelectorList(
         selectors: []const parser.Selector,
         comptime W: type,

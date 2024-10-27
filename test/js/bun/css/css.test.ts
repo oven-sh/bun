@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import "harness";
 import path from "path";
-import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
+import { attrTest, cssTest, indoc, indoc, minify_test, minifyTest, prefix_test } from "./util";
 
 describe("css tests", () => {
   describe("border_spacing", () => {
@@ -69,7 +69,6 @@ describe("css tests", () => {
   });
 
   describe("border", () => {
-    // TODO:
     // cssTest(
     //   `
     //   .foo {
@@ -1823,5 +1822,1436 @@ describe("css tests", () => {
     //     }
     //   `,
     // );
+  });
+
+  describe("margin", () => {
+    cssTest(
+      `
+      .foo {
+        margin-left: 10px;
+        margin-right: 10px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+      }`,
+      indoc`
+      .foo {
+        margin: 20px 10px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin-block-start: 15px;
+        margin-block-end: 15px;
+      }`,
+      indoc`
+      .foo {
+        margin-block: 15px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin-left: 10px;
+        margin-right: 10px;
+        margin-inline-start: 15px;
+        margin-inline-end: 15px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+      }`,
+      indoc`
+      .foo {
+        margin-left: 10px;
+        margin-right: 10px;
+        margin-inline: 15px;
+        margin-top: 20px;
+        margin-bottom: 20px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin: 10px;
+        margin-top: 20px;
+      }`,
+      indoc`
+      .foo {
+        margin: 20px 10px 10px;
+      }
+`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        margin: 10px;
+        margin-top: var(--top);
+      }`,
+      indoc`
+      .foo {
+        margin: 10px;
+        margin-top: var(--top);
+      }
+`,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 4px;
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+        margin-right: 4px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        margin-left: 2px;
+        margin-right: 4px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-left: 4px;
+        margin-right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        margin-left: 4px;
+        margin-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-left: 2px;
+        margin-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-block-start: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-top: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-block-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-bottom: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      {
+        safari: 13 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      {
+        safari: 13 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline-start: 2px;
+        margin-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      {
+        safari: 15 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        margin-inline: 2px;
+      }
+    `,
+      {
+        safari: 15 << 16,
+      },
+    );
+  });
+
+  describe("length", () => {
+    const properties = [
+      "margin-right",
+      "margin",
+      "padding-right",
+      "padding",
+      "width",
+      "height",
+      "min-height",
+      "max-height",
+      // "line-height",
+      // "border-radius",
+    ];
+
+    for (const prop of properties) {
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        {
+          safari: 10 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: max(4%, 22px);
+        }
+      `,
+        {
+          safari: 14 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        {
+          safari: 14 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${prop}: 22px;
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        indoc`
+        .foo {
+          ${prop}: max(2cqw, 22px);
+        }
+      `,
+        {
+          safari: 16 << 16,
+        },
+      );
+    }
+  });
+
+  describe("padding", () => {
+    cssTest(
+      `
+      .foo {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 20px;
+        padding-bottom: 20px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding: 20px 10px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        padding-block-start: 15px;
+        padding-block-end: 15px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-block: 15px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-inline-start: 15px;
+        padding-inline-end: 15px;
+        padding-top: 20px;
+        padding-bottom: 20px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-inline: 15px;
+        padding-top: 20px;
+        padding-bottom: 20px;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-inline-start: 2px;
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        padding-left: 2px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        padding-left: 2px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        padding-right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        padding-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-inline-start: 2px;
+        padding-inline-end: 4px;
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        padding-left: 2px;
+        padding-right: 4px;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        padding-left: 2px;
+        padding-right: 4px;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        padding-left: 4px;
+        padding-right: 2px;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        padding-left: 4px;
+        padding-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-inline-start: var(--padding);
+      }
+    `,
+      indoc`
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        padding-left: var(--padding);
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        padding-left: var(--padding);
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        padding-right: var(--padding);
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        padding-right: var(--padding);
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-left: 2px;
+        padding-right: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-block-start: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-top: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-block-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-bottom: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-top: 1px;
+        padding-left: 2px;
+        padding-bottom: 3px;
+        padding-right: 4px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding: 1px 4px 3px 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-inline-start: 2px;
+        padding-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-inline-start: 2px;
+        padding-inline-end: 2px;
+      }
+    `,
+      {
+        safari: 13 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        padding-inline-start: 2px;
+        padding-inline-end: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        padding-inline: 2px;
+      }
+    `,
+      {
+        safari: 15 << 16,
+      },
+    );
+  });
+
+  describe("scroll-paddding", () => {
+    prefix_test(
+      `
+      .foo {
+        scroll-padding-inline: 2px;
+      }
+    `,
+      indoc`
+      .foo {
+        scroll-padding-inline: 2px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+  });
+
+  describe("size", () => {
+    prefix_test(
+      `
+      .foo {
+        block-size: 25px;
+        inline-size: 25px;
+        min-block-size: 25px;
+        min-inline-size: 25px;
+      }
+    `,
+      indoc`
+      .foo {
+        height: 25px;
+        min-height: 25px;
+        width: 25px;
+        min-width: 25px;
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        block-size: 25px;
+        min-block-size: 25px;
+        inline-size: 25px;
+        min-inline-size: 25px;
+      }
+    `,
+      indoc`
+      .foo {
+        block-size: 25px;
+        min-block-size: 25px;
+        inline-size: 25px;
+        min-inline-size: 25px;
+      }
+    `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        block-size: var(--size);
+        min-block-size: var(--size);
+        inline-size: var(--size);
+        min-inline-size: var(--size);
+      }
+    `,
+      indoc`
+      .foo {
+        height: var(--size);
+        min-height: var(--size);
+        width: var(--size);
+        min-width: var(--size);
+      }
+    `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    const sizeProps = [
+      ["width", "width"],
+      ["height", "height"],
+      ["block-size", "height"],
+      ["inline-size", "width"],
+      ["min-width", "min-width"],
+      ["min-height", "min-height"],
+      ["min-block-size", "min-height"],
+      ["min-inline-size", "min-width"],
+      ["max-width", "max-width"],
+      ["max-height", "max-height"],
+      ["max-block-size", "max-height"],
+      ["max-inline-size", "max-width"],
+    ];
+
+    for (const [inProp, outProp] of sizeProps) {
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: stretch;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: -webkit-fill-available;
+          ${outProp}: -moz-available;
+          ${outProp}: stretch;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: -webkit-fill-available;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: -webkit-fill-available;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: 100vw;
+          ${inProp}: -webkit-fill-available;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: 100vw;
+          ${outProp}: -webkit-fill-available;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: fit-content;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: -webkit-fit-content;
+          ${outProp}: -moz-fit-content;
+          ${outProp}: fit-content;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: fit-content(50%);
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: fit-content(50%);
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: min-content;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: -webkit-min-content;
+          ${outProp}: -moz-min-content;
+          ${outProp}: min-content;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: max-content;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: -webkit-max-content;
+          ${outProp}: -moz-max-content;
+          ${outProp}: max-content;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: 100%;
+          ${inProp}: max-content;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: 100%;
+          ${outProp}: max-content;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+
+      prefix_test(
+        `
+        .foo {
+          ${inProp}: var(--fallback);
+          ${inProp}: max-content;
+        }
+      `,
+        indoc`
+        .foo {
+          ${outProp}: var(--fallback);
+          ${outProp}: max-content;
+        }
+      `,
+        {
+          safari: 8 << 16,
+          firefox: 4 << 16,
+        },
+      );
+    }
+
+    minifyTest(".foo { aspect-ratio: auto }", ".foo{aspect-ratio:auto}");
+    minifyTest(".foo { aspect-ratio: 2 / 3 }", ".foo{aspect-ratio:2/3}");
+    minifyTest(".foo { aspect-ratio: auto 2 / 3 }", ".foo{aspect-ratio:auto 2/3}");
+    minifyTest(".foo { aspect-ratio: 2 / 3 auto }", ".foo{aspect-ratio:auto 2/3}");
+  });
+
+  describe("background", () => {
+    cssTest(
+      `
+      .foo {
+        background: url(img.png);
+        background-position-x: 20px;
+        background-position-y: 10px;
+        background-size: 50px 100px;
+        background-repeat: repeat no-repeat;
+      }
+    `,
+      indoc`
+      .foo {
+        background: url("img.png") 20px 10px / 50px 100px repeat-x;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background-color: red;
+        background-position: 0% 0%;
+        background-size: auto;
+        background-repeat: repeat;
+        background-clip: border-box;
+        background-origin: padding-box;
+        background-attachment: scroll;
+        background-image: none
+      }
+    `,
+      indoc`
+      .foo {
+        background: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background-color: gray;
+        background-position: 40% 50%;
+        background-size: 10em auto;
+        background-repeat: round;
+        background-clip: border-box;
+        background-origin: border-box;
+        background-attachment: fixed;
+        background-image: url('chess.png');
+      }
+    `,
+      indoc`
+      .foo {
+        background: gray url("chess.png") 40% / 10em round fixed border-box;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: url(img.png), url(test.jpg) gray;
+        background-position-x: right 20px, 10px;
+        background-position-y: top 20px, 15px;
+        background-size: 50px 50px, auto;
+        background-repeat: repeat no-repeat, no-repeat;
+      }
+    `,
+      indoc`
+      .foo {
+        background: url("img.png") right 20px top 20px / 50px 50px repeat-x, gray url("test.jpg") 10px 15px no-repeat;
+      }
+    `,
+    );
+
+    minify_test(
+      `
+      .foo {
+        background-position: center center;
+      }
+    `,
+      indoc`.foo{background-position:50%}`,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: url(img.png) gray;
+        background-clip: content-box;
+        -webkit-background-clip: text;
+      }
+    `,
+      indoc`
+      .foo {
+        background: gray url("img.png") padding-box content-box;
+        -webkit-background-clip: text;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: url(img.png) gray;
+        -webkit-background-clip: text;
+        background-clip: content-box;
+      }
+    `,
+      indoc`
+      .foo {
+        background: gray url("img.png");
+        -webkit-background-clip: text;
+        background-clip: content-box;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: url(img.png) gray;
+        background-position: var(--pos);
+      }
+    `,
+      indoc`
+      .foo {
+        background: gray url("img.png");
+        background-position: var(--pos);
+      }
+    `,
+    );
+
+    minify_test(".foo { background-position: bottom left }", ".foo{background-position:0 100%}");
+    minify_test(".foo { background-position: left 10px center }", ".foo{background-position:10px 50%}");
+    minify_test(".foo { background-position: right 10px center }", ".foo{background-position:right 10px center}");
+    minify_test(".foo { background-position: right 10px top 20px }", ".foo{background-position:right 10px top 20px}");
+    minify_test(".foo { background-position: left 10px top 20px }", ".foo{background-position:10px 20px}");
+    minify_test(
+      ".foo { background-position: left 10px bottom 20px }",
+      ".foo{background-position:left 10px bottom 20px}",
+    );
+    minify_test(".foo { background-position: left 10px top }", ".foo{background-position:10px 0}");
+    minify_test(".foo { background-position: bottom right }", ".foo{background-position:100% 100%}");
+
+    minify_test(
+      ".foo { background: url('img-sprite.png') no-repeat bottom right }",
+      ".foo{background:url(img-sprite.png) 100% 100% no-repeat}",
+    );
+    minify_test(".foo { background: transparent }", ".foo{background:0 0}");
+
+    minify_test(
+      ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
+      ".foo{background:url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\")}",
+    );
+
+    cssTest(
+      `
+      .foo {
+        background: url(img.png);
+        background-clip: text;
+      }
+    `,
+      indoc`
+      .foo {
+        background: url("img.png") text;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: url(img.png);
+          background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          background: url("img.png");
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+      `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: url(img.png);
+          background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          background: url("img.png") text;
+        }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: url(img.png) text;
+        }
+      `,
+      indoc`
+        .foo {
+          background: url("img.png");
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+      `,
+      {
+        chrome: 45 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: url(img.png);
+          -webkit-background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          background: url("img.png");
+          -webkit-background-clip: text;
+        }
+      `,
+      {
+        chrome: 45 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: url(img.png);
+          background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          background: url("img.png");
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+      `,
+      {
+        safari: 14 << 16,
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background-image: url(img.png);
+          background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          background-image: url("img.png");
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+      `,
+      {
+        safari: 8 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+      `,
+      {
+        chrome: 45 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background-image: url(img.png);
+          background-clip: text;
+        }
+      `,
+      indoc`
+        .foo {
+          background-image: url("img.png");
+          background-clip: text;
+        }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
+    minify_test(".foo { background: none center }", ".foo{background:50%}");
+    minify_test(".foo { background: none }", ".foo{background:0 0}");
+
+    prefix_test(
+      `
+        .foo {
+          background: lab(51.5117% 43.3777 -29.0443);
+        }
+      `,
+      indoc`
+        .foo {
+          background: #af5cae;
+          background: lab(51.5117% 43.3777 -29.0443);
+        }
+      `,
+      {
+        chrome: 95 << 16,
+        safari: 15 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: lab(51.5117% 43.3777 -29.0443) url(foo.png);
+        }
+      `,
+      indoc`
+        .foo {
+          background: #af5cae url("foo.png");
+          background: lab(51.5117% 43.3777 -29.0443) url("foo.png");
+        }
+      `,
+      {
+        chrome: 95 << 16,
+        safari: 15 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
+        }
+      `,
+      indoc`
+        .foo {
+          background: #af5cae linear-gradient(#c65d07, #00807c);
+          background: lab(51.5117% 43.3777 -29.0443) linear-gradient(lab(52.2319% 40.1449 59.9171), lab(47.7776% -34.2947 -7.65904));
+        }
+      `,
+      {
+        chrome: 95 << 16,
+        safari: 15 << 16,
+      },
+    );
+
+    cssTest(
+      ".foo { background: calc(var(--v) / 0.3)",
+      indoc`
+        .foo {
+          background: calc(var(--v) / .3);
+        }
+      `,
+    );
+
+    prefix_test(
+      `
+        .foo {
+          background-color: #4263eb;
+          background-color: color(display-p3 0 .5 1);
+        }
+      `,
+      indoc`
+        .foo {
+          background-color: #4263eb;
+          background-color: color(display-p3 0 .5 1);
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background-color: #4263eb;
+          background-color: color(display-p3 0 .5 1);
+        }
+      `,
+      indoc`
+        .foo {
+          background-color: color(display-p3 0 .5 1);
+        }
+      `,
+      {
+        safari: 16 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background-image: linear-gradient(red, green);
+          background-image: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      indoc`
+        .foo {
+          background-image: linear-gradient(red, green);
+          background-image: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background-image: linear-gradient(red, green);
+          background-image: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      indoc`
+        .foo {
+          background-image: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      {
+        safari: 16 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: #4263eb;
+          background: color(display-p3 0 .5 1);
+        }
+      `,
+      indoc`
+        .foo {
+          background: #4263eb;
+          background: color(display-p3 0 .5 1);
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: #4263eb;
+          background: color(display-p3 0 .5 1);
+        }
+      `,
+      indoc`
+        .foo {
+          background: color(display-p3 0 .5 1);
+        }
+      `,
+      {
+        safari: 16 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: linear-gradient(red, green);
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      indoc`
+        .foo {
+          background: linear-gradient(red, green);
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: red;
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      indoc`
+        .foo {
+          background: red;
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: linear-gradient(red, green);
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      indoc`
+        .foo {
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      {
+        safari: 16 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: var(--fallback);
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      indoc`
+        .foo {
+          background: var(--fallback);
+          background: linear-gradient(lch(50% 132 50), lch(50% 130 150));
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
+    prefix_test(
+      `
+        .foo {
+          background: red url(foo.png);
+          background: lch(50% 132 50) url(foo.png);
+        }
+      `,
+      indoc`
+        .foo {
+          background: red url("foo.png");
+          background: lch(50% 132 50) url("foo.png");
+        }
+      `,
+      {
+        chrome: 99 << 16,
+      },
+    );
   });
 });

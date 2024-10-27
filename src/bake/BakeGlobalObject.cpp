@@ -25,9 +25,8 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* jsGlobalObject,
     auto err = JSC::createTypeError(
         jsGlobalObject,
         WTF::makeString(
-            "Dynamic import to '"_s, keyString, 
-            "' should have been replaced with a hook into the module runtime"_s
-        ));
+            "Dynamic import to '"_s, keyString,
+            "' should have been replaced with a hook into the module runtime"_s));
     auto* promise = JSC::JSInternalPromise::create(
         vm, jsGlobalObject->internalPromiseStructure());
     promise->reject(jsGlobalObject, err);
@@ -38,7 +37,8 @@ extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunStrin
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
-    JSC::JSValue referrer, JSC::JSValue origin) {
+    JSC::JSValue referrer, JSC::JSValue origin)
+{
     Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(jsGlobal);
     JSC::VM& vm = global->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -49,7 +49,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
         ASSERT(referrer.isString());
         auto refererString = jsCast<JSC::JSString*>(referrer)->value(global);
-        
+
         BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
         return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
     } else {
@@ -142,12 +142,13 @@ extern "C" GlobalObject* BakeCreateDevGlobal(DevServer* owner,
     return global;
 }
 
-extern "C" GlobalObject* BakeCreateProdGlobal(JSC::VM* vm, void* console) {
+extern "C" GlobalObject* BakeCreateProdGlobal(JSC::VM* vm, void* console)
+{
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
 
     JSC::Structure* structure = GlobalObject::createStructure(*vm);
-    GlobalObject* global = GlobalObject::create(*vm, structure, &GlobalObject::s_globalObjectMethodTable); 
+    GlobalObject* global = GlobalObject::create(*vm, structure, &GlobalObject::s_globalObjectMethodTable);
     if (!global)
         BUN_PANIC("Failed to create BakeGlobalObject");
 
@@ -155,7 +156,6 @@ extern "C" GlobalObject* BakeCreateProdGlobal(JSC::VM* vm, void* console) {
     global->m_bunVM = bunVM;
 
     JSC::gcProtect(global);
-
 
     global->setConsole(console);
     global->setStackTraceLimit(10); // Node.js defaults to 10

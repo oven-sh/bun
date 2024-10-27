@@ -32,7 +32,8 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString) {
+JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString)
+{
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto&& origin = SourceOrigin(WTF::URL(urlString));
     SourceCode source = JSC::makeSource(SOURCE, origin,
@@ -66,8 +67,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     ASSERT(
         result && result.isCell() && jsDynamicCast<JSObject*>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().data()
-    );                                             
+        moduleName.utf8().data());
     return result;
 }
 

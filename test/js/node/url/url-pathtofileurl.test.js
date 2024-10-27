@@ -1,6 +1,7 @@
 import { describe, test } from "bun:test";
 import { isWindows } from "harness";
 import assert from "node:assert";
+import { parse } from "node:path";
 import url from "node:url";
 
 describe("url.pathToFileURL", () => {
@@ -68,6 +69,7 @@ describe("url.pathToFileURL", () => {
   test("general", () => {
     let testCases;
     if (isWindows) {
+      const cwdDriveLetterPrefix = parse(process.cwd()).root.slice(0, 2);
       testCases = [
         // Lowercase ascii alpha
         { path: "C:\\foo", expected: "file:///C:/foo" },
@@ -116,9 +118,9 @@ describe("url.pathToFileURL", () => {
         // UNC path (see https://docs.microsoft.com/en-us/archive/blogs/ie/file-uris-in-windows)
         { path: "\\\\nas\\My Docs\\File.doc", expected: "file://nas/My%20Docs/File.doc" },
         // POSIX-style absolute paths #14816
-        { path: "/foo", expected: "file:///C:/foo" },
+        { path: "/foo", expected: `file:///${cwdDriveLetterPrefix}/foo` },
         // POSIX-style root #14816
-        { path: "/", expected: "file:///C:/" },
+        { path: "/", expected: `file:///${cwdDriveLetterPrefix}/` },
       ];
     } else {
       testCases = [

@@ -2,30 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { readdirSync } from "fs";
 import "harness";
-import path from "path";
-import { attrTest, cssTest, indoc, minify_test, minifyTest, prefix_test } from "./util";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-
+import path from "path";
 describe("doesnt_crash", async () => {
   let files: string[] = [];
   let temp_dir: string = tmpdirSync();
   const files_dir = path.join(import.meta.dir, "files");
   temp_dir = tmpdirSync();
-  files = await Bun.$`ls ${files_dir}`.text().then(s =>
-    s
-      .split("\n")
-      .filter(s => s.length > 0)
-      .map(s => path.join(files_dir, s)),
-  );
+  files = readdirSync(files_dir).map(file => path.join(files_dir, file));
   console.log("Tempdir", temp_dir);
 
   files.map(file => {
-    const outfile1 = path.join(temp_dir, file);
-    const outfile2 = path.join(temp_dir, "lmao1-" + file);
-    const outfile3 = path.join(temp_dir, "lmao2-" + file);
-    const outfile4 = path.join(temp_dir, "lmao3-" + file);
+    const outfile1 = path.join(temp_dir, file).replaceAll("\\", "/");
+    const outfile2 = path.join(temp_dir, "lmao1-" + file).replaceAll("\\", "/");
+    const outfile3 = path.join(temp_dir, "lmao2-" + file).replaceAll("\\", "/");
+    const outfile4 = path.join(temp_dir, "lmao3-" + file).replaceAll("\\", "/");
     test(file, async () => {
       {
         const { stdout, stderr, exitCode } =

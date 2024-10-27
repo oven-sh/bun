@@ -121,6 +121,11 @@ const testCases: TestCase[] = [
     expectedStatus: [[200, 299]],
   },
   {
+    request: "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n",
+    description: "Valid GET request with HTTP/1.0",
+    expectedStatus: [[200, 299]],
+  },
+  {
     request: "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
     description: "Valid GET request for a proxy URL",
     expectedStatus: [[200, 299]],

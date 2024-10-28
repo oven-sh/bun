@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const js_ast = bun.JSAst;
+const OOM = bun.OOM;
 
 pub const Reader = struct {
     const Self = @This();
@@ -2825,11 +2826,11 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
-            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) !Api.NpmRegistry {
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) OOM!Api.NpmRegistry {
                 const url = bun.URL.parse(str);
                 var registry = std.mem.zeroes(Api.NpmRegistry);
 

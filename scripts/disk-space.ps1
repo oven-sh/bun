@@ -25,14 +25,14 @@ foreach ($path in $buildkitePaths) {
 # Clear package manager caches
 Write-Host "Cleaning package manager caches..."
 # NuGet
-Remove-Item -Path "$env:USERPROFILE\.nuget\packages\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:USERPROFILE\.nuget\packages" -Recurse -Force -ErrorAction SilentlyContinue
 # npm
-Remove-Item -Path "$env:USERPROFILE\AppData\Roaming\npm-cache\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:USERPROFILE\AppData\Roaming\npm-cache" -Recurse -Force -ErrorAction SilentlyContinue
 # yarn
-Remove-Item -Path "$env:USERPROFILE\AppData\Local\Yarn\Cache\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:USERPROFILE\AppData\Local\Yarn\Cache" -Recurse -Force -ErrorAction SilentlyContinue
 # bun
-Remove-Item -Path "$env:AppData\bun\install\cache\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$env:LocalAppData\bun\install\cache\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:AppData\bun\install\cache" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:LocalAppData\bun\install\cache" -Recurse -Force -ErrorAction SilentlyContinue
 
 # Clean Docker
 Write-Host "Cleaning Docker resources..."

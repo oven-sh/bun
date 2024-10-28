@@ -379,7 +379,7 @@ pub const BabyString = packed struct {
 pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
-    metadata: Metadata = .{ .build = 0 },
+    metadata: Metadata = .{ .build = {} },
     // TODO: make this non-optional, empty slice for no notes
     notes: ?[]Data = null,
 
@@ -444,7 +444,7 @@ pub const Msg = struct {
     }
 
     pub const Metadata = union(Tag) {
-        build: u0,
+        build: void,
         resolve: Resolve,
         pub const Tag = enum(u8) {
             build = 1,

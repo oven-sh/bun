@@ -3108,7 +3108,7 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+        const parse_tracer = bun.perf.trace("JSParser.parse");
 
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
@@ -3146,7 +3146,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        const visit_tracer = bun.perf.trace("JSParser.visit");
         try p.prepareForVisitPass();
 
         var parts = ListManaged(js_ast.Part).init(p.allocator);
@@ -3155,7 +3155,7 @@ pub const Parser = struct {
         try p.appendPart(&parts, stmts);
         visit_tracer.end();
 
-        const analyze_tracer = bun.tracy.traceNamed(@src(), "JSParser.analyze");
+        const analyze_tracer = bun.perf.trace("JSParser.analyze");
         try callback(context, &p, parts.items);
         analyze_tracer.end();
     }
@@ -3245,7 +3245,7 @@ pub const Parser = struct {
 
         // Parse the file in the first pass, but do not bind symbols
         var opts = ParseStatementOptions{ .is_module_scope = true };
-        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+        const parse_tracer = bun.perf.trace("JSParser.parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
@@ -3266,7 +3266,7 @@ pub const Parser = struct {
 
         bun.crash_handler.current_action = .{ .visit = self.source.path.text };
 
-        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        const visit_tracer = bun.perf.trace("JSParser.visit");
         try p.prepareForVisitPass();
 
         // ESM is always strict mode. I don't think we need this.
@@ -3493,7 +3493,7 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const postvisit_tracer = bun.tracy.traceNamed(@src(), "JSParser.postvisit");
+        const postvisit_tracer = bun.perf.trace("JSParser.postvisit");
         defer postvisit_tracer.end();
 
         var uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;

@@ -964,7 +964,7 @@ pub const JSBundler = struct {
             is_onLoad: bool,
         ) bool {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.hasAnyMatches");
+            const tracer = bun.perf.trace("JSBundler.hasAnyMatches");
             defer tracer.end();
 
             const namespace_string = if (path.isFile())
@@ -986,7 +986,7 @@ pub const JSBundler = struct {
             default_loader: options.Loader,
         ) void {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
+            const tracer = bun.perf.trace("JSBundler.matchOnLoad");
             defer tracer.end();
             const namespace_string = if (namespace.len == 0)
                 bun.String.static("file")
@@ -1008,7 +1008,7 @@ pub const JSBundler = struct {
             import_record_kind: bun.ImportKind,
         ) void {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnResolve");
+            const tracer = bun.perf.trace("JSBundler.matchOnResolve");
             defer tracer.end();
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
@@ -1028,7 +1028,7 @@ pub const JSBundler = struct {
             config: JSC.JSValue,
         ) JSValue {
             JSC.markBinding(@src());
-            const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
+            const tracer = bun.perf.trace("JSBundler.addPlugin");
             defer tracer.end();
             return JSBundlerPlugin__runSetupFunction(this, object, config);
         }

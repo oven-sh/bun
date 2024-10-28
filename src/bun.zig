@@ -4087,3 +4087,5 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
     comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
     hasher.update(std.mem.asBytes(&thing));
 }
+
+pub const perf = @import("./perf.zig");

@@ -295,26 +295,16 @@ pub const CommandLineReporter = struct {
 
     pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, byte_ranges: []bun.sourcemap.ByteRangeMapping, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
         _ = this; // autofix
-        const trace = bun.tracy.traceNamed(@src(), comptime brk: {
-            if (reporters.text and reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCovAndText";
-            }
-
-            if (reporters.text) {
-                break :brk "TestCommand.printCodeCoverageText";
-            }
-
-            if (reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCov";
-            }
-
+        const trace = if (reporters.text and reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCovAndText")
+        else if (reporters.text)
+            bun.perf.trace("TestCommand.printCodeCoverageText")
+        else if (reporters.lcov)
+            bun.perf.trace("TestCommand.printCodeCoverageLCov")
+        else
             @compileError("No reporters enabled");
-        });
+
         defer trace.end();
-
-        if (comptime !reporters.text and !reporters.lcov) {
-            @compileError("No reporters enabled");
-        }
 
         const relative_dir = vm.bundler.fs.top_level_dir;
 

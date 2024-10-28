@@ -77,7 +77,7 @@ pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_in
 //     if (builtin.os.tag == .windows) {
 //         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
 //         var info: windows.FILE_ALL_INFORMATION = undefined;
-//         const rc = windows.ntdll.NtQueryInformationFile(self.handle, &io_status_block, &info, @sizeOf(windows.FILE_ALL_INFORMATION), .FileAllInformation);
+//         const rc = windows.ntdll.NtQueryInformationFile(this.handle, &io_status_block, &info, @sizeOf(windows.FILE_ALL_INFORMATION), .FileAllInformation);
 //         switch (rc) {
 //             .SUCCESS => {},
 //             .BUFFER_OVERFLOW => {},
@@ -892,3 +892,75 @@ pub const netdb = @cImport({
 pub extern fn memset_pattern4(buf: [*]u8, pattern: [*]const u8, len: usize) void;
 pub extern fn memset_pattern8(buf: [*]u8, pattern: [*]const u8, len: usize) void;
 pub extern fn memset_pattern16(buf: [*]u8, pattern: [*]const u8, len: usize) void;
+
+pub const OSLog = opaque {
+    pub const Category = enum(u8) {
+        PointsOfInterest = 0,
+        Dynamicity = 1,
+        SizeAndThroughput = 2,
+        TimeProfile = 3,
+        SystemReporting = 4,
+        UserCustom = 5,
+    };
+
+    // Common subsystems that Instruments recognizes
+    pub const Subsystem = struct {
+        pub const Network = "com.apple.network";
+        pub const FileIO = "com.apple.disk_io";
+        pub const Graphics = "com.apple.graphics";
+        pub const Memory = "com.apple.memory";
+        pub const Performance = "com.apple.performance";
+    };
+
+    extern "C" fn os_log_create(subsystem: ?[*:0]const u8, category: ?[*:0]const u8) ?*OSLog;
+
+    pub fn init() ?*OSLog {
+        return os_log_create("com.bun.bun", "PointsOfInterest");
+    }
+
+    // anything except 0 and ~0 is a valid signpost id
+    var signpost_id_counter = std.atomic.Value(u64).init(1);
+
+    pub fn signpost(log: *OSLog, name: i32) Signpost {
+        return .{
+            .id = signpost_id_counter.fetchAdd(1, .monotonic),
+            .name = name,
+            .log = log,
+        };
+    }
+
+    const SignpostType = enum(u8) {
+        Event = 0,
+        IntervalBegin = 1,
+        IntervalEnd = 2,
+    };
+
+    pub extern "C" fn Bun__signpost_emit(log: *OSLog, id: u64, signpost_type: SignpostType, name: i32, category: u8) void;
+
+    pub const Signpost = struct {
+        id: u64,
+        name: i32,
+        log: *OSLog,
+
+        pub fn emit(this: *const Signpost, category: Category) void {
+            Bun__signpost_emit(this.log, this.id, .Event, this.name, @intFromEnum(category));
+        }
+
+        pub const Interval = struct {
+            signpost: Signpost,
+            category: Category,
+
+            pub fn end(this: *const Interval) void {
+                Bun__signpost_emit(this.signpost.log, this.signpost.id, .IntervalEnd, this.signpost.name, @intFromEnum(this.category));
+            }
+        };
+
+        pub fn interval(this: Signpost, category: Category) Interval {
+            Bun__signpost_emit(this.log, this.id, .IntervalBegin, this.name, @intFromEnum(category));
+            return Interval{
+                .signpost = this,
+                .category = category,
+            };
+        }
+    };
+};

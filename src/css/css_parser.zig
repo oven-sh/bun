@@ -826,10 +826,11 @@ pub const enum_property_util = struct {
             .result => |v| v,
         };
 
-        // todo_stuff.match_ignore_ascii_case
-        inline for (std.meta.fields(T)) |field| {
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
-        }
+        const Map = comptime bun.ComptimeEnumMap(T);
+        if (Map.getASCIIICaseInsensitive(ident)) |x| return .{ .result = x };
+        // inline for (std.meta.fields(T)) |field| {
+        //     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
+        // }
 
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
@@ -1517,104 +1518,121 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             pub const AtRule = void;
 
             pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "import")) {
-                    if (@intFromEnum(this.state) > @intFromEnum(State.imports)) {
-                        return .{ .err = input.newCustomError(@as(ParserError, ParserError.unexpected_import_rule)) };
-                    }
-                    const url_str = switch (input.expectUrlOrString()) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v| v,
-                    };
+                const PreludeEnum = enum {
+                    import,
+                    charset,
+                    namespace,
+                    @"custom-media",
+                    property,
+                };
+                const Map = comptime bun.ComptimeEnumMap(PreludeEnum);
 
-                    const layer: ?struct { value: ?LayerName } =
-                        if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) == .result)
-                        .{ .value = null }
-                    else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
-                        break :brk .{
-                            .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
-                                .result => |v| v,
-                                .err => |e| return .{ .err = e },
-                            },
-                        };
-                    } else null;
-
-                    const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) == .result) brk: {
-                        const Func = struct {
-                            pub fn do(_: void, p: *Parser) Result(SupportsCondition) {
-                                const result = p.tryParse(SupportsCondition.parse, .{});
-                                if (result == .err) return SupportsCondition.parseDeclaration(p);
-                                return result;
+                if (Map.getASCIIICaseInsensitive(name)) |prelude| {
+                    switch (prelude) {
+                        .import => {
+                            if (@intFromEnum(this.state) > @intFromEnum(State.imports)) {
+                                return .{ .err = input.newCustomError(@as(ParserError, ParserError.unexpected_import_rule)) };
                             }
-                        };
-                        break :brk switch (input.parseNestedBlock(SupportsCondition, {}, Func.do)) {
-                            .result => |v| v,
-                            .err => |e| return .{ .err = e },
-                        };
-                    } else null;
+                            const url_str = switch (input.expectUrlOrString()) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
 
-                    const media = switch (MediaList.parse(input)) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v| v,
-                    };
+                            const layer: ?struct { value: ?LayerName } =
+                                if (input.tryParse(Parser.expectIdentMatching, .{"layer"}) == .result)
+                                .{ .value = null }
+                            else if (input.tryParse(Parser.expectFunctionMatching, .{"layer"}) == .result) brk: {
+                                break :brk .{
+                                    .value = switch (input.parseNestedBlock(LayerName, {}, voidWrap(LayerName, LayerName.parse))) {
+                                        .result => |v| v,
+                                        .err => |e| return .{ .err = e },
+                                    },
+                                };
+                            } else null;
 
-                    return .{
-                        .result = .{
-                            .import = .{
-                                url_str,
-                                media,
-                                supports,
-                                if (layer) |l| .{ .value = if (l.value) |ll| ll else null } else null,
-                            },
+                            const supports = if (input.tryParse(Parser.expectFunctionMatching, .{"supports"}) == .result) brk: {
+                                const Func = struct {
+                                    pub fn do(_: void, p: *Parser) Result(SupportsCondition) {
+                                        const result = p.tryParse(SupportsCondition.parse, .{});
+                                        if (result == .err) return SupportsCondition.parseDeclaration(p);
+                                        return result;
+                                    }
+                                };
+                                break :brk switch (input.parseNestedBlock(SupportsCondition, {}, Func.do)) {
+                                    .result => |v| v,
+                                    .err => |e| return .{ .err = e },
+                                };
+                            } else null;
+
+                            const media = switch (MediaList.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+
+                            return .{
+                                .result = .{
+                                    .import = .{
+                                        url_str,
+                                        media,
+                                        supports,
+                                        if (layer) |l| .{ .value = if (l.value) |ll| ll else null } else null,
+                                    },
+                                },
+                            };
                         },
-                    };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "namespace")) {
-                    if (@intFromEnum(this.state) > @intFromEnum(State.namespaces)) {
-                        return .{ .err = input.newCustomError(ParserError{ .unexpected_namespace_rule = {} }) };
+                        .namespace => {
+                            if (@intFromEnum(this.state) > @intFromEnum(State.namespaces)) {
+                                return .{ .err = input.newCustomError(ParserError{ .unexpected_namespace_rule = {} }) };
+                            }
+
+                            const prefix = switch (input.tryParse(Parser.expectIdent, .{})) {
+                                .result => |v| v,
+                                .err => null,
+                            };
+                            const namespace = switch (input.expectUrlOrString()) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            return .{ .result = .{ .namespace = .{ prefix, namespace } } };
+                        },
+                        .charset => {
+                            // @charset is removed by rust-cssparser if it's the first rule in the stylesheet.
+                            // Anything left is technically invalid, however, users often concatenate CSS files
+                            // together, so we are more lenient and simply ignore @charset rules in the middle of a file.
+                            if (input.expectString().asErr()) |e| return .{ .err = e };
+                            return .{ .result = .charset };
+                        },
+                        .@"custom-media" => {
+                            const custom_media_name = switch (DashedIdentFns.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            const media = switch (MediaList.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            return .{
+                                .result = .{
+                                    .custom_media = .{
+                                        custom_media_name,
+                                        media,
+                                    },
+                                },
+                            };
+                        },
+                        .property => {
+                            const property_name = switch (DashedIdentFns.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            return .{ .result = .{ .property = .{property_name} } };
+                        },
                     }
-
-                    const prefix = switch (input.tryParse(Parser.expectIdent, .{})) {
-                        .result => |v| v,
-                        .err => null,
-                    };
-                    const namespace = switch (input.expectUrlOrString()) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v| v,
-                    };
-                    return .{ .result = .{ .namespace = .{ prefix, namespace } } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "charset")) {
-                    // @charset is removed by rust-cssparser if it’s the first rule in the stylesheet.
-                    // Anything left is technically invalid, however, users often concatenate CSS files
-                    // together, so we are more lenient and simply ignore @charset rules in the middle of a file.
-                    if (input.expectString().asErr()) |e| return .{ .err = e };
-                    return .{ .result = .charset };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-media")) {
-                    const custom_media_name = switch (DashedIdentFns.parse(input)) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v| v,
-                    };
-                    const media = switch (MediaList.parse(input)) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v| v,
-                    };
-                    return .{
-                        .result = .{
-                            .custom_media = .{
-                                custom_media_name,
-                                media,
-                            },
-                        },
-                    };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "property")) {
-                    const property_name = switch (DashedIdentFns.parse(input)) {
-                        .err => |e| return .{ .err = e },
-                        .result => |v| v,
-                    };
-                    return .{ .result = .{ .property = .{property_name} } };
-                } else {
-                    const Nested = NestedRuleParser(AtRuleParserT);
-                    var nested_rule_parser: Nested = this.nested();
-                    return Nested.AtRuleParser.parsePrelude(&nested_rule_parser, name, input);
                 }
+
+                const Nested = NestedRuleParser(AtRuleParserT);
+                var nested_rule_parser: Nested = this.nested();
+                return Nested.AtRuleParser.parsePrelude(&nested_rule_parser, name, input);
             }
 
             pub fn parseBlock(this: *This, prelude: AtRuleParser.Prelude, start: *const ParserState, input: *Parser) Result(AtRuleParser.AtRule) {
@@ -1788,174 +1806,203 @@ pub fn NestedRuleParser(comptime T: type) type {
 
             pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
                 const result: Prelude = brk: {
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "media")) {
-                        const media = switch (MediaList.parse(input)) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .media = media };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "supports")) {
-                        const cond = switch (SupportsCondition.parse(input)) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .supports = cond };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-face")) {
-                        break :brk .font_face;
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-palette-values")) {
-                        const dashed_ident_name = switch (DashedIdentFns.parse(input)) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .font_palette_values = dashed_ident_name };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "counter-style")) {
-                        const custom_name = switch (CustomIdentFns.parse(input)) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .counter_style = custom_name };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "viewport") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-viewport")) {
-                        const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
-                        break :brk .{ .viewport = prefix };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "keyframes") or
-                        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-viewport") or
-                        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-keyframes") or
-                        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-o-keyframes") or
-                        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-keyframes"))
-                    {
-                        const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-webkit"))
-                            VendorPrefix{ .webkit = true }
-                        else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-moz-"))
-                            VendorPrefix{ .moz = true }
-                        else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-o-"))
-                            VendorPrefix{ .o = true }
-                        else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms-")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
+                    const PreludeEnum = enum {
+                        media,
+                        supports,
+                        @"font-face",
+                        @"font-palette-values",
+                        @"counter-style",
+                        viewport,
+                        keyframes,
+                        @"-ms-viewport",
+                        @"-moz-keyframes",
+                        @"-o-keyframes",
+                        @"-ms-keyframes",
+                        page,
+                        @"-moz-document",
+                        layer,
+                        container,
+                        @"starting-style",
+                        scope,
+                        nest,
+                    };
+                    const Map = comptime bun.ComptimeEnumMap(PreludeEnum);
+                    if (Map.getASCIIICaseInsensitive(name)) |kind| switch (kind) {
+                        .media => {
+                            const media = switch (MediaList.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            break :brk .{ .media = media };
+                        },
+                        .supports => {
+                            const cond = switch (SupportsCondition.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            break :brk .{ .supports = cond };
+                        },
+                        .@"font-face" => break :brk .font_face,
+                        .@"font-palette-values" => {
+                            const dashed_ident_name = switch (DashedIdentFns.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            break :brk .{ .font_palette_values = dashed_ident_name };
+                        },
+                        .@"counter-style" => {
+                            const custom_name = switch (CustomIdentFns.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            break :brk .{ .counter_style = custom_name };
+                        },
+                        .viewport, .@"-ms-viewport" => {
+                            const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
+                            break :brk .{ .viewport = prefix };
+                        },
+                        .keyframes, .@"-moz-keyframes", .@"-o-keyframes", .@"-ms-keyframes" => {
+                            const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-webkit"))
+                                VendorPrefix{ .webkit = true }
+                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-moz-"))
+                                VendorPrefix{ .moz = true }
+                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-o-"))
+                                VendorPrefix{ .o = true }
+                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms-")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
 
-                        const keyframes_name = switch (input.tryParse(css_rules.keyframes.KeyframesName.parse, .{})) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .keyframes = .{ .name = keyframes_name, .prefix = prefix } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "page")) {
-                        const Fn = struct {
-                            pub fn parsefn(input2: *Parser) Result(ArrayList(css_rules.page.PageSelector)) {
-                                return input2.parseCommaSeparated(css_rules.page.PageSelector, css_rules.page.PageSelector.parse);
-                            }
-                        };
-                        const selectors = switch (input.tryParse(Fn.parsefn, .{})) {
-                            .result => |v| v,
-                            .err => ArrayList(css_rules.page.PageSelector){},
-                        };
-                        break :brk .{ .page = selectors };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-document")) {
-                        // Firefox only supports the url-prefix() function with no arguments as a legacy CSS hack.
-                        // See https://css-tricks.com/snippets/css/css-hacks-targeting-firefox/
-                        if (input.expectFunctionMatching("url-prefix").asErr()) |e| return .{ .err = e };
-                        const Fn = struct {
-                            pub fn parsefn(_: void, input2: *Parser) Result(void) {
-                                // Firefox also allows an empty string as an argument...
-                                // https://github.com/mozilla/gecko-dev/blob/0077f2248712a1b45bf02f0f866449f663538164/servo/components/style/stylesheets/document_rule.rs#L303
-                                _ = input2.tryParse(parseInner, .{});
-                                if (input2.expectExhausted().asErr()) |e| return .{ .err = e };
-                                return .{ .result = {} };
-                            }
-                            fn parseInner(input2: *Parser) Result(void) {
-                                const s = switch (input2.expectString()) {
+                            const keyframes_name = switch (input.tryParse(css_rules.keyframes.KeyframesName.parse, .{})) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            break :brk .{ .keyframes = .{ .name = keyframes_name, .prefix = prefix } };
+                        },
+                        .page => {
+                            const Fn = struct {
+                                pub fn parsefn(input2: *Parser) Result(ArrayList(css_rules.page.PageSelector)) {
+                                    return input2.parseCommaSeparated(css_rules.page.PageSelector, css_rules.page.PageSelector.parse);
+                                }
+                            };
+                            const selectors = switch (input.tryParse(Fn.parsefn, .{})) {
+                                .result => |v| v,
+                                .err => ArrayList(css_rules.page.PageSelector){},
+                            };
+                            break :brk .{ .page = selectors };
+                        },
+                        .@"-moz-document" => {
+                            // Firefox only supports the url-prefix() function with no arguments as a legacy CSS hack.
+                            // See https://css-tricks.com/snippets/css/css-hacks-targeting-firefox/
+                            if (input.expectFunctionMatching("url-prefix").asErr()) |e| return .{ .err = e };
+                            const Fn = struct {
+                                pub fn parsefn(_: void, input2: *Parser) Result(void) {
+                                    // Firefox also allows an empty string as an argument...
+                                    // https://github.com/mozilla/gecko-dev/blob/0077f2248712a1b45bf02f0f866449f663538164/servo/components/style/stylesheets/document_rule.rs#L303
+                                    _ = input2.tryParse(parseInner, .{});
+                                    if (input2.expectExhausted().asErr()) |e| return .{ .err = e };
+                                    return .{ .result = {} };
+                                }
+                                fn parseInner(input2: *Parser) Result(void) {
+                                    const s = switch (input2.expectString()) {
+                                        .err => |e| return .{ .err = e },
+                                        .result => |v| v,
+                                    };
+                                    if (s.len > 0) {
+                                        return .{ .err = input2.newCustomError(ParserError.invalid_value) };
+                                    }
+                                    return .{ .result = {} };
+                                }
+                            };
+                            if (input.parseNestedBlock(void, {}, Fn.parsefn).asErr()) |e| return .{ .err = e };
+                            break :brk .moz_document;
+                        },
+                        .layer => {
+                            const names = switch (input.parseList(LayerName, LayerName.parse)) {
+                                .result => |vv| vv,
+                                .err => |e| names: {
+                                    if (e.kind == .basic and e.kind.basic == .end_of_input) {
+                                        break :names ArrayList(LayerName){};
+                                    }
+                                    return .{ .err = e };
+                                },
+                            };
+
+                            break :brk .{ .layer = names };
+                        },
+                        .container => {
+                            const container_name = switch (input.tryParse(css_rules.container.ContainerName.parse, .{})) {
+                                .result => |vv| vv,
+                                .err => null,
+                            };
+                            const condition = switch (css_rules.container.ContainerCondition.parse(input)) {
+                                .err => |e| return .{ .err = e },
+                                .result => |v| v,
+                            };
+                            break :brk .{ .container = .{ .name = container_name, .condition = condition } };
+                        },
+                        .@"starting-style" => break :brk .starting_style,
+                        .scope => {
+                            var selector_parser = selector.parser.SelectorParser{
+                                .is_nesting_allowed = true,
+                                .options = this.options,
+                                .allocator = input.allocator(),
+                            };
+                            const Closure = struct {
+                                selector_parser: *selector.parser.SelectorParser,
+                                pub fn parsefn(self: *@This(), input2: *Parser) Result(selector.parser.SelectorList) {
+                                    return selector.parser.SelectorList.parseRelative(self.selector_parser, input2, .ignore_invalid_selector, .none);
+                                }
+                            };
+                            var closure = Closure{
+                                .selector_parser = &selector_parser,
+                            };
+
+                            const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{}).isOk()) scope_start: {
+                                break :scope_start switch (input.parseNestedBlock(selector.parser.SelectorList, &closure, Closure.parsefn)) {
+                                    .result => |v| v,
+                                    .err => |e| return .{ .err = e },
+                                };
+                            } else null;
+
+                            const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"}).isOk()) scope_end: {
+                                if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e };
+                                break :scope_end switch (input.parseNestedBlock(selector.parser.SelectorList, &closure, Closure.parsefn)) {
+                                    .result => |v| v,
+                                    .err => |e| return .{ .err = e },
+                                };
+                            } else null;
+
+                            break :brk .{
+                                .scope = .{
+                                    .scope_start = scope_start,
+                                    .scope_end = scope_end,
+                                },
+                            };
+                        },
+                        .nest => {
+                            if (this.is_in_style_rule) {
+                                this.options.warn(input.newCustomError(ParserError{ .deprecated_nest_rule = {} }));
+                                var selector_parser = selector.parser.SelectorParser{
+                                    .is_nesting_allowed = true,
+                                    .options = this.options,
+                                    .allocator = input.allocator(),
+                                };
+                                const selectors = switch (selector.parser.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
                                     .err => |e| return .{ .err = e },
                                     .result => |v| v,
                                 };
-                                if (s.len > 0) {
-                                    return .{ .err = input2.newCustomError(ParserError.invalid_value) };
-                                }
-                                return .{ .result = {} };
+                                break :brk .{ .nest = selectors };
                             }
-                        };
-                        if (input.parseNestedBlock(void, {}, Fn.parsefn).asErr()) |e| return .{ .err = e };
-                        break :brk .moz_document;
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "layer")) {
-                        const names = switch (input.parseList(LayerName, LayerName.parse)) {
-                            .result => |vv| vv,
-                            .err => |e| names: {
-                                if (e.kind == .basic and e.kind.basic == .end_of_input) {
-                                    break :names ArrayList(LayerName){};
-                                }
-                                return .{ .err = e };
-                            },
-                        };
+                        },
+                    };
 
-                        break :brk .{ .layer = names };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "container")) {
-                        const container_name = switch (input.tryParse(css_rules.container.ContainerName.parse, .{})) {
-                            .result => |vv| vv,
-                            .err => null,
-                        };
-                        const condition = switch (css_rules.container.ContainerCondition.parse(input)) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .container = .{ .name = container_name, .condition = condition } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "starting-style")) {
-                        break :brk .starting_style;
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "scope")) {
-                        var selector_parser = selector.parser.SelectorParser{
-                            .is_nesting_allowed = true,
-                            .options = this.options,
-                            .allocator = input.allocator(),
-                        };
-                        const Closure = struct {
-                            selector_parser: *selector.parser.SelectorParser,
-                            pub fn parsefn(self: *@This(), input2: *Parser) Result(selector.parser.SelectorList) {
-                                return selector.parser.SelectorList.parseRelative(self.selector_parser, input2, .ignore_invalid_selector, .none);
-                            }
-                        };
-                        var closure = Closure{
-                            .selector_parser = &selector_parser,
-                        };
-
-                        const scope_start = if (input.tryParse(Parser.expectParenthesisBlock, .{}).isOk()) scope_start: {
-                            break :scope_start switch (input.parseNestedBlock(selector.parser.SelectorList, &closure, Closure.parsefn)) {
-                                .result => |v| v,
-                                .err => |e| return .{ .err = e },
-                            };
-                        } else null;
-
-                        const scope_end = if (input.tryParse(Parser.expectIdentMatching, .{"to"}).isOk()) scope_end: {
-                            if (input.expectParenthesisBlock().asErr()) |e| return .{ .err = e };
-                            break :scope_end switch (input.parseNestedBlock(selector.parser.SelectorList, &closure, Closure.parsefn)) {
-                                .result => |v| v,
-                                .err => |e| return .{ .err = e },
-                            };
-                        } else null;
-
-                        break :brk .{
-                            .scope = .{
-                                .scope_start = scope_start,
-                                .scope_end = scope_end,
-                            },
-                        };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "nest") and this.is_in_style_rule) {
-                        this.options.warn(input.newCustomError(ParserError{ .deprecated_nest_rule = {} }));
-                        var selector_parser = selector.parser.SelectorParser{
-                            .is_nesting_allowed = true,
-                            .options = this.options,
-                            .allocator = input.allocator(),
-                        };
-                        const selectors = switch (selector.parser.SelectorList.parse(&selector_parser, input, .discard_list, .contained)) {
-                            .err => |e| return .{ .err = e },
-                            .result => |v| v,
-                        };
-                        break :brk .{ .nest = selectors };
-                    } else {
-                        break :brk switch (parse_custom_at_rule_prelude(
-                            name,
-                            input,
-                            this.options,
-                            T,
-                            this.at_rule_parser,
-                        )) {
-                            .result => |v| v,
-                            .err => |e| return .{ .err = e },
-                        };
+                    switch (parse_custom_at_rule_prelude(
+                        name,
+                        input,
+                        this.options,
+                        T,
+                        this.at_rule_parser,
+                    )) {
+                        .result => |v| break :brk v,
+                        .err => |e| return .{ .err = e },
                     }
                 };
 

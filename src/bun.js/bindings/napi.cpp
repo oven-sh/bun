@@ -506,6 +506,8 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
+        napi_set_last_error(env, napi_ok);
+
         napi_value napi_result = callback(env, frame.toNapi());
         JSValue result = napi_result ? toJS(napi_result) : jsUndefined();
 

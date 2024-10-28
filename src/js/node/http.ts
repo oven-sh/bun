@@ -610,6 +610,7 @@ Server.prototype = {
         port,
         hostname: host,
         unix: socketPath,
+        development: false,
         reusePort,
         // Bindings to be used for WS Server
         websocket: {

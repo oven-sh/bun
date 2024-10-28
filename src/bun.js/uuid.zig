@@ -160,18 +160,18 @@ pub const UUID7 = struct {
         var bytes: [16]u8 = undefined;
 
         // First 6 bytes: timestamp in big-endian
-        bytes[0] = @as(u8, @truncate((timestamp >> 40) & 0xFF));
-        bytes[1] = @as(u8, @truncate((timestamp >> 32) & 0xFF));
-        bytes[2] = @as(u8, @truncate((timestamp >> 24) & 0xFF));
-        bytes[3] = @as(u8, @truncate((timestamp >> 16) & 0xFF));
-        bytes[4] = @as(u8, @truncate((timestamp >> 8) & 0xFF));
-        bytes[5] = @as(u8, @truncate(timestamp & 0xFF));
+        bytes[0] = @truncate(timestamp >> 40);
+        bytes[1] = @truncate(timestamp >> 32);
+        bytes[2] = @truncate(timestamp >> 24);
+        bytes[3] = @truncate(timestamp >> 16);
+        bytes[4] = @truncate(timestamp >> 8);
+        bytes[5] = @truncate(timestamp);
 
         // Byte 6: Version 7 in high nibble, top 4 bits of counter in low nibble
         bytes[6] = (@as(u8, 7) << 4) | @as(u8, @truncate((count >> 8) & 0x0F));
 
         // Byte 7: Lower 8 bits of counter
-        bytes[7] = @as(u8, @truncate(count & 0xFF));
+        bytes[7] = @truncate(count);
 
         // Byte 8: Variant in top 2 bits, 6 bits of random
         bytes[8] = (0x80 & 0xFF) | (random[0] & 0x3F);

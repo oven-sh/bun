@@ -1,6 +1,6 @@
 ## With `bun dev`
 
-When importing CSS in JavaScript-like loaders, CSS is treated special.
+When importing CSS in JavaScript-like loaders, CSS is treated in a special way.
 
 By default, Bun will transform a statement like this:
 

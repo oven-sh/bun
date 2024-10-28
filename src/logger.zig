@@ -22,6 +22,15 @@ const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
 
+const SourceType = enum {
+    other,
+
+    /// passwords and tokens are redacted
+    npmrc,
+    /// passwords and tokens are redacted
+    bunfig,
+};
+
 pub const Kind = enum(u8) {
     err = 0,
     warn = 1,
@@ -253,8 +262,10 @@ pub const Data = struct {
         this: *const Data,
         to: anytype,
         kind: Kind,
+        source_type: SourceType,
         comptime enable_ansi_colors: bool,
     ) !void {
+        _ = source_type;
         if (this.text.len == 0) return;
 
         const message_color = switch (kind) {
@@ -510,9 +521,10 @@ pub const Msg = struct {
     pub fn writeFormat(
         msg: *const Msg,
         to: anytype,
+        source_type: SourceType,
         comptime enable_ansi_colors: bool,
     ) !void {
-        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors);
+        try msg.data.writeFormat(to, msg.kind, source_type, enable_ansi_colors);
 
         if (msg.notes) |notes| {
             if (notes.len > 0) {
@@ -522,7 +534,7 @@ pub const Msg = struct {
             for (notes) |note| {
                 try to.writeAll("\n");
 
-                try note.writeFormat(to, .note, enable_ansi_colors);
+                try note.writeFormat(to, .note, source_type, enable_ansi_colors);
             }
         }
     }
@@ -1239,13 +1251,13 @@ pub const Log = struct {
         );
     }
 
-    pub fn printForLogLevel(self: *Log, to: anytype) !void {
+    pub fn print(self: *Log, to: anytype, source_type: SourceType) !void {
         return switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| self.printForLogLevelWithEnableAnsiColors(to, enable_ansi_colors),
+            inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, source_type, enable_ansi_colors),
         };
     }
 
-    pub fn printForLogLevelWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, source_type: SourceType, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
@@ -1257,7 +1269,7 @@ pub const Log = struct {
                 if (msg.kind != .err) {
                     if (msg.kind.shouldPrint(self.level)) {
                         if (needs_newline) try to.writeAll("\n\n");
-                        try msg.writeFormat(to, enable_ansi_colors);
+                        try msg.writeFormat(to, source_type, enable_ansi_colors);
                         needs_newline = true;
                     }
                 }
@@ -1267,7 +1279,7 @@ pub const Log = struct {
                 if (msg.kind == .err) {
                     if (msg.kind.shouldPrint(self.level)) {
                         if (needs_newline) try to.writeAll("\n\n");
-                        try msg.writeFormat(to, enable_ansi_colors);
+                        try msg.writeFormat(to, source_type, enable_ansi_colors);
                         needs_newline = true;
                     }
                 }
@@ -1276,21 +1288,13 @@ pub const Log = struct {
             for (self.msgs.items) |*msg| {
                 if (msg.kind.shouldPrint(self.level)) {
                     if (needs_newline) try to.writeAll("\n\n");
-                    try msg.writeFormat(to, enable_ansi_colors);
+                    try msg.writeFormat(to, source_type, enable_ansi_colors);
                     needs_newline = true;
                 }
             }
         }
 
         if (needs_newline) _ = try to.write("\n");
-    }
-
-    pub fn printForLogLevelColorsRuntime(self: *Log, to: anytype, enable_ansi_colors: bool) !void {
-        if (enable_ansi_colors) {
-            return self.printForLogLevelWithEnableAnsiColors(to, true);
-        } else {
-            return self.printForLogLevelWithEnableAnsiColors(to, false);
-        }
     }
 
     pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {

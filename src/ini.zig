@@ -892,7 +892,7 @@ pub fn loadNpmrcFromFile(
         else
             Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
     }
-    log.printForLogLevel(Output.errorWriter()) catch {};
+    log.print(Output.errorWriter(), .npmrc) catch {};
 }
 
 pub fn loadNpmrc(

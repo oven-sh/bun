@@ -284,7 +284,7 @@ pub const BuildCommand = struct {
                 );
 
                 if (log.hasErrors()) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter(), .other);
 
                     if (result.errors.len > 0 or result.output_files.len == 0) {
                         Output.flush();
@@ -306,7 +306,7 @@ pub const BuildCommand = struct {
                 &input_code_length,
             ) catch |err| {
                 if (log.msgs.items.len > 0) {
-                    try log.printForLogLevel(Output.errorWriter());
+                    try log.print(Output.errorWriter(), .other);
                 } else {
                     try Output.errorWriter().print("error: {s}", .{@errorName(err)});
                 }
@@ -474,7 +474,7 @@ pub const BuildCommand = struct {
                 }
             }
 
-            try log.printForLogLevel(Output.errorWriter());
+            try log.print(Output.errorWriter(), .other);
             exitOrWatch(0, ctx.debug.hot_reload == .watch);
         }
     }

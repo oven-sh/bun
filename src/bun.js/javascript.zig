@@ -178,13 +178,14 @@ pub const SavedSourceMap = struct {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
+                            .other,
                             true,
                         );
                     } else {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
-
+                            .other,
                             false,
                         );
                     }
@@ -1513,11 +1514,7 @@ pub const VirtualMachine = struct {
             this.global.handleRejectedPromises();
 
             if (this.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                this.log.print(Output.errorWriter(), .other) catch {};
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }
@@ -3105,7 +3102,7 @@ pub const VirtualMachine = struct {
                     if (this.had_errors) {
                         writer.writeAll("\n") catch {};
                     }
-                    build_error.msg.writeFormat(writer, allow_ansi_color) catch {};
+                    build_error.msg.writeFormat(writer, .other, allow_ansi_color) catch {};
                     build_error.logged = true;
                     writer.writeAll("\n") catch {};
                 }
@@ -3122,7 +3119,7 @@ pub const VirtualMachine = struct {
                     if (this.had_errors) {
                         writer.writeAll("\n") catch {};
                     }
-                    resolve_error.msg.writeFormat(writer, allow_ansi_color) catch {};
+                    resolve_error.msg.writeFormat(writer, .other, allow_ansi_color) catch {};
                     resolve_error.logged = true;
                     writer.writeAll("\n") catch {};
                 }

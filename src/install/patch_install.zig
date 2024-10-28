@@ -158,7 +158,7 @@ pub const PatchTask = struct {
         if (this.callback.apply.logger.errors > 0) {
             defer this.callback.apply.logger.deinit();
             Output.errGeneric("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
-            this.callback.apply.logger.printForLogLevel(Output.errorWriter()) catch {};
+            this.callback.apply.logger.print(Output.errorWriter(), .other) catch {};
         }
     }
 
@@ -183,7 +183,7 @@ pub const PatchTask = struct {
             }
             if (calc_hash.logger.errors > 0) {
                 Output.prettyErrorln("\n\n", .{});
-                calc_hash.logger.printForLogLevel(Output.errorWriter()) catch {};
+                calc_hash.logger.print(Output.errorWriter(), .other) catch {};
             }
             Output.flush();
             Global.crash();

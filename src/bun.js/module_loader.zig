@@ -492,7 +492,7 @@ pub const RuntimeTranspilerStore = struct {
             if (is_node_override) {
                 if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                    fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                    fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
                 }
             }
@@ -1638,7 +1638,7 @@ pub const ModuleLoader = struct {
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                        fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                         parse_options.virtual_source = &fallback_source;
                     }
                 }
@@ -2279,7 +2279,6 @@ pub const ModuleLoader = struct {
                     virtual_source_to_use = logger.Source{
                         .path = path,
                         .contents = blob.sharedView(),
-                        .key_path = path,
                     };
                     virtual_source = &virtual_source_to_use.?;
                 }
@@ -2813,7 +2812,7 @@ pub const HardcodedModule = enum {
     );
 
     pub const Alias = struct {
-        path: string,
+        path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
     };
 

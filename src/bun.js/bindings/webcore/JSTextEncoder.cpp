@@ -378,6 +378,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
+    if (argument0.value().isUndefined()) {
+        auto res = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(res));
+    }
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
     JSC::EncodedJSValue res;
     String str;

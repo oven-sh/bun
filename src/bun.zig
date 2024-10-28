@@ -37,6 +37,19 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+const cmath = struct {
+    extern "c" fn powf(x: f32, y: f32) f32;
+    extern "c" fn pow(x: f64, y: f64) f64;
+};
+
+pub inline fn powf(x: f32, y: f32) f32 {
+    return cmath.powf(x, y);
+}
+
+pub inline fn pow(x: f64, y: f64) f64 {
+    return cmath.pow(x, y);
+}
+
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
     bun.debugAssert(min <= max);
@@ -109,6 +122,7 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
+pub const bun_js = @import("./bun_js.zig");
 
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
@@ -3864,7 +3878,7 @@ pub const DebugThreadLock = if (Environment.allow_assert)
             if (impl.owning_thread) |thread| {
                 Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
                 crash_handler.dumpStackTrace(impl.locked_at.trace());
-                @panic("Safety lock violated");
+                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
             }
             impl.owning_thread = std.Thread.getCurrentId();
             impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
@@ -3929,6 +3943,11 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
 
         pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
             return a.get() < b.get();
+        }
+
+        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            comptime bun.assert(strings.eql(f, "d"));
+            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 
         pub const Optional = enum(backing_int) {
@@ -4036,4 +4055,35 @@ pub fn Once(comptime f: anytype) type {
             }
         }
     };
+}
+
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function takes the value out of the optional, replacing it with null, and returns the value.
+pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
+    if (val.*) |v| {
+        val.* = null;
+        return v;
+    }
+    return null;
+}
+
+pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
+    return 0 -% val;
+}
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        inline .Struct, .Union => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
 }

@@ -500,7 +500,7 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
     }
 }
 
-noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
+pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
     @setCold(true);
     dumpBuildError(vm);
     Global.exit(1);

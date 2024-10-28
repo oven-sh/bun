@@ -1309,8 +1309,6 @@ pub inline fn usize2Loc(loc: usize) Loc {
 
 pub const Source = struct {
     path: fs.Path,
-    // TODO(@paperdave): delete key_path
-    key_path: fs.Path,
 
     contents: string,
     contents_is_recycled: bool = false,
@@ -1357,13 +1355,12 @@ pub const Source = struct {
 
     pub fn initEmptyFile(filepath: string) Source {
         const path = fs.Path.init(filepath);
-        return Source{ .path = path, .key_path = path, .contents = "" };
+        return Source{ .path = path, .contents = "" };
     }
 
     pub fn initFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
-            .key_path = fs.Path.init(file.path.text),
             .contents = file.contents,
         };
         source.path.namespace = "file";
@@ -1373,7 +1370,6 @@ pub const Source = struct {
     pub fn initRecycledFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
-            .key_path = fs.Path.init(file.path.text),
             .contents = file.contents,
             .contents_is_recycled = true,
         };
@@ -1384,7 +1380,7 @@ pub const Source = struct {
 
     pub fn initPathString(pathString: string, contents: string) Source {
         const path = fs.Path.init(pathString);
-        return Source{ .key_path = path, .path = path, .contents = contents };
+        return Source{ .path = path, .contents = contents };
     }
 
     pub fn textForRange(self: *const Source, r: Range) string {

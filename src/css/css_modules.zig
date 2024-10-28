@@ -67,7 +67,7 @@ pub const CssModule = struct {
 
     pub fn deinit(this: *CssModule) void {
         _ = this; // autofix
-        @panic(css.todo_stuff.depth);
+        // TODO: deinit
     }
 
     pub fn referenceDashed(

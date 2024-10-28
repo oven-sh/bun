@@ -128,7 +128,6 @@ pub const DefineData = struct {
         var source = logger.Source{
             .contents = value_str,
             .path = defines_path,
-            .key_path = fs.Path.initWithNamespace("defines", "internal"),
         };
         const expr = try json_parser.parseEnvJSON(&source, _log, allocator);
         const cloned = try expr.data.deepClone(allocator);

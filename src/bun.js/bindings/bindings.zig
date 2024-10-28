@@ -5165,6 +5165,7 @@ pub const JSValue = enum(JSValueReprInt) {
         name,
         message,
         @"error",
+        default,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

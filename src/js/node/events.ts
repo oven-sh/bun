@@ -1,8 +1,36 @@
 // Reimplementation of https://nodejs.org/api/events.html
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
+
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 const { throwNotImplemented } = require("internal/shared");
-const { validateAbortSignal, validateNumber, validateBoolean } = require("internal/validators");
+const {
+  validateObject,
+  validateInteger,
+  validateAbortSignal,
+  validateNumber,
+  validateBoolean,
+} = require("internal/validators");
 
 const SymbolFor = Symbol.for;
 
@@ -15,6 +43,8 @@ const kRejection = SymbolFor("nodejs.rejection");
 const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
+
+let FixedQueue;
 
 var defaultMaxListeners = 10;
 
@@ -359,70 +389,172 @@ function once(emitter, type, options) {
   return promise;
 }
 
-function on(emitter, event, options = {}) {
+const kEmptyObject = Object.freeze({ __proto__: null });
+
+const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+function createIterResult(value, done) {
+  return { value, done };
+}
+function on(emitter, event, options = kEmptyObject) {
+  // Parameters validation
+  validateObject(options, "options");
   const signal = options.signal;
+  validateAbortSignal(signal, "options.signal");
+  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
+  // Support both highWaterMark and highWatermark for backward compatibility
+  const highWatermark = options.highWaterMark ?? options.highWatermark ?? Number.MAX_SAFE_INTEGER;
+  validateInteger(highWatermark, "options.highWaterMark", 1);
+  // Support both lowWaterMark and lowWatermark for backward compatibility
+  const lowWatermark = options.lowWaterMark ?? options.lowWatermark ?? 1;
+  validateInteger(lowWatermark, "options.lowWaterMark", 1);
 
-  const { FixedQueue } = require("internal/fixed_queue");
-  const unconsumedPromises = new FixedQueue();
+  // Preparing controlling queues and variables
+  FixedQueue ??= require("internal/fixed_queue").FixedQueue;
   const unconsumedEvents = new FixedQueue();
-  const unconsumedErrors = new FixedQueue();
-  let done = false;
+  const unconsumedPromises = new FixedQueue();
+  let paused = false;
+  let error = null;
+  let finished = false;
+  let size = 0;
 
-  const eventHandlerBody = ev => {
-    // If there is a pending Promise -> resolve with current event value.
-    if (!unconsumedPromises.isEmpty()) {
-      const { resolve } = unconsumedPromises.shift();
-      return resolve(ev);
+  const iterator = Object.setPrototypeOf(
+    {
+      next() {
+        // First, we consume all unread events
+        if (size) {
+          const value = unconsumedEvents.shift();
+          size--;
+          if (paused && size < lowWatermark) {
+            emitter.resume();
+            paused = false;
+          }
+          return Promise.resolve(createIterResult(value, false));
+        }
+
+        // Then we error, if an error happened
+        // This happens one time if at all, because after 'error'
+        // we stop listening
+        if (error) {
+          const p = Promise.reject(error);
+          // Only the first element errors
+          error = null;
+          return p;
+        }
+
+        // If the iterator is finished, resolve to done
+        if (finished) return closeHandler();
+
+        // Wait until an event happens
+        return new Promise(function (resolve, reject) {
+          unconsumedPromises.push({ resolve, reject });
+        });
+      },
+
+      return() {
+        return closeHandler();
+      },
+
+      throw(err) {
+        if (!err || !(err instanceof Error)) {
+          throw new ERR_INVALID_ARG_TYPE("EventEmitter.AsyncIterator", "Error", err);
+        }
+        errorHandler(err);
+      },
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      [kWatermarkData]: {
+        get size() {
+          return size;
+        },
+        get low() {
+          return lowWatermark;
+        },
+        get high() {
+          return highWatermark;
+        },
+        get isPaused() {
+          return paused;
+        },
+      },
+    },
+    AsyncIteratorPrototype,
+  );
+
+  // Adding event handlers
+  const { addEventListener, removeAll } = listenersController();
+  addEventListener(
+    emitter,
+    event,
+    options[kFirstEventParam]
+      ? eventHandler
+      : function (...args) {
+          return eventHandler(args);
+        },
+  );
+  if (event !== "error" && typeof emitter.on === "function") {
+    addEventListener(emitter, "error", errorHandler);
+  }
+  const closeEvents = options?.close;
+  if (closeEvents?.length) {
+    for (let i = 0; i < closeEvents.length; i++) {
+      addEventListener(emitter, closeEvents[i], closeHandler);
     }
-    // Else: Add event value to queue so it can be consumed by a future Promise.
-    unconsumedEvents.push(ev);
-  };
-  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args);
-  emitter.on(event, eventHandler);
-
-  const errorHandler = ex => {
-    if (!unconsumedPromises.isEmpty()) {
-      const { reject } = unconsumedPromises.shift();
-      return reject(ex);
-    }
-    unconsumedErrors.push(ex);
-  };
-  emitter.on("error", errorHandler);
-
-  signal?.addEventListener("abort", () => {
-    emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
-  });
-
-  // If any of the close events is emitted -> remove listeners
-  // and yield only the remaining queued-up values in iterator.
-  for (const evName of options?.close || []) {
-    emitter.on(evName, () => {
-      emitter.removeListener(event, eventHandler);
-      emitter.removeListener("error", errorHandler);
-      while (!unconsumedPromises.isEmpty()) {
-        unconsumedPromises.shift().resolve();
-      }
-      done = true;
-    });
   }
 
-  // Create AsyncGeneratorFunction which handles the Iterator logic
-  const iterator = async function* () {
-    while (!done || !unconsumedEvents.isEmpty() || !unconsumedErrors.isEmpty()) {
-      if (!unconsumedEvents.isEmpty()) {
-        yield Promise.$resolve(unconsumedEvents.shift());
-      } else if (!unconsumedErrors.isEmpty()) {
-        yield Promise.$reject(unconsumedErrors.shift());
-      } else {
-        const { promise, reject, resolve } = $newPromiseCapability(Promise);
-        unconsumedPromises.push({ reject, resolve });
-        yield promise;
-      }
-    }
-  };
+  const abortListenerDisposable = signal ? addAbortListener(signal, abortListener) : null;
 
-  // Return AsyncGenerator
-  return iterator();
+  return iterator;
+
+  function abortListener() {
+    errorHandler(new AbortError(undefined, { cause: signal?.reason }));
+  }
+
+  function eventHandler(value) {
+    if (unconsumedPromises.isEmpty()) {
+      size++;
+      if (!paused && size > highWatermark) {
+        paused = true;
+        emitter.pause();
+      }
+      unconsumedEvents.push(value);
+    } else unconsumedPromises.shift().resolve(createIterResult(value, false));
+  }
+
+  function errorHandler(err) {
+    if (unconsumedPromises.isEmpty()) error = err;
+    else unconsumedPromises.shift().reject(err);
+
+    closeHandler();
+  }
+
+  function closeHandler() {
+    abortListenerDisposable?.[Symbol.dispose]();
+    removeAll();
+    finished = true;
+    const doneResult = createIterResult(undefined, true);
+    while (!unconsumedPromises.isEmpty()) {
+      unconsumedPromises.shift().resolve(doneResult);
+    }
+
+    return Promise.resolve(doneResult);
+  }
+}
+function listenersController() {
+  const listeners = [];
+
+  return {
+    addEventListener(emitter, event, handler, flags) {
+      eventTargetAgnosticAddListener(emitter, event, handler, flags);
+      listeners.push([emitter, event, handler, flags]);
+    },
+    removeAll() {
+      while (listeners.length > 0) {
+        const [emitter, event, handler, flags] = listeners.pop();
+        eventTargetAgnosticRemoveListener(emitter, event, handler, flags);
+      }
+    },
+  };
 }
 
 const getEventListenersForEventTarget = $newCppFunction(
@@ -459,8 +591,18 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
   }
 }
 
+const jsEventTargetGetEventListenersCount = $newCppFunction(
+  "JSEventTarget.cpp",
+  "jsEventTargetGetEventListenersCount",
+  2,
+);
+
 function listenerCount(emitter, type) {
-  return emitter.listenerCount(type);
+  if ($isCallable(emitter.listenerCount)) {
+    return emitter.listenerCount(type);
+  }
+
+  return jsEventTargetGetEventListenersCount(emitter, type);
 }
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
@@ -473,7 +615,7 @@ function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
 
 function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   if (typeof emitter.on === "function") {
-    if (flags.once) emitter.once(name, listener);
+    if (flags?.once) emitter.once(name, listener);
     else emitter.on(name, listener);
   } else {
     emitter.addEventListener(name, listener, flags);

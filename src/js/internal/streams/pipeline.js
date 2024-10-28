@@ -54,7 +54,7 @@ function destroyer(stream, reading, writing) {
     destroy: err => {
       if (finished) return;
       finished = true;
-      destroyImpl.destroyer(stream, err || new ERR_STREAM_DESTROYED("pipe"));
+      destroyImpl.destroyer(stream, err || $ERR_STREAM_DESTROYED("pipe"));
     },
     cleanup,
   };
@@ -75,7 +75,7 @@ function makeAsyncIterable(val) {
     // Legacy streams are not Iterable.
     return fromReadable(val);
   }
-  throw new ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
+  throw $ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
 }
 
 async function* fromReadable(val) {
@@ -253,7 +253,7 @@ function pipelineImpl(streams, callback, opts) {
 
     if (isNodeStream(stream)) {
       if (next !== null && (next?.closed || next?.destroyed)) {
-        throw new Error("ERR_STREAM_UNABLE_TO_PIPE()");
+        throw $ERR_STREAM_CANNOT_PIPE();
       }
 
       if (end) {
@@ -283,7 +283,7 @@ function pipelineImpl(streams, callback, opts) {
       if (typeof stream === "function") {
         ret = stream({ signal });
         if (!isIterable(ret)) {
-          throw new Error("ERR_INVALID_RETURN_VALUE()");
+          throw $ERR_INVALID_RETURN_VALUE();
         }
       } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
         ret = stream;
@@ -300,7 +300,7 @@ function pipelineImpl(streams, callback, opts) {
 
       if (reading) {
         if (!isIterable(ret, true)) {
-          throw new Error("ERR_INVALID_RETURN_VALUE()");
+          throw $ERR_INVALID_RETURN_VALUE();
         }
       } else {
         PassThrough ??= require("internal/streams/passthrough");
@@ -344,7 +344,7 @@ function pipelineImpl(streams, callback, opts) {
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
-          throw new Error("ERR_INVALID_RETURN_VALUE()");
+          throw $ERR_INVALID_RETURN_VALUE();
         }
 
         ret = pt;
@@ -370,7 +370,7 @@ function pipelineImpl(streams, callback, opts) {
         finishCount++;
         pumpToNode(ret, stream, finish, { end });
       } else {
-        throw new Error("ERR_INVALID_ARG_TYPE()");
+        throw $ERR_INVALID_ARG_TYPE();
       }
       ret = stream;
     } else if (isWebStream(stream)) {
@@ -384,7 +384,7 @@ function pipelineImpl(streams, callback, opts) {
         finishCount++;
         pumpToWeb(ret.readable, stream, finish, { end });
       } else {
-        throw new Error("ERR_INVALID_ARG_TYPE()");
+        throw $ERR_INVALID_ARG_TYPE();
       }
       ret = stream;
     } else {
@@ -404,7 +404,7 @@ function pipe(src, dst, finish, finishOnlyHandleError, { end }) {
   dst.on("close", () => {
     if (!ended) {
       // Finish if the destination closes before the source has completed.
-      finishOnlyHandleError(new ERR_STREAM_PREMATURE_CLOSE());
+      finishOnlyHandleError($ERR_STREAM_PREMATURE_CLOSE());
     }
   });
 

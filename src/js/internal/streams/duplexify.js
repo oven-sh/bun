@@ -107,7 +107,7 @@ export default function duplexify(body, name) {
         value,
         val => {
           if (val != null) {
-            throw new ERR_INVALID_RETURN_VALUE("nully", "body", val);
+            throw $ERR_INVALID_RETURN_VALUE("nully", "body", val);
           }
         },
         err => {
@@ -134,7 +134,7 @@ export default function duplexify(body, name) {
       }));
     }
 
-    throw new ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or AsyncFunction", name, value);
+    throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or AsyncFunction", name, value);
   }
 
   if (isBlob(body)) {
@@ -194,7 +194,7 @@ export default function duplexify(body, name) {
     }));
   }
 
-  throw new ERR_INVALID_ARG_TYPE(
+  throw $ERR_INVALID_ARG_TYPE(
     name,
     [
       "Blob",

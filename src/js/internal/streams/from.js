@@ -26,7 +26,7 @@ function from(Readable, iterable, opts) {
     isAsync = false;
     iterator = iterable[SymbolIterator]();
   } else {
-    throw new ERR_INVALID_ARG_TYPE("iterable", ["Iterable"], iterable);
+    throw $ERR_INVALID_ARG_TYPE("iterable", ["Iterable"], iterable);
   }
 
   const readable = new Readable({
@@ -98,7 +98,7 @@ function from(Readable, iterable, opts) {
 
         if (value === null) {
           reading = false;
-          throw new ERR_STREAM_NULL_VALUES();
+          throw $ERR_STREAM_NULL_VALUES();
         }
 
         if (readable.push(value)) {
@@ -121,7 +121,7 @@ function from(Readable, iterable, opts) {
 
       if (res === null) {
         reading = false;
-        throw new ERR_STREAM_NULL_VALUES();
+        throw $ERR_STREAM_NULL_VALUES();
       }
 
       if (readable.push(res)) {
@@ -149,7 +149,7 @@ function from(Readable, iterable, opts) {
 
         if (res === null) {
           reading = false;
-          throw new ERR_STREAM_NULL_VALUES();
+          throw $ERR_STREAM_NULL_VALUES();
         }
 
         if (readable.push(res)) {
@@ -176,7 +176,7 @@ function from(Readable, iterable, opts) {
 
         if (value === null) {
           reading = false;
-          throw new ERR_STREAM_NULL_VALUES();
+          throw $ERR_STREAM_NULL_VALUES();
         }
 
         if (readable.push(value)) {

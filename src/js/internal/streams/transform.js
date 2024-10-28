@@ -153,7 +153,7 @@ function prefinish() {
 Transform.prototype._final = final;
 
 Transform.prototype._transform = function (chunk, encoding, callback) {
-  throw new /*ERR_METHOD_NOT_IMPLEMENTED*/ Error("_transform()");
+  throw new /*ERR_METHOD_NOT_IMPLEMENTED*/ $ERR_METHOD_NOT_IMPLEMENTED();
 };
 
 Transform.prototype._write = function (chunk, encoding, callback) {

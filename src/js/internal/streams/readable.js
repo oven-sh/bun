@@ -415,7 +415,7 @@ function readableAddChunkUnshiftByteMode(stream, state, chunk, encoding) {
   } else if (Stream._isArrayBufferView(chunk)) {
     chunk = Stream._uint8ArrayToBuffer(chunk);
   } else if (chunk !== undefined && !(chunk instanceof Buffer)) {
-    errorOrDestroy(stream, new $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
+    errorOrDestroy(stream, $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
     return false;
   }
 
@@ -467,7 +467,7 @@ function readableAddChunkPushByteMode(stream, state, chunk, encoding) {
     chunk = new Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     encoding = "";
   } else if (chunk !== undefined) {
-    errorOrDestroy(stream, new $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
+    errorOrDestroy(stream, $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk));
     return false;
   }
 
@@ -868,7 +868,7 @@ function maybeReadMore_(stream, state) {
 // for virtual (non-string, non-buffer) streams, "length" is somewhat
 // arbitrary, and perhaps not very meaningful.
 Readable.prototype._read = function (n) {
-  throw /*$ERR_METHOD_NOT_IMPLEMENTED*/ new Error("_read()");
+  throw $ERR_METHOD_NOT_IMPLEMENTED();
 };
 
 Readable.prototype.pipe = function (dest, pipeOpts) {

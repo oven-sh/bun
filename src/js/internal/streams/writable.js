@@ -337,7 +337,7 @@ function WritableState(options, stream, isDuplex) {
     this[kState] &= ~kDefaultUTF8Encoding;
     this[kDefaultEncodingValue] = defaultEncoding;
   } else {
-    throw new ERR_UNKNOWN_ENCODING(defaultEncoding);
+    throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }
 
   // Not an actual buffer we keep track of, but a measurement
@@ -445,7 +445,7 @@ ObjectDefineProperty(Writable, SymbolHasInstance, {
 
 // Otherwise people can pipe Writable streams, which is just wrong.
 Writable.prototype.pipe = function () {
-  errorOrDestroy(this, new ERR_STREAM_CANNOT_PIPE());
+  errorOrDestroy(this, $ERR_STREAM_CANNOT_PIPE());
 };
 
 function _write(stream, chunk, encoding, cb) {
@@ -456,14 +456,14 @@ function _write(stream, chunk, encoding, cb) {
   }
 
   if (chunk === null) {
-    throw new ERR_STREAM_NULL_VALUES();
+    throw $ERR_STREAM_NULL_VALUES();
   }
 
   if ((state[kState] & kObjectMode) === 0) {
     if (!encoding) {
       encoding = (state[kState] & kDefaultUTF8Encoding) !== 0 ? "utf8" : state.defaultEncoding;
     } else if (encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
-      throw new ERR_UNKNOWN_ENCODING(encoding);
+      throw $ERR_UNKNOWN_ENCODING(encoding);
     }
 
     if (typeof chunk === "string") {
@@ -477,7 +477,7 @@ function _write(stream, chunk, encoding, cb) {
       chunk = Stream._uint8ArrayToBuffer(chunk);
       encoding = "buffer";
     } else {
-      throw new ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
+      throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
     }
   }
 
@@ -531,7 +531,7 @@ Writable.prototype.uncork = function () {
 Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
   // node::ParseEncoding() requires lower case.
   if (typeof encoding === "string") encoding = StringPrototypeToLowerCase(encoding);
-  if (!Buffer.isEncoding(encoding)) throw new ERR_UNKNOWN_ENCODING(encoding);
+  if (!Buffer.isEncoding(encoding)) throw $ERR_UNKNOWN_ENCODING(encoding);
   this._writableState.defaultEncoding = encoding;
   return this;
 };
@@ -584,7 +584,7 @@ function doWrite(stream, state, writev, len, chunk, encoding, cb) {
     state.writecb = cb;
   }
   state[kState] |= kWriting | kSync | kExpectWriteCb;
-  if ((state[kState] & kDestroyed) !== 0) state.onwrite(new ERR_STREAM_DESTROYED("write"));
+  if ((state[kState] & kDestroyed) !== 0) state.onwrite($ERR_STREAM_DESTROYED("write"));
   else if (writev) stream._writev(chunk, state.onwrite);
   else stream._write(chunk, encoding, state.onwrite);
   state[kState] &= ~kSync;
@@ -720,11 +720,11 @@ function errorBuffer(state) {
       const { chunk, callback } = state[kBufferedValue][n];
       const len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length;
       state.length -= len;
-      callback(state.errored ?? new ERR_STREAM_DESTROYED("write"));
+      callback(state.errored ?? $ERR_STREAM_DESTROYED("write"));
     }
   }
 
-  callFinishedCallbacks(state, state.errored ?? new ERR_STREAM_DESTROYED("end"));
+  callFinishedCallbacks(state, state.errored ?? $ERR_STREAM_DESTROYED("end"));
 
   resetBuffer(state);
 }
@@ -792,7 +792,7 @@ Writable.prototype._write = function (chunk, encoding, cb) {
   if (this._writev) {
     this._writev([{ chunk, encoding }], cb);
   } else {
-    throw new /*$ERR_METHOD_NOT_IMPLEMENTED*/ Error("_write()");
+    throw $ERR_METHOD_NOT_IMPLEMENTED();
   }
 };
 

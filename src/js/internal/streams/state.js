@@ -3,8 +3,6 @@ const primordials = require("internal/primordials");
 const { MathFloor, NumberIsInteger } = primordials;
 const { validateInteger } = require("internal/validators");
 
-const { ERR_INVALID_ARG_VALUE } = require("internal/errors");
-
 // TODO (fix): For some reason Windows CI fails with bigger hwm.
 let defaultHighWaterMarkBytes = process.platform === "win32" ? 16 * 1024 : 64 * 1024;
 let defaultHighWaterMarkObjectMode = 16;
@@ -31,7 +29,7 @@ function getHighWaterMark(state, options, duplexKey, isDuplex) {
   if (hwm != null) {
     if (!NumberIsInteger(hwm) || hwm < 0) {
       const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-      throw new ERR_INVALID_ARG_VALUE(name, hwm);
+      throw $ERR_INVALID_ARG_VALUE(name, hwm);
     }
     return MathFloor(hwm);
   }

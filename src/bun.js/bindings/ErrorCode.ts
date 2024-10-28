@@ -17,6 +17,7 @@ export default [
   ["ERR_INVALID_ARG_VALUE", TypeError, "TypeError"],
   ["ERR_INVALID_PROTOCOL", TypeError, "TypeError"],
   ["ERR_INVALID_THIS", TypeError, "TypeError"],
+  ["ERR_INVALID_RETURN_VALUE", TypeError, "TypeError"],
   ["ERR_IPC_CHANNEL_CLOSED", Error, "Error"],
   ["ERR_IPC_DISCONNECTED", Error, "Error"],
   ["ERR_MISSING_ARGS", TypeError, "TypeError"],
@@ -31,6 +32,7 @@ export default [
   ["ERR_STREAM_DESTROYED", TypeError, "TypeError"],
   ["ERR_STREAM_NULL_VALUES", TypeError, "TypeError"],
   ["ERR_STREAM_WRITE_AFTER_END", TypeError, "TypeError"],
+  ["ERR_STREAM_PREMATURE_CLOSE", TypeError, "TypeError"],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error, "Error"],
   ["ERR_STRING_TOO_LONG", Error, "Error"],
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error, "Error"],
@@ -47,7 +49,7 @@ export default [
   ["ERR_SOCKET_BAD_PORT", RangeError, "RangeError"],
   ["ERR_EVENT_RECURSION", Error, "Error"],
   ["ERR_MULTIPLE_CALLBACK", TypeError, "TypeError"],
-
+  ["ERR_METHOD_NOT_IMPLEMENTED", Error, "Error"],
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],

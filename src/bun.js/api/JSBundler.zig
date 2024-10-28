@@ -75,6 +75,7 @@ pub const JSBundler = struct {
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         experimental_css: bool = false,
+        css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
@@ -99,7 +100,15 @@ pub const JSBundler = struct {
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
             if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
-                this.experimental_css = if (enable_css.isBoolean()) enable_css.toBoolean() else false;
+                this.experimental_css = if (enable_css.isBoolean())
+                    enable_css.toBoolean()
+                else if (enable_css.isObject()) true: {
+                    if (enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
+                        this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
+                    }
+
+                    break :true true;
+                } else false;
             }
 
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
@@ -1087,9 +1096,6 @@ pub const BuildArtifact = struct {
         chunk,
         asset,
         @"entry-point",
-        @"component-manifest",
-        @"use client",
-        @"use server",
         sourcemap,
         bytecode,
 

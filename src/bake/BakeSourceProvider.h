@@ -1,7 +1,7 @@
 #pragma once
 #include "root.h"
 #include "headers-handwritten.h"
-#include "BakeDevGlobalObject.h"
+#include "BakeGlobalObject.h"
 #include "JavaScriptCore/SourceOrigin.h"
 
 namespace Bake {
@@ -39,10 +39,5 @@ private:
     sourceType
   ) {}
 };
-
-// Zig API
-extern "C" LoadServerCodeResult BakeLoadInitialServerCode(DevGlobalObject* global, BunString source);
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(DevGlobalObject* global, BunString source);
-extern "C" JSC::EncodedJSValue BakeGetRequestHandlerFromModule(DevGlobalObject* global, JSC::JSString* encodedModule);
 
 } // namespace Bake

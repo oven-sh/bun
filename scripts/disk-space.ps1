@@ -6,8 +6,8 @@ Write-Host "Initial free space: $([math]::Round($beforeFree, 2)) GB"
 
 # Clear Windows Temp folders
 Write-Host "Cleaning Windows temp folders..."
-Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "C:\Windows\Temp\" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:TEMP\" -Recurse -Force -ErrorAction SilentlyContinue
 
 # Clear BuildKite artifacts and caches
 Write-Host "Cleaning BuildKite artifacts..."
@@ -18,7 +18,7 @@ $buildkitePaths = @(
 )
 foreach ($path in $buildkitePaths) {
     if (Test-Path $path) {
-        Remove-Item -Path "$path\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "$path\" -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

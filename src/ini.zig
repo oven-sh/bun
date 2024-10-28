@@ -884,18 +884,16 @@ pub fn loadNpmrcFromFile(
     loadNpmrc(allocator, install, env, npmrc_path, &log, &source) catch |err| {
         switch (err) {
             error.OutOfMemory => bun.outOfMemory(),
-            error.ParserError => {
-                if (log.errors == 1)
-                    Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
-                else
-                    Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
-            },
         }
     };
+    if (log.hasErrors()) {
+        if (log.errors == 1)
+            Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
+        else
+            Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
+    }
     log.printForLogLevel(Output.errorWriter()) catch {};
 }
-
-const LoadNpmrcError = OOM || error{ParserError};
 
 pub fn loadNpmrc(
     allocator: std.mem.Allocator,
@@ -904,7 +902,7 @@ pub fn loadNpmrc(
     npmrc_path: [:0]const u8,
     log: *bun.logger.Log,
     source: *const bun.logger.Source,
-) LoadNpmrcError!void {
+) OOM!void {
     var parser = bun.ini.Parser.init(allocator, npmrc_path, source.contents, env);
     defer parser.deinit();
     try parser.parse(parser.arena.allocator());
@@ -1157,11 +1155,6 @@ pub fn loadNpmrc(
                 }
             }
         }
-    }
-
-    const had_errors = log.hasErrors();
-    if (had_errors) {
-        return error.ParserError;
     }
 }
 

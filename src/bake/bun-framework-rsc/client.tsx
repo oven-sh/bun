@@ -81,10 +81,15 @@ async function goto(href: string) {
 
   await Promise.race([
     p,
-    new Promise((_, reject) => {
-      signal.onabort = () => reject(new Error("Navigation aborted"));
+    new Promise<void>((resolve) => {
+      signal.onabort = () => resolve();
     }),
   ]);
+
+  if (signal.aborted) return;
+
+  // TODO:
+  // await ensureCssIsLoaded();
 
   if (signal.aborted) return;
 

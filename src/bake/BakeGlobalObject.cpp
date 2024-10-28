@@ -19,14 +19,13 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* jsGlobalObject,
     JSC::JSValue parameters,
     const JSC::SourceOrigin& sourceOrigin)
 {
-    // TODO: forward this to the runtime?
     JSC::VM& vm = jsGlobalObject->vm();
     WTF::String keyString = moduleNameValue->getString(jsGlobalObject);
     auto err = JSC::createTypeError(
         jsGlobalObject,
         WTF::makeString(
             "Dynamic import to '"_s, keyString,
-            "' should have been replaced with a hook into the module runtime"_s));
+            "' should have been replaced with a hook into the module runtime. This is a bug in Bun's bundler"_s));
     auto* promise = JSC::JSInternalPromise::create(
         vm, jsGlobalObject->internalPromiseStructure());
     promise->reject(jsGlobalObject, err);

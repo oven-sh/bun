@@ -1,8 +1,8 @@
 import type { Bake } from "bun";
 import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
 import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunBakeGraph: "ssr" };
-import { clientManifest, serverManifest } from "bun:bake/server";
-import { join } from 'node:path';
+import { serverManifest } from "bun:bake/server";
+import { join } from "node:path";
 
 function getPage(route, meta: Bake.RouteMetadata) {
   const Route = route.default;
@@ -90,14 +90,17 @@ export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
   const page = getPage(route, meta);
   const rscPayload = renderToReadableStream(page, serverManifest);
   const [rscPayload1, rscPayload2] = rscPayload.tee();
-  
+
   // Prepare both files in parallel
   let [html, rscPayloadBuffer] = await Promise.all([
     Bun.readableStreamToText(await renderToHtml(rscPayload2)),
     Bun.readableStreamToText(rscPayload1),
   ]);
   const scripts = meta.scripts.map(url => `<script src=${JSON.stringify(url)}></script>`);
-  html = html.replace('</body>', `<script id="rsc_payload" type="json">${rscPayloadBuffer}</script>${scripts.join('\n')}</body>`);
+  html = html.replace(
+    "</body>",
+    `<script id="rsc_payload" type="json">${rscPayloadBuffer}</script>${scripts.join("\n")}</body>`,
+  );
 
   // Each route generates a directory with framework-provided files. Keys are
   // files relative to the route path, and values are anything `Bun.write`
@@ -106,13 +109,13 @@ export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
     // Directories like `blog/index.html` are preferred over `blog.html` because
     // certain static hosts do not support this conversion. By using `index.html`,
     // the static build is more portable.
-    '/index.html': html,
+    "/index.html": html,
 
     // The RSC payload is provided so client-side can use this file for seamless
     // client-side navigation. This is equivalent to 'Accept: text/x-component'
     // for the non-static build.s
-    '/index.rsc': rscPayloadBuffer,
-  }
+    "/index.rsc": rscPayloadBuffer,
+  };
 }
 
 // This is a hack to make react-server-dom-webpack work with Bun's bundler.
@@ -121,7 +124,7 @@ if (!import.meta.env.DEV) {
   globalThis.__webpack_require__ = (id: string) => {
     console.log("Bun: __webpack_require__", id);
     const y = import.meta.require(join(import.meta.dir, id));
-    console.log({y});
+    console.log({ y });
     return y;
   };
 }

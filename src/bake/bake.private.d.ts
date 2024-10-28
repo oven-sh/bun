@@ -55,13 +55,10 @@ declare var server_exports: {
  */
 declare const IS_BUN_DEVELOPMENT: any;
 
-// shims for experimental react types
-declare module "react" {
-  export function use<T>(promise: Promise<T>): T;
-}
 declare module "react-server-dom-webpack/client.browser" {
   export function createFromReadableStream<T = any>(readable: ReadableStream, manifest?: any): Promise<T>;
 }
+
 declare module "react-server-dom-webpack/server.browser" {
   export function renderToReadableStream<T = any>(element: JSX.Element, manifest: any): ReadableStream;
 }

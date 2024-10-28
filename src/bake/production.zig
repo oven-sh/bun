@@ -161,13 +161,13 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     var client_bundler: bun.bundler.Bundler = undefined;
     var server_bundler: bun.bundler.Bundler = undefined;
     var ssr_bundler: bun.bundler.Bundler = undefined;
-    try framework.initBundler(allocator, vm.log, .production, .server, &server_bundler);
-    try framework.initBundler(allocator, vm.log, .production, .client, &client_bundler);
+    try framework.initBundler(allocator, vm.log, .production_static, .server, &server_bundler);
+    try framework.initBundler(allocator, vm.log, .production_static, .client, &client_bundler);
     if (separate_ssr_graph) {
-        try framework.initBundler(allocator, vm.log, .production, .ssr, &ssr_bundler);
+        try framework.initBundler(allocator, vm.log, .production_static, .ssr, &ssr_bundler);
     }
 
-    // these share pointers right now, so setting NODE_ENV == production
+    // these share pointers right now, so setting NODE_ENV == production on one should affect all
     bun.assert(server_bundler.env == client_bundler.env);
 
     framework.* = framework.resolve(&server_bundler.resolver, &client_bundler.resolver) catch {

@@ -137,7 +137,7 @@ declare module "bun" {
       //  * as the first line of a function declaration. This is useful for small one-off
       //  * interactive components. This is behind a flag because it is not a feature of
       //  * React or Next.js, but rather is implemented because it is possible to.
-      //  * 
+      //  *
       //  * The client versions of these are tree-shaked extremely aggressively: anything
       //  * not referenced by the function body will be removed entirely.
       //  */
@@ -146,25 +146,27 @@ declare module "bun" {
 
     /** Customize the React Fast Refresh transform. */
     interface ReactFastRefreshOptions {
-      /** 
+      /**
        * This import has four exports, mirroring "react-refresh/runtime":
-       * 
+       *
        * `injectIntoGlobalHook(window): void`
        * Called on first startup, before the user entrypoint.
-       * 
+       *
        * `register(component, uniqueId: string): void`
        * Called on every function that starts with an uppercase letter. These
        * may or may not be components, but they are always functions.
-       * 
+       *
        * `createSignatureFunctionForTransform(): ReactRefreshSignatureFunction`
        * TODO: document. A passing no-op for this api is `return () => {}`
-       * 
+       *
        * @default "react-refresh/runtime"
        */
       importSource: ImportSource | undefined;
     }
 
-    type ReactRefreshSignatureFunction = () => void | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
+    type ReactRefreshSignatureFunction = () =>
+      | void
+      | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
     /// Will be resolved from the point of view of the framework user's project root
     /// Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
@@ -181,7 +183,10 @@ declare module "bun" {
        * multiple output files. Note that `import.meta.env.STATIC` will
        * be inlined to true during a static build.
        */
-      staticRender: (routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Record<string, Blob | ArrayBuffer>>;
+      staticRender: (
+        routeModule: unknown,
+        routeMetadata: RouteMetadata,
+      ) => Awaitable<Record<string, Blob | ArrayBuffer>>;
     }
 
     interface ClientEntryPoint {

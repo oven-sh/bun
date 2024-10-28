@@ -306,11 +306,11 @@ pub const Framework = struct {
         out.options.log = log;
         out.options.output_format = switch (mode) {
             .development => .internal_bake_dev,
-            .production => .esm,
+            .production_dynamic, .production_static => .esm,
         };
         out.options.out_extensions = bun.StringHashMap([]const u8).init(out.allocator);
         out.options.hot_module_reloading = mode == .development;
-        out.options.code_splitting = mode == .production;
+        out.options.code_splitting = mode != .development;
 
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.
@@ -325,12 +325,12 @@ pub const Framework = struct {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
 
-        out.options.production = mode == .production;
+        out.options.production = mode != .development;
 
-        out.options.tree_shaking = mode == .production;
+        out.options.tree_shaking = mode != .development;
         out.options.minify_syntax = true; // required for DCE
-        // out.options.minify_identifiers = mode == .production;
-        // out.options.minify_whitespace = mode == .production;
+        // out.options.minify_identifiers = mode != .development;
+        // out.options.minify_whitespace = mode != .development;
 
         out.options.experimental_css = true;
         out.options.css_chunking = true;
@@ -347,7 +347,7 @@ pub const Framework = struct {
             .server, .ssr => .server,
         });
 
-        if (mode == .production) {
+        if (mode != .development) {
             out.options.entry_naming = "[name]-[hash].[ext]";
             out.options.chunk_naming = "chunk-[name]-[hash].[ext]";
         }
@@ -415,18 +415,22 @@ pub fn wipDevServer(options: DevServer.Options) noreturn {
     dev.runLoopForever();
 }
 
-pub fn getHmrRuntime(mode: Side) []const u8 {
+pub fn getHmrRuntime(side: Side) []const u8 {
     return if (Environment.codegen_embed)
-        switch (mode) {
+        switch (side) {
             .client => @embedFile("bake-codegen/bake.client.js"),
             .server => @embedFile("bake-codegen/bake.server.js"),
         }
-    else switch (mode) {
+    else switch (side) {
         inline else => |m| bun.runtimeEmbedFile(.codegen_eager, "bake." ++ @tagName(m) ++ ".js"),
     };
 }
 
-pub const Mode = enum { production, development };
+pub const Mode = enum {
+    development,
+    production_dynamic,
+    production_static,
+};
 pub const Side = enum { client, server };
 pub const Graph = enum(u2) {
     client,
@@ -444,7 +448,9 @@ pub fn addImportMetaDefines(
     const Define = bun.options.Define;
 
     // The following are from Vite: https://vitejs.dev/guide/env-and-mode
-    // TODO: MODE, BASE_URL
+    // Note that it is not currently possible to have mixed
+    // modes (production + hmr dev server)
+    // TODO: BASE_URL
     try define.insert(
         allocator,
         "import.meta.env.DEV",
@@ -453,12 +459,27 @@ pub fn addImportMetaDefines(
     try define.insert(
         allocator,
         "import.meta.env.PROD",
-        Define.Data.initBoolean(mode == .production),
+        Define.Data.initBoolean(mode != .development),
+    );
+    try define.insert(
+        allocator,
+        "import.meta.env.MODE",
+        Define.Data.initStaticString(switch (mode) {
+            .development => &.{ .data = "development" },
+            .production_dynamic, .production_static => &.{ .data = "production" },
+        }),
     );
     try define.insert(
         allocator,
         "import.meta.env.SSR",
         Define.Data.initBoolean(side == .server),
+    );
+
+    // To indicate a static build, `STATIC` is set to true then.
+    try define.insert(
+        allocator,
+        "import.meta.env.STATIC",
+        Define.Data.initBoolean(mode == .production_static),
     );
 }
 

@@ -9,9 +9,9 @@ export function react(): Bake.Framework {
     // When the files are embedded in the Bun binary, relative
     // path resolution does not work.
     builtInModules: {
-      'bun-framework-react/client.tsx': { path: require.resolve('./client.tsx') },
-      'bun-framework-react/server.tsx': { path: require.resolve('./server.tsx') },
-      'bun-framework-react/ssr.tsx': { path: require.resolve('./ssr.tsx') },
+      "bun-framework-react/client.tsx": { path: require.resolve("./client.tsx") },
+      "bun-framework-react/server.tsx": { path: require.resolve("./server.tsx") },
+      "bun-framework-react/ssr.tsx": { path: require.resolve("./ssr.tsx") },
     },
     clientEntryPoint: "bun-framework-react/client.tsx",
     serverEntryPoint: "bun-framework-react/server.tsx",
@@ -20,8 +20,8 @@ export function react(): Bake.Framework {
     },
     serverComponents: {
       separateSSRGraph: true,
-      serverRegisterClientReferenceExport: 'registerClientReference',
-      serverRuntimeImportSource: 'react-server-dom-webpack/server'
-    }
+      serverRegisterClientReferenceExport: "registerClientReference",
+      serverRuntimeImportSource: "react-server-dom-webpack/server",
+    },
   };
 }

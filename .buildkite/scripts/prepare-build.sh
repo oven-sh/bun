@@ -99,7 +99,10 @@ assert_curl
 assert_node
 assert_release
 assert_canary
-
+# If is Windows x64, run scripts/disk-space.ps1
+if [ -n "$BUILDKITE_AGENT_META_DATA_OS" ] && [ "$BUILDKITE_AGENT_META_DATA_OS" == "windows" ]; then
+  run_command powershell ".buildkite/scripts/disk-space.ps1"
+fi
 run_command node ".buildkite/ci.mjs"
 
 if [ -f ".buildkite/ci.yml" ]; then

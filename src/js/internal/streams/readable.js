@@ -1678,17 +1678,16 @@ let webStreamsAdapters;
 
 // Lazy to avoid circular references
 function lazyWebStreams() {
-  throw new Error("Not implemented");
   if (webStreamsAdapters === undefined) webStreamsAdapters = /*require("internal/webstreams/adapters")*/ {};
   return webStreamsAdapters;
 }
 
 Readable.fromWeb = function (readableStream, options) {
-  return lazyWebStreams().newStreamReadableFromReadableStream(readableStream, options);
+  throw $ERR_METHOD_NOT_IMPLEMENTED();
 };
 
 Readable.toWeb = function (streamReadable, options) {
-  return lazyWebStreams().newReadableStreamFromStreamReadable(streamReadable, options);
+  throw $ERR_METHOD_NOT_IMPLEMENTED();
 };
 
 Readable.wrap = function (src, options) {

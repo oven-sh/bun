@@ -1138,11 +1138,11 @@ function lazyWebStreams() {
 }
 
 Writable.fromWeb = function (writableStream, options) {
-  throw new Error("Not implemented");
+  throw $ERR_METHOD_NOT_IMPLEMENTED();
 };
 
 Writable.toWeb = function (streamWritable) {
-  throw new Error("Not implemented");
+  throw $ERR_METHOD_NOT_IMPLEMENTED();
 };
 
 Writable.prototype[SymbolAsyncDispose] = function () {

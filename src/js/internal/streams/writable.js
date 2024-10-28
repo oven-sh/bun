@@ -540,8 +540,6 @@ Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
 // in the queue, and wait our turn.  Otherwise, call _write
 // If we return false, then we need a drain event, so set that flag.
 function writeOrBuffer(stream, state, chunk, encoding, callback) {
-  console.info(state);
-
   const len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length;
 
   state.length += len;

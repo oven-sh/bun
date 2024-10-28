@@ -297,7 +297,7 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   return function (...args) {
     if (called) return returnValue;
     called = true;
-    const result = Reflect.$apply(callback, this, args);
+    const result = callback.$apply(this, args);
     returnValue = preserveReturnValue ? result : undefined;
     return result;
   };

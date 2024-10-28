@@ -21,6 +21,7 @@ const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const { createDeferredPromise } = require("../../node/util");
 const from = require("internal/streams/from");
+const { AbortError } = require("../../node/events");
 
 const isBlob =
   typeof Blob !== "undefined"
@@ -55,7 +56,6 @@ class Duplexify extends Duplex {
 }
 
 export default function duplexify(body, name) {
-  console.log(1);
   if (isDuplexNodeStream(body)) {
     return body;
   }
@@ -79,8 +79,6 @@ export default function duplexify(body, name) {
   if (isWritableStream(body)) {
     return _duplexify({ writable: Writable.fromWeb(body) });
   }
-
-  console.log(2);
 
   if (typeof body === "function") {
     const { value, write, final, destroy } = fromAsyncGen(body);
@@ -139,14 +137,9 @@ export default function duplexify(body, name) {
     throw new ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or AsyncFunction", name, value);
   }
 
-  console.log(3, isBlob);
-
   if (isBlob(body)) {
-    console.log(3.01);
     return duplexify(body.arrayBuffer());
   }
-
-  console.log(3.1);
 
   if (isIterable(body)) {
     return from(Duplexify, body, {
@@ -156,13 +149,9 @@ export default function duplexify(body, name) {
     });
   }
 
-  console.log(3.2);
-
   if (isReadableStream(body?.readable) && isWritableStream(body?.writable)) {
     return Duplexify.fromWeb(body);
   }
-
-  console.log(3.3);
 
   if (typeof body?.writable === "object" || typeof body?.readable === "object") {
     const readable = body?.readable
@@ -179,8 +168,6 @@ export default function duplexify(body, name) {
 
     return _duplexify({ readable, writable });
   }
-
-  console.log(4);
 
   const then = body?.then;
   if (typeof then === "function") {
@@ -206,8 +193,6 @@ export default function duplexify(body, name) {
       read() {},
     }));
   }
-
-  console.log(5);
 
   throw new ERR_INVALID_ARG_TYPE(
     name,

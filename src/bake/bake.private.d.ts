@@ -11,6 +11,8 @@ interface Config {
   separateSSRGraph?: true;
 
   // Client
+  /** Dev Server's `configuration_hash_key` */
+  version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
   refresh?: Id;
   /**
@@ -39,18 +41,13 @@ declare const side: "client" | "server";
  * interface as opposed to a WebSocket connection.
  */
 declare var server_exports: {
-  handleRequest: (req: Request, meta: HandleRequestMeta, id: Id) => any;
+  handleRequest: (req: Request, routeModuleId: Id, clientEntryUrl: string, styles: string[]) => any;
   registerUpdate: (
     modules: any,
     componentManifestAdd: null | string[],
     componentManifestDelete: null | string[],
   ) => void;
 };
-
-interface HandleRequestMeta {
-  // url for script tag
-  clientEntryPoint: string;
-}
 
 /*
  * If you are running a debug build of Bun. These debug builds should provide

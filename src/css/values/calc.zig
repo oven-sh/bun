@@ -659,7 +659,7 @@ pub fn Calc(comptime V: type) type {
                             };
 
                             return .{ .result = This{
-                                .number = std.math.pow(f32, a, b),
+                                .number = bun.powf(a, b),
                             } };
                         }
                     };
@@ -1235,7 +1235,7 @@ pub fn Calc(comptime V: type) type {
             for (args.items[i..]) |*arg| {
                 const Fn = struct {
                     pub fn applyOpFn(_: void, a: f32, b: f32) f32 {
-                        return a + std.math.pow(f32, b, 2);
+                        return a + bun.powf(b, 2);
                     }
                 };
                 sum = This.applyOp(&sum, arg, allocator, {}, Fn.applyOpFn) orelse {
@@ -1470,6 +1470,16 @@ pub fn Calc(comptime V: type) type {
             css.deepDeinit(This, allocator, args);
             args.* = reduced;
         }
+
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            return switch (this.*) {
+                .sum => |*args| return args.left.isCompatible(browsers) and args.right.isCompatible(browsers),
+                .product => |*args| return args.expression.isCompatible(browsers),
+                .function => |f| f.isCompatible(browsers),
+                .value => |v| v.isCompatible(browsers),
+                .number => true,
+            };
+        }
     };
 }
 
@@ -1688,6 +1698,54 @@ pub fn MathFunction(comptime V: type) type {
                 },
             };
         }
+
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            const F = css.compat.Feature;
+            return switch (this.*) {
+                .calc => |*c| F.isCompatible(F.calc_function, browsers) and c.isCompatible(browsers),
+                .min => |*m| F.isCompatible(F.min_function, browsers) and brk: {
+                    for (m.items) |*arg| {
+                        if (!arg.isCompatible(browsers)) {
+                            break :brk false;
+                        }
+                    }
+                    break :brk true;
+                },
+                .max => |*m| F.isCompatible(F.max_function, browsers) and brk: {
+                    for (m.items) |*arg| {
+                        if (!arg.isCompatible(browsers)) {
+                            break :brk false;
+                        }
+                    }
+                    break :brk true;
+                },
+                .clamp => |*c| F.isCompatible(F.clamp_function, browsers) and
+                    c.min.isCompatible(browsers) and
+                    c.center.isCompatible(browsers) and
+                    c.max.isCompatible(browsers),
+                .round => |*r| F.isCompatible(F.round_function, browsers) and
+                    r.value.isCompatible(browsers) and
+                    r.interval.isCompatible(browsers),
+                .rem => |*r| F.isCompatible(F.rem_function, browsers) and
+                    r.dividend.isCompatible(browsers) and
+                    r.divisor.isCompatible(browsers),
+                .mod_ => |*m| F.isCompatible(F.mod_function, browsers) and
+                    m.dividend.isCompatible(browsers) and
+                    m.divisor.isCompatible(browsers),
+                .abs => |*a| F.isCompatible(F.abs_function, browsers) and
+                    a.isCompatible(browsers),
+                .sign => |*s| F.isCompatible(F.sign_function, browsers) and
+                    s.isCompatible(browsers),
+                .hypot => |*h| F.isCompatible(F.hypot_function, browsers) and brk: {
+                    for (h.items) |*arg| {
+                        if (!arg.isCompatible(browsers)) {
+                            break :brk false;
+                        }
+                    }
+                    break :brk true;
+                },
+            };
+        }
     };
 }
 
@@ -1745,7 +1803,7 @@ fn hypot(_: void, a: f32, b: f32) f32 {
 }
 
 fn powi2(v: f32) f32 {
-    return std.math.pow(f32, v, 2);
+    return bun.powf(v, 2);
 }
 
 fn sqrtf32(v: f32) f32 {

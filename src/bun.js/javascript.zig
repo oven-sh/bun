@@ -783,7 +783,6 @@ pub const VirtualMachine = struct {
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -1657,7 +1656,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1765,7 +1763,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1901,7 +1898,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1994,7 +1990,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -2204,7 +2199,6 @@ pub const VirtualMachine = struct {
                     if (!blob.needsToReadFile()) {
                         virtual_source_to_use = logger.Source{
                             .path = path,
-                            .key_path = path,
                             .contents = blob.sharedView(),
                         };
                     }

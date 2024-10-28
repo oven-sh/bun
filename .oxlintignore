@@ -3,6 +3,8 @@ bench/react-hello-world/react-hello-world.node.js
 
 # Test fixtures, many of which intentionally have invalid syntax
 test/**/fixtures
+# Snapshots
+test/snapshots/**
 
 # Test fixtures that should be in a `fixtures` folder but aren't
 test/bundler/transpiler/decorators.test.ts

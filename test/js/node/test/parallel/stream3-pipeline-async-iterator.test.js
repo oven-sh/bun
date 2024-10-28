@@ -1,15 +1,13 @@
 //#FILE: test-stream3-pipeline-async-iterator.js
 //#SHA1: db2d5b4cb6c502fdccdfa1ed9384d6baa70b1e0b
 //-----------------
-/* eslint-disable node-core/require-common-first, require-yield */
-"use strict";
-const { pipeline } = require("node:stream/promises");
+'use strict';
+const { pipeline } = require('node:stream/promises');
 
-test("async iterators can act as readable and writable streams", async () => {
-  // Ensure that async iterators can act as readable and writable streams
+test('async iterators can act as readable and writable streams', async () => {
   async function* myCustomReadable() {
-    yield "Hello";
-    yield "World";
+    yield 'Hello';
+    yield 'World';
   }
 
   const messages = [];
@@ -19,9 +17,12 @@ test("async iterators can act as readable and writable streams", async () => {
     }
   }
 
-  await pipeline(myCustomReadable, myCustomWritable);
+  await pipeline(
+    myCustomReadable,
+    myCustomWritable,
+  );
 
-  expect(messages).toEqual(["Hello", "World"]);
+  expect(messages).toEqual(['Hello', 'World']);
 });
 
 //<#END_FILE: test-stream3-pipeline-async-iterator.js

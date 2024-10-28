@@ -1678,6 +1678,7 @@ let webStreamsAdapters;
 
 // Lazy to avoid circular references
 function lazyWebStreams() {
+  throw new Error("Not implemented");
   if (webStreamsAdapters === undefined) webStreamsAdapters = /*require("internal/webstreams/adapters")*/ {};
   return webStreamsAdapters;
 }

@@ -181,7 +181,7 @@ function pipelineImpl(streams, callback, opts) {
   }
 
   if (streams.length < 2) {
-    throw new ERR_MISSING_ARGS("streams");
+    throw $ERR_MISSING_ARGS("streams");
   }
 
   const ac = new AbortController();
@@ -253,7 +253,7 @@ function pipelineImpl(streams, callback, opts) {
 
     if (isNodeStream(stream)) {
       if (next !== null && (next?.closed || next?.destroyed)) {
-        throw new ERR_STREAM_UNABLE_TO_PIPE();
+        throw new Error("ERR_STREAM_UNABLE_TO_PIPE()");
       }
 
       if (end) {
@@ -283,7 +283,7 @@ function pipelineImpl(streams, callback, opts) {
       if (typeof stream === "function") {
         ret = stream({ signal });
         if (!isIterable(ret)) {
-          throw new ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or Stream", "source", ret);
+          throw new Error("ERR_INVALID_RETURN_VALUE()");
         }
       } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
         ret = stream;
@@ -300,7 +300,7 @@ function pipelineImpl(streams, callback, opts) {
 
       if (reading) {
         if (!isIterable(ret, true)) {
-          throw new ERR_INVALID_RETURN_VALUE("AsyncIterable", `transform[${i - 1}]`, ret);
+          throw new Error("ERR_INVALID_RETURN_VALUE()");
         }
       } else {
         PassThrough ??= require("internal/streams/passthrough");
@@ -344,7 +344,7 @@ function pipelineImpl(streams, callback, opts) {
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
-          throw new ERR_INVALID_RETURN_VALUE("AsyncIterable or Promise", "destination", ret);
+          throw new Error("ERR_INVALID_RETURN_VALUE()");
         }
 
         ret = pt;
@@ -370,11 +370,7 @@ function pipelineImpl(streams, callback, opts) {
         finishCount++;
         pumpToNode(ret, stream, finish, { end });
       } else {
-        throw new ERR_INVALID_ARG_TYPE(
-          "val",
-          ["Readable", "Iterable", "AsyncIterable", "ReadableStream", "TransformStream"],
-          ret,
-        );
+        throw new Error("ERR_INVALID_ARG_TYPE()");
       }
       ret = stream;
     } else if (isWebStream(stream)) {
@@ -388,11 +384,7 @@ function pipelineImpl(streams, callback, opts) {
         finishCount++;
         pumpToWeb(ret.readable, stream, finish, { end });
       } else {
-        throw new ERR_INVALID_ARG_TYPE(
-          "val",
-          ["Readable", "Iterable", "AsyncIterable", "ReadableStream", "TransformStream"],
-          ret,
-        );
+        throw new Error("ERR_INVALID_ARG_TYPE()");
       }
       ret = stream;
     } else {

@@ -65,8 +65,10 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 # Ensure `bun install -g` works
 ARG BUN_INSTALL_BIN=/usr/local/bin
 ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
+ENV PATH "${HOME}/.bun/bin:${PATH}"
 
 COPY --from=build /usr/local/bin/bun /usr/local/bin/
+RUN ln -s /usr/local/bin/bun /usr/local/bin/node
 
 # Temporarily use the `build`-stage image binaries to create a symlink:
 RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \

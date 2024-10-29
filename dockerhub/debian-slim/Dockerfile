@@ -65,9 +65,11 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 # Ensure `bun install -g` works
 ARG BUN_INSTALL_BIN=/usr/local/bin
 ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
+ENV PATH "${HOME}/.bun/bin:${PATH}"
 
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s /usr/local/bin/bun /usr/local/bin/node
 
 RUN groupadd bun \
       --gid 1000 \

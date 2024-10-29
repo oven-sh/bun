@@ -106,6 +106,11 @@ pub const JSError = error{
     /// - Bubble it up to the caller
     /// - Call `global.takeException(err)` to get the JSValue of the exception,
     /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    ///
+    /// Prefer `global.jsErrorFromCPP()` over constructing this error manually,
+    /// that way the exception is asserted to actually exist.
+    ///
+    /// To pass this to C++ code as JSC::JSValue, use `global.errorUnionToCPP(...)`
     JSError,
 };
 

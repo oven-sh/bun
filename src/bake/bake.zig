@@ -77,7 +77,7 @@ pub const UserOptions = struct {
         );
         errdefer framework.deinit(bun.default_allocator);
 
-        const root = if (try config.getOptional(global, "framework", ZigString.Slice)) |slice|
+        const root = if (try config.getOptional(global, "root", ZigString.Slice)) |slice|
             allocations.track(slice)
         else
             allocations.trackSlice(
@@ -148,38 +148,23 @@ const BuildConfigSubset = struct {
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
+    _ = global;
+    _ = callframe;
     if (!bun.FeatureFlags.bake) return .undefined;
 
-    BakeInitProcessIdentifier();
-
-    bun.Output.warn(
-        \\Be advised that Bun Bake is highly experimental, and its API
-        \\will have breaking changes. Join the <magenta>#bake<r> Discord
-        \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+    bun.Output.errGeneric(
+        \\This api has moved to the `app` property of the default export.
         \\
+        \\  export default {{
+        \\    port: 3000,
+        \\    app: {{
+        \\      framework: 'react'
+        \\    }},
+        \\  }};
         \\
-    , .{});
-    bun.Output.flush();
-
-    const options = UserOptions.fromJS(callframe.argument(0), global) catch |err| switch (err) {
-        error.OutOfMemory => {
-            global.throwOutOfMemory();
-            return .zero;
-        },
-        error.JSError => return .zero,
-    };
-
-    var dev = DevServer.init(.{
-        .cwd = options.root,
-        .framework = options.framework,
-        .routes = options.routes,
-        .vm = global.bunVM(),
-    }) catch |err| {
-        global.throwError(err, "while initializing Bun Dev Server");
-        return .zero;
-    };
-    _ = &dev;
-
+    ,
+        .{},
+    );
     return .undefined;
 }
 
@@ -214,20 +199,20 @@ pub const Framework = struct {
                 // .client_runtime_import = "react-server-dom-webpack/client",
             },
             .react_fast_refresh = .{},
-            .entry_client = "bun-framework-rsc/client.tsx",
-            .entry_server = "bun-framework-rsc/server.tsx",
+            .entry_client = "bun-framework-react/client.tsx",
+            .entry_server = "bun-framework-react/server.tsx",
             .built_in_modules = bun.StringArrayHashMapUnmanaged(BuiltInModule).init(bun.default_allocator, &.{
-                "bun-framework-rsc/client.tsx",
-                "bun-framework-rsc/server.tsx",
-                "bun-framework-rsc/ssr.tsx",
+                "bun-framework-react/client.tsx",
+                "bun-framework-react/server.tsx",
+                "bun-framework-react/ssr.tsx",
             }, if (Environment.codegen_embed) &.{
-                .{ .code = @embedFile("./bun-framework-rsc/client.tsx") },
-                .{ .code = @embedFile("./bun-framework-rsc/server.tsx") },
-                .{ .code = @embedFile("./bun-framework-rsc/ssr.tsx") },
+                .{ .code = @embedFile("./bun-framework-react/client.tsx") },
+                .{ .code = @embedFile("./bun-framework-react/server.tsx") },
+                .{ .code = @embedFile("./bun-framework-react/ssr.tsx") },
             } else &.{
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-rsc/client.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-rsc/server.tsx") },
-                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-rsc/ssr.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
+                .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
             }) catch bun.outOfMemory(),
         };
     }
@@ -583,6 +568,30 @@ pub fn addImportMetaDefines(
         Define.Data.initBoolean(mode == .production_static),
     );
 }
+
+// bun.Output.warn(
+//     \\Be advised that Bun Bake is highly experimental, and its API
+//     \\will have breaking changes. Join the <magenta>#bake<r> Discord
+//     \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+//     \\
+//     \\
+// , .{});
+// bun.Output.flush();
+
+// const options = try UserOptions.fromJS(callframe.argument(0), global);
+
+// var dev = DevServer.init(.{
+//     .root = options.root,
+//     .framework = options.framework,
+//     .routes = options.routes,
+//     .vm = global.bunVM(),
+// }) catch |err| {
+//     global.throwError(err, "while initializing Bun Dev Server");
+//     return .zero;
+// };
+// _ = &dev;
+
+// return .undefined;
 
 pub const server_virtual_source: bun.logger.Source = .{
     .path = bun.fs.Path.initForKitBuiltIn("bun", "bake/server"),

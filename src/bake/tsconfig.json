@@ -13,7 +13,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "paths": {
-      "bun-framework-rsc/*": ["./bun-framework-rsc/*"]
+      "bun-framework-react/*": ["./bun-framework-react/*"]
     },
     "jsx": "react-jsx",
     "types": ["react/experimental"]

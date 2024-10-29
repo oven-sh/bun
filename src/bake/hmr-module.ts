@@ -169,6 +169,15 @@ if (side === "client") {
     refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
     refreshRuntime.injectIntoGlobalHook(window);
   }
+
+  const server_module = new HotModule("bun:bake/client");
+  server_module.__esModule = true;
+  server_module.exports = {
+    bundleRouteForDevelopment: async () => {
+      
+    },
+  };
+  registry.set(server_module.id, server_module);
 }
 
 // TODO: Remove this after `react-server-dom-bun` is uploaded

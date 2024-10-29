@@ -90,6 +90,8 @@ async function goto(href: string) {
   const p = createFromReadableStream(response.body!);
 
   // TODO: ensure CSS is ready
+  // Right now you can see a flash of unstyled content, since react does not
+  // wait for new link tags to load before they are injected.
 
   // Wait up to 100ms before updating the page promise.
   await Promise.race([p, wait100ms]);

@@ -3030,7 +3030,7 @@ pub const JSGlobalObject = opaque {
         return .zero;
     }
 
-    /// This is a wrapper around just returning JSException
+    /// This is a wrapper around just returning JSError
     ///
     /// The intent is for writing C++ bindings where null or some other value is
     /// returned in the exception case. In a debug build, this asserts that such
@@ -3043,11 +3043,11 @@ pub const JSGlobalObject = opaque {
         return JSError.JSError;
     }
 
-    /// Pass a JSException through the C ABI boundary
+    /// Pass a JSError!JSValue and variants through the C ABI boundary
     ///
     /// In C++, WebKit represents a thrown JavaScript expression as
     /// JSValue.zero, and stores the actual exception on the global. In Zig, we
-    /// represent this zero as a distinct Zig error type 'error.JSException'.
+    /// represent this zero as a distinct Zig error type 'error.JSError'.
     /// Instead of using JSValue.zero directly, we pass the Zig error to this
     /// function as "proof" there is an error. In debug, this will also assert
     /// that an error is actually present.
@@ -3058,23 +3058,63 @@ pub const JSGlobalObject = opaque {
     /// Ideally, we can use this function as little as possible, and instead
     /// have auto-generated wrappers that do this conversion. It is ugly to use
     /// on purpose.
-    pub fn exceptionToCPP(global: *JSGlobalObject, err: anytype) JSC.JSValue {
-        return switch (@TypeOf(err)) {
-            JSError => {
-                if (bun.Environment.isDebug) {
-                    std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
-                }
-                return .zero;
-            },
-            else => err catch |e| switch (e) {
-                error.JSError => {
-                    if (bun.Environment.isDebug) {
-                        std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
-                    }
-                    return .zero;
-                },
-            },
+    pub inline fn errorUnionToCPP(global: *JSGlobalObject, result: anytype) JSC.JSValue {
+        const T = @TypeOf(result);
+
+        const unwrapped = if (T == JSValue)
+            result
+        else switch (@typeInfo(T)) {
+            .ErrorUnion => result catch |err| return global.errorSetToCPP(err, T),
+            .ErrorSet => return global.errorSetToCPP(result, T),
+            else => @compileError(unreachable), // unsupported type
         };
+
+        // Validate exception state aligns with return value.
+        if (bun.Environment.isDebug) {
+            if (unwrapped == .zero) {
+                std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
+            } else {
+                if (global.tryTakeException()) |exception| {
+                    bun.Output.err("assertion failure", "Pending exception while returning non-empty JSValue", .{});
+                    bun.Output.printErrorln("Exception thrown:", .{});
+                    bun.Output.flush();
+                    global.bunVM().printErrorLikeObjectToConsole(exception);
+                    bun.Output.printErrorln("Value returned:", .{});
+                    unwrapped.print(global, .Log, .Error);
+                    bun.Output.flush();
+                    @panic("Pending exception while returning non-empty JSValue");
+                }
+            }
+        }
+
+        return unwrapped;
+    }
+
+    inline fn errorSetToCPP(global: *JSGlobalObject, err: anytype, T: type) JSC.JSValue {
+        const info = @typeInfo(@TypeOf(err));
+        comptime bun.assert(info == .ErrorSet);
+
+        const possible_errors = comptime parseErrorSet(
+            T,
+            info.ErrorSet orelse
+                @compileError("host function cannot return 'anyerror!JSValue'"),
+        );
+
+        if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
+            std.debug.assert(!global.hasException()); // dual exception
+
+            global.throwOutOfMemory();
+            return .zero;
+        }
+
+        if (possible_errors.JSError and err == error.JSError) {
+            std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
+            return .zero;
+        }
+
+        // all errors have now been handled. parseErrorSet will report
+        // a compile error if there is another possible error
+        unreachable;
     }
 
     pub fn createInvalidArgumentType(
@@ -3408,12 +3448,8 @@ pub const JSGlobalObject = opaque {
             error.JSError => {},
         }
 
-        if (bun.Environment.allow_assert)
-            bun.assert(this.hasException());
-
         return this.tryTakeException() orelse {
-            bun.assert(false);
-            return .zero;
+            @panic("A JavaScript exception was thrown, however it was cleared before it could be read.");
         };
     }
 
@@ -6693,33 +6729,10 @@ pub const CallFrame = opaque {
     pub fn argumentsCount(self: *const CallFrame) usize {
         return @as(usize, @intCast(self.asUnsafeJSValueArray()[Sizes.Bun_CallFrame__argumentCountIncludingThis].asInt32() - 1));
     }
+
+    extern fn Bun__CallFrame__isFromBunMain(*const CallFrame, *const VM) bool;
+    pub const isFromBunMain = Bun__CallFrame__isFromBunMain;
 };
-
-// pub const WellKnownSymbols = extern struct {
-//     pub const shim = Shimmer("JSC", "CommonIdentifiers", @This());
-
-//
-//
-
-//     pub const include = "JavaScriptCore/CommonIdentifiers.h";
-//     pub const name = "JSC::CommonIdentifiers";
-//     pub const namespace = "JSC";
-
-//     pub var hasthis: *const Identifier = shim.cppConst(Identifier, "hasInstance");
-//     pub var isConcatSpreadable: Identifier = shim.cppConst(Identifier, "isConcatSpreadable");
-//     pub var asyncIterator: Identifier = shim.cppConst(Identifier, "asyncIterator");
-//     pub var iterator: Identifier = shim.cppConst(Identifier, "iterator");
-//     pub var match: Identifier = shim.cppConst(Identifier, "match");
-//     pub var matchAll: Identifier = shim.cppConst(Identifier, "matchAll");
-//     pub var replace: Identifier = shim.cppConst(Identifier, "replace");
-//     pub var search: Identifier = shim.cppConst(Identifier, "search");
-//     pub var species: Identifier = shim.cppConst(Identifier, "species");
-//     pub var split: Identifier = shim.cppConst(Identifier, "split");
-//     pub var toPrimitive: Identifier = shim.cppConst(Identifier, "toPrimitive");
-//     pub var toStringTag: Identifier = shim.cppConst(Identifier, "toStringTag");
-//     pub var unscopable: Identifier = shim.cppConst(Identifier, "unscopabl");
-
-// };
 
 pub const EncodedJSValue = extern union {
     asInt64: i64,
@@ -6732,53 +6745,25 @@ pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.con
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
 
-pub fn toJSHostFunction(comptime function: anytype) JSC.JSHostFunctionType {
+/// Wraps a Zig `fn (*JSGlobalObject, *CallFrame) !JSValue` into the proper JSC
+/// host function type, adding handling for Zig error types and setting the
+/// correct calling convention on Windows.
+pub fn toJSHostFunction(comptime function_ptr: anytype) JSC.JSHostFunctionType {
+    const function = if (@typeInfo(@TypeOf(function_ptr)) == .Pointer) function_ptr.* else function_ptr;
+
+    // Do not wrap twice
     if (@TypeOf(function) == JSHostFunctionType) {
         return function;
     }
 
-    bun.assert(@typeInfo(@TypeOf(function)) == .Fn);
+    // only operate on unspecified calling conventions. the code is going to be
+    // inlined anyways
+    const fn_type = @typeInfo(@TypeOf(function)).Fn;
+    bun.assert(fn_type.calling_convention == .Unspecified);
 
     return struct {
         pub fn wrapper(global: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
-            comptime {
-                const Fn = @TypeOf(function);
-                var FnTypeInfo = @typeInfo(Fn);
-                if (FnTypeInfo == .Pointer) {
-                    FnTypeInfo = @typeInfo(std.meta.Child(Fn));
-                }
-
-                if (bun.Environment.isWindows) {
-                    if (FnTypeInfo.Fn.calling_convention == .C) {
-                        @compileLog(function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
-                    }
-                }
-            }
-
-            const result = @call(.always_inline, function, .{ global, callframe });
-            const T = @TypeOf(result);
-            if (T == JSValue) return result;
-            const error_union = @typeInfo(T).ErrorUnion; // Must be !JSValue
-            bun.assert(error_union.payload == JSValue);
-
-            const possible_errors = parseErrorSet(
-                error_union,
-                @typeInfo(error_union.error_set).ErrorSet orelse
-                    @compileError("host function cannot return 'anyerror!JSValue'"),
-            );
-
-            return result catch |err| {
-                if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
-                    global.throwOutOfMemory();
-                    return .zero;
-                }
-                if (possible_errors.JSError and err == error.JSError) {
-                    return global.exceptionToCPP(err);
-                }
-                // all errors have now been handled. parseErrorSet will report
-                // a compile error if there is another possible error
-                unreachable;
-            };
+            return global.errorUnionToCPP(@call(.always_inline, function_ptr, .{ global, callframe }));
         }
     }.wrapper;
 }

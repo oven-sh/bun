@@ -3343,7 +3343,13 @@ pub fn serve(
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
-        JSC.API.ServerConfig.fromJS(globalObject, &config, &args, exception);
+        JSC.API.ServerConfig.fromJS(
+            globalObject,
+            &config,
+            &args,
+            callframe.isFromBunMain(globalObject.vm()),
+            exception,
+        );
         if (exception[0] != null) {
             config.deinit();
 

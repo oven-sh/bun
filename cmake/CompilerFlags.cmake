@@ -265,7 +265,7 @@ if(ENABLE_LTO)
 endif()
 
 # --- Remapping ---
-if(UNIX)
+if(UNIX AND CI)
   register_compiler_flags(
     DESCRIPTION "Remap source files"
     -ffile-prefix-map=${CWD}=.

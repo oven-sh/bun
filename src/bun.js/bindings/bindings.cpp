@@ -5880,3 +5880,11 @@ CPP_DECL void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
 {
     provider->deref();
 }
+
+CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* vm)
+{
+    auto source = callFrame->callerSourceOrigin(*vm);
+    if(source.isNull())
+        return false;
+    return source.string() == "builtin://bun/main"_s;
+}

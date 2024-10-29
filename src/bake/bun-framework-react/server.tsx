@@ -1,6 +1,6 @@
 import type { Bake } from "bun";
 import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
-import { renderToHtml } from "bun-framework-rsc/ssr.tsx" with { bunBakeGraph: "ssr" };
+import { renderToHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
 import { join } from "node:path";
 

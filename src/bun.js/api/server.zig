@@ -1184,6 +1184,7 @@ pub const ServerConfig = struct {
         global: *JSC.JSGlobalObject,
         args: *ServerConfig,
         arguments: *JSC.Node.ArgumentsSlice,
+        allow_bake_config: bool,
         exception: JSC.C.ExceptionRef,
     ) void {
         const vm = arguments.vm;
@@ -1314,26 +1315,6 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
-                if (!websocket_object.isObject()) {
-                    JSC.throwInvalidArguments("Expected websocket to be an object", .{}, global, exception);
-                    if (args.ssl_config) |*conf| {
-                        conf.deinit();
-                    }
-                    return;
-                }
-
-                if (WebSocketServer.onCreate(global, websocket_object)) |wss| {
-                    args.websocket = wss;
-                } else {
-                    if (args.ssl_config) |*conf| {
-                        conf.deinit();
-                    }
-                    return;
-                }
-            }
-            if (global.hasException()) return;
-
             if (arg.getTruthy(global, "port")) |port_| {
                 args.address.tcp.port = @as(
                     u16,
@@ -1411,6 +1392,26 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return;
 
+            if (arg.getTruthy(global, "app")) |bake_args_js| {
+                if (!bun.FeatureFlags.bake) {
+                    global.throwInvalidArguments("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
+                    return;
+                }
+                if (!allow_bake_config) {
+                    global.throwInvalidArguments("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
+                    return;
+                }
+                if (!args.development) {
+                    global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
+                    return;
+                }
+
+                args.bake = bun.bake.UserOptions.fromJS(bake_args_js, global) catch |err| {
+                    _ = global.errorUnionToCPP(err);
+                    return;
+                };
+            }
+
             if (arg.get(global, "reusePort")) |dev| {
                 args.reuse_port = dev.coerce(bool, global);
             }
@@ -1449,16 +1450,52 @@ pub const ServerConfig = struct {
                     JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return;
                 }
+
+                if (args.bake != null) {
+                    JSC.throwInvalidArguments("TODO: Cannot provide 'fetch' function with 'app'", .{}, global, exception);
+                    return;
+                }
+
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else {
+            } else if (args.bake == null) {
                 if (global.hasException()) return;
                 JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                 return;
             }
 
+            if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
+                if (args.bake != null) {
+                    JSC.throwInvalidArguments("TODO: Cannot provide 'websocket' handlers with 'app'", .{}, global, exception);
+                    return;
+                }
+
+                if (!websocket_object.isObject()) {
+                    JSC.throwInvalidArguments("Expected websocket to be an object", .{}, global, exception);
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return;
+                }
+
+                if (WebSocketServer.onCreate(global, websocket_object)) |wss| {
+                    args.websocket = wss;
+                } else {
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return;
+                }
+            }
+            if (global.hasException()) return;
+
             if (arg.getTruthy(global, "tls")) |tls| {
+                if (args.bake != null) {
+                    JSC.throwInvalidArguments("TODO: Cannot provide 'tls' option with 'app'", .{}, global, exception);
+                    return;
+                }
+
                 if (tls.jsType().isArray()) {
                     var value_iter = tls.arrayIterator(global);
                     if (value_iter.len == 1) {
@@ -5810,7 +5847,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         thisObject: JSC.JSValue = JSC.JSValue.zero,
         /// Potentially null before listen() is called, and once .destroy() is called.
         app: ?*App = null,
-        vm: *JSC.VirtualMachine = undefined,
+        vm: *JSC.VirtualMachine,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
         config: ServerConfig = ServerConfig{},
@@ -5830,6 +5867,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             has_js_deinited: bool = false,
             has_handled_all_closed_promise: bool = false,
         } = .{},
+
+        dev_server: ?*bun.bake.DevServer,
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = JSC.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -6182,7 +6221,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const exception: JSC.C.ExceptionRef = &exception_ref;
 
             var new_config: ServerConfig = .{};
-            ServerConfig.fromJS(globalThis, &new_config, &args_slice, exception);
+            ServerConfig.fromJS(globalThis, &new_config, &args_slice, false, exception);
             if (exception.* != null) {
                 new_config.deinit();
                 globalThis.throwValue(exception_ref[0].?.value());
@@ -6990,6 +7029,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const request_value = args[0];
             request_value.ensureStillAlive();
 
+            bun.assert(this.config.onRequest != .zero);
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch |err|
                 this.globalThis.takeException(err);
             defer {
@@ -7109,7 +7149,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 );
             }
 
-            app.any("/*", *ThisServer, this, onRequest);
+            if (this.config.onRequest != .zero)
+                app.any("/*", *ThisServer, this, onRequest);
 
             if (comptime debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);

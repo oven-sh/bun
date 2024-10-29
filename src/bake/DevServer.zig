@@ -17,7 +17,7 @@ pub const Options = struct {
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
     verbose_watcher: bool = false,
-    // vm: *VirtualMachine,
+    vm: *VirtualMachine,
 };
 
 // The fields `client_graph`, `server_graph`, and `directory_watchers` all

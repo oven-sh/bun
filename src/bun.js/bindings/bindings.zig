@@ -6731,24 +6731,18 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
-pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
-    if (comptime @TypeOf(Function) == JSHostFunctionType) {
-        return Function;
+
+pub fn toJSHostFunction(comptime function: anytype) JSC.JSHostFunctionType {
+    if (@TypeOf(function) == JSHostFunctionType) {
+        return function;
     }
 
-    if (@TypeOf(Function) == fn (*JSGlobalObject, *CallFrame) JSValue) {
-        // These may coerce to both, but we want to force it to be this kind.
-    } else if (@TypeOf(Function) == *const fn (*JSGlobalObject, *CallFrame) JSValue) {
-        @compileLog(Function, "use JSC.toJSHostFunction(Function) instead of JSC.toJSHostFunction(&Function)");
-    }
+    bun.assert(@typeInfo(@TypeOf(function)) == .Fn);
 
     return struct {
-        pub fn function(
-            globalThis: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        pub fn wrapper(global: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
             comptime {
-                const Fn = @TypeOf(Function);
+                const Fn = @TypeOf(function);
                 var FnTypeInfo = @typeInfo(Fn);
                 if (FnTypeInfo == .Pointer) {
                     FnTypeInfo = @typeInfo(std.meta.Child(Fn));
@@ -6756,14 +6750,55 @@ pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
 
                 if (bun.Environment.isWindows) {
                     if (FnTypeInfo.Fn.calling_convention == .C) {
-                        @compileLog(Function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
+                        @compileLog(function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
                     }
                 }
             }
 
-            return @call(.always_inline, Function, .{ globalThis, callframe });
+            const result = @call(.always_inline, function, .{ global, callframe });
+            const T = @TypeOf(result);
+            if (T == JSValue) return result;
+            const error_union = @typeInfo(T).ErrorUnion; // Must be !JSValue
+            bun.assert(error_union.payload == JSValue);
+
+            const possible_errors = parseErrorSet(
+                error_union,
+                @typeInfo(error_union.error_set).ErrorSet orelse
+                    @compileError("host function cannot return 'anyerror!JSValue'"),
+            );
+
+            return result catch |err| {
+                if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
+                    global.throwOutOfMemory();
+                    return .zero;
+                }
+                if (possible_errors.JSError and err == error.JSError) {
+                    return global.exceptionToCPP(err);
+                }
+                // all errors have now been handled. parseErrorSet will report
+                // a compile error if there is another possible error
+                unreachable;
+            };
         }
-    }.function;
+    }.wrapper;
+}
+
+const ParsedHostFunctionErrorSet = struct {
+    OutOfMemory: bool = false,
+    JSError: bool = false,
+};
+
+inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedHostFunctionErrorSet {
+    return comptime brk: {
+        var errs: ParsedHostFunctionErrorSet = .{};
+        for (errors) |err| {
+            if (!@hasField(ParsedHostFunctionErrorSet, err.name)) {
+                @compileError("Return value from host function '" ++ @typeInfo(T) ++ "' can not contain error '" ++ err.name ++ "'");
+            }
+            @field(errs, err.name) = true;
+        }
+        break :brk errs;
+    };
 }
 
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;

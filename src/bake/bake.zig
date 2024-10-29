@@ -147,7 +147,7 @@ const BuildConfigSubset = struct {
 
 /// Temporary function to invoke dev server via JavaScript. Will be
 /// replaced with a user-facing API. Refs the event loop forever.
-pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
     if (!bun.FeatureFlags.bake) return .undefined;
 
     BakeInitProcessIdentifier();
@@ -161,20 +161,26 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     , .{});
     bun.Output.flush();
 
-    const options = UserOptions.fromJS(callframe.argument(0), global) catch {
-        if (!global.hasException())
-            global.throwInvalidArguments("invalid arguments", .{});
-        return .zero;
+    const options = UserOptions.fromJS(callframe.argument(0), global) catch |err| switch (err) {
+        error.OutOfMemory => {
+            global.throwOutOfMemory();
+            return .zero;
+        },
+        error.JSError => return .zero,
     };
 
-    // TODO: this should inherit the current VM, running on the main thread.
-    const t = std.Thread.spawn(.{}, wipDevServer, .{options}) catch @panic("Failed to start");
-    t.detach();
+    var dev = DevServer.init(.{
+        .cwd = options.root,
+        .framework = options.framework,
+        .routes = options.routes,
+        .vm = global.bunVM(),
+    }) catch |err| {
+        global.throwError(err, "while initializing Bun Dev Server");
+        return .zero;
+    };
+    _ = &dev;
 
-    {
-        var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
-    }
+    return .undefined;
 }
 
 extern fn BakeInitProcessIdentifier() void;
@@ -508,23 +514,6 @@ fn getOptionalString(
 export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
     if (!bun.FeatureFlags.bake) return .undefined;
     return JSC.JSFunction.create(global, "wipDevServer", bun.JSC.toJSHostFunction(jsWipDevServer), 0, .{});
-}
-
-pub fn wipDevServer(options: UserOptions) noreturn {
-    bun.Output.Source.configureNamedThread("Dev Server");
-
-    const dev = DevServer.init(.{
-        .cwd = options.root,
-        .routes = options.routes,
-        .framework = options.framework,
-    }) catch |err| switch (err) {
-        error.FrameworkInitialization => bun.Global.exit(1),
-        else => {
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-            bun.Output.panic("Failed to init DevServer: {}", .{err});
-        },
-    };
-    dev.runLoopForever();
 }
 
 pub fn getHmrRuntime(side: Side) []const u8 {

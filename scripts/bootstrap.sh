@@ -420,7 +420,12 @@ install_common_software() {
     software-properties-common
     ;;
   dnf) install_packages \
-    dnf-plugins-core \
+    dnf-plugins-core
+    ;;
+  esac
+
+  case "$distro" in
+  amzn) install_packages \
     tar
     ;;
   esac

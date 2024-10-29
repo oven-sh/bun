@@ -63,8 +63,37 @@ export function getStdioWriteStream(fd) {
 export function getStdinStream(fd) {
   const tty = require("node:tty");
   const fs = require("node:fs");
-  if (!tty.isatty(fd) && fs.fstatSync(fd).isFile()) {
-    return new fs.ReadStream(null, { fd: fd, autoClose: false });
+
+  let stream;
+  if (tty.isatty(fd)) {
+    stream = new tty.ReadStream(fd);
+  } else {
+    const stat = fs.fstatSync(fd);
+    if (stat.isFile()) {
+      stream = new fs.ReadStream(null, { fd: fd, autoClose: false });
+    } else {
+      const net = require("node:net");
+      if (process.channel && process.channel.fd === fd) {
+        stream = new net.Socket({
+          handle: process.channel,
+          readable: true,
+          writable: false,
+          manualStart: true,
+        });
+      } else if (stat.isSocket()) {
+        stream = new net.Socket({
+          fd: fd,
+          readable: true,
+          writable: false,
+          manualStart: true,
+        });
+      } else {
+        const { Readable } = require("node:stream");
+        stream = new Readable({ read() {} });
+        stream.push(null);
+      }
+      stream._writableState.ended = true;
+    }
   }
 
   // Ideally we could use this:
@@ -116,8 +145,6 @@ export function getStdinStream(fd) {
       }
     }
   }
-
-  const stream = new tty.ReadStream(fd);
 
   const originalOn = stream.on;
 

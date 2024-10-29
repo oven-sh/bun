@@ -163,12 +163,12 @@ function lazyWebStreams() {
   return webStreamsAdapters;
 }
 
-Duplex.fromWeb = function (pair, options) {
-  throw new Error("Not implemented");
+Duplex.fromWeb = function () {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
 };
 
-Duplex.toWeb = function (duplex) {
-  throw new Error("Not implemented");
+Duplex.toWeb = function () {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
 };
 
 let duplexify;

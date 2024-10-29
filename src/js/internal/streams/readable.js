@@ -868,7 +868,7 @@ function maybeReadMore_(stream, state) {
 // for virtual (non-string, non-buffer) streams, "length" is somewhat
 // arbitrary, and perhaps not very meaningful.
 Readable.prototype._read = function (n) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED();
+  throw $ERR_METHOD_NOT_IMPLEMENTED("The _read() method is not implemented");
 };
 
 Readable.prototype.pipe = function (dest, pipeOpts) {
@@ -1671,15 +1671,8 @@ function endWritableNT(stream) {
 }
 
 Readable.from = function (iterable, opts) {
-  return from(Readable, iterable, opts);
-};
-
-Readable.filter = function (fn, options) {
-  return require("./operators").filter(fn, options);
-};
-
-Readable.map = function (fn, options) {
-  return require("./operators").map(fn, options);
+  let result = from(Readable, iterable, opts);
+  return result;
 };
 
 let webStreamsAdapters;
@@ -1690,12 +1683,12 @@ function lazyWebStreams() {
   return webStreamsAdapters;
 }
 
-Readable.fromWeb = function (readableStream, options) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED();
+Readable.fromWeb = function () {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
 };
 
-Readable.toWeb = function (streamReadable, options) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED();
+Readable.toWeb = function () {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
 };
 
 Readable.wrap = function (src, options) {

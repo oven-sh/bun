@@ -283,7 +283,7 @@ function pipelineImpl(streams, callback, opts) {
       if (typeof stream === "function") {
         ret = stream({ signal });
         if (!isIterable(ret)) {
-          throw $ERR_INVALID_RETURN_VALUE();
+          throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or Stream", "source", ret);
         }
       } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
         ret = stream;
@@ -300,7 +300,7 @@ function pipelineImpl(streams, callback, opts) {
 
       if (reading) {
         if (!isIterable(ret, true)) {
-          throw $ERR_INVALID_RETURN_VALUE();
+          throw $ERR_INVALID_RETURN_VALUE("AsyncIterable", `transform[${i - 1}]`, ret);
         }
       } else {
         PassThrough ??= require("internal/streams/passthrough");
@@ -344,7 +344,7 @@ function pipelineImpl(streams, callback, opts) {
           finishCount++;
           pumpToNode(toRead, pt, finish, { end });
         } else {
-          throw $ERR_INVALID_RETURN_VALUE();
+          throw $ERR_INVALID_RETURN_VALUE("AsyncIterable or Promise", "destination", ret);
         }
 
         ret = pt;
@@ -370,7 +370,11 @@ function pipelineImpl(streams, callback, opts) {
         finishCount++;
         pumpToNode(ret, stream, finish, { end });
       } else {
-        throw $ERR_INVALID_ARG_TYPE();
+        throw $ERR_INVALID_ARG_TYPE(
+          "val",
+          ["Readable", "Iterable", "AsyncIterable", "ReadableStream", "TransformStream"],
+          ret,
+        );
       }
       ret = stream;
     } else if (isWebStream(stream)) {
@@ -384,7 +388,11 @@ function pipelineImpl(streams, callback, opts) {
         finishCount++;
         pumpToWeb(ret.readable, stream, finish, { end });
       } else {
-        throw $ERR_INVALID_ARG_TYPE();
+        throw $ERR_INVALID_ARG_TYPE(
+          "val",
+          ["Readable", "Iterable", "AsyncIterable", "ReadableStream", "TransformStream"],
+          ret,
+        );
       }
       ret = stream;
     } else {

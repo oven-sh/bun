@@ -17,8 +17,27 @@ const {
   kAutoDestroy,
   kErrored,
 } = require("internal/streams/utils");
-const aggregateTwoErrors = (inner, outer) => {
-  return new AggregateError([inner, outer]);
+
+const aggregateTwoErrors = (innerError, outerError) => {
+  if (innerError && outerError && innerError !== outerError) {
+    if (Array.isArray(outerError.errors)) {
+      // If `outerError` is already an `AggregateError`.
+      outerError.errors.push(innerError);
+      return outerError;
+    }
+    let err;
+
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    // eslint-disable-next-line no-restricted-syntax
+    err = new AggregateError(new SafeArrayIterator([outerError, innerError]), outerError.message);
+    Error.stackTraceLimit = limit;
+    Error.captureStackTrace(err, aggregateTwoErrors);
+
+    err.code = outerError.code;
+    return err;
+  }
+  return innerError || outerError;
 };
 
 const kDestroy = Symbol("kDestroy");

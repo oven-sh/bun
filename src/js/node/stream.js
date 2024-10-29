@@ -55,7 +55,7 @@ for (let i = 0; i < streamKeys.length; i++) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    return Stream.Readable.from(Reflect.$apply(op, this, args));
+    return Stream.Readable.from(op.$apply(this, args));
   }
   Object.$defineProperty(fn, "name", { __proto__: null, value: op.name });
   Object.$defineProperty(fn, "length", { __proto__: null, value: op.length });
@@ -75,7 +75,7 @@ for (let i = 0; i < promiseKeys.length; i++) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
-    return Reflect.$apply(op, this, args);
+    return op.$apply(this, args);
   }
   Object.$defineProperty(fn, "name", { __proto__: null, value: op.name });
   Object.$defineProperty(fn, "length", { __proto__: null, value: op.length });

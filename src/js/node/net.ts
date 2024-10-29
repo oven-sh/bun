@@ -817,7 +817,7 @@ const Socket = (function (InternalSocket) {
     }
 
     _write(chunk, encoding, callback) {
-      if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
+      if (typeof chunk === "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
       var written = this[bunSocketInternal]?.write(chunk);
 
       if (written == chunk.length) {

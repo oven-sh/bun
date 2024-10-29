@@ -445,7 +445,7 @@ ObjectDefineProperty(Writable, SymbolHasInstance, {
 
 // Otherwise people can pipe Writable streams, which is just wrong.
 Writable.prototype.pipe = function () {
-  errorOrDestroy(this, $ERR_STREAM_CANNOT_PIPE());
+  errorOrDestroy(this, $ERR_STREAM_CANNOT_PIPE("writable", this));
 };
 
 function _write(stream, chunk, encoding, cb) {
@@ -456,7 +456,7 @@ function _write(stream, chunk, encoding, cb) {
   }
 
   if (chunk === null) {
-    throw $ERR_STREAM_NULL_VALUES();
+    throw $ERR_STREAM_NULL_VALUES("chunk");
   }
 
   if ((state[kState] & kObjectMode) === 0) {
@@ -531,7 +531,9 @@ Writable.prototype.uncork = function () {
 Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
   // node::ParseEncoding() requires lower case.
   if (typeof encoding === "string") encoding = StringPrototypeToLowerCase(encoding);
-  if (!Buffer.isEncoding(encoding)) throw $ERR_UNKNOWN_ENCODING(encoding);
+  if (!Buffer.isEncoding(encoding)) {
+    throw $ERR_UNKNOWN_ENCODING(encoding);
+  }
   this._writableState.defaultEncoding = encoding;
   return this;
 };
@@ -792,7 +794,7 @@ Writable.prototype._write = function (chunk, encoding, cb) {
   if (this._writev) {
     this._writev([{ chunk, encoding }], cb);
   } else {
-    throw $ERR_METHOD_NOT_IMPLEMENTED();
+    throw $ERR_METHOD_NOT_IMPLEMENTED("The _write() method is not implemented");
   }
 };
 
@@ -1137,12 +1139,12 @@ function lazyWebStreams() {
   return webStreamsAdapters;
 }
 
-Writable.fromWeb = function (writableStream, options) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED();
+Writable.fromWeb = function () {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
 };
 
-Writable.toWeb = function (streamWritable) {
-  throw $ERR_METHOD_NOT_IMPLEMENTED();
+Writable.toWeb = function () {
+  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
 };
 
 Writable.prototype[SymbolAsyncDispose] = function () {

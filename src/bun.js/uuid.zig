@@ -148,7 +148,7 @@ pub const UUID7 = struct {
         uuid_v7_lock.lock();
         defer uuid_v7_lock.unlock();
         if (uuid_v7_last_timestamp.swap(timestamp, .monotonic) != timestamp) {
-            uuid_v7_counter.store(@intCast(bun.fastRandom() % std.math.maxInt(u32)), .monotonic);
+            uuid_v7_counter.store(0, .monotonic);
         }
 
         return uuid_v7_counter.fetchAdd(1, .monotonic) % 4096;

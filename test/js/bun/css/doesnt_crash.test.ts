@@ -16,6 +16,7 @@ describe("doesnt_crash", async () => {
   console.log("Tempdir", temp_dir);
 
   files.map(absolute => {
+    absolute = absolute.replaceAll("\\", "/");
     const file = path.basename(absolute);
     const outfile1 = path.join(temp_dir, "file-1" + file).replaceAll("\\", "/");
     const outfile2 = path.join(temp_dir, "file-2" + file).replaceAll("\\", "/");

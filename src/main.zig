@@ -30,6 +30,19 @@ pub fn main() void {
             @ptrCast(&bun.Mimalloc.mi_calloc),
             @ptrCast(&bun.Mimalloc.mi_free),
         );
+        // This memory gets freed when the main thread exits
+        // if the main thread exits before the other threads, the other threads will segfault.
+        var string_builder = bun.StringBuilder{};
+        const environ_count = std.os.environ.len;
+        for (std.os.environ) |arg| {
+            string_builder.countZ(std.mem.sliceTo(arg, 0));
+        }
+        string_builder.allocate(bun.default_allocator) catch Output.panic("Bun is unable to allocate memory.", .{});
+        const out_environ = bun.default_allocator.alloc([*:0]u8, environ_count) catch Output.panic("Bun is unable to allocate memory.", .{});
+        for (std.os.environ, out_environ) |arg, *out| {
+            out.* = @constCast(string_builder.appendZ(std.mem.sliceTo(arg, 0)));
+        }
+        std.os.environ = out_environ;
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
     }

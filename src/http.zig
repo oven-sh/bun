@@ -1245,7 +1245,7 @@ pub const HTTPThread = struct {
             @compileError("TODO:");
         }
 
-        while (true) {
+        while (!bun.Global.isExiting()) {
             this.drainEvents();
 
             var start_time: i128 = 0;
@@ -1265,6 +1265,8 @@ pub const HTTPThread = struct {
                 Output.flush();
             }
         }
+
+        bun.exitThread();
     }
 
     pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {

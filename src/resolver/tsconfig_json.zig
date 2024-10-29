@@ -119,7 +119,7 @@ pub const TSConfigJSON = struct {
 
         bun.Analytics.Features.tsconfig += 1;
 
-        var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
+        var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
         if (json.asProperty("extends")) |extends_value| {
             if (!source.path.isNodeModule()) {

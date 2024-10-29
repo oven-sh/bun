@@ -3734,17 +3734,18 @@ pub const JSValue = enum(JSValueReprInt) {
         StringIterator = 70,
         WrapForValidIterator = 71,
         RegExpStringIterator = 72,
-        JSPromise = 73,
-        Map = 74,
-        Set = 75,
-        WeakMap = 76,
-        WeakSet = 77,
-        WebAssemblyModule = 78,
-        WebAssemblyInstance = 79,
-        WebAssemblyGCObject = 80,
-        StringObject = 81,
-        DerivedStringObject = 82,
-        InternalFieldTuple = 83,
+        AsyncFromSyncIterator = 73,
+        JSPromise = 74,
+        Map = 75,
+        Set = 76,
+        WeakMap = 77,
+        WeakSet = 78,
+        WebAssemblyModule = 79,
+        WebAssemblyInstance = 80,
+        WebAssemblyGCObject = 81,
+        StringObject = 82,
+        DerivedStringObject = 83,
+        InternalFieldTuple = 84,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -5166,6 +5167,7 @@ pub const JSValue = enum(JSValueReprInt) {
         name,
         message,
         @"error",
+        default,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
@@ -6160,6 +6162,22 @@ pub const VM = extern struct {
         SmallHeap = 0,
         LargeHeap = 1,
     };
+
+    extern fn Bun__JSC_onBeforeWait(vm: *VM) i32;
+    extern fn Bun__JSC_onAfterWait(vm: *VM) void;
+    pub const ReleaseHeapAccess = struct {
+        vm: *VM,
+        needs_to_release: bool,
+        pub fn acquire(this: *const ReleaseHeapAccess) void {
+            if (this.needs_to_release) {
+                Bun__JSC_onAfterWait(this.vm);
+            }
+        }
+    };
+
+    pub fn releaseHeapAccess(vm: *VM) ReleaseHeapAccess {
+        return .{ .vm = vm, .needs_to_release = Bun__JSC_onBeforeWait(vm) != 0 };
+    }
 
     pub fn create(heap_type: HeapType) *VM {
         return cppFn("create", .{@intFromEnum(heap_type)});

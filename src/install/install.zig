@@ -2341,13 +2341,24 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 supported_method;
         }
 
-        pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID) bool {
+        pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID, resolution_tag: Resolution.Tag) bool {
             const state = manager.getPreinstallState(package_id);
             return switch (state) {
                 .done => false,
                 else => brk: {
                     if (this.patch.isNull()) {
-                        const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+                        const exists = switch (resolution_tag) {
+                            .npm => package_json_exists: {
+                                bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, &PackageManager.cached_package_folder_name_buf), @src());
+
+                                const subpath_len = strings.withoutTrailingSlash(this.cache_dir_subpath).len;
+                                PackageManager.cached_package_folder_name_buf[subpath_len] = std.fs.path.sep;
+                                @memcpy(PackageManager.cached_package_folder_name_buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
+                                const cached_package_json_subpath = PackageManager.cached_package_folder_name_buf[0 .. subpath_len + 1 + "package.json".len :0];
+                                break :package_json_exists Syscall.existsAt(bun.toFD(this.cache_dir.fd), cached_package_json_subpath);
+                            },
+                            else => Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false,
+                        };
                         if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                         break :brk !exists;
                     }
@@ -12656,7 +12667,6 @@ pub const PackageManager = struct {
             var installer = PackageInstall{
                 .progress = this.progress,
                 .cache_dir = undefined,
-                .cache_dir_subpath = undefined,
                 .destination_dir_subpath = destination_dir_subpath,
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
@@ -12803,7 +12813,7 @@ pub const PackageManager = struct {
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
-                if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id)) {
+                if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
                     if (comptime Environment.allow_assert) {
                         bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
                     }

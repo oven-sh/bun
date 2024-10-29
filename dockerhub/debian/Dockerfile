@@ -70,7 +70,6 @@ ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 # Ensure `bun install -g` works
 ARG BUN_INSTALL_BIN=/usr/local/bin
 ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
-ENV PATH "${HOME}/.bun/bin:${PATH}"
 
 RUN groupadd bun \
       --gid 1000 \

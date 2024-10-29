@@ -48,7 +48,8 @@ build_image() {
   esac
 
   release="$3"
-  tag="linux-$arch-$distro-$release-v$(script_version)"
+  release_tag="$(echo "$release" | sed 's/\.//')"
+  tag="linux-$arch-$distro-$release_tag-v$(script_version)"
 
   execute docker build ../ \
     --progress plain \

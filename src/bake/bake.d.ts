@@ -1,75 +1,127 @@
-declare module "bun" {
-  declare function wipDevServerExpectHugeBreakingChanges(options: Bake.Options): never;
+// This API is under heavy development. See #bake in the Bun Discord for more info.
+// Definitions that are commented out are planned but not implemented.
+//
+// To use, add a TypeScript reference comment mentioning this file:
+// /// <reference path="/path/to/bun/src/bake/bake.d.ts" />
 
+declare module "bun" {
   type Awaitable<T> = T | Promise<T>;
 
   declare namespace Bake {
     interface Options {
+      /** Will be replaced by fileSystemRouters */
+      routes: {}[];
+
       /**
-       * Bun provides built-in support for using React as a framework by
-       * passing 'react-server-components' as the framework name.
+       * Bun provides built-in support for using React as a framework by passing
+       * 'react' as the framework name. Otherwise, frameworks are config objects.
        *
-       * Has external dependencies:
+       * External dependencies:
        * ```
        * bun i react@experimental react-dom@experimental react-server-dom-webpack@experimental react-refresh@experimental
        * ```
        */
-      framework: Framework | "react-server-components";
+      framework: Framework | "react";
+      // Note: To contribute to 'bun-framework-react', it can be run from this file:
+      // https://github.com/oven-sh/bun/blob/main/src/bake/bun-framework-react/index.ts
 
       /**
-       * Route patterns must be statically known.
-       * TODO: Static at dev-server start is bad and this API must be revisited
+       * A subset of the options from Bun.build can be configured. Keep in mind,
+       * your framework may set different defaults.
+       *
+       * @default {}
        */
-      routes: Record<RoutePattern, RouteOptions>;
-
-      // TODO: many other options
+      bundlerOptions?: BundlerOptions | undefined;
     }
+
+    /** Bake only allows a subset of options from `Bun.build` */
+    type BuildConfigSubset = Pick<
+      BuildConfig,
+      "conditions" | "plugins" | "define" | "loader" | "ignoreDCEAnnotations" | "drop"
+      // - format is not allowed because it is set to an internal "hmr" format
+      // - entrypoints/outfile/outdir doesnt make sense to set
+      // - disabling sourcemap is not allowed because it makes code impossible to debug
+      // - enabling minifyIdentifiers in dev is not allowed because some generated code does not support it
+      // - publicPath is set elsewhere (TODO:)
+      // - emitDCEAnnotations is not useful
+      // - banner and footer do not make sense in these multi-file builds
+      // - experimentalCss cannot be disabled
+      // - disabling external would make it exclude imported files.
+
+      // TODO: jsx customization
+      // TODO: chunk naming
+    >;
+
+    type BundlerOptions = BuildConfigSubset & {
+      /** Customize the build options of the client-side build */
+      client?: BuildConfigSubset;
+      /** Customize the build options of the server build */
+      server?: BuildConfigSubset;
+      /** Customize the build options of the separated SSR graph */
+      ssr?: BuildConfigSubset;
+    };
 
     /**
      * A "Framework" in our eyes is simply a set of bundler options that a
      * framework author would set in order to integrate framework code with the
      * application. Many of the configuration options are paths, which are
-     * resolved as import specifiers. The first thing the bundler does is
-     * ensure that all import specifiers are fully resolved.
+     * resolved as import specifiers.
      */
     interface Framework {
+      /** Deprecated */
+      clientEntryPoint: string;
+      /** Deprecated */
+      serverEntryPoint: string;
+
       /**
-       * This file is the true entrypoint of the server application. This module
-       * must `export default` a fetch function, which takes a request and the
-       * bundled route module, and returns a response. See `ServerEntryPoint`
-       *
-       * When `serverComponents` is configured, this can access the component
-       * manifest using the special 'bun:bake/server' import:
-       *
-       *     import { serverManifest } from 'bun:bake/server'
+       * Customize the bundler options. Plugins in this array are merged
+       * with any plugins the user has.
+       * @default {}
        */
-      serverEntryPoint: ImportSource;
+      bundlerOptions?: BundlerOptions | undefined;
+      // /**
+      //  * The translation of files to routes is unopinionated and left
+      //  * to framework authors. This interface allows most flexibility
+      //  * between the already established conventions while allowing
+      //  * new ideas to be explored too.
+      //  * @default []
+      //  */
+      // fileSystemRouters?: FrameworkFileSystemRouter[] ;
+      // /**
+      //  * A list of directories that should be served statically. If the directory
+      //  * does not exist in the user's project, it is ignored.
+      //  *
+      //  * Example: 'public' or 'static'
+      //  *
+      //  * Different frameworks have different opinions, some use 'static', some
+      //  * use 'public'.
+      //  * @default []
+      //  */
+      // staticRouters?: Array<StaticRouter> | undefined;
       /**
-       * This file is the true entrypoint of the client application.
+       * Add extra modules. This can be used to, for example, replace `react`
+       * with a different resolution.
        *
-       * When `serverComponents` is configured, this can access the component
-       * manifest using the special 'bun:bake/client' import:
-       *
-       *     import { clientManifest } from 'bun:bake/client'
+       * Internally, Bun's `react-server-components` framework uses this to
+       * embed its files in the `bun` binary.
+       * @default {}
        */
-      clientEntryPoint: ImportSource;
-      /**
-       * Add extra modules
-       */
-      builtInModules?: Record<string, BuiltInModule>;
+      builtInModules?: BuiltInModule[] | undefined;
       /**
        * Bun offers integration for React's Server Components with an
        * interface that is generic enough to adapt to any framework.
+       * @default undefined
        */
       serverComponents?: ServerComponentsOptions | undefined;
       /**
        * While it is unlikely that Fast Refresh is useful outside of
        * React, it can be enabled regardless.
+       * @default false
        */
-      reactFastRefresh?: ReactFastRefreshOptions | true | undefined;
+      reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
     }
 
-    type BuiltInModule = { code: string } | { path: string };
+    type BuiltInModule = { import: string, code: string } | { import: string, path: string };
 
     /**
      * A high-level overview of what server components means exists
@@ -100,7 +152,7 @@ declare module "bun" {
        * To cross from the server graph to the SSR graph, use the bun_bake_graph
        * import attribute:
        *
-       *     import * as ReactDOM from 'react-dom/server' with { bun_bake_graph: 'ssr' };
+       *     import * as ReactDOM from 'react-dom/server' with { bunBakeGraph: 'ssr' };
        *
        * Since these models are so subtley different, there is no default value
        * provided for this.
@@ -130,8 +182,9 @@ declare module "bun" {
        *
        * Additionally, the bundler will assemble a component manifest to be used
        * during rendering.
+       * @default "registerClientReference"
        */
-      serverRegisterClientReferenceExport: string | undefined;
+      serverRegisterClientReferenceExport?: string | undefined;
       // /**
       //  * Allow creating client components inside of server-side files by using "use client"
       //  * as the first line of a function declaration. This is useful for small one-off
@@ -168,14 +221,85 @@ declare module "bun" {
       | void
       | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
-    /// Will be resolved from the point of view of the framework user's project root
-    /// Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
-    type ImportSource = string;
+    /** This API is similar, but unrelated to `Bun.FileSystemRouter`  */
+    interface FrameworkFileSystemRouter {
+      /**
+       * This file is the entrypoint of the server application. This module
+       * must `export default` a fetch function, which takes a request and the
+       * bundled route module, and returns a response. See `ServerEntryPoint`
+       *
+       * When `serverComponents` is configured, this can access the component
+       * manifest using the special 'bun:bake/server' import:
+       *
+       *     import { serverManifest } from 'bun:bake/server'
+       */
+      serverEntryPoint: ImportSource<ServerEntryPoint>;
+      /**
+       * This file is the true entrypoint of the client application.
+       */
+      clientEntryPoint: ImportSource<ClientEntryPoint>;
+      /**
+       * Relative to project root. For example: `src/pages`.
+       */
+      root: string;
+      /**
+       * Extensions to match on
+       */
+      extensions: string[] | "*";
+      /**
+       * 'nextjs-app' builds routes out of directories with `page.tsx` and `layout.tsx`
+       * 'nextjs-pages' builds routes out of any `.tsx` file and layouts with `_layout.tsx`. Component routes are marked as "use client".
+       *
+       * Eventually, an API will be added to add custom styles.
+       */
+      style: "nextjs-app" | "nextjs-pages" | CustomFileSystemRouterFunction;
+    }
+
+    type StaticRouter =
+      /** Alias for { source: ..., prefix: "/" } */
+      | string
+      | {
+          /** The source directory to observe. */
+          source: string;
+          /** The prefix to serve this directory on. */
+          prefix: string;
+        };
+
+    /**
+     * Bun will call this function for every found file. This
+     * function classifies each file's role in the file system routing.
+     */
+    type CustomFileSystemRouterFunction = (candidatePath: string) => CustomFileSystemRouterResult;
+
+    type CustomFileSystemRouterResult =
+      /** Skip this file */
+      | undefined
+      | null
+      /**
+       * Use this file as a route. Routes may nest, where a framework
+       * can use parent routes to implement layouts.
+       *
+       * TODO: API design for sanely linking routes to their parent.
+       */
+      | {
+          type: "route";
+          pattern: RoutePattern;
+          navigatable: boolean;
+        };
+
+    /**
+     * Will be resolved from the point of view of the framework user's project root
+     * Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
+     */
+    type ImportSource<T = unknown> = string;
 
     interface ServerEntryPoint {
       /**
-       * The framework implementation decides and enforces the shape
-       * of the route module. Bun passes it as an opaque value.
+       * Bun passes the route's module as an opaque argument `routeModule`. The
+       * framework implementation decides and enforces the shape of the module.
+       *
+       * A common pattern would be to enforce the object is
+       * `{ default: ReactComponent }`
        */
       default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
       /**
@@ -192,11 +316,13 @@ declare module "bun" {
     interface ClientEntryPoint {
       /**
        * Called when server-side code is changed. This can be used to fetch a
-       * non-html version of the updated page to perform a faster reload.
+       * non-html version of the updated page to perform a faster reload. If
+       * this function does not exist or throws, the client will perform a
+       * hard reload.
        *
        * Tree-shaken away in production builds.
        */
-      onServerSideReload?: () => void;
+      onServerSideReload?: () => Promise<void> | void;
     }
 
     /**
@@ -204,6 +330,8 @@ declare module "bun" {
      * is not safe to mutate it at all.
      */
     interface RouteMetadata {
+      readonly routeModule: unknown;
+      readonly layouts: ReadonlyArray<LayoutMetadata>;
       /**
        * A list of js files that the route will need to be interactive.
        */
@@ -221,9 +349,10 @@ declare module "bun" {
     }
   }
 
-  // declare class Bake {
-  //   constructor(options: Bake.Options);
-  // }
+  interface GenericServeOptions {
+    /** Add a fullstack web app to this server using Bun Bake */
+    app?: Bake.Options | undefined;
+  }
 }
 
 declare module "bun:bake/server" {
@@ -248,10 +377,11 @@ declare module "bun:bake/server" {
 
 declare module "bun:bake/client" {
   /**
-   * Entries in this manifest can be loaded by using dynamic `await import()` or
-   * `require`. The bundler currently ensures that all modules are ready.
+   * Due to the current implementation of the Dev Server, it must be informed of
+   * client-side routing so it can load client components. This is not necessary
+   * in production, and calling this in that situation will fail to compile.
    */
-  declare const clientManifest: ReactClientManifest;
+  declare function bundleRouteForDevelopment(href: string, options?: { signal?: AbortSignal }): Promise<void>;
 }
 
 declare interface ReactClientManifest {

@@ -1058,9 +1058,7 @@ pub const BundleV2 = struct {
     }
 
     /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
-    /// at the same time in one pass over the SBC list.
-    ///
-    ///
+    /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing
         const fw = this.framework orelse return;
@@ -1594,7 +1592,6 @@ pub const BundleV2 = struct {
             bundler.options.entry_points = config.entry_points.keys();
             bundler.options.jsx = config.jsx;
             bundler.options.no_macros = config.no_macros;
-            bundler.options.server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
             bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
             bundler.options.entry_naming = config.names.entry_point.data;
             bundler.options.chunk_naming = config.names.chunk.data;

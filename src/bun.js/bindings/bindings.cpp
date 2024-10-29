@@ -3704,7 +3704,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     if (UNLIKELY(!object))
         return JSValue::encode({});
 
-    // Since Identifier might not ref' the string, we need to enusre it doesn't get deref'd until this function returns
+    // Since Identifier might not ref' the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);

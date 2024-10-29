@@ -11,14 +11,13 @@ pub const debug = bun.Output.Scoped(.Bake, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 
 pub const Options = struct {
-    allocator: ?Allocator = null, // defaults to a named heap
-    cwd: []u8,
+    cwd: []const u8,
     routes: []Route,
     framework: bake.Framework,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
     verbose_watcher: bool = false,
-    // TODO: make it required to inherit a js VM
+    // vm: *VirtualMachine,
 };
 
 // The fields `client_graph`, `server_graph`, and `directory_watchers` all
@@ -47,6 +46,7 @@ address: struct {
 listener: ?*App.ListenSocket,
 
 // Server Runtime
+// TODO: remove server_global
 server_global: *DevGlobalObject,
 vm: *VirtualMachine,
 
@@ -172,7 +172,7 @@ const Asset = union(enum) {
 
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) !*DevServer {
-    const allocator = options.allocator orelse bun.default_allocator;
+    const allocator = bun.default_allocator;
     bun.analytics.Features.kit_dev +|= 1;
     if (JSC.VirtualMachine.VMHolder.vm != null)
         @panic("Cannot initialize bake.DevServer on a thread with an active JSC.VirtualMachine");
@@ -3270,8 +3270,6 @@ pub const DevGlobalObject = opaque {
     }
 };
 
-pub const BakeSourceProvider = opaque {};
-
 const c = struct {
     // BakeDevGlobalObject.cpp
     extern fn BakeCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
@@ -3285,15 +3283,10 @@ const c = struct {
     };
 
     fn BakeLoadServerHmrPatch(global: *DevGlobalObject, code: bun.String) !JSValue {
-        const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) JSValue, .{
+        const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) JSValue.MaybeException, .{
             .name = "BakeLoadServerHmrPatch",
         });
-        const result = f(global, code);
-        if (result == .zero) {
-            if (Environment.allow_assert) assert(global.js().hasException());
-            return error.JSError;
-        }
-        return result;
+        return f(global, code).unwrap();
     }
 
     fn BakeLoadInitialServerCode(global: *DevGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
@@ -3306,10 +3299,8 @@ const c = struct {
         });
         const result = f(global, code);
         return .{
-            .promise = result.promise orelse {
-                if (Environment.allow_assert) assert(global.js().hasException());
-                return error.JSError;
-            },
+            .promise = result.promise orelse
+                return global.js().jsErrorFromCPP(),
             .key = result.key,
         };
     }

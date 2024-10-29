@@ -132,7 +132,7 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
                 @panic("pending exception");
             }
 
-            break :config bake.bakeOptionsFromJs(vm.global, app) catch |err| {
+            break :config bake.UserOptions.fromJS(app, vm.global) catch |err| {
                 Output.panic("TODO, print this error better: {}", .{err});
             };
         },

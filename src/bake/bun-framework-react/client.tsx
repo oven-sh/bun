@@ -5,6 +5,7 @@
 import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
+import { bundleRouteForDevelopment } from "bun:bake/client";
 
 function assertionFailed(msg: string) {
   throw new Error(`Assertion Failure: ${msg}. This is a bug in Bun's React integration`);
@@ -48,6 +49,15 @@ async function goto(href: string) {
   }
   const signal = (currentReloadCtrl = new AbortController()).signal;
 
+  const wait100ms = new Promise<void>(resolve => setTimeout(resolve, 100))
+
+  // Due to the current implementation of the Dev Server, it must be informed of
+  // client-side routing so it can load client components. This is not necessary
+  // in production, and calling this in that situation will fail to compile.
+  if (import.meta.env.DEV) {
+    await bundleRouteForDevelopment(href, { signal });
+  }
+
   let response;
   try {
     // When using static builds, it isn't possible for the server to reliably
@@ -79,17 +89,10 @@ async function goto(href: string) {
   // TODO: error handling? abort handling?
   const p = createFromReadableStream(response.body!);
 
-  await Promise.race([
-    p,
-    new Promise<void>((resolve) => {
-      signal.onabort = () => resolve();
-    }),
-  ]);
+  // TODO: ensure CSS is ready
 
-  if (signal.aborted) return;
-
-  // TODO:
-  // await ensureCssIsLoaded();
+  // Wait up to 100ms before updating the page promise.
+  await Promise.race([p, wait100ms]);
 
   if (signal.aborted) return;
 
@@ -123,7 +126,6 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
 
     // If the current tag is an anchor.
     if (element.nodeName.toUpperCase() === "A" && element.hasAttribute("href")) {
-      // Link processing logic
       let url;
       try {
         url = new URL(element instanceof SVGAElement ? element.href.baseVal : element.href, document.baseURI);
@@ -131,6 +133,7 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
         // Bail out to browser logic
         return;
       }
+      
       let pathname = url.pathname;
       if (pathname.endsWith("/")) {
         pathname = pathname.slice(0, -1);
@@ -149,8 +152,9 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
         return url.hash || event.preventDefault();
       }
 
-      history.pushState({}, "", url.href);
-      goto(url.href);
+      const href = url.href;
+      history.pushState({}, "", href);
+      goto(href);
 
       return event.preventDefault();
     }

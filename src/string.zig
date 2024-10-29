@@ -691,6 +691,7 @@ pub const String = extern struct {
         try self.toZigString().format(fmt, opts, writer);
     }
 
+    /// Deprecated: use `fromJS2` to handle errors explicitly
     pub fn fromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
         JSC.markBinding(@src());
 
@@ -699,6 +700,16 @@ pub const String = extern struct {
             return out;
         } else {
             return String.dead;
+        }
+    }
+
+    pub fn fromJS2(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
+        var out: String = String.dead;
+        if (BunString__fromJS(globalObject, value, &out)) {
+            bun.assert(out.tag != .Dead);
+            return out;
+        } else {
+            return globalObject.jsErrorFromCPP();
         }
     }
 

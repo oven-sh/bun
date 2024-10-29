@@ -60,7 +60,6 @@ pub const JSBundler = struct {
         jsx: options.JSX.Pragma = .{},
         code_splitting: bool = false,
         minify: Minify = .{},
-        server_components: ServerComponents = ServerComponents{},
         no_macros: bool = false,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: ?bool = null,
@@ -517,18 +516,6 @@ pub const JSBundler = struct {
             }
         };
 
-        pub const ServerComponents = struct {
-            router: JSC.Strong = .{},
-            client: std.ArrayListUnmanaged(OwnedString) = .{},
-            server: std.ArrayListUnmanaged(OwnedString) = .{},
-
-            pub fn deinit(self: *ServerComponents, allocator: std.mem.Allocator) void {
-                self.router.deinit();
-                self.client.clearAndFree(allocator);
-                self.server.clearAndFree(allocator);
-            }
-        };
-
         pub const Minify = struct {
             whitespace: bool = false,
             identifiers: bool = false,
@@ -552,7 +539,6 @@ pub const JSBundler = struct {
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
-            self.server_components.deinit(allocator);
             if (self.loaders) |loaders| {
                 for (loaders.extensions) |ext| {
                     bun.default_allocator.free(ext);

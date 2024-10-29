@@ -3,9 +3,146 @@
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
 
-/// Zig version of TS definition 'Bake.Options' in 'bake.d.ts'
+pub const production = @import("./production.zig");
+pub const DevServer = @import("./DevServer.zig");
+pub const FrameworkRouter = @import("./FrameworkRouter.zig");
+
+/// export default { app: ... };
+pub const api_name = "app";
+
+/// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub const UserOptions = struct {
+    allocations: AllocationList,
+
+    root: []const u8,
     framework: Framework,
+
+    bundler_options: SplitBundlerOptions,
+
+    // TODO: move to FrameworkRouter
+    routes: []DevServer.Route,
+
+    pub fn deinit(options: *UserOptions) void {
+        bun.default_allocator.free(options.routes);
+        options.framework.deinit(bun.default_allocator);
+        options.allocations.free();
+    }
+
+    pub fn fromJS(config: JSValue, global: *JSC.JSGlobalObject) !UserOptions {
+        if (!config.isObject()) {
+            return global.throwInvalidArguments2("'" ++ api_name ++ "' is not an object", .{});
+        }
+
+        var allocations = AllocationList.empty;
+        errdefer allocations.free();
+        var bundler_options: SplitBundlerOptions = .{};
+        // errdefer bundler_options.deinit();
+
+        const routes_js: JSValue = try config.getArray(global, "routes") orelse {
+            return global.throwInvalidArguments2("'" ++ api_name ++ "' is missing 'routes'", .{});
+        };
+
+        const len = routes_js.getLength(global);
+        const routes = try bun.default_allocator.alloc(DevServer.Route, len);
+
+        var it = routes_js.arrayIterator(global);
+        var i: usize = 0;
+        while (it.next()) |route| : (i += 1) {
+            if (!route.isObject()) {
+                return global.throwInvalidArguments2("'routes[{d}]' is not an object", .{i});
+            }
+
+            const pattern = try route.getOptional(global, "pattern", ZigString.Slice) orelse {
+                return global.throwInvalidArguments2("'routes[{d}]' is missing 'pattern'", .{i});
+            };
+            defer pattern.deinit();
+
+            const entry_point = try getOptionalString(route, global, "entrypoint", &allocations) orelse {
+                return global.throwInvalidArguments2("'routes[{d}]' is missing 'entrypoint'", .{i});
+            };
+
+            routes[i] = .{
+                .pattern = allocations.trackSliceZ(try bun.default_allocator.dupeZ(u8, pattern.slice())),
+                .entry_point = entry_point,
+            };
+        }
+
+        var framework = try Framework.fromJS(
+            try config.get2(global, "framework") orelse {
+                return global.throwInvalidArguments2("'" ++ api_name ++ "' is missing 'framework'", .{});
+            },
+            global,
+            &allocations,
+            &bundler_options,
+        );
+        errdefer framework.deinit(bun.default_allocator);
+
+        const root = if (try config.getOptional(global, "framework", ZigString.Slice)) |slice|
+            allocations.track(slice)
+        else
+            allocations.trackSlice(
+                bun.getcwdAlloc(bun.default_allocator) catch |err| switch (err) {
+                    error.OutOfMemory => {
+                        global.throwOutOfMemory();
+                        return global.jsErrorFromCPP();
+                    },
+                    else => {
+                        global.throwError(err, "while querying current working directory");
+                        return global.jsErrorFromCPP();
+                    },
+                },
+            );
+
+        return .{
+            .allocations = allocations,
+            .root = root,
+            .routes = routes,
+            .framework = framework,
+            .bundler_options = bundler_options,
+        };
+    }
+};
+
+/// Each string stores its allocator since some may hold reference counts to JSC
+const AllocationList = struct {
+    allocations: std.ArrayListUnmanaged(ZigString.Slice),
+
+    pub fn track(al: *AllocationList, str: ZigString.Slice) []const u8 {
+        al.allocations.append(bun.default_allocator, str) catch bun.outOfMemory();
+        return str.slice();
+    }
+
+    pub fn trackSlice(al: *AllocationList, str: []const u8) []const u8 {
+        al.allocations.append(bun.default_allocator, ZigString.Slice.init(bun.default_allocator, str)) catch bun.outOfMemory();
+        return str;
+    }
+
+    pub fn trackSliceZ(al: *AllocationList, str: [:0]const u8) [:0]const u8 {
+        al.allocations.append(bun.default_allocator, ZigString.Slice.init(bun.default_allocator, str)) catch bun.outOfMemory();
+        return str;
+    }
+
+    pub fn free(al: *AllocationList) void {
+        for (al.allocations.items) |item| item.deinit();
+        al.allocations.clearAndFree(bun.default_allocator);
+    }
+
+    pub const empty: AllocationList = .{ .allocations = .{} };
+};
+
+const SplitBundlerOptions = struct {
+    all: BuildConfigSubset = .{},
+    client: BuildConfigSubset = .{},
+    server: BuildConfigSubset = .{},
+    ssr: BuildConfigSubset = .{},
+};
+
+const BuildConfigSubset = struct {
+    loader: ?bun.Schema.Api.LoaderMap = null,
+    ignoreDCEAnnotations: ?bool = null,
+    conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
+    drop: bun.StringArrayHashMapUnmanaged(void) = .{},
+    // TODO: plugins
 };
 
 /// Temporary function to invoke dev server via JavaScript. Will be
@@ -24,7 +161,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     , .{});
     bun.Output.flush();
 
-    const options = bakeOptionsFromJs(global, callframe.argument(0)) catch {
+    const options = UserOptions.fromJS(callframe.argument(0), global) catch {
         if (!global.hasException())
             global.throwInvalidArguments("invalid arguments", .{});
         return .zero;
@@ -54,6 +191,10 @@ pub const Framework = struct {
     react_fast_refresh: ?ReactFastRefresh = null,
 
     built_in_modules: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{},
+
+    pub fn deinit(fw: *Framework, alloc: std.mem.Allocator) void {
+        fw.built_in_modules.deinit(alloc);
+    }
 
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
@@ -145,138 +286,132 @@ pub const Framework = struct {
         path.* = result.path().?.text; // TODO: what is the lifetime of this string
     }
 
-    // TODO: This function always leaks memory.
-    // `Framework` has no way to specify what is allocated, nor should it.
-    fn fromJS(opts: JSValue, global: *JSC.JSGlobalObject) !Framework {
+    fn fromJS(
+        opts: JSValue,
+        global: *JSC.JSGlobalObject,
+        allocations: *AllocationList,
+        bundler_options: *SplitBundlerOptions,
+    ) !Framework {
+        _ = bundler_options; // autofix
         if (opts.isString()) {
-            const str = opts.toBunString(global);
+            const str = try opts.toBunString2(global);
             defer str.deref();
+
+            // Deprecated
             if (str.eqlComptime("react-server-components")) {
+                bun.Output.warn("framework: 'react-server-components' will be renamed to 'react'", .{});
                 return Framework.react();
             }
+
             if (str.eqlComptime("react")) {
                 return Framework.react();
             }
         }
 
         if (!opts.isObject()) {
-            global.throwInvalidArguments("Framework must be an object", .{});
-            return error.JSError;
+            return global.throwInvalidArguments2("Framework must be an object", .{});
         }
-        return .{
-            .entry_server = brk: {
-                const prop: JSValue = opts.get(global, "serverEntryPoint") orelse {
-                    if (!global.hasException())
-                        global.throwInvalidArguments("Missing 'framework.serverEntryPoint'", .{});
-                    return error.JSError;
-                };
-                const str = prop.toBunString(global);
-                defer str.deref();
 
-                if (global.hasException())
-                    return error.JSError;
-
-                // Leak
-                break :brk str.toUTF8(bun.default_allocator).slice();
+        var framework: Framework = .{
+            .entry_server = try getOptionalString(opts, global, "serverEntryPoint", allocations) orelse {
+                return global.throwInvalidArguments2("Missing 'framework.serverEntryPoint'", .{});
             },
-            .entry_client = brk: {
-                const prop: JSValue = opts.get(global, "clientEntryPoint") orelse {
-                    if (!global.hasException())
-                        global.throwInvalidArguments("Missing 'framework.clientEntryPoint'", .{});
-                    return error.JSError;
-                };
-                const str = prop.toBunString(global);
-                defer str.deref();
-
-                if (global.hasException())
-                    return error.JSError;
-
-                // Leak
-                break :brk str.toUTF8(bun.default_allocator).slice();
+            .entry_client = try getOptionalString(opts, global, "clientEntryPoint", allocations) orelse {
+                return global.throwInvalidArguments2("Missing 'framework.clientEntryPoint'", .{});
             },
             .react_fast_refresh = brk: {
-                const rfr: JSValue = opts.get(global, "reactFastRefresh") orelse {
-                    if (global.hasException())
-                        return error.JSError;
+                const rfr: JSValue = try opts.get2(global, "reactFastRefresh") orelse
                     break :brk null;
-                };
+
                 if (rfr == .true) break :brk .{};
                 if (rfr == .false or rfr == .null or rfr == .undefined) break :brk null;
+
                 if (!rfr.isObject()) {
-                    global.throwInvalidArguments("'framework.reactFastRefresh' must be an object or 'true'", .{});
-                    return error.JSError;
+                    return global.throwInvalidArguments2("'framework.reactFastRefresh' must be an object or 'true'", .{});
                 }
 
                 const prop = rfr.get(global, "importSource") orelse {
-                    global.throwInvalidArguments("'framework.reactFastRefresh' is missing 'importSource'", .{});
-                    return error.JSError;
+                    return global.throwInvalidArguments2("'framework.reactFastRefresh' is missing 'importSource'", .{});
                 };
 
-                const str = prop.toBunString(global);
+                const str = try prop.toBunString2(global);
                 defer str.deref();
 
-                if (global.hasException())
-                    return error.JSError;
-
-                // Leak
                 break :brk .{
-                    .import_source = str.toUTF8(bun.default_allocator).slice(),
+                    .import_source = allocations.track(str.toUTF8(bun.default_allocator)),
                 };
             },
             .server_components = sc: {
-                const sc: JSValue = opts.get(global, "serverComponents") orelse {
-                    if (global.hasException())
-                        return error.JSError;
+                const sc: JSValue = try opts.get2(global, "serverComponents") orelse
                     break :sc null;
-                };
-                if (sc == .null or sc == .undefined) break :sc null;
+                if (sc == .false or sc == .null or sc == .undefined) break :sc null;
+
+                if (!sc.isObject()) {
+                    return global.throwInvalidArguments2("'framework.serverComponents' must be an object or 'undefined'", .{});
+                }
 
                 break :sc .{
-                    // .client_runtime_import = "",
                     .separate_ssr_graph = brk: {
-                        const prop: JSValue = sc.get(global, "separateSSRGraph") orelse {
-                            if (!global.hasException())
-                                global.throwInvalidArguments("Missing 'framework.serverComponents.separateSSRGraph'", .{});
-                            return error.JSError;
+                        // Intentionally not using a truthiness check
+                        const prop = try sc.getOptional(global, "separateSSRGraph", JSValue) orelse {
+                            return global.throwInvalidArguments2("Missing 'framework.serverComponents.separateSSRGraph'", .{});
                         };
                         if (prop == .true) break :brk true;
                         if (prop == .false) break :brk false;
-                        global.throwInvalidArguments("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
-                        return error.JSError;
+                        return global.throwInvalidArguments2("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
                     },
-                    .server_runtime_import = brk: {
-                        const prop: JSValue = sc.get(global, "serverRuntimeImportSource") orelse {
-                            if (!global.hasException())
-                                global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
-                            return error.JSError;
-                        };
-                        const str = prop.toBunString(global);
-                        defer str.deref();
-
-                        if (global.hasException())
-                            return error.JSError;
-
-                        // Leak
-                        break :brk str.toUTF8(bun.default_allocator).slice();
-                    },
-                    .server_register_client_reference = brk: {
-                        const prop: JSValue = sc.get(global, "serverRegisterClientReferenceExport") orelse {
-                            if (!global.hasException())
-                                global.throwInvalidArguments("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
-                            return error.JSError;
-                        };
-                        const str = prop.toBunString(global);
-                        defer str.deref();
-
-                        if (global.hasException())
-                            return error.JSError;
-
-                        // Leak
-                        break :brk str.toUTF8(bun.default_allocator).slice();
-                    },
+                    .server_runtime_import = allocations.track(
+                        try sc.getOptional(global, "serverRuntimeImportSource", ZigString.Slice) orelse {
+                            return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
+                        },
+                    ),
+                    .server_register_client_reference = allocations.track(
+                        try sc.getOptional(global, "serverRegisterClientReferenceExport", ZigString.Slice) orelse {
+                            return global.throwInvalidArguments2("Missing 'framework.serverComponents.serverRegisterClientReferenceExport'", .{});
+                        },
+                    ),
                 };
             },
+            .built_in_modules = built_in_modules: {
+                const array = try opts.getArray(global, "builtInModules") orelse
+                    break :built_in_modules .{};
+
+                const len = array.getLength(global);
+                var files: bun.StringArrayHashMapUnmanaged(BuiltInModule) = .{};
+                try files.ensureTotalCapacity(bun.default_allocator, len);
+
+                var it = array.arrayIterator(global);
+                var i: usize = 0;
+                while (it.next()) |file| : (i += 1) {
+                    if (!file.isObject()) {
+                        return global.throwInvalidArguments2("'builtInModules[{d}]' is not an object", .{i});
+                    }
+
+                    const path = try getOptionalString(file, global, "import", allocations) orelse {
+                        return global.throwInvalidArguments2("'builtInModules[{d}]' is missing 'import'", .{i});
+                    };
+
+                    const value: BuiltInModule = if (try getOptionalString(file, global, "path", allocations)) |str|
+                        .{ .import = str }
+                    else if (try getOptionalString(file, global, "code", allocations)) |str|
+                        .{ .code = str }
+                    else
+                        return global.throwInvalidArguments2("'builtInModules[{d}]' needs either 'path' or 'code'", .{i});
+
+                    files.putAssumeCapacity(path, value);
+                }
+
+                break :built_in_modules files;
+            },
         };
+        errdefer framework.deinit(bun.default_allocator);
+
+        if (try opts.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            _ = js_options; // autofix
+            // try SplitBundlerOptions.parseInto(global, js_options, bundler_options, .root);
+        }
+
+        return framework;
     }
 
     pub fn initBundler(
@@ -356,45 +491,18 @@ pub const Framework = struct {
     }
 };
 
-// TODO: this function leaks memory and bad error handling, but that is OK since
-pub fn bakeOptionsFromJs(global: *JSC.JSGlobalObject, options: JSValue) !DevServer.Options {
-    if (!options.isObject()) return error.Invalid;
-    const routes_js = try options.getArray(global, "routes") orelse return error.Invalid;
-
-    const len = routes_js.getLength(global);
-    const routes = try bun.default_allocator.alloc(DevServer.Route, len);
-
-    var it = routes_js.arrayIterator(global);
-    var i: usize = 0;
-    while (it.next()) |route| : (i += 1) {
-        if (!route.isObject()) return error.Invalid;
-
-        const pattern_js = route.get(global, "pattern") orelse return error.Invalid;
-        if (!pattern_js.isString()) return error.Invalid;
-        const entry_point_js = route.get(global, "entrypoint") orelse return error.Invalid;
-        if (!entry_point_js.isString()) return error.Invalid;
-
-        const pattern = pattern_js.toBunString(global).toUTF8(bun.default_allocator);
-        defer pattern.deinit();
-        // TODO: this dupe is stupid
-        const pattern_z = try bun.default_allocator.dupeZ(u8, pattern.slice());
-        const entry_point = entry_point_js.toBunString(global).toUTF8(bun.default_allocator).slice(); // leak
-
-        routes[i] = .{
-            .pattern = pattern_z,
-            .entry_point = entry_point,
-        };
-    }
-
-    const framework_js = options.get(global, "framework") orelse {
-        return error.Invalid;
-    };
-    const framework = try Framework.fromJS(framework_js, global);
-    return .{
-        .cwd = bun.getcwdAlloc(bun.default_allocator) catch bun.outOfMemory(),
-        .routes = routes,
-        .framework = framework,
-    };
+fn getOptionalString(
+    target: JSValue,
+    global: *JSC.JSGlobalObject,
+    property: []const u8,
+    allocations: *AllocationList,
+) !?[]const u8 {
+    const value = try target.get2(global, property) orelse
+        return null;
+    if (value == .undefined or value == .null)
+        return null;
+    const str = try value.toBunString2(global);
+    return allocations.track(str.toUTF8(bun.default_allocator));
 }
 
 export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
@@ -402,10 +510,14 @@ export fn Bun__getTemporaryDevServer(global: *JSC.JSGlobalObject) JSValue {
     return JSC.JSFunction.create(global, "wipDevServer", bun.JSC.toJSHostFunction(jsWipDevServer), 0, .{});
 }
 
-pub fn wipDevServer(options: DevServer.Options) noreturn {
+pub fn wipDevServer(options: UserOptions) noreturn {
     bun.Output.Source.configureNamedThread("Dev Server");
 
-    const dev = DevServer.init(options) catch |err| switch (err) {
+    const dev = DevServer.init(.{
+        .cwd = options.root,
+        .routes = options.routes,
+        .framework = options.framework,
+    }) catch |err| switch (err) {
         error.FrameworkInitialization => bun.Global.exit(1),
         else => {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -495,13 +607,11 @@ pub const client_virtual_source: bun.logger.Source = .{
     .index = bun.JSAst.Index.bake_client_data,
 };
 
-pub const production = @import("./production.zig");
-pub const DevServer = @import("./DevServer.zig");
-
 const std = @import("std");
 
 const bun = @import("root").bun;
 const Environment = bun.Environment;
+const ZigString = bun.JSC.ZigString;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

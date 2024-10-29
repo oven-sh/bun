@@ -952,7 +952,7 @@ pub const Formatter = struct {
     // For detecting circular references
     pub const Visited = struct {
         const ObjectPool = @import("../pool.zig").ObjectPool;
-        pub const Map = std.AutoHashMap(JSValue.Type, void);
+        pub const Map = std.AutoHashMap(JSValue, void);
         pub const Pool = ObjectPool(
             Map,
             struct {
@@ -1929,7 +1929,7 @@ pub const Formatter = struct {
                 this.map = this.map_node.?.data;
             }
 
-            const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+            const entry = this.map.getOrPut(value) catch unreachable;
             if (entry.found_existing) {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
@@ -1938,7 +1938,7 @@ pub const Formatter = struct {
 
         defer {
             if (comptime Format.canHaveCircularReferences()) {
-                _ = this.map.remove(@intFromEnum(value));
+                _ = this.map.remove(value);
             }
         }
 

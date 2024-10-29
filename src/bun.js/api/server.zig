@@ -465,6 +465,8 @@ pub const ServerConfig = struct {
 
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
 
+    bake: ?bun.bake.UserOptions = null,
+
     pub const StaticRouteEntry = struct {
         path: []const u8,
         route: *StaticRoute,
@@ -521,6 +523,10 @@ pub const ServerConfig = struct {
             entry.deinit();
         }
         this.static_routes.clearAndFree();
+
+        if (this.bake) |*bake| {
+            bake.deinit();
+        }
     }
 
     pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {

@@ -172,8 +172,8 @@ pub const ServerEntryPoint = struct {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
-                    \\var hmrSymbol = Symbol.for("BunServerHMR");
                     \\import * as start from '{}';
+                    \\var hmrSymbol = Symbol("BunServerHMR");
                     \\var entryNamespace = start;
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -210,12 +210,14 @@ pub const ServerEntryPoint = struct {
                 \\var entryNamespace = start;
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
-                \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
-                \\        Bun.serve(entryNamespace.default);
+                \\      if (typeof entryNamespace?.default?.fetch === 'function')  {{
+                \\        const server = Bun.serve(entryNamespace.default);
+                \\        console.debug(`Started server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\      }}
                 \\   }}, reportError);
                 \\}} else if (typeof entryNamespace?.default?.fetch === 'function') {{
-                \\   Bun.serve(entryNamespace.default);
+                \\   const server = Bun.serve(entryNamespace.default);
+                \\   console.debug(`Started server ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);
                 \\}}
                 \\
             ,

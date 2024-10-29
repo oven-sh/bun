@@ -374,25 +374,30 @@ pub export fn napi_create_int64(env_: napi_env, value: i64, result_: ?*napi_valu
     result.set(env, JSValue.jsNumber(value));
     return env.ok();
 }
-pub export fn napi_create_string_latin1(env_: napi_env, str_: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
+pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
     const env = env_ orelse {
         return envIsNull();
     };
     const result: *napi_value = result_ orelse {
         return env.invalidArg();
     };
-    const str = str_ orelse {
-        return env.invalidArg();
-    };
 
     const slice: []const u8 = brk: {
-        if (NAPI_AUTO_LENGTH == length) {
-            break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
-        } else if (length > std.math.maxInt(u32)) {
-            return env.invalidArg();
+        if (str) |ptr| {
+            if (NAPI_AUTO_LENGTH == length) {
+                break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(ptr)), 0);
+            } else if (length > std.math.maxInt(u32)) {
+                return env.invalidArg();
+            } else {
+                break :brk ptr[0..length];
+            }
         }
 
-        break :brk str[0..length];
+        if (length == 0) {
+            break :brk &.{};
+        } else {
+            return env.invalidArg();
+        }
     };
 
     log("napi_create_string_latin1: {s}", .{slice});
@@ -419,16 +424,21 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
     };
 
     const slice: []const u8 = brk: {
-        if (NAPI_AUTO_LENGTH == length) {
-            break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
-        } else if (length > std.math.maxInt(u32)) {
-            return env.invalidArg();
+        if (str) |ptr| {
+            if (NAPI_AUTO_LENGTH == length) {
+                break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
+            } else if (length > std.math.maxInt(u32)) {
+                return env.invalidArg();
+            } else {
+                break :brk ptr[0..length];
+            }
         }
 
-        if (str) |ptr|
-            break :brk ptr[0..length];
-
-        return env.invalidArg();
+        if (length == 0) {
+            break :brk &.{};
+        } else {
+            return env.invalidArg();
+        }
     };
 
     log("napi_create_string_utf8: {s}", .{slice});
@@ -451,16 +461,21 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
     };
 
     const slice: []const u16 = brk: {
-        if (NAPI_AUTO_LENGTH == length) {
-            break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
-        } else if (length > std.math.maxInt(u32)) {
-            return env.invalidArg();
+        if (str) |ptr| {
+            if (NAPI_AUTO_LENGTH == length) {
+                break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
+            } else if (length > std.math.maxInt(u32)) {
+                return env.invalidArg();
+            } else {
+                break :brk ptr[0..length];
+            }
         }
 
-        if (str) |ptr|
-            break :brk ptr[0..length];
-
-        return env.invalidArg();
+        if (length == 0) {
+            break :brk &.{};
+        } else {
+            return env.invalidArg();
+        }
     };
 
     if (comptime bun.Environment.allow_assert)
@@ -468,6 +483,7 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
 
     if (slice.len == 0) {
         result.set(env, bun.String.empty.toJS(env.toJS()));
+        return env.ok();
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);

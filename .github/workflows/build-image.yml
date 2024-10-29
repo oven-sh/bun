@@ -40,9 +40,39 @@ jobs:
             distro: "ubuntu"
             release: "2004"
           - arch: "aarch64"
+            distro: "ubuntu"
+            release: "1804"
+          - arch: "aarch64"
             distro: "amazonlinux"
             release: "2023"
           - arch: "aarch64"
+            distro: "amazonlinux"
+            release: "2"
+          - arch: "x64"
+            distro: "debian"
+            release: "12"
+          - arch: "x64"
+            distro: "debian"
+            release: "11"
+          - arch: "x64"
+            distro: "debian"
+            release: "10"
+          - arch: "x64"
+            distro: "ubuntu"
+            release: "2404"
+          - arch: "x64"
+            distro: "ubuntu"
+            release: "2204"
+          - arch: "x64"
+            distro: "ubuntu"
+            release: "2004"
+          - arch: "x64"
+            distro: "ubuntu"
+            release: "1804"
+          - arch: "x64"
+            distro: "amazonlinux"
+            release: "2023"
+          - arch: "x64"
             distro: "amazonlinux"
             release: "2"
     steps:
@@ -61,6 +91,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build
+        working-directory: ci
         run: bun build:linux-${{ matrix.arch }}-${{ matrix.distro }}-${{ matrix.release }}
       - name: Test
+        working-directory: ci
         run: bun test:linux-${{ matrix.arch }}-${{ matrix.distro }}-${{ matrix.release }}

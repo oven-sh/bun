@@ -15,16 +15,17 @@ describe("doesnt_crash", async () => {
   files = readdirSync(files_dir).map(file => path.join(files_dir, file));
   console.log("Tempdir", temp_dir);
 
-  files.map(file => {
-    const outfile1 = path.join(temp_dir, "file-1" + path.basename(file)).replaceAll("\\", "/");
-    const outfile2 = path.join(temp_dir, "file-2" + path.basename(file)).replaceAll("\\", "/");
-    const outfile3 = path.join(temp_dir, "file-3" + path.basename(file)).replaceAll("\\", "/");
-    const outfile4 = path.join(temp_dir, "file-4" + path.basename(file)).replaceAll("\\", "/");
+  files.map(absolute => {
+    const file = path.basename(absolute);
+    const outfile1 = path.join(temp_dir, "file-1" + file).replaceAll("\\", "/");
+    const outfile2 = path.join(temp_dir, "file-2" + file).replaceAll("\\", "/");
+    const outfile3 = path.join(temp_dir, "file-3" + file).replaceAll("\\", "/");
+    const outfile4 = path.join(temp_dir, "file-4" + file).replaceAll("\\", "/");
 
     test(file, async () => {
       {
         const { stdout, stderr, exitCode } =
-          await Bun.$`${bunExe()} build --experimental-css ${file} --outfile=${outfile1}`.quiet().env(bunEnv);
+          await Bun.$`${bunExe()} build --experimental-css ${absolute} --outfile=${outfile1}`.quiet().env(bunEnv);
         expect(exitCode).toBe(0);
         expect(stdout.toString()).not.toContain("error");
         expect(stderr.toString()).toBeEmpty();
@@ -40,7 +41,9 @@ describe("doesnt_crash", async () => {
     test(`(minify) ${file}`, async () => {
       {
         const { stdout, stderr, exitCode } =
-          await Bun.$`${bunExe()} build --experimental-css ${file} --minify --outfile=${outfile3}`.quiet().env(bunEnv);
+          await Bun.$`${bunExe()} build --experimental-css ${absolute} --minify --outfile=${outfile3}`
+            .quiet()
+            .env(bunEnv);
         expect(exitCode).toBe(0);
         expect(stdout.toString()).not.toContain("error");
         expect(stderr.toString()).toBeEmpty();

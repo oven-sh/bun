@@ -1,4 +1,0 @@
-NOTE: The test started as a child_process using these flags: [ '--expose-internals' ] Use NODE_SKIP_FLAG_CHECK to run the test with the original flags.
-error: Cannot find module 'internal/test/binding' from '/Users/bun/code/bun/test/js/node/test/parallel/test-stream-base-prototype-accessors-enumerability.js'
-
-Bun v1.1.31-debug+5fc53353f (macOS arm64)

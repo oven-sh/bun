@@ -12,6 +12,7 @@ const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
 const Environment = bun.Environment;
+const UUID7 = @import("./uuid.zig").UUID7;
 
 pub const Lifetime = enum {
     clone,
@@ -662,6 +663,69 @@ pub const Crypto = struct {
 
         uuid.print(bytes[0..36]);
         return str.toJS(globalThis);
+    }
+
+    pub export fn Bun__randomUUIDv7(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.argumentsUndef(2).slice();
+
+        var encoding_value: JSC.JSValue = .undefined;
+
+        const encoding: JSC.Node.Encoding = brk: {
+            if (arguments.len > 0) {
+                if (arguments[0] != .undefined) {
+                    if (arguments[0].isString()) {
+                        encoding_value = arguments[0];
+                        break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
+                            globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
+                            return .undefined;
+                        };
+                    }
+                }
+            }
+
+            break :brk JSC.Node.Encoding.hex;
+        };
+
+        const timestamp: u64 = brk: {
+            const timestamp_value: JSC.JSValue = if (encoding_value != .undefined and arguments.len > 1)
+                arguments[1]
+            else if (arguments.len == 1 and encoding_value == .undefined)
+                arguments[0]
+            else
+                .undefined;
+
+            if (timestamp_value != .undefined) {
+                if (timestamp_value.isDate()) {
+                    const date = timestamp_value.getUnixTimestamp();
+                    break :brk @intFromFloat(@max(0, date));
+                }
+
+                if (globalThis.validateIntegerRange(timestamp_value, i64, 0, .{
+                    .min = 0,
+                    .field_name = "timestamp",
+                })) |timestamp_int| {
+                    break :brk @intCast(timestamp_int);
+                }
+                return .zero;
+            }
+
+            break :brk @intCast(@max(0, std.time.milliTimestamp()));
+        };
+
+        const entropy = globalThis.bunVM().rareData().entropySlice(8);
+
+        const uuid = UUID7.init(timestamp, &entropy[0..8].*);
+
+        if (encoding == .hex) {
+            var str, var bytes = bun.String.createUninitialized(.latin1, 36);
+            uuid.print(bytes[0..36]);
+            return str.transferToJS(globalThis);
+        }
+
+        return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
     }
 
     pub fn randomUUIDWithoutTypeChecks(

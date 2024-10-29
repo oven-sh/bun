@@ -1,0 +1,23 @@
+ 5 | const { Writable } = require('stream');
+ 6 | 
+ 7 | const bufferBlerg = Buffer.from('blerg');
+ 8 | const w = new Writable();
+ 9 | 
+10 | assert.throws(
+            ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   message: 'requires 2 arguments',
++   name: 'TypeError'
+-   code: 'ERR_METHOD_NOT_IMPLEMENTED',
+-   message: 'The _write() method is not implemented',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-constructor-set-methods.js:10:8
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

@@ -1,0 +1,18 @@
+393 |       }
+394 |     }
+395 |   } else {
+396 |     defaultMaxListeners = n;
+397 |   }
+398 | function listenerCount2(emitter, type) {
+                        ^
+TypeError: undefined is not a function
+      at node:events:398:24
+      at onerror (internal:streams/legacy:44:19)
+      at emitError (node:events:38:19)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipe-without-listenerCount.js:12:5
+      at emit (node:events:74:48)
+      at internal:streams/legacy:12:33
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipe-without-listenerCount.js:17:3
+      at asyncFunctionResume (1:11)
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

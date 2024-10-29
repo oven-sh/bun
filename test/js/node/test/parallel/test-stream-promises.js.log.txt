@@ -1,0 +1,17 @@
+12 | const assert = require('assert');
+13 | const { promisify } = require('util');
+14 | 
+15 | assert.strictEqual(promises.pipeline, pipeline);
+16 | assert.strictEqual(promises.finished, finished);
+17 | assert.strictEqual(pipeline, promisify(stream.pipeline));
+            ^
+AssertionError: Values identical but not reference-equal:
+
+[Function: pipeline]
+
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-promises.js:17:8
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

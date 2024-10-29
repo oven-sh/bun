@@ -1,0 +1,47 @@
+51 |   };
+52 | }
+53 | function popCallback(streams) {
+54 |   validateFunction(streams[streams.length - 1], "streams[stream.length - 1]");
+55 |   return streams.pop();
+56 | function makeAsyncIterable(val) {
+                               ^
+TypeError: The "val" argument must be of type Readable, Iterable or AsyncIterable. Received: [object Object]
+ code: "ERR_INVALID_ARG_TYPE"
+
+      at makeAsyncIterable (internal:streams/pipeline:56:27)
+      at pipelineImpl (internal:streams/pipeline:145:22)
+      at node:stream/promises:8:23
+      at new Promise (1:11)
+      at pipeline (node:stream/promises:7:18)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipeline.js:52:3
+      at asyncFunctionResume (1:11)
+140 |     }
+141 |   }
+142 | }
+143 | function pipeline(...streams) {
+144 |   return pipelineImpl(streams, once(popCallback(streams)));
+145 | function pipelineImpl(streams, callback, opts) {
+                           ^
+TypeError: requires 2 arguments
+      at pipelineImpl (internal:streams/pipeline:145:22)
+      at node:stream/promises:8:23
+      at new Promise (1:11)
+      at pipeline (node:stream/promises:7:18)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipeline.js:64:5
+      at getActual (node:assert:658:23)
+      at throws (node:assert:733:36)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipeline.js:63:10
+58 | {
+59 |   const read = new Readable({
+60 |     read() {}
+61 |   });
+62 | 
+63 |   assert.throws(() => {
+              ^
+AssertionError: Missing expected exception.
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipeline.js:63:10
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

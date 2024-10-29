@@ -1,0 +1,79 @@
+15 | 
+16 | {
+17 |   // flatMap works on synchronous streams with a synchronous mapper
+18 |   (async () => {
+19 |     assert.deepStrictEqual(
+20 |       await oneTo5().flatMap((x) => [x + x]).toArray(),
+                          ^
+TypeError: undefined is not a function
+      at flatMap (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:20:22
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:18:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:30:5
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+34 | 
+35 | {
+36 |   // flatMap works on sync/async streams with an asynchronous mapper
+37 |   (async () => {
+38 |     assert.deepStrictEqual(
+39 |       await oneTo5().flatMap(async (x) => [x, x]).toArray(),
+                          ^
+TypeError: undefined is not a function
+      at flatMap (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:39:22
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:37:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:46:5
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+47 |   })().then(common.mustCall());
+48 | }
+49 | {
+50 |   // flatMap works on a stream where mapping returns a stream
+51 |   (async () => {
+52 |     const result = await oneTo5().flatMap(async (x) => {
+                                       ^
+TypeError: undefined is not a function
+      at flatMap (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:52:35
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:51:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:55:66
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+54 |     }).toArray();
+55 |     assert.deepStrictEqual(result, [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]);
+56 |   })().then(common.mustCall());
+57 |   // flatMap works on an objectMode stream where mappign returns a stream
+58 |   (async () => {
+59 |     const result = await oneTo5().flatMap(() => {
+                                       ^
+TypeError: undefined is not a function
+      at flatMap (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:59:35
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:58:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:67:5
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+71 | }
+72 | 
+73 | {
+74 |   // Concurrency + AbortSignal
+75 |   const ac = new AbortController();
+76 |   const stream = oneTo5().flatMap(common.mustNotCall(async (_, { signal }) => {
+                               ^
+TypeError: undefined is not a function
+      at flatMap (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-flatMap.js:76:27
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

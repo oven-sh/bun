@@ -1,0 +1,15 @@
+27 |   return promiseAndResolveArray;
+28 | }
+29 | 
+30 | {
+31 |   // Map works on synchronous streams with a synchronous mapper
+32 |   const stream = Readable.from([1, 2, 3, 4, 5]).map((x) => x + x);
+                                                     ^
+TypeError: undefined is not a function
+      at map (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-map.js:32:49
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

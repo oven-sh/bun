@@ -1,0 +1,15 @@
+292 |       return true;
+293 |     if (this !== Writable)
+294 |       return false;
+295 |     return object && object._writableState instanceof WritableState;
+296 |   }
+297 | Writable.prototype.pipe = function() {
+                                        ^
+TypeError: requires 2 arguments
+      at internal:streams/writable:297:35
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:288:5
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

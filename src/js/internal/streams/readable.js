@@ -1674,6 +1674,14 @@ Readable.from = function (iterable, opts) {
   return from(Readable, iterable, opts);
 };
 
+Readable.filter = function (fn, options) {
+  return require("./operators").filter(fn, options);
+};
+
+Readable.map = function (fn, options) {
+  return require("./operators").map(fn, options);
+};
+
 let webStreamsAdapters;
 
 // Lazy to avoid circular references

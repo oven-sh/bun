@@ -1,0 +1,63 @@
+22 |       [[1, 2], sum],
+23 |       [[1, 2, 3], (x, y) => y],
+24 |     ];
+25 |     for (const [values, fn, initial] of tests) {
+26 |       const streamReduce = await Readable.from(values)
+27 |                                          .reduce(fn, initial);
+                                               ^
+TypeError: undefined is not a function
+      at node:stream:75:20
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:27:43
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:15:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:38:55
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+40 |   })().then(common.mustCall());
+41 | }
+42 | {
+43 |   // Works with an async reducer, with or without initial value
+44 |   (async () => {
+45 |     const six = await Readable.from([1, 2, 3]).reduce(async (p, c) => p + c, 0);
+                                                    ^
+TypeError: undefined is not a function
+      at node:stream:75:20
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:45:48
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:44:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:46:30
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+44 |   (async () => {
+45 |     const six = await Readable.from([1, 2, 3]).reduce(async (p, c) => p + c, 0);
+46 |     assert.strictEqual(six, 6);
+47 |   })().then(common.mustCall());
+48 |   (async () => {
+49 |     const six = await Readable.from([1, 2, 3]).reduce(async (p, c) => p + c);
+                                                    ^
+TypeError: undefined is not a function
+      at node:stream:75:20
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:49:48
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:48:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:50:30
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+51 |   })().then(common.mustCall());
+52 | }
+53 | {
+54 |   // Works lazily
+55 |   assert.rejects(Readable.from([1, 2, 3, 4, 5, 6])
+56 |     .map(common.mustCall((x) => {
+          ^
+TypeError: undefined is not a function
+      at map (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-reduce.js:56:6
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

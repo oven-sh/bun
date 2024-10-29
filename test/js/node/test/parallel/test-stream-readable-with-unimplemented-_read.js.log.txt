@@ -1,0 +1,34 @@
+738 |     }
+739 |     const error = args.pop();
+740 |     // The error message should be non-enumerable
+741 |     assert.strictEqual(Object.prototype.propertyIsEnumerable.call(error, 'message'), false);
+742 | 
+743 |     assert.throws(() => { throw error; }, validator);
+                 ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   message: 'requires 2 arguments',
++   name: 'TypeError'
+-   code: 'ERR_METHOD_NOT_IMPLEMENTED',
+-   message: 'The _read() method is not implemented',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/common/index.js:743:12
+      at emitError (node:events:38:19)
+      at emitErrorNT (internal:streams/destroy:111:21)
+      at emitErrorCloseNT (internal:streams/destroy:94:26)
+      at processTicksAndRejections (native:7:39)
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-readable-with-unimplemented-_read.js:13:29)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}

@@ -1,0 +1,22 @@
+43 |   testTransform(DEFAULT, 777, { highWaterMark: v, writableHighWaterMark: 777 });
+44 | });
+45 | 
+46 | // test NaN
+47 | {
+48 |   assert.throws(() => {
+              ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    code: 'ERR_INVALID_ARG_VALUE',
++   message: 'options.readableHighWaterMark',
+-   message: "The property 'options.readableHighWaterMark' is invalid. Received NaN",
+    name: 'TypeError'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-transform-split-highwatermark.js:48:10
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

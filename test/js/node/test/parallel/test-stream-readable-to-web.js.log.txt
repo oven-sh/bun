@@ -1,0 +1,12 @@
+1218 | Readable.map = function(fn, options) {
+1219 |   return (@getInternalField(@internalModuleRegistry, 30) || @createInternalModuleById(30)).map(fn, options);
+1220 | };
+1221 | Readable.fromWeb = function(readableStream, options) {
+1222 |   throw @makeErrorWithCode(39);
+1223 | Readable.toWeb = function(streamReadable, options) {
+                                ^
+TypeError: requires 2 arguments
+      at internal:streams/readable:1223:26
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-readable-to-web.js:46:32
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

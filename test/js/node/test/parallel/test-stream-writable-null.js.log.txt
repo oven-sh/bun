@@ -1,0 +1,20 @@
+15 | }
+16 | 
+17 | {
+18 |   const m = new MyWritable({ objectMode: true });
+19 |   m.on('error', common.mustNotCall());
+20 |   assert.throws(() => {
+              ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
++ {}
+- {
+-   code: 'ERR_STREAM_NULL_VALUES'
+- }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-null.js:20:10
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

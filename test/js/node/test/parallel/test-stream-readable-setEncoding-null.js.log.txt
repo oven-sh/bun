@@ -1,0 +1,17 @@
+ 9 |   const readable = new Readable({ encoding: 'hex' });
+10 |   assert.strictEqual(readable._readableState.encoding, 'hex');
+11 | 
+12 |   readable.setEncoding(null);
+13 | 
+14 |   assert.strictEqual(readable._readableState.encoding, 'utf8');
+              ^
+AssertionError: Expected values to be strictly equal:
+
+null !== 'utf8'
+
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-readable-setEncoding-null.js:14:10
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

@@ -1,0 +1,40 @@
+ 5 | const assert = require('assert');
+ 6 | const stream = require('stream');
+ 7 | 
+ 8 | // Verify that all individual aliases are left in place.
+ 9 | 
+10 | assert.strictEqual(stream.Readable, require('_stream_readable'));
+            ^
+AssertionError: Expected values to be strictly equal:
++ actual - expected ... Lines skipped
+
++ [Function: Readable] {
++   ReadableState: [Function: ReadableState] {
++     prototype: {
++       [Symbol(kOnConstructed)]: [Function: onConstructed]
++     }
++   },
++   _fromList: [Function: fromList],
++   filter: [Function (anonymous)],
++   from: [Function (anonymous)],
++   fromWeb: [Function (anonymous)],
++   map: [Function (anonymous)],
+...
+- <ref *1> [Function: Stream] {
+-       Duplex: [Function: Duplex] {
+-     from: [Function (anonymous)],
+-     fromWeb: [Function (anonymous)],
+-     prototype: EventEmitter2 {
+-       _write: [Function (anonymous)],
+-       _writev: null,
+-       cork: [Function (anonymous)],
+-       destroy: [Function (anonymous)],
+-       end: [Function (anonymous)],
+-       setDefaultEncoding: [Function: setDefaultEncoding],
+...
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-aliases-legacy.js:10:8
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

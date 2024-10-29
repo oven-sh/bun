@@ -1,0 +1,72 @@
+15 |       [1, 2, 3],
+16 |       Array(100).fill().map((_, i) => i),
+17 |     ];
+18 |     for (const test of tests) {
+19 |       const stream = Readable.from(test);
+20 |       const result = await stream.toArray();
+                                       ^
+TypeError: undefined is not a function
+      at node:stream:75:20
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:20:35
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:11:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:21:42
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+29 |     const firstBuffer = Buffer.from([1, 2, 3]);
+30 |     const secondBuffer = Buffer.from([4, 5, 6]);
+31 |     const stream = Readable.from(
+32 |       [firstBuffer, secondBuffer],
+33 |       { objectMode: false });
+34 |     const result = await stream.toArray();
+                                     ^
+TypeError: undefined is not a function
+      at node:stream:75:20
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:34:33
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:28:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:36:63
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+45 |       [1],
+46 |       [1, 2, 3],
+47 |       Array(100).fill().map((_, i) => i),
+48 |     ];
+49 |     for (const test of tests) {
+50 |       const stream = Readable.from(test).map((x) => Promise.resolve(x));
+                                              ^
+TypeError: undefined is not a function
+      at map (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:50:42
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:42:4
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:52:42
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   name: 'TypeError'
+-   name: 'AbortError'
+  }
+ code: "ERR_ASSERTION"
+
+74 |   }));
+75 |   ac.abort();
+76 | }
+77 | {
+78 |   // Test result is a Promise
+79 |   const result = Readable.from([1, 2, 3, 4, 5]).toArray();
+                                                     ^
+TypeError: undefined is not a function
+      at node:stream:75:20
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-toArray.js:79:49
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

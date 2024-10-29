@@ -1,0 +1,22 @@
+ 5 | const { Writable } = require('stream');
+ 6 | 
+ 7 | function expectError(w, args, code, sync) {
+ 8 |   if (sync) {
+ 9 |     if (code) {
+10 |       assert.throws(() => w.write(...args), { code });
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
++ {}
+- {
+-   code: 'ERR_STREAM_NULL_VALUES'
+- }
+ code: "ERR_ASSERTION"
+
+      at expectError (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-write-error.js:10:14)
+      at test (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-write-error.js:59:16)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-write-error.js:74:1
+      at native:11:43
+
+Bun v1.1.31-debug+5fc53353f (macOS arm64)

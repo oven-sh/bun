@@ -1,0 +1,46 @@
+error: undefined
+24 | export default "internal:streams/add-abort-signal";
+                                              ^
+AbortError: The operation was aborted
+ code: "ABORT_ERR"
+
+      at new AbortError (node:events:420:14)
+      at internal:streams/add-abort-signal:24:42
+      at abort (native:1:1)
+
+AbortError: The operation was aborted.
+ code: "ABORT_ERR"
+
+error: undefined
+24 | export default "internal:streams/add-abort-signal";
+                                              ^
+AbortError: The operation was aborted
+ code: "ABORT_ERR"
+
+      at new AbortError (node:events:420:14)
+      at internal:streams/add-abort-signal:24:42
+      at abort (native:1:1)
+
+AbortError: The operation was aborted.
+ code: "ABORT_ERR"
+
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-readable-destroy.js:268:27)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-readable-destroy.js:321:35)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}

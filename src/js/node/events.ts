@@ -23,6 +23,7 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 const { throwNotImplemented } = require("internal/shared");
 const {
   validateObject,
@@ -45,6 +46,7 @@ const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
 
 let FixedQueue;
+const kEmptyObject = Object.freeze({ __proto__: null });
 
 var defaultMaxListeners = 10;
 
@@ -348,7 +350,8 @@ EventEmitterPrototype.eventNames = function eventNames() {
 
 EventEmitterPrototype[kCapture] = false;
 
-function once(emitter, type, options) {
+function once(emitter, type, options = kEmptyObject) {
+  validateObject(options, "options");
   var signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
@@ -388,8 +391,6 @@ function once(emitter, type, options) {
 
   return promise;
 }
-
-const kEmptyObject = Object.freeze({ __proto__: null });
 
 const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
 function createIterResult(value, done) {
@@ -456,7 +457,7 @@ function on(emitter, event, options = kEmptyObject) {
 
       throw(err) {
         if (!err || !(err instanceof Error)) {
-          throw new ERR_INVALID_ARG_TYPE("EventEmitter.AsyncIterator", "Error", err);
+          throw ERR_INVALID_ARG_TYPE("EventEmitter.AsyncIterator", "Error", err);
         }
         errorHandler(err);
       },
@@ -605,20 +606,27 @@ function listenerCount(emitter, type) {
   return jsEventTargetGetEventListenersCount(emitter, type);
 }
 
-function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
+function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
-  } else {
+  } else if (typeof emitter.removeEventListener === "function") {
     emitter.removeEventListener(name, listener, flags);
+  } else {
+    throw ERR_INVALID_ARG_TYPE("emitter", "EventEmitter", emitter);
   }
 }
 
 function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   if (typeof emitter.on === "function") {
-    if (flags?.once) emitter.once(name, listener);
-    else emitter.on(name, listener);
-  } else {
+    if (flags?.once) {
+      emitter.once(name, listener);
+    } else {
+      emitter.on(name, listener);
+    }
+  } else if (typeof emitter.addEventListener === "function") {
     emitter.addEventListener(name, listener, flags);
+  } else {
+    throw ERR_INVALID_ARG_TYPE("emitter", "EventEmitter", emitter);
   }
 }
 
@@ -631,12 +639,6 @@ class AbortError extends Error {
     this.code = "ABORT_ERR";
     this.name = "AbortError";
   }
-}
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
 }
 
 function ERR_OUT_OF_RANGE(name, range, value) {

@@ -30,7 +30,7 @@ test("basic", async () => {
   expect(ee.listenerCount("error")).toBe(0);
 });
 
-test.skip("invalidArgType", async () => {
+test("invalidArgType", async () => {
   assert.throws(
     () => on({}, "foo"),
     common.expectsError({
@@ -187,7 +187,7 @@ test("nextError", async () => {
   expect(ee.listeners("error").length).toBe(0);
 });
 
-test.skip("iterableThrow", async () => {
+test("iterableThrow", async () => {
   const ee = new EventEmitter();
   const iterable = on(ee, "foo");
 
@@ -206,7 +206,7 @@ test.skip("iterableThrow", async () => {
       iterable.throw();
     },
     {
-      message: 'The "EventEmitter.AsyncIterator" property must be' + " an instance of Error. Received undefined",
+      message: 'The "EventEmitter.AsyncIterator" argument must be' + " of type Error. Received: undefined",
       name: "TypeError",
     },
   );

@@ -5165,6 +5165,7 @@ pub const JSValue = enum(JSValueReprInt) {
         name,
         message,
         @"error",
+        default,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
@@ -6159,6 +6160,22 @@ pub const VM = extern struct {
         SmallHeap = 0,
         LargeHeap = 1,
     };
+
+    extern fn Bun__JSC_onBeforeWait(vm: *VM) i32;
+    extern fn Bun__JSC_onAfterWait(vm: *VM) void;
+    pub const ReleaseHeapAccess = struct {
+        vm: *VM,
+        needs_to_release: bool,
+        pub fn acquire(this: *const ReleaseHeapAccess) void {
+            if (this.needs_to_release) {
+                Bun__JSC_onAfterWait(this.vm);
+            }
+        }
+    };
+
+    pub fn releaseHeapAccess(vm: *VM) ReleaseHeapAccess {
+        return .{ .vm = vm, .needs_to_release = Bun__JSC_onBeforeWait(vm) != 0 };
+    }
 
     pub fn create(heap_type: HeapType) *VM {
         return cppFn("create", .{@intFromEnum(heap_type)});

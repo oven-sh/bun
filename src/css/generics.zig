@@ -149,6 +149,13 @@ pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList
     return true;
 }
 
+pub fn canTransitivelyImplementEql(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .Struct, .Union => true,
+        else => false,
+    };
+}
+
 pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     const tyinfo = comptime @typeInfo(T);
     if (comptime tyinfo == .Pointer) {
@@ -191,6 +198,13 @@ pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
     };
 }
 
+pub fn canTransitivelyImplementDeepClone(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .Struct, .Union => true,
+        else => false,
+    };
+}
+
 pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) T {
     const tyinfo = comptime @typeInfo(T);
     if (comptime tyinfo == .Pointer) {
@@ -204,7 +218,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
                 @memcpy(slice, this.*);
             } else {
                 for (this.*, 0..) |*e, i| {
-                    slice[i] = deepClone(tyinfo.Pointer.child, &e, allocator);
+                    slice[i] = deepClone(tyinfo.Pointer.child, e, allocator);
                 }
             }
             return slice;

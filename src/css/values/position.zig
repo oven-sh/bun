@@ -377,6 +377,10 @@ pub const HorizontalPositionKeyword = enum {
     /// The `right` keyword.
     right,
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) HorizontalPositionKeyword {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const HorizontalPositionKeyword, other: *const HorizontalPositionKeyword) bool {
         return this.* == other.*;
     }
@@ -406,6 +410,10 @@ pub const VerticalPositionKeyword = enum {
     top,
     /// The `bottom` keyword.
     bottom,
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 
     pub fn eql(this: *const VerticalPositionKeyword, other: *const VerticalPositionKeyword) bool {
         return this.* == other.*;

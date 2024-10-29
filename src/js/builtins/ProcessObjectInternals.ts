@@ -69,10 +69,9 @@ export function getStdinStream(fd) {
     stream = new tty.ReadStream(fd);
   } else {
     const stat = fs.fstatSync(fd);
-    if (stat.isFile()) {
-      stream = new fs.ReadStream(null, { fd: fd, autoClose: false });
-    } else {
+    if (stat.isSocket()) {
       const net = require("node:net");
+
       if (process.channel && process.channel.fd === fd) {
         stream = new net.Socket({
           handle: process.channel,
@@ -80,19 +79,19 @@ export function getStdinStream(fd) {
           writable: false,
           manualStart: true,
         });
-      } else if (stat.isSocket()) {
+      } else {
         stream = new net.Socket({
           fd: fd,
           readable: true,
           writable: false,
           manualStart: true,
         });
-      } else {
-        const { Readable } = require("node:stream");
-        stream = new Readable({ read() {} });
-        stream.push(null);
       }
+
       stream._writableState.ended = true;
+    } else {
+      // Default to a file stream
+      stream = new fs.ReadStream(null, { fd: fd, autoClose: false });
     }
   }
 

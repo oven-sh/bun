@@ -1451,11 +1451,6 @@ pub const ServerConfig = struct {
                     return;
                 }
 
-                if (args.bake != null) {
-                    JSC.throwInvalidArguments("TODO: Cannot provide 'fetch' function with 'app'", .{}, global, exception);
-                    return;
-                }
-
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
@@ -1466,11 +1461,6 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
-                if (args.bake != null) {
-                    JSC.throwInvalidArguments("TODO: Cannot provide 'websocket' handlers with 'app'", .{}, global, exception);
-                    return;
-                }
-
                 if (!websocket_object.isObject()) {
                     JSC.throwInvalidArguments("Expected websocket to be an object", .{}, global, exception);
                     if (args.ssl_config) |*conf| {
@@ -1492,7 +1482,7 @@ pub const ServerConfig = struct {
 
             if (arg.getTruthy(global, "tls")) |tls| {
                 if (args.bake != null) {
-                    JSC.throwInvalidArguments("TODO: Cannot provide 'tls' option with 'app'", .{}, global, exception);
+                    JSC.throwInvalidArguments("TODO: Cannot provide 'tls' option with 'app' yet", .{}, global, exception);
                     return;
                 }
 
@@ -5901,7 +5891,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSValue.jsNumber(0);
             }
 
-            return JSValue.jsNumber((this.app.?.num_subscribers(topic.slice())));
+            return JSValue.jsNumber((this.app.?.numSubscribers(topic.slice())));
         }
 
         pub usingnamespace NamespaceType;
@@ -6661,20 +6651,44 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 app.destroy();
             }
 
+            if (this.dev_server) |dev_server| {
+                dev_server.deinit();
+            }
+
             this.destroy();
         }
 
-        pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
+        pub fn init(config: ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
             var server = ThisServer.new(.{
-                .globalThis = globalThis,
+                .globalThis = global,
                 .config = config,
-                .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
+                .base_url_string_for_joining = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")),
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
+                .dev_server = if (bun.FeatureFlags.bake) if (config.bake) |bake_options| dev_server: {
+                    bun.Output.warn(
+                        \\Be advised that Bun Bake is highly experimental, and its API
+                        \\will have breaking changes. Join the <magenta>#bake<r> Discord
+                        \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+                        \\
+                        \\
+                    , .{});
+                    bun.Output.flush();
+
+                    break :dev_server bun.bake.DevServer.init(.{
+                        .root = bake_options.root,
+                        .framework = bake_options.framework,
+                        .routes = bake_options.routes,
+                        .vm = global.bunVM(),
+                    }) catch |err| {
+                        global.throwError(err, "while initializing Bun Dev Server");
+                        return error.JSError;
+                    };
+                } else null else null,
             });
 
             if (RequestContext.pool == null) {
-                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch bun.outOfMemory();
+                RequestContext.pool = try server.allocator.create(RequestContext.RequestContextStackAllocator);
                 RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(
                     if (comptime bun.heap_breakdown.enabled)
                         bun.typedAllocator(RequestContext)
@@ -7161,6 +7175,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                 app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
+
+            if (this.dev_server) |dev|
+                dev.attachRoutes(this, this.config.onRequest != .zero) catch bun.outOfMemory();
         }
 
         pub fn listen(this: *ThisServer) void {
@@ -7339,7 +7356,7 @@ pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
 pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);
 pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, true);
-const AnyServer = union(enum) {
+pub const AnyServer = union(enum) {
     HTTPServer: *HTTPServer,
     HTTPSServer: *HTTPSServer,
     DebugHTTPServer: *DebugHTTPServer,
@@ -7353,11 +7370,11 @@ const AnyServer = union(enum) {
 
     pub fn from(server: anytype) AnyServer {
         return switch (@TypeOf(server)) {
-            *HTTPServer => AnyServer{ .HTTPServer = server },
-            *HTTPSServer => AnyServer{ .HTTPSServer = server },
-            *DebugHTTPServer => AnyServer{ .DebugHTTPServer = server },
-            *DebugHTTPSServer => AnyServer{ .DebugHTTPSServer = server },
-            else => @compileError("Invalid server type"),
+            *HTTPServer => .{ .HTTPServer = server },
+            *HTTPSServer => .{ .HTTPSServer = server },
+            *DebugHTTPServer => .{ .DebugHTTPServer = server },
+            *DebugHTTPSServer => .{ .DebugHTTPSServer = server },
+            else => |T| @compileError("Invalid server type: " ++ @typeName(T)),
         };
     }
 
@@ -7377,6 +7394,18 @@ const AnyServer = union(enum) {
         switch (this) {
             inline else => |server| server.onStaticRequestComplete(),
         }
+    }
+
+    pub fn publish(this: AnyServer, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+        return switch (this) {
+            inline else => |server| server.app.?.publish(topic, message, opcode, compress),
+        };
+    }
+
+    pub fn numSubscribers(this: AnyServer, topic: []const u8) usize {
+        return switch (this) {
+            inline else => |server| server.app.?.numSubscribers(topic),
+        };
     }
 };
 const welcome_page_html_gz = @embedFile("welcome-page.html.gz");

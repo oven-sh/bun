@@ -3043,7 +3043,7 @@ pub const JSGlobalObject = opaque {
         return JSError.JSError;
     }
 
-    /// Pass a JSError!JSValue and variants through the C ABI boundary
+    /// Pass a JSOrMemoryError!JSValue and variants through the C ABI boundary
     ///
     /// In C++, WebKit represents a thrown JavaScript expression as
     /// JSValue.zero, and stores the actual exception on the global. In Zig, we

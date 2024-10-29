@@ -3324,18 +3324,12 @@ pub const Crypto = struct {
     pub const SHA512_256 = StaticCryptoHasher(Hashers.SHA512_256, "SHA512_256");
 };
 
-pub fn nanoseconds(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.CallFrame,
-) JSC.JSValue {
+pub fn nanoseconds(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
     const ns = globalThis.bunVM().origin_timer.read();
     return JSC.JSValue.jsNumberFromUint64(ns);
 }
 
-pub fn serve(
-    globalObject: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) JSC.JSValue {
+pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
     var config: JSC.API.ServerConfig = brk: {
         var exception_ = [1]JSC.JSValueRef{null};
@@ -3415,17 +3409,14 @@ pub fn serve(
                         },
                     };
 
-                    var server = ServerType.init(config, globalObject);
-                    if (globalObject.hasException()) {
-                        return .zero;
-                    }
+                    const server = try ServerType.init(config, globalObject);
                     server.listen();
                     if (globalObject.hasException()) {
+                        server.deinit();
                         return .zero;
                     }
                     const obj = server.toJS(globalObject);
                     obj.protect();
-
                     server.thisObject = obj;
 
                     if (config.allow_hot) {
@@ -3433,13 +3424,14 @@ pub fn serve(
                             hot.insert(config.id, server);
                         }
                     }
+
                     return obj;
                 },
             }
         },
     }
 
-    unreachable;
+    comptime unreachable;
 }
 
 pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {

@@ -14,7 +14,6 @@ pub const Options = struct {
     root: []const u8,
     routes: []Route,
     framework: bake.Framework,
-    listen_config: uws.AppListenConfig = .{ .port = 3000 },
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
     verbose_watcher: bool = false,
     vm: *VirtualMachine,
@@ -35,20 +34,35 @@ root: []const u8,
 /// Emebedding in client bundles and sent when the HMR Socket is opened;
 /// When the value mismatches the page is forcibly reloaded.
 configuration_hash_key: [16]u8,
-
-// UWS App
-app: *App,
+/// The virtual machine (global object) to execute code in.
+vm: *VirtualMachine,
+/// May be `null` if not attached to an HTTP server yet.
+server: ?bun.JSC.API.AnyServer,
+// TODO: replace with FrameworkRouter
 routes: []Route,
-address: struct {
-    port: u16,
-    hostname: [*:0]const u8,
-},
-listener: ?*App.ListenSocket,
+/// All access into IncrementalGraph is guarded by this. This is only
+/// a debug assertion since contention to this is always a bug.
+graph_safety_lock: bun.DebugThreadLock,
+client_graph: IncrementalGraph(.client),
+server_graph: IncrementalGraph(.server),
+incremental_result: IncrementalResult,
+/// CSS files are accessible via `/_bun/css/<hex key>.css`
+/// Value is bundled code owned by `dev.allocator`
+css_files: AutoArrayHashMapUnmanaged(u64, []const u8),
+// /// Assets are accessible via `/_bun/asset/<key>`
+// assets: bun.StringArrayHashMapUnmanaged(u64, Asset),
+/// All bundling failures are stored until a file is saved and rebuilt.
+/// They are stored in the wire format the HMR runtime expects so that
+/// serialization only happens once.
+bundling_failures: std.ArrayHashMapUnmanaged(
+    SerializedFailure,
+    void,
+    SerializedFailure.ArrayHashContextViaOwner,
+    false,
+) = .{},
 
-// Server Runtime
 // TODO: remove server_global
 server_global: *DevGlobalObject,
-vm: *VirtualMachine,
 
 // These values are handles to the functions in server_exports.
 // For type definitions, see `./bake.private.d.ts`
@@ -67,42 +81,28 @@ watch_events: [2]HotReloadTask.Aligned,
 watch_state: std.atomic.Value(u32),
 watch_current: u1 = 0,
 
-// Bundling
+/// Number of bundles that have been executed. This is currently not read, but
+/// will be used later to determine when to invoke graph garbage collection.
 generation: usize = 0,
+/// Displayed in the HMR success indicator
 bundles_since_last_error: usize = 0,
-/// All access into IncrementalGraph is guarded by this. This is only
-/// a debug assertion since there is no actual contention.
-graph_safety_lock: bun.DebugThreadLock,
-client_graph: IncrementalGraph(.client),
-server_graph: IncrementalGraph(.server),
-/// CSS files are accessible via `/_bun/css/<hex key>.css`
-/// Value is bundled code.
-css_files: AutoArrayHashMapUnmanaged(u64, []const u8),
-// /// Assets are accessible via `/_bun/asset/<key>`
-// assets: bun.StringArrayHashMapUnmanaged(u64, Asset),
-/// All bundling failures are stored until a file is saved and rebuilt.
-/// They are stored in the wire format the HMR runtime expects so that
-/// serialization only happens once.
-bundling_failures: std.ArrayHashMapUnmanaged(
-    SerializedFailure,
-    void,
-    SerializedFailure.ArrayHashContextViaOwner,
-    false,
-) = .{},
+
 /// Quickly retrieve a route's index from the entry point file.
 route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Route.Index),
 /// State populated during bundling. Often cleared
-incremental_result: IncrementalResult,
 framework: bake.Framework,
 // Each logical graph gets its own bundler configuration
 server_bundler: Bundler,
 client_bundler: Bundler,
 ssr_bundler: Bundler,
+
+// TODO: This being shared state is likely causing a crash
 /// Stored and reused for bundling tasks
 log: Log,
 
 // Debugging
 dump_dir: ?std.fs.Dir,
+/// Reference count to number of active sockets with the visualizer enabled.
 emit_visualizer_events: u32,
 
 pub const internal_prefix = "/_bun";
@@ -139,7 +139,7 @@ pub const Route = struct {
 
     /// Assigned in DevServer.init
     dev: *DevServer = undefined,
-    client_bundled_url: []u8 = undefined,
+    client_bundled_url: []u8 = "",
 
     /// A union is not used so that `bundler_failure_logs` can re-use memory, as
     /// this state frequently changes between `loaded` and the failure variants.
@@ -171,6 +171,7 @@ const Asset = union(enum) {
 };
 
 /// DevServer is stored on the heap, storing its allocator.
+// TODO: change the error set to JSOrMemoryError!*DevServer
 pub fn init(options: Options) !*DevServer {
     const allocator = bun.default_allocator;
     bun.analytics.Features.kit_dev +|= 1;
@@ -184,11 +185,6 @@ pub fn init(options: Options) !*DevServer {
     else
         null;
 
-    const app = App.create(.{}) orelse {
-        Output.prettyErrorln("Failed to create app", .{});
-        return error.AppInitialization;
-    };
-
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.create(allocator, DevServer, .{
@@ -196,16 +192,11 @@ pub fn init(options: Options) !*DevServer {
 
         .root = options.root,
         .vm = options.vm,
-        .app = app,
         .routes = options.routes,
-        .address = .{
-            .port = @intCast(options.listen_config.port),
-            .hostname = options.listen_config.host orelse "localhost",
-        },
+        .server = null,
         .directory_watchers = DirectoryWatchStore.empty,
         .server_fetch_function_callback = .{},
         .server_register_update_callback = .{},
-        .listener = null,
         .generation = 0,
         .graph_safety_lock = .{},
         .log = Log.init(allocator),
@@ -314,39 +305,6 @@ pub fn init(options: Options) !*DevServer {
         break :hash_key std.fmt.bytesToHex(std.mem.asBytes(&hash.final()), .lower);
     };
 
-    var has_fallback = false;
-
-    for (options.routes, 0..) |*route, i| {
-        app.any(route.pattern, *Route, route, onServerRequest);
-
-        route.dev = dev;
-        route.client_bundled_url = std.fmt.allocPrint(
-            allocator,
-            client_prefix ++ "/{d}.js",
-            .{i},
-        ) catch bun.outOfMemory();
-
-        if (bun.strings.eqlComptime(route.pattern, "/*"))
-            has_fallback = true;
-    }
-
-    app.get(client_prefix ++ "/:route", *DevServer, dev, onJsRequest);
-    app.get(asset_prefix ++ "/:asset", *DevServer, dev, onAssetRequest);
-    app.get(css_prefix ++ "/:asset", *DevServer, dev, onCssRequest);
-    app.get(internal_prefix ++ "/src/*", *DevServer, dev, onSrcRequest);
-
-    app.ws(
-        internal_prefix ++ "/hmr",
-        dev,
-        0,
-        uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, false).apply(.{}),
-    );
-
-    app.get(internal_prefix ++ "/incremental_visualizer", *DevServer, dev, onIncrementalVisualizer);
-
-    if (!has_fallback)
-        app.any("/*", void, {}, onFallbackRoute);
-
     // Some indices at the start of the graph are reserved for framework files.
     {
         dev.graph_safety_lock.lock();
@@ -381,42 +339,58 @@ pub fn init(options: Options) !*DevServer {
         };
     }
 
-    app.listenWithConfig(*DevServer, dev, onListen, options.listen_config);
-
     return dev;
 }
 
-fn deinit(dev: *DevServer) void {
+pub fn attachRoutes(dev: *DevServer, server: anytype, has_global_fallback: bool) !void {
+    var has_fallback = has_global_fallback;
+
+    dev.server = bun.JSC.API.AnyServer.from(server);
+    const app = server.app.?;
+
+    // For this to work, the route handlers need to be augmented to use the comptime
+    // SSL parameter. It's worth considering removing the SSL boolean.
+    if (@TypeOf(app) == *uws.NewApp(true)) {
+        bun.todoPanic(@src(), "DevServer does not support SSL yet", .{});
+    }
+
+    for (dev.routes, 0..) |*route, i| {
+        app.any(route.pattern, *Route, route, onServerRequest);
+
+        route.dev = dev;
+        dev.allocator.free(route.client_bundled_url);
+        route.client_bundled_url = try std.fmt.allocPrint(
+            dev.allocator,
+            client_prefix ++ "/{d}.js",
+            .{i},
+        );
+
+        if (bun.strings.eqlComptime(route.pattern, "/*"))
+            has_fallback = true;
+    }
+
+    app.get(client_prefix ++ "/:route", *DevServer, dev, onJsRequest);
+    app.get(asset_prefix ++ "/:asset", *DevServer, dev, onAssetRequest);
+    app.get(css_prefix ++ "/:asset", *DevServer, dev, onCssRequest);
+    app.get(internal_prefix ++ "/src/*", *DevServer, dev, onSrcRequest);
+
+    app.ws(
+        internal_prefix ++ "/hmr",
+        dev,
+        0,
+        uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, false).apply(.{}),
+    );
+
+    app.get(internal_prefix ++ "/incremental_visualizer", *DevServer, dev, onIncrementalVisualizer);
+
+    if (!has_fallback)
+        app.any("/*", void, {}, onFallbackRoute);
+}
+
+pub fn deinit(dev: *DevServer) void {
     const allocator = dev.allocator;
     allocator.destroy(dev);
-    bun.todoPanic(@src(), "bake.DevServer.deinit()");
-}
-
-pub fn runLoopForever(dev: *DevServer) noreturn {
-    const lock = dev.vm.jsc.getAPILock();
-    defer lock.release();
-
-    while (true) {
-        dev.vm.tick();
-        dev.vm.eventLoop().autoTickActive();
-    }
-}
-
-// uws handlers
-
-fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
-    const listen: *App.ListenSocket = maybe_listen orelse {
-        bun.todoPanic(@src(), "handle listen failure", .{});
-    };
-
-    ctx.listener = listen;
-    ctx.address.port = @intCast(listen.getLocalPort());
-
-    Output.prettyErrorln("--\\> <green>http://{s}:{d}<r>\n", .{
-        bun.span(ctx.address.hostname),
-        ctx.address.port,
-    });
-    Output.flush();
+    bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: *Response) void {
@@ -868,7 +842,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
     const css_chunks = bundle_result.cssChunks();
     if ((dev.client_graph.current_chunk_len > 0 or
         css_chunks.len > 0) and
-        dev.app.num_subscribers(HmrSocket.global_topic) > 0)
+        dev.numSubscribers(HmrSocket.global_topic) > 0)
     {
         var sfb2 = std.heap.stackFallback(65536, bun.default_allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb2.get(), 65536) catch
@@ -893,7 +867,7 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         if (dev.client_graph.current_chunk_len > 0)
             try dev.client_graph.takeBundleToList(.hmr_chunk, &payload);
 
-        _ = dev.app.publish(HmrSocket.global_topic, payload.items, .binary, true);
+        dev.publish(HmrSocket.global_topic, payload.items, .binary);
     }
 
     if (dev.incremental_result.failures_added.items.len > 0) {
@@ -948,10 +922,10 @@ fn indexFailures(dev: *DevServer) !void {
             route.server_state = .possible_bundling_failures;
         }
 
-        _ = dev.app.publish(HmrSocket.global_topic, payload.items, .binary, false);
+        dev.publish(HmrSocket.global_topic, payload.items, .binary);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
         if (dev.bundling_failures.count() == 0) {
-            _ = dev.app.publish(HmrSocket.global_topic, &.{MessageId.errors_cleared.char()}, .binary, false);
+            dev.publish(HmrSocket.global_topic, &.{MessageId.errors_cleared.char()}, .binary);
             for (dev.incremental_result.failures_removed.items) |removed| {
                 removed.deinit();
             }
@@ -968,7 +942,7 @@ fn indexFailures(dev: *DevServer) !void {
                 removed.deinit();
             }
 
-            _ = dev.app.publish(HmrSocket.global_topic, payload.items, .binary, false);
+            dev.publish(HmrSocket.global_topic, payload.items, .binary);
         }
     }
 
@@ -3093,7 +3067,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) !void {
         }
     }
 
-    _ = dev.app.publish(HmrSocket.visualizer_topic, payload.items, .binary, false);
+    dev.publish(HmrSocket.visualizer_topic, payload.items, .binary);
 }
 
 pub fn onWebSocketUpgrade(
@@ -3383,7 +3357,7 @@ pub fn reload(dev: *DevServer, reload_task: *HotReloadTask) bun.OOM!void {
             try w.writeAll(pattern);
         }
 
-        _ = dev.app.publish(HmrSocket.global_topic, payload.items, .binary, true);
+        dev.publish(HmrSocket.global_topic, payload.items, .binary);
     }
 
     // When client component roots get updated, the `client_components_affected`
@@ -3614,6 +3588,14 @@ pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
     if (bun.Environment.isDebug) {
         bun.todoPanic(@src(), "Watcher crash", .{});
     }
+}
+
+pub fn publish(dev: *DevServer, topic: []const u8, message: []const u8, opcode: uws.Opcode) void {
+    if (dev.server) |s| _ = s.publish(topic, message, opcode, false);
+}
+
+pub fn numSubscribers(dev: *DevServer, topic: []const u8) usize {
+    return if (dev.server) |s| s.numSubscribers(topic) else 0;
 }
 
 const std = @import("std");

@@ -98,14 +98,17 @@ pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
     return default_allocator;
 }
 
-pub const OOM = error{OutOfMemory};
+pub const OOM = std.mem.Allocator.Error;
 
 pub const JSError = error{
     /// There is an active exception on the global object. Options:
     ///
-    /// - Bubble it up to the caller
-    /// - Call `global.takeException(err)` to get the JSValue of the exception,
-    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to make it unhandled.
+    /// - Bubble up `error.JSError` to the caller.
+    /// - Call `global.takeException(err)` to branch on the JSValue of the exception.
+    /// - Call `global.reportActiveExceptionAsUnhandled(err)` to mark it unhandled.
+    ///
+    /// Calling into JS bindings while an active error exists is will crash.
+    /// Ignoring the exception will also cause a crash.
     ///
     /// Prefer `global.jsErrorFromCPP()` over constructing this error manually,
     /// that way the exception is asserted to actually exist.
@@ -113,6 +116,8 @@ pub const JSError = error{
     /// To pass this to C++ code as JSC::JSValue, use `global.errorUnionToCPP(...)`
     JSError,
 };
+
+pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 

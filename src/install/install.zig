@@ -2349,13 +2349,18 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                     if (this.patch.isNull()) {
                         const exists = switch (resolution_tag) {
                             .npm => package_json_exists: {
-                                bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, &PackageManager.cached_package_folder_name_buf), @src());
+                                var buf = &PackageManager.cached_package_folder_name_buf;
+
+                                if (comptime Environment.isDebug) {
+                                    bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, buf), @src());
+                                }
 
                                 const subpath_len = strings.withoutTrailingSlash(this.cache_dir_subpath).len;
-                                PackageManager.cached_package_folder_name_buf[subpath_len] = std.fs.path.sep;
-                                @memcpy(PackageManager.cached_package_folder_name_buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
-                                const cached_package_json_subpath = PackageManager.cached_package_folder_name_buf[0 .. subpath_len + 1 + "package.json".len :0];
-                                break :package_json_exists Syscall.existsAt(bun.toFD(this.cache_dir.fd), cached_package_json_subpath);
+                                buf[subpath_len] = std.fs.path.sep;
+                                defer buf[subpath_len] = 0;
+                                @memcpy(buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
+                                const subpath = buf[0 .. subpath_len + 1 + "package.json".len :0];
+                                break :package_json_exists Syscall.existsAt(bun.toFD(this.cache_dir.fd), subpath);
                             },
                             else => Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false,
                         };
@@ -2388,13 +2393,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
-            // If this fails, we don't care.
-            // we'll catch it the next error
-            if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
-
-            if (comptime kind == .regular) return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-
             const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+            if (comptime kind == .regular) return result;
             if (result == .fail) return result;
             const fd = bun.toFD(destination_dir.fd);
             const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });

@@ -1374,7 +1374,7 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
 
     auto* arrayBuffer = jsArrayBuffer->impl();
-    if (!arrayBuffer->isDetached()) {
+    if (!arrayBuffer->isDetached() && arrayBuffer->isDetachable()) {
         arrayBuffer->detach(vm);
     }
     NAPI_RETURN_SUCCESS(env);
@@ -1623,6 +1623,124 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
 
     auto dataView = JSC::DataView::create(arraybufferPtr->impl(), byte_offset, length);
     *result = toNapi(dataView->wrap(globalObject, globalObject), globalObject);
+    RELEASE_AND_RETURN(scope, napi_set_last_error(env, napi_ok));
+}
+
+static size_t getTypedArrayElementByteSize(napi_typedarray_type type)
+{
+    switch (type) {
+    case napi_int8_array:
+        return 1;
+    case napi_uint8_array:
+        return 1;
+    case napi_uint8_clamped_array:
+        return 1;
+    case napi_int16_array:
+        return 2;
+    case napi_uint16_array:
+        return 2;
+    case napi_int32_array:
+        return 4;
+    case napi_uint32_array:
+        return 4;
+    case napi_float32_array:
+        return 4;
+    case napi_float64_array:
+        return 8;
+    case napi_bigint64_array:
+        return 8;
+    case napi_biguint64_array:
+        return 8;
+    default:
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
+    }
+}
+
+static JSC::TypedArrayType getTypedArrayTypeFromNAPI(napi_typedarray_type type)
+{
+    switch (type) {
+    case napi_int8_array:
+        return JSC::TypedArrayType::TypeInt8;
+    case napi_uint8_array:
+        return JSC::TypedArrayType::TypeUint8;
+    case napi_uint8_clamped_array:
+        return JSC::TypedArrayType::TypeUint8Clamped;
+    case napi_int16_array:
+        return JSC::TypedArrayType::TypeInt16;
+    case napi_uint16_array:
+        return JSC::TypedArrayType::TypeUint16;
+    case napi_int32_array:
+        return JSC::TypedArrayType::TypeInt32;
+    case napi_uint32_array:
+        return JSC::TypedArrayType::TypeUint32;
+    case napi_float32_array:
+        return JSC::TypedArrayType::TypeFloat32;
+    case napi_float64_array:
+        return JSC::TypedArrayType::TypeFloat64;
+    case napi_bigint64_array:
+        return JSC::TypedArrayType::TypeBigInt64;
+    case napi_biguint64_array:
+        return JSC::TypedArrayType::TypeBigUint64;
+    default:
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
+    }
+}
+
+static JSC::JSArrayBufferView* createArrayBufferView(
+    Zig::GlobalObject* globalObject,
+    napi_typedarray_type type,
+    RefPtr<ArrayBuffer>&& arrayBuffer,
+    size_t byteOffset,
+    size_t length)
+{
+    Structure* structure = globalObject->typedArrayStructure(getTypedArrayTypeFromNAPI(type), arrayBuffer->isResizableOrGrowableShared());
+    switch (type) {
+    case napi_int8_array:
+        return JSC::JSInt8Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_uint8_array:
+        return JSC::JSUint8Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_uint8_clamped_array:
+        return JSC::JSUint8ClampedArray::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_int16_array:
+        return JSC::JSInt16Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_uint16_array:
+        return JSC::JSUint16Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_int32_array:
+        return JSC::JSInt32Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_uint32_array:
+        return JSC::JSUint32Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_float32_array:
+        return JSC::JSFloat32Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_float64_array:
+        return JSC::JSFloat64Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_bigint64_array:
+        return JSC::JSBigInt64Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    case napi_biguint64_array:
+        return JSC::JSBigUint64Array::create(globalObject, structure, std::move(arrayBuffer), byteOffset, length);
+    default:
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
+    }
+}
+
+extern "C" napi_status napi_create_typedarray(
+    napi_env env,
+    napi_typedarray_type type,
+    size_t length,
+    napi_value arraybuffer,
+    size_t byte_offset,
+    napi_value* result)
+{
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    Zig::GlobalObject* globalObject = toJS(env);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    NAPI_CHECK_ARG(env, arraybuffer);
+    NAPI_CHECK_ARG(env, result);
+    JSValue arraybufferValue = toJS(arraybuffer);
+    auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
+    NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
+    JSC::JSArrayBufferView* view = createArrayBufferView(globalObject, type, arraybufferPtr->impl(), byte_offset, length);
+    *result = toNapi(view, globalObject);
     RELEASE_AND_RETURN(scope, napi_set_last_error(env, napi_ok));
 }
 

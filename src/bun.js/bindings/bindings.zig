@@ -3859,6 +3859,8 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Float32Array => .kJSTypedArrayTypeFloat32Array,
                 .Float64Array => .kJSTypedArrayTypeFloat64Array,
                 .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
+                .BigInt64Array => .kJSTypedArrayTypeBigInt64Array,
+                .BigUint64Array => .kJSTypedArrayTypeBigUint64Array,
                 // .DataView => .kJSTypedArrayTypeDataView,
                 else => .kJSTypedArrayTypeNone,
             };

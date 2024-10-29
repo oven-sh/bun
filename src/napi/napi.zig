@@ -874,27 +874,6 @@ pub export fn napi_is_typedarray(env_: napi_env, value_: napi_value, result_: ?*
     result.* = value.jsTypeLoose().isTypedArray();
     return env.ok();
 }
-pub export fn napi_create_typedarray(env_: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer_: napi_value, byte_offset: usize, result_: ?*napi_value) napi_status {
-    log("napi_create_typedarray", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    const arraybuffer = arraybuffer_.get();
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    result.set(env, JSValue.c(
-        JSC.C.JSObjectMakeTypedArrayWithArrayBufferAndOffset(
-            env.toJS().ref(),
-            @"type".toC(),
-            arraybuffer.asObjectRef(),
-            byte_offset,
-            length,
-            TODO_EXCEPTION,
-        ),
-    ));
-    return env.ok();
-}
 pub export fn napi_get_typedarray_info(
     env_: napi_env,
     typedarray_: napi_value,

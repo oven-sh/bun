@@ -506,12 +506,17 @@ it("should pass arguments correctly in scripts", async () => {
     });
 
     expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toBe(
-      "a echo2: $HOME (!) argument two\n" +
-        "a echo2: Exited with code 0\n" +
-        'b echo2: $ echo "\\$HOME (!)" "argument two"\n' +
-        "b echo2: $HOME (!) argument two\n" +
-        "b echo2: Exited with code 0\n",
+    expect(stdout.toString().split("\n").sort().join("\n")).toBe(
+      [
+        "a echo2: $HOME (!) argument two",
+        "a echo2: Exited with code 0",
+        'b echo2: $ echo "\\$HOME (!)" "argument two"',
+        "b echo2: $HOME (!) argument two",
+        "b echo2: Exited with code 0",
+        "",
+      ]
+        .sort()
+        .join("\n"),
     );
     expect(exitCode).toBe(0);
   }

@@ -74,8 +74,8 @@ pub fn StyleRule(comptime R: type) type {
                 try this.toCssBase(W, dest);
             } else {
                 var first_rule = true;
-                inline for (std.meta.fields(css.VendorPrefix)) |field| {
-                    if (field.type == bool and @field(this.vendor_prefix, field.name)) {
+                inline for (css.VendorPrefix.FIELDS) |field| {
+                    if (@field(this.vendor_prefix, field)) {
                         if (first_rule) {
                             first_rule = false;
                         } else {
@@ -85,7 +85,7 @@ pub fn StyleRule(comptime R: type) type {
                             try dest.newline();
                         }
 
-                        const prefix = css.VendorPrefix.fromName(field.name);
+                        const prefix = css.VendorPrefix.fromName(field);
                         dest.vendor_prefix = prefix;
                         try this.toCssBase(W, dest);
                     }
@@ -245,10 +245,11 @@ pub fn StyleRule(comptime R: type) type {
             return this.declarations.len() == other.declarations.len() and
                 this.selectors.eql(&other.selectors) and
                 brk: {
-                const len = @min(this.declarations.len(), other.declarations.len());
+                var len = @min(this.declarations.declarations.items.len, other.declarations.declarations.items.len);
                 for (this.declarations.declarations.items[0..len], other.declarations.declarations.items[0..len]) |*a, *b| {
                     if (!a.propertyId().eql(&b.propertyId())) break :brk false;
                 }
+                len = @min(this.declarations.important_declarations.items.len, other.declarations.important_declarations.items.len);
                 for (this.declarations.important_declarations.items[0..len], other.declarations.important_declarations.items[0..len]) |*a, *b| {
                     if (!a.propertyId().eql(&b.propertyId())) break :brk false;
                 }

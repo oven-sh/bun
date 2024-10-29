@@ -162,13 +162,14 @@ pub const Runtime = struct {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         react_fast_refresh: bool = false,
-
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         hot_module_reloading: bool = false,
+        /// Control how the parser handles server components and server functions.
+        server_components: ServerComponentsMode = .none,
 
         is_macro_runtime: bool = false,
         top_level_await: bool = false,
@@ -272,6 +273,34 @@ pub const Runtime = struct {
             },
 
             pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
+        };
+
+        pub const ServerComponentsMode = enum {
+            /// Server components is disabled, strings "use client" and "use server" mean nothing.
+            none,
+            /// This is a server-side file outside of the SSR graph, but not a "use server" file.
+            /// - Handle functions with "use server", creating secret exports for them.
+            wrap_anon_server_functions,
+            /// This is a "use client" file on the server, and separate_ssr_graph is off.
+            /// - Wrap all exports in a call to `registerClientReference`
+            /// - Ban "use server" functions???
+            wrap_exports_for_client_reference,
+            /// This is a "use server" file on the server
+            /// - Wrap all exports in a call to `registerServerReference`
+            /// - Ban "use server" functions, since this directive is already applied.
+            wrap_exports_for_server_reference,
+            /// This is a client side file.
+            /// - Ban "use server" functions since it is on the client-side
+            client_side,
+
+            pub fn wrapsExports(mode: ServerComponentsMode) bool {
+                return switch (mode) {
+                    .wrap_exports_for_client_reference,
+                    .wrap_exports_for_server_reference,
+                    => true,
+                    else => false,
+                };
+            }
         };
     };
 

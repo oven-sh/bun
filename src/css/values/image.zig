@@ -28,6 +28,68 @@ pub const Image = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn deinit(_: *@This(), _: std.mem.Allocator) void {
+        // TODO: implement this
+        // Right now not implementing this.
+        // It is not a bug to implement this since all memory allocated in CSS parser is allocated into arena.
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .gradient => |g| switch (g.*) {
+                .linear => |linear| css.Feature.isCompatible(.linear_gradient, browsers) and linear.isCompatible(browsers),
+                .repeating_linear => |repeating_linear| css.Feature.isCompatible(.repeating_linear_gradient, browsers) and repeating_linear.isCompatible(browsers),
+                .radial => |radial| css.Feature.isCompatible(.radial_gradient, browsers) and radial.isCompatible(browsers),
+                .repeating_radial => |repeating_radial| css.Feature.isCompatible(.repeating_radial_gradient, browsers) and repeating_radial.isCompatible(browsers),
+                .conic => |conic| css.Feature.isCompatible(.conic_gradient, browsers) and conic.isCompatible(browsers),
+                .repeating_conic => |repeating_conic| css.Feature.isCompatible(.repeating_conic_gradient, browsers) and repeating_conic.isCompatible(browsers),
+                .@"webkit-gradient" => css.prefixes.Feature.isWebkitGradient(browsers),
+            },
+            .image_set => |image_set| image_set.isCompatible(browsers),
+            .url, .none => true,
+        };
+    }
+
+    pub fn getPrefixed(this: *const @This(), allocator: Allocator, prefix: css.VendorPrefix) Image {
+        return switch (this.*) {
+            .gradient => |grad| .{ .gradient = bun.create(allocator, Gradient, grad.getPrefixed(allocator, prefix)) },
+            .image_set => |image_set| .{ .image_set = image_set.getPrefixed(allocator, prefix) },
+            else => this.deepClone(allocator),
+        };
+    }
+
+    pub fn getNecessaryPrefixes(this: *const @This(), targets: css.targets.Targets) css.VendorPrefix {
+        return switch (this.*) {
+            .gradient => |grad| grad.getNecessaryPrefixes(targets),
+            .image_set => |*image_set| image_set.getNecessaryPrefixes(targets),
+            else => css.VendorPrefix{ .none = true },
+        };
+    }
+
+    pub fn hasVendorPrefix(this: *const @This()) bool {
+        const prefix = this.getVendorPrefix();
+        return !prefix.isEmpty() and !prefix.eq(VendorPrefix{ .none = true });
+    }
+
+    /// Returns the vendor prefix used in the image value.
+    pub fn getVendorPrefix(this: *const @This()) VendorPrefix {
+        return switch (this.*) {
+            .gradient => |a| a.getVendorPrefix(),
+            .image_set => |a| a.getVendorPrefix(),
+            else => VendorPrefix.empty(),
+        };
+    }
+
+    /// Needed to satisfy ImageFallback interface
+    pub fn getImage(this: *const @This()) *const Image {
+        return this;
+    }
+
+    /// Needed to satisfy ImageFallback interface
+    pub fn withImage(_: *const @This(), _: Allocator, image: Image) @This() {
+        return image;
+    }
+
     pub fn default() Image {
         return .none;
     }
@@ -55,6 +117,30 @@ pub const Image = union(enum) {
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    /// Returns a legacy `-webkit-gradient()` value for the image.
+    ///
+    /// May return an error in case the gradient cannot be converted.
+    pub fn getLegacyWebkit(this: *const @This(), allocator: Allocator) ?Image {
+        return switch (this.*) {
+            .gradient => |gradient| Image{ .gradient = bun.create(allocator, Gradient, gradient.getLegacyWebkit(allocator) orelse return null) },
+            else => this.deepClone(allocator),
+        };
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) Image {
+        return switch (this.*) {
+            .gradient => |grad| .{ .gradient = bun.create(allocator, Gradient, grad.getFallback(allocator, kind)) },
+            else => this.deepClone(allocator),
+        };
+    }
+
+    pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
+        return switch (this.*) {
+            .gradient => |grad| grad.getNecessaryFallbacks(targets),
+            else => css.ColorFallbackKind.empty(),
+        };
     }
 
     // pub fn parse(input: *css.Parser) Result(Image) {
@@ -127,12 +213,37 @@ pub const ImageSet = struct {
         return dest.writeChar(')');
     }
 
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return css.Feature.isCompatible(.image_set, browsers) and
+            for (this.options.items) |opt|
+        {
+            if (!opt.image.isCompatible(browsers)) break false;
+        } else true;
+    }
+
+    /// Returns the `image-set()` value with the given vendor prefix.
+    pub fn getPrefixed(this: *const @This(), allocator: Allocator, prefix: css.VendorPrefix) ImageSet {
+        return ImageSet{
+            .options = css.deepClone(ImageSetOption, allocator, &this.options),
+            .vendor_prefix = prefix,
+        };
+    }
+
     pub fn eql(this: *const ImageSet, other: *const ImageSet) bool {
         return this.vendor_prefix.eql(other.vendor_prefix) and css.generic.eqlList(ImageSetOption, &this.options, &other.options);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn getVendorPrefix(this: *const @This()) VendorPrefix {
+        return this.vendor_prefix;
+    }
+
+    /// Returns the vendor prefixes needed for the given browser targets.
+    pub fn getNecessaryPrefixes(this: *const @This(), targets: css.targets.Targets) css.VendorPrefix {
+        return targets.prefixes(this.vendor_prefix, css.prefixes.Feature.image_set);
     }
 };
 

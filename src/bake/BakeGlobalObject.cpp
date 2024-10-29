@@ -1,4 +1,4 @@
-#include "BakeDevGlobalObject.h"
+#include "BakeGlobalObject.h"
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSInternalPromise.h"
@@ -14,34 +14,61 @@ extern "C" void BakeInitProcessIdentifier()
 }
 
 JSC::JSInternalPromise*
-moduleLoaderImportModule(JSC::JSGlobalObject* jsGlobalObject,
+bakeModuleLoaderImportModule(JSC::JSGlobalObject* jsGlobalObject,
     JSC::JSModuleLoader*, JSC::JSString* moduleNameValue,
     JSC::JSValue parameters,
     const JSC::SourceOrigin& sourceOrigin)
 {
     // TODO: forward this to the runtime?
     JSC::VM& vm = jsGlobalObject->vm();
+    WTF::String keyString = moduleNameValue->getString(jsGlobalObject);
     auto err = JSC::createTypeError(
         jsGlobalObject,
         WTF::makeString(
-            "Dynamic import should have been replaced with a hook into the module runtime"_s));
+            "Dynamic import to '"_s, keyString,
+            "' should have been replaced with a hook into the module runtime"_s));
     auto* promise = JSC::JSInternalPromise::create(
         vm, jsGlobalObject->internalPromiseStructure());
     promise->reject(jsGlobalObject, err);
     return promise;
 }
 
+extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
+
+JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
+    JSC::JSModuleLoader* loader, JSC::JSValue key,
+    JSC::JSValue referrer, JSC::JSValue origin)
+{
+    Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(jsGlobal);
+    JSC::VM& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (global->isProduction()) {
+        WTF::String keyString = key.toWTFString(global);
+        RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
+
+        ASSERT(referrer.isString());
+        auto refererString = jsCast<JSC::JSString*>(referrer)->value(global);
+
+        BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
+        return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+    } else {
+        JSC::throwTypeError(global, scope, "External imports are not allowed in Bun Bake's dev server. This is a bug in Bun's bundler."_s);
+        return vm.propertyNames->emptyIdentifier;
+    }
+}
+
 #define INHERIT_HOOK_METHOD(name) \
     Zig::GlobalObject::s_globalObjectMethodTable.name
 
-const JSC::GlobalObjectMethodTable DevGlobalObject::s_globalObjectMethodTable = {
+const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     INHERIT_HOOK_METHOD(supportsRichSourceInfo),
     INHERIT_HOOK_METHOD(shouldInterruptScript),
     INHERIT_HOOK_METHOD(javaScriptRuntimeFlags),
     INHERIT_HOOK_METHOD(queueMicrotaskToEventLoop),
     INHERIT_HOOK_METHOD(shouldInterruptScriptBeforeTimeout),
-    moduleLoaderImportModule,
-    INHERIT_HOOK_METHOD(moduleLoaderResolve),
+    bakeModuleLoaderImportModule,
+    bakeModuleLoaderResolve,
     INHERIT_HOOK_METHOD(moduleLoaderFetch),
     INHERIT_HOOK_METHOD(moduleLoaderCreateImportMetaProperties),
     INHERIT_HOOK_METHOD(moduleLoaderEvaluate),
@@ -58,17 +85,16 @@ const JSC::GlobalObjectMethodTable DevGlobalObject::s_globalObjectMethodTable = 
     INHERIT_HOOK_METHOD(canCompileStrings),
 };
 
-DevGlobalObject*
-DevGlobalObject::create(JSC::VM& vm, JSC::Structure* structure,
+GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure,
     const JSC::GlobalObjectMethodTable* methodTable)
 {
-    DevGlobalObject* ptr = new (NotNull, JSC::allocateCell<DevGlobalObject>(vm))
-        DevGlobalObject(vm, structure, methodTable);
+    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm))
+        GlobalObject(vm, structure, methodTable);
     ptr->finishCreation(vm);
     return ptr;
 }
 
-void DevGlobalObject::finishCreation(JSC::VM& vm)
+void GlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -77,7 +103,8 @@ void DevGlobalObject::finishCreation(JSC::VM& vm)
 extern "C" BunVirtualMachine* Bun__getVM();
 
 // A lot of this function is taken from 'Zig__GlobalObject__create'
-extern "C" DevGlobalObject* BakeCreateDevGlobal(DevServer* owner,
+// TODO: remove this entire method
+extern "C" GlobalObject* BakeCreateDevGlobal(DevServer* owner,
     void* console)
 {
     JSC::VM& vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
@@ -86,11 +113,11 @@ extern "C" DevGlobalObject* BakeCreateDevGlobal(DevServer* owner,
     BunVirtualMachine* bunVM = Bun__getVM();
     WebCore::JSVMClientData::create(&vm, bunVM);
 
-    JSC::Structure* structure = DevGlobalObject::createStructure(vm);
-    DevGlobalObject* global = DevGlobalObject::create(
-        vm, structure, &DevGlobalObject::s_globalObjectMethodTable);
+    JSC::Structure* structure = GlobalObject::createStructure(vm);
+    GlobalObject* global = GlobalObject::create(
+        vm, structure, &GlobalObject::s_globalObjectMethodTable);
     if (!global)
-        BUN_PANIC("Failed to create DevGlobalObject");
+        BUN_PANIC("Failed to create BakeGlobalObject");
 
     global->m_devServer = owner;
     global->m_bunVM = bunVM;
@@ -111,6 +138,27 @@ extern "C" DevGlobalObject* BakeCreateDevGlobal(DevServer* owner,
     //     return;
     //   }
     // });
+
+    return global;
+}
+
+extern "C" GlobalObject* BakeCreateProdGlobal(JSC::VM* vm, void* console)
+{
+    JSC::JSLockHolder locker(vm);
+    BunVirtualMachine* bunVM = Bun__getVM();
+
+    JSC::Structure* structure = GlobalObject::createStructure(*vm);
+    GlobalObject* global = GlobalObject::create(*vm, structure, &GlobalObject::s_globalObjectMethodTable);
+    if (!global)
+        BUN_PANIC("Failed to create BakeGlobalObject");
+
+    global->m_devServer = nullptr;
+    global->m_bunVM = bunVM;
+
+    JSC::gcProtect(global);
+
+    global->setConsole(console);
+    global->setStackTraceLimit(10); // Node.js defaults to 10
 
     return global;
 }

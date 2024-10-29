@@ -1747,6 +1747,7 @@ extern "C" napi_status napi_get_all_property_names(
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    NAPI_CHECK_ARG(env, objectNapi);
     auto objectValue = toJS(objectNapi);
     auto* object = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_object_expected);
@@ -1879,12 +1880,13 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, object);
     NAPI_CHECK_ARG(env, result);
     JSValue jsValue = toJS(object);
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isObject(), napi_object_expected);
+    JSObject* jsObject = jsValue.getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_object_expected);
 
     Zig::GlobalObject* globalObject = toJS(env);
 
     JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
-    JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include);
+    JSValue value = JSC::ownPropertyKeys(globalObject, jsObject, PropertyNameMode::Strings, DontEnumPropertiesMode::Include);
     NAPI_RETURN_IF_EXCEPTION(env);
     JSC::EnsureStillAliveScope ensureStillAlive1(value);
 
@@ -2176,11 +2178,10 @@ extern "C" napi_status napi_get_element(napi_env env, napi_value objectValue,
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, objectValue);
     JSValue jsValue = toJS(objectValue);
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isObject(), napi_object_expected);
+    JSObject* jsObject = jsValue.getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_object_expected);
 
-    JSObject* object = jsValue.getObject();
-
-    JSValue element = object->getIndex(toJS(env), index);
+    JSValue element = jsObject->getIndex(toJS(env), index);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     *result = toNapi(element, toJS(env));
@@ -2193,11 +2194,11 @@ extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, objectValue);
     JSValue jsValue = toJS(objectValue);
-    NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isObject(), napi_object_expected);
+    JSObject* jsObject = jsValue.getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_object_expected);
 
-    JSObject* object = jsValue.getObject();
     if (LIKELY(result)) {
-        *result = JSObject::deletePropertyByIndex(object, toJS(env), index);
+        *result = JSObject::deletePropertyByIndex(jsObject, toJS(env), index);
     }
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
@@ -2502,8 +2503,8 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, argc == 0 || argv, napi_invalid_arg);
     JSValue constructorValue = toJS(constructor);
-    NAPI_RETURN_EARLY_IF_FALSE(env, constructorValue.isObject(), napi_function_expected);
     JSC::JSObject* constructorObject = constructorValue.getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, constructorObject, napi_function_expected);
     JSC::CallData constructData = getConstructData(constructorObject);
     NAPI_RETURN_EARLY_IF_FALSE(env, constructData.type != JSC::CallData::Type::None, napi_function_expected);
 
@@ -2559,6 +2560,8 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
 extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, const napi_type_tag* type_tag)
 {
     NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
@@ -2576,6 +2579,8 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
 extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value, const napi_type_tag* type_tag, bool* result)
 {
     NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, type_tag);
     Zig::GlobalObject* globalObject = toJS(env);
     JSObject* js_object = toJS(value).getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
@@ -2585,8 +2590,32 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     if (found_tag && found_tag->matches(*type_tag)) {
         match = true;
     }
-    if (result) {
+    if (LIKELY(result)) {
         *result = match;
     }
     NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_property_key_latin1(napi_env env, const char* str, size_t length, napi_value* result)
+{
+    // EXPERIMENTAL
+    // TODO(@190n) use jsAtomString or something
+    NAPI_LOG_CURRENT_FUNCTION;
+    return napi_create_string_latin1(env, str, length, result);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_property_key_utf16(napi_env env, const char16_t* str, size_t length, napi_value* result)
+{
+    // EXPERIMENTAL
+    // TODO(@190n) use jsAtomString or something
+    NAPI_LOG_CURRENT_FUNCTION;
+    return napi_create_string_utf16(env, str, length, result);
+}
+
+extern "C" JS_EXPORT napi_status node_api_create_property_key_utf8(napi_env env, const char* str, size_t length, napi_value* result)
+{
+    // EXPERIMENTAL
+    // TODO(@190n) use jsAtomString or something
+    NAPI_LOG_CURRENT_FUNCTION;
+    return napi_create_string_utf8(env, str, length, result);
 }

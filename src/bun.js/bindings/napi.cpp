@@ -757,6 +757,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
 
     auto keyProp = toJS(key);
+    NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
     *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
@@ -2004,7 +2005,7 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     Zig::GlobalObject* globalObject = toJS(env);
 
     JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
-    JSValue value = JSC::ownPropertyKeys(globalObject, jsObject, PropertyNameMode::Strings, DontEnumPropertiesMode::Include);
+    JSValue value = JSC::allPropertyKeys(globalObject, jsObject, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
     NAPI_RETURN_IF_EXCEPTION(env);
     JSC::EnsureStillAliveScope ensureStillAlive1(value);
 

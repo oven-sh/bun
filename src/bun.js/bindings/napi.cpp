@@ -2053,7 +2053,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
         }
     }));
 
-    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTFMove(arrayBuffer));
+    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTFMove(arrayBuffer));
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

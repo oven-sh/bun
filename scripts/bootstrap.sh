@@ -27,10 +27,10 @@ error() {
 }
 
 execute() {
-  print "$ $@" >&2
-  if ! "$@"; then
-    error "Command failed: $@"
-  fi
+	print "$ $@" >&2
+	if ! "$@"; then
+		error "Command failed: $@"
+	fi
 }
 
 execute_sudo() {
@@ -82,13 +82,13 @@ fetch() {
 }
 
 download_file() {
-  url="$1"
-  filename="${2:-$(basename "$url")}"
+	url="$1"
+	filename="${2:-$(basename "$url")}"
 	tmp="$(execute_as_user mktemp -d)"
-  path="$tmp/$filename"
+	path="$tmp/$filename"
 
-  fetch "$url" > "$path"
-  print "$path"
+	fetch "$url" >"$path"
+	print "$path"
 }
 
 compare_version() {
@@ -112,7 +112,7 @@ append_to_file() {
 
 	echo "$content" | while read -r line; do
 		if ! grep -q "$line" "$file"; then
-			echo "$line" >> "$file"
+			echo "$line" >>"$file"
 		fi
 	done
 }
@@ -190,7 +190,7 @@ check_operating_system() {
 				;;
 			esac
 		fi
-		
+
 		if [ -f "/proc/self/mountinfo" ]; then
 			case "$(cat /proc/self/mountinfo)" in
 			*/docker/*)
@@ -270,7 +270,7 @@ check_package_manager() {
 			install_brew
 		fi
 		pm="brew"
-	;;
+		;;
 	linux)
 		if [ -f "$(which apt-get)" ]; then
 			pm="apt"
@@ -281,7 +281,7 @@ check_package_manager() {
 		else
 			error "No package manager found. (apt, dnf, yum)"
 		fi
-	;;
+		;;
 	esac
 
 	print "Package manager: $pm"
@@ -331,8 +331,8 @@ package_manager() {
 		execute yum "$@"
 		;;
 	brew)
-    execute_as_user brew "$@"
-    ;;
+		execute_as_user brew "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -359,14 +359,14 @@ install_packages() {
 		package_manager install --yes --no-install-recommends "$@"
 		;;
 	dnf)
-    package_manager install --assumeyes --nodocs --noautoremove --allowerasing "$@"
+		package_manager install --assumeyes --nodocs --noautoremove --allowerasing "$@"
 		;;
 	yum)
 		package_manager install -y "$@"
 		;;
 	brew)
 		package_manager install --force --formula "$@"
-    package_manager link --force --overwrite "$@"
+		package_manager link --force --overwrite "$@"
 		;;
 	apk)
 		package_manager add "$@"
@@ -394,8 +394,8 @@ get_version() {
 install_brew() {
 	print "Installing Homebrew..."
 
-  bash="$(require bash)"
-  script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
+	bash="$(require bash)"
+	script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
 	NONINTERACTIVE=1 execute_as_user "$bash" "$script"
 
 	case "$arch" in
@@ -418,14 +418,16 @@ install_brew() {
 
 install_common_software() {
 	case "$pm" in
-	apt) install_packages \
-		apt-transport-https \
-		software-properties-common
-    ;;
-	dnf) install_packages \
-		dnf-plugins-core \
-		tar
-    ;;
+	apt)
+		install_packages \
+			apt-transport-https \
+			software-properties-common
+		;;
+	dnf)
+		install_packages \
+			dnf-plugins-core \
+			tar
+		;;
 	esac
 
 	install_packages \
@@ -456,14 +458,14 @@ install_nodejs() {
 
 	case "$pm" in
 	dnf | yum)
-    bash="$(require bash)"
-    script=$(download_file "https://rpm.nodesource.com/setup_$version.x")
-    execute "$bash" "$script"
+		bash="$(require bash)"
+		script=$(download_file "https://rpm.nodesource.com/setup_$version.x")
+		execute "$bash" "$script"
 		;;
 	apt)
-    bash="$(require bash)"
-    script=$(download_file "https://deb.nodesource.com/setup_$version.x")
-    execute "$bash" "$script"
+		bash="$(require bash)"
+		script=$(download_file "https://deb.nodesource.com/setup_$version.x")
+		execute "$bash" "$script"
 		;;
 	esac
 
@@ -478,16 +480,17 @@ install_bun() {
 		append_to_path "$HOME/.bun/bin"
 		return
 	fi
+	
   bash="$(require bash)"
   script=$(download_file "https://bun.sh/install")
 
-  version="${1:-"latest"}"
+	version="${1:-"latest"}"
 	case "$version" in
 	latest)
-    execute_as_user "$bash" "$script"
+		execute_as_user "$bash" "$script"
 		;;
 	*)
-    execute_as_user "$bash" "$script" -s "$version"
+		execute_as_user "$bash" "$script" -s "$version"
 		;;
 	esac
 
@@ -503,14 +506,14 @@ install_cmake() {
 		sh="$(require sh)"
 		release="3.30.5"
 		case "$arch" in
-			x64)
-				url="https://github.com/Kitware/CMake/releases/download/v$release/cmake-$release-linux-x86_64.sh"
-				;;
-			aarch64)
-				url="https://github.com/Kitware/CMake/releases/download/v$release/cmake-$release-linux-aarch64.sh"
-				;;
+		x64)
+			url="https://github.com/Kitware/CMake/releases/download/v$release/cmake-$release-linux-x86_64.sh"
+			;;
+		aarch64)
+			url="https://github.com/Kitware/CMake/releases/download/v$release/cmake-$release-linux-aarch64.sh"
+			;;
 		esac
-  	script=$(download_file "$url")
+		script=$(download_file "$url")
 		execute "$sh" "$script" \
 			--skip-license \
 			--prefix=/usr
@@ -586,6 +589,7 @@ llvm_version_exact() {
 		print "18.1.8"
 		return
 	fi
+	
   case "$os" in
   linux)
     print "16.0.6"
@@ -597,32 +601,34 @@ llvm_version_exact() {
 }
 
 llvm_version() {
-  echo "$(llvm_version_exact)" | cut -d. -f1
+	echo "$(llvm_version_exact)" | cut -d. -f1
 }
 
 install_llvm() {
 	case "$pm" in
 	apt)
-    bash="$(require bash)"
-    script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		bash="$(require bash)"
+		script="$(download_file "https://apt.llvm.org/llvm.sh")"
 		execute "$bash" "$script" "$(llvm_version)" all
 		;;
   brew)
     install_packages "llvm@$(llvm_version)"
     ;;
   apk)
-    install_packages "llvm$(llvm_version)-dev" "clang$(llvm_version)-dev" "lld$(llvm_version)-dev"
-		append_to_path "/usr/lib/llvm$(llvm_version)/bin"
+    install_packages \
+			"llvm$(llvm_version)-dev" \
+			"clang$(llvm_version)-dev" \
+			"lld$(llvm_version)-dev"
     ;;
 	esac
 }
 
 install_ccache() {
-  case "$pm" in
-  apt | brew)
-    install_packages ccache
-    ;;
-  esac
+	case "$pm" in
+	apt | brew)
+		install_packages ccache
+		;;
+	esac
 }
 
 install_rust() {
@@ -632,10 +638,15 @@ install_rust() {
 		append_to_path "$HOME/.cargo/bin"
 		return
 	fi
+
   sh="$(require sh)"
   script=$(download_file "https://sh.rustup.rs")
 	execute_as_user "$sh" "$script" -y
-	link_to_bin "$home/.cargo/bin"
+
+	# FIXME: This causes cargo to fail to build:
+	# > error: rustup could not choose a version of cargo to run,
+	# > because one wasn't specified explicitly, and no default is configured.
+	# link_to_bin "$home/.cargo/bin"
 }
 
 install_docker() {
@@ -645,34 +656,34 @@ install_docker() {
 
 	case "$pm" in
 	brew)
-    if ! [ -d "/Applications/Docker.app" ]; then
-		  package_manager install docker --cask
-    fi
+		if ! [ -d "/Applications/Docker.app" ]; then
+			package_manager install docker --cask
+		fi
 		;;
 	apk)
 		install_packages docker
 		;;
 	*)
-    case "$distro-$release" in
-    amzn-2 | amzn-1)
-      execute amazon-linux-extras install docker
-      ;;
-    amzn-*)
-      install_packages docker
-      ;;
-    *)
-      sh="$(require sh)"
-      script=$(download_file "https://get.docker.com")
-      execute "$sh" "$script"
-		  ;;
-    esac
-    ;;
+		case "$distro-$release" in
+		amzn-2 | amzn-1)
+			execute amazon-linux-extras install docker
+			;;
+		amzn-*)
+			install_packages docker
+			;;
+		*)
+			sh="$(require sh)"
+			script=$(download_file "https://get.docker.com")
+			execute "$sh" "$script"
+			;;
+		esac
+		;;
 	esac
 
-  systemctl="$(which systemctl)"
-  if [ -f "$systemctl" ]; then
-    execute "$systemctl" enable docker
-  fi
+	systemctl="$(which systemctl)"
+	if [ -f "$systemctl" ]; then
+		execute "$systemctl" enable docker
+	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
@@ -690,9 +701,9 @@ install_tailscale() {
 
 	case "$os" in
 	linux)
-    sh="$(require sh)"
-    script=$(download_file "https://tailscale.com/install.sh")
-    execute "$sh" "$script"
+		sh="$(require sh)"
+		script=$(download_file "https://tailscale.com/install.sh")
+		execute "$sh" "$script"
 		;;
 	darwin)
 		install_packages go
@@ -855,13 +866,13 @@ install_chrome_dependencies() {
 
 main() {
 	check_features
-  check_operating_system
+	check_operating_system
 	check_user
 	check_package_manager
 
-  install_common_software
-  install_build_essentials
-  install_chrome_dependencies
+	install_common_software
+	install_build_essentials
+	install_chrome_dependencies
 }
 
 main

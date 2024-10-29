@@ -629,6 +629,10 @@ install_rust() {
 }
 
 install_docker() {
+	if [ "$docker" = "1" ]; then
+		return
+	fi
+
 	case "$pm" in
 	brew)
     if ! [ -d "/Applications/Docker.app" ]; then

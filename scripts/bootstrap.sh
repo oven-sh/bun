@@ -182,12 +182,22 @@ check_operating_system() {
 
 	if [ -f "/.dockerenv" ]; then
 		docker=1
-	elif [ -f "/proc/1/cgroup" ]; then
-		case "$(cat /proc/1/cgroup)" in
-		*/docker/*)
-			docker=1
-			;;
-		esac
+	else
+		if [ -f "/proc/1/cgroup" ]; then
+			case "$(cat /proc/1/cgroup)" in
+			*/docker/*)
+				docker=1
+				;;
+			esac
+		fi
+		
+		if [ -f "/proc/self/mountinfo" ]; then
+			case "$(cat /proc/self/mountinfo)" in
+			*/docker/*)
+				docker=1
+				;;
+			esac
+		fi
 	fi
 
 	if [ "$docker" = "1" ]; then

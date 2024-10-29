@@ -2982,7 +2982,7 @@ pub const JSGlobalObject = opaque {
         JSGlobalObject__throwOutOfMemoryError(this);
     }
 
-    pub fn outOfMemory(this: *JSGlobalObject) JSValue {
+    pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
         JSGlobalObject__throwOutOfMemoryError(this);
         return .zero;
     }

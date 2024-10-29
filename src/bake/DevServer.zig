@@ -2967,7 +2967,7 @@ pub const SerializedFailure = struct {
             inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))),
         });
         try writeLogData(msg.data, w);
-        const notes = msg.notes orelse &.{};
+        const notes = msg.notes;
         try w.writeInt(u32, @intCast(notes.len), .little);
         for (notes) |note| {
             try writeLogData(note, w);

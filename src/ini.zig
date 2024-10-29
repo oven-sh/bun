@@ -540,34 +540,34 @@ pub const IniTestingAPIs = struct {
             }).init(globalThis, envjs);
             defer object_iter.deinit();
 
-            envmap.ensureTotalCapacity(object_iter.len) catch return globalThis.outOfMemory();
+            envmap.ensureTotalCapacity(object_iter.len) catch return globalThis.throwOutOfMemoryValue();
 
             while (object_iter.next()) |key| {
-                const keyslice = key.toOwnedSlice(allocator) catch return globalThis.outOfMemory();
+                const keyslice = key.toOwnedSlice(allocator) catch return globalThis.throwOutOfMemoryValue();
                 var value = object_iter.value;
                 if (value == .undefined) continue;
 
                 const value_str = value.getZigString(globalThis);
-                const slice = value_str.toOwnedSlice(allocator) catch return globalThis.outOfMemory();
+                const slice = value_str.toOwnedSlice(allocator) catch return globalThis.throwOutOfMemoryValue();
 
                 envmap.put(keyslice, .{
                     .value = slice,
                     .conditional = false,
-                }) catch return globalThis.outOfMemory();
+                }) catch return globalThis.throwOutOfMemoryValue();
             }
 
-            const map = allocator.create(bun.DotEnv.Map) catch return globalThis.outOfMemory();
+            const map = allocator.create(bun.DotEnv.Map) catch return globalThis.throwOutOfMemoryValue();
             map.* = .{
                 .map = envmap,
             };
 
             const env = bun.DotEnv.Loader.init(map, allocator);
-            const envstable = allocator.create(bun.DotEnv.Loader) catch return globalThis.outOfMemory();
+            const envstable = allocator.create(bun.DotEnv.Loader) catch return globalThis.throwOutOfMemoryValue();
             envstable.* = env;
             break :brk envstable;
         };
 
-        const install = allocator.create(bun.Schema.Api.BunInstall) catch return globalThis.outOfMemory();
+        const install = allocator.create(bun.Schema.Api.BunInstall) catch return globalThis.throwOutOfMemoryValue();
         install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
         loadNpmrc(allocator, install, env, ".npmrc", &log, &source) catch {
             return log.toJS(globalThis, allocator, "error");
@@ -636,7 +636,7 @@ pub const IniTestingAPIs = struct {
 
         parser.parse(parser.arena.allocator()) catch |err| {
             switch (err) {
-                error.OutOfMemory => return globalThis.outOfMemory(),
+                error.OutOfMemory => return globalThis.throwOutOfMemoryValue(),
             }
         };
 
@@ -888,9 +888,10 @@ pub fn loadNpmrcFromFile(
     };
     if (log.hasErrors()) {
         if (log.errors == 1)
-            Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
+            Output.warn("Encountered an error while reading <b>.npmrc<r>:\n\n", .{})
         else
-            Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
+            Output.warn("Encountered errors while reading <b>.npmrc<r>:\n\n", .{});
+        Output.flush();
     }
     log.print(Output.errorWriter(), .npmrc) catch {};
 }
@@ -1166,12 +1167,10 @@ fn @"handle _auth"(
     source: *const bun.logger.Source,
 ) OOM!void {
     if (conf_item.value.len == 0) {
-        try log.addErrorFmt(
+        try log.addRedactedError(
             source,
             conf_item.loc,
-            allocator,
-            "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base64, but got an empty string",
-            .{},
+            "invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
         );
         return;
     }
@@ -1180,19 +1179,31 @@ fn @"handle _auth"(
     const result = bun.base64.decode(decoded[0..], conf_item.value);
     if (!result.isSuccessful()) {
         defer allocator.free(decoded);
-        try log.addErrorFmt(source, conf_item.loc, allocator, "invalid base64", .{});
+        try log.addRedactedError(
+            source,
+            conf_item.loc,
+            "invalid _auth value, expected valid base64",
+        );
         return;
     }
     const @"username:password" = decoded[0..result.count];
     const colon_idx = std.mem.indexOfScalar(u8, @"username:password", ':') orelse {
-        defer allocator.free(decoded);
-        try log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base 64, but got:\n\n{s}", .{decoded});
+        defer allocator.free(@"username:password");
+        try log.addRedactedError(
+            source,
+            conf_item.loc,
+            "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
+        );
         return;
     };
     const username = @"username:password"[0..colon_idx];
     if (colon_idx + 1 >= @"username:password".len) {
-        defer allocator.free(decoded);
-        try log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base64, but got:\n\n{s}", .{decoded});
+        defer allocator.free(@"username:password");
+        try log.addRedactedError(
+            source,
+            conf_item.loc,
+            "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
+        );
         return;
     }
     const password = @"username:password"[colon_idx + 1 ..];

@@ -16,10 +16,11 @@ describe("doesnt_crash", async () => {
   console.log("Tempdir", temp_dir);
 
   files.map(file => {
-    const outfile1 = path.join(temp_dir, file).replaceAll("\\", "/");
-    const outfile2 = path.join(temp_dir, "lmao1-" + file).replaceAll("\\", "/");
-    const outfile3 = path.join(temp_dir, "lmao2-" + file).replaceAll("\\", "/");
-    const outfile4 = path.join(temp_dir, "lmao3-" + file).replaceAll("\\", "/");
+    const outfile1 = path.join(temp_dir, "file-1" + path.basename(file)).replaceAll("\\", "/");
+    const outfile2 = path.join(temp_dir, "file-2" + path.basename(file)).replaceAll("\\", "/");
+    const outfile3 = path.join(temp_dir, "file-3" + path.basename(file)).replaceAll("\\", "/");
+    const outfile4 = path.join(temp_dir, "file-4" + path.basename(file)).replaceAll("\\", "/");
+
     test(file, async () => {
       {
         const { stdout, stderr, exitCode } =

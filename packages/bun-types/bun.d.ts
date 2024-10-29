@@ -5499,7 +5499,7 @@ declare module "bun" {
     /**
      * @default Date.now()
      */
-    timestamp?: number,
+    timestamp?: number | Date,
   ): string;
 
   /**
@@ -5513,7 +5513,7 @@ declare module "bun" {
     /**
      * @default Date.now()
      */
-    timestamp?: number,
+    timestamp?: number | Date,
   ): Buffer;
 }
 

@@ -35,6 +35,10 @@ describe("randomUUIDv7", () => {
     const uuid = Bun.randomUUIDv7("hex", customTimestamp);
     expect(uuid).toStartWith("017a5f5d-");
     expect(Bun.randomUUIDv7()).not.toStartWith("017a5f5d-");
+    expect(Bun.randomUUIDv7("hex", new Date(customTimestamp))).toStartWith("017a5f5d-");
+    console.log({ uuid });
+    console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
+    console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
   });
 
   test("monotonic", () => {

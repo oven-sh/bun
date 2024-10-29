@@ -174,7 +174,7 @@ pub const UUID7 = struct {
         bytes[7] = @truncate(count);
 
         // Byte 8: Variant in top 2 bits, 6 bits of random
-        bytes[8] = (0x80 & 0xFF) | (random[0] & 0x3F);
+        bytes[8] = 0x80 | (random[0] & 0x3F);
 
         // Remaining 7 bytes: random
         @memcpy(bytes[9..16], random[1..8]);

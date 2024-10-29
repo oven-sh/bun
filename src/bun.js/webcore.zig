@@ -690,9 +690,19 @@ pub const Crypto = struct {
         };
 
         const timestamp: u64 = brk: {
-            const timestamp_value: JSC.JSValue = if (encoding_value != .undefined and arguments.len > 1) arguments[1] else if (arguments.len == 1 and encoding_value == .undefined) arguments[0] else .undefined;
+            const timestamp_value: JSC.JSValue = if (encoding_value != .undefined and arguments.len > 1)
+                arguments[1]
+            else if (arguments.len == 1 and encoding_value == .undefined)
+                arguments[0]
+            else
+                .undefined;
 
             if (timestamp_value != .undefined) {
+                if (timestamp_value.isDate()) {
+                    const date = timestamp_value.getUnixTimestamp();
+                    break :brk @intFromFloat(@max(0, date));
+                }
+
                 if (globalThis.validateIntegerRange(timestamp_value, i64, 0, .{
                     .min = 0,
                     .field_name = "timestamp",

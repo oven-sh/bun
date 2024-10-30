@@ -29,6 +29,10 @@ pub const Targets = struct {
         }
     }
 
+    pub fn shouldCompileLogical(this: *const Targets, feature: css.compat.Feature) bool {
+        return this.shouldCompile(feature, css.Features{ .logical_properties = true });
+    }
+
     pub fn shouldCompile(this: *const Targets, feature: css.compat.Feature, flag: Features) bool {
         return this.include.contains(flag) or (!this.exclude.contains(flag) and !this.isCompatible(feature));
     }

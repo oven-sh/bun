@@ -15,9 +15,7 @@
  * limitations under the License.
  */
 
-#ifndef UWS_TOPICTREE_H
-#define UWS_TOPICTREE_H
-
+#pragma once
 #include <map>
 #include <list>
 #include <iostream>
@@ -366,4 +364,4 @@ public:
 
 }
 
-#endif
+

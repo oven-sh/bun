@@ -187,6 +187,13 @@ pub const Gradient = union(enum) {
         return dest.writeChar(')');
     }
 
+    /// Attempts to convert the gradient to the legacy `-webkit-gradient()` syntax.
+    ///
+    /// Returns an error in case the conversion is not possible.
+    pub fn getLegacyWebkit(this: *const @This(), allocator: Allocator) ?Gradient {
+        return Gradient{ .@"webkit-gradient" = WebKitGradient.fromStandard(this, allocator) orelse return null };
+    }
+
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
     }
@@ -210,6 +217,99 @@ pub const Gradient = union(enum) {
         // }
         // ret
     }
+
+    /// Returns the vendor prefix of the gradient.
+    pub fn getVendorPrefix(this: *const @This()) VendorPrefix {
+        return switch (this.*) {
+            .linear => |linear| linear.vendor_prefix,
+            .repeating_linear => |linear| linear.vendor_prefix,
+            .radial => |radial| radial.vendor_prefix,
+            .repeating_radial => |radial| radial.vendor_prefix,
+            .@"webkit-gradient" => VendorPrefix{ .webkit = true },
+            else => VendorPrefix{ .none = true },
+        };
+    }
+
+    /// Returns the vendor prefixes needed for the given browser targets.
+    pub fn getNecessaryPrefixes(this: *const @This(), targets: css.targets.Targets) css.VendorPrefix {
+        const getPrefixes = struct {
+            fn call(tgts: css.targets.Targets, feature: css.prefixes.Feature, prefix: VendorPrefix) VendorPrefix {
+                return tgts.prefixes(prefix, feature);
+            }
+        }.call;
+
+        return switch (this.*) {
+            .linear => |linear| getPrefixes(targets, .linear_gradient, linear.vendor_prefix),
+            .repeating_linear => |linear| getPrefixes(targets, .repeating_linear_gradient, linear.vendor_prefix),
+            .radial => |radial| getPrefixes(targets, .radial_gradient, radial.vendor_prefix),
+            .repeating_radial => |radial| getPrefixes(targets, .repeating_radial_gradient, radial.vendor_prefix),
+            else => VendorPrefix{ .none = true },
+        };
+    }
+
+    /// Returns a copy of the gradient with the given vendor prefix.
+    pub fn getPrefixed(this: *const @This(), allocator: Allocator, prefix: css.VendorPrefix) Gradient {
+        return switch (this.*) {
+            .linear => |*linear| .{ .linear = brk: {
+                var x = linear.deepClone(allocator);
+                x.vendor_prefix = prefix;
+                break :brk x;
+            } },
+            .repeating_linear => |*linear| .{ .repeating_linear = brk: {
+                var x = linear.deepClone(allocator);
+                x.vendor_prefix = prefix;
+                break :brk x;
+            } },
+            .radial => |*radial| .{ .radial = brk: {
+                var x = radial.deepClone(allocator);
+                x.vendor_prefix = prefix;
+                break :brk x;
+            } },
+            .repeating_radial => |*radial| .{ .repeating_radial = brk: {
+                var x = radial.deepClone(allocator);
+                x.vendor_prefix = prefix;
+                break :brk x;
+            } },
+            else => this.deepClone(allocator),
+        };
+    }
+
+    /// Returns a fallback gradient for the given color fallback type.
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) Gradient {
+        return switch (this.*) {
+            .linear => |g| .{ .linear = g.getFallback(allocator, kind) },
+            .repeating_linear => |g| .{ .repeating_linear = g.getFallback(allocator, kind) },
+            .radial => |g| .{ .radial = g.getFallback(allocator, kind) },
+            .repeating_radial => |g| .{ .repeating_radial = g.getFallback(allocator, kind) },
+            .conic => |g| .{ .conic = g.getFallback(allocator, kind) },
+            .repeating_conic => |g| .{ .repeating_conic = g.getFallback(allocator, kind) },
+            .@"webkit-gradient" => |g| .{ .@"webkit-gradient" = g.getFallback(allocator, kind) },
+        };
+    }
+
+    /// Returns the color fallback types needed for the given browser targets.
+    pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
+        var fallbacks = css.ColorFallbackKind.empty();
+        switch (this.*) {
+            .linear, .repeating_linear => |*linear| {
+                for (linear.items.items) |*item| {
+                    fallbacks = fallbacks.bitwiseOr(item.getNecessaryFallbacks(targets));
+                }
+            },
+            .radial, .repeating_radial => |*radial| {
+                for (radial.items.items) |*item| {
+                    fallbacks = fallbacks.bitwiseOr(item.getNecessaryFallbacks(targets));
+                }
+            },
+            .conic, .repeating_conic => |*conic| {
+                for (conic.items.items) |*item| {
+                    fallbacks = fallbacks.bitwiseOr(item.getNecessaryFallbacks(targets));
+                }
+            },
+            .@"webkit-gradient" => {},
+        }
+        return fallbacks;
+    }
 };
 
 /// A CSS [`linear-gradient()`](https://www.w3.org/TR/css-images-3/#linear-gradients) or `repeating-linear-gradient()`.
@@ -220,14 +320,6 @@ pub const LinearGradient = struct {
     direction: LineDirection,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
-
-    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
-        return css.implementDeepClone(@This(), this, allocator);
-    }
-
-    pub fn eql(this: *const LinearGradient, other: *const LinearGradient) bool {
-        return this.vendor_prefix.eql(other.vendor_prefix) and this.direction.eql(&other.direction) and css.generic.eqlList(GradientItem(LengthPercentage), &this.items, &other.items);
-    }
 
     pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(LinearGradient) {
         const direction: LineDirection = if (input.tryParse(LineDirection.parse, .{vendor_prefix.neq(VendorPrefix{ .none = true })}).asValue()) |dir| direction: {
@@ -304,6 +396,35 @@ pub const LinearGradient = struct {
             serializeItems(LengthPercentage, &this.items, W, dest) catch return dest.addFmtError();
         }
     }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        for (this.items.items) |*item| {
+            if (!item.isCompatible(browsers)) return false;
+        }
+        return true;
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const LinearGradient, other: *const LinearGradient) bool {
+        return this.vendor_prefix.eql(other.vendor_prefix) and this.direction.eql(&other.direction) and css.generic.eqlList(GradientItem(LengthPercentage), &this.items, &other.items);
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: std.mem.Allocator, kind: css.ColorFallbackKind) LinearGradient {
+        var fallback_items = ArrayList(GradientItem(LengthPercentage)).initCapacity(allocator, this.items.items.len) catch bun.outOfMemory();
+        fallback_items.items.len = this.items.items.len;
+        for (fallback_items.items, this.items.items) |*out, *in| {
+            out.* = in.getFallback(allocator, kind);
+        }
+
+        return LinearGradient{
+            .direction = this.direction.deepClone(allocator),
+            .items = fallback_items,
+            .vendor_prefix = this.vendor_prefix,
+        };
+    }
 };
 
 /// A CSS [`radial-gradient()`](https://www.w3.org/TR/css-images-3/#radial-gradients) or `repeating-radial-gradient()`.
@@ -316,10 +437,6 @@ pub const RadialGradient = struct {
     position: Position,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(LengthPercentage)),
-
-    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
-        return css.implementDeepClone(@This(), this, allocator);
-    }
 
     pub fn parse(input: *css.Parser, vendor_prefix: VendorPrefix) Result(RadialGradient) {
         // todo_stuff.depth
@@ -376,6 +493,32 @@ pub const RadialGradient = struct {
         try serializeItems(LengthPercentage, &this.items, W, dest);
     }
 
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        for (this.items.items) |*item| {
+            if (!item.isCompatible(browsers)) return false;
+        }
+        return true;
+    }
+
+    pub fn getFallback(this: *const RadialGradient, allocator: Allocator, kind: css.ColorFallbackKind) RadialGradient {
+        var items = ArrayList(GradientItem(LengthPercentage)).initCapacity(allocator, this.items.items.len) catch bun.outOfMemory();
+        items.items.len = this.items.items.len;
+        for (items.items, this.items.items) |*out, *in| {
+            out.* = in.getFallback(allocator, kind);
+        }
+
+        return RadialGradient{
+            .shape = this.shape.deepClone(allocator),
+            .position = this.position.deepClone(allocator),
+            .items = items,
+            .vendor_prefix = this.vendor_prefix,
+        };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const RadialGradient, other: *const RadialGradient) bool {
         return this.vendor_prefix.eql(other.vendor_prefix) and
             this.shape.eql(&other.shape) and
@@ -392,10 +535,6 @@ pub const ConicGradient = struct {
     position: Position,
     /// The color stops and transition hints for the gradient.
     items: ArrayList(GradientItem(AnglePercentage)),
-
-    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
-        return css.implementDeepClone(@This(), this, allocator);
-    }
 
     pub fn parse(input: *css.Parser) Result(ConicGradient) {
         const angle = input.tryParse(struct {
@@ -450,6 +589,31 @@ pub const ConicGradient = struct {
         return try serializeItems(AnglePercentage, &this.items, W, dest);
     }
 
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        for (this.items.items) |*item| {
+            if (!item.isCompatible(browsers)) return false;
+        }
+        return true;
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) ConicGradient {
+        var items = ArrayList(GradientItem(AnglePercentage)).initCapacity(allocator, this.items.items.len) catch bun.outOfMemory();
+        items.items.len = this.items.items.len;
+        for (items.items, this.items.items) |*out, *in| {
+            out.* = in.getFallback(allocator, kind);
+        }
+
+        return ConicGradient{
+            .angle = this.angle.deepClone(allocator),
+            .position = this.position.deepClone(allocator),
+            .items = items,
+        };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
     pub fn eql(this: *const ConicGradient, other: *const ConicGradient) bool {
         return this.angle.eql(&other.angle) and
             this.position.eql(&other.position) and
@@ -489,23 +653,6 @@ pub const WebKitGradient = union(enum) {
             return css.implementDeepClone(@This(), this, allocator);
         }
     },
-
-    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
-        return css.implementDeepClone(@This(), this, allocator);
-    }
-
-    pub fn eql(this: *const WebKitGradient, other: *const WebKitGradient) bool {
-        return switch (this.*) {
-            .linear => |*a| switch (other.*) {
-                .linear => a.from.eql(&other.linear.from) and a.to.eql(&other.linear.to) and css.generic.eqlList(WebKitColorStop, &a.stops, &other.linear.stops),
-                else => false,
-            },
-            .radial => |*a| switch (other.*) {
-                .radial => a.from.eql(&other.radial.from) and a.to.eql(&other.radial.to) and a.r0 == other.radial.r0 and a.r1 == other.radial.r1 and css.generic.eqlList(WebKitColorStop, &a.stops, &other.radial.stops),
-                else => false,
-            },
-        };
-    }
 
     pub fn parse(input: *css.Parser) Result(WebKitGradient) {
         const location = input.currentSourceLocation();
@@ -606,6 +753,139 @@ pub const WebKitGradient = union(enum) {
                 }
             },
         }
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) WebKitGradient {
+        var stops: ArrayList(WebKitColorStop) = .{};
+        switch (this.*) {
+            .linear => |linear| {
+                stops = ArrayList(WebKitColorStop).initCapacity(allocator, linear.stops.items.len) catch bun.outOfMemory();
+                stops.items.len = linear.stops.items.len;
+                for (stops.items, linear.stops.items) |*out, *in| {
+                    out.* = in.getFallback(allocator, kind);
+                }
+                return WebKitGradient{
+                    .linear = .{
+                        .from = linear.from.deepClone(allocator),
+                        .to = linear.to.deepClone(allocator),
+                        .stops = stops,
+                    },
+                };
+            },
+            .radial => |radial| {
+                stops = ArrayList(WebKitColorStop).initCapacity(allocator, radial.stops.items.len) catch bun.outOfMemory();
+                stops.items.len = radial.stops.items.len;
+                for (stops.items, radial.stops.items) |*out, *in| {
+                    out.* = in.getFallback(allocator, kind);
+                }
+                return WebKitGradient{
+                    .radial = .{
+                        .from = radial.from.deepClone(allocator),
+                        .r0 = radial.r0,
+                        .to = radial.to.deepClone(allocator),
+                        .r1 = radial.r1,
+                        .stops = stops,
+                    },
+                };
+            },
+        }
+    }
+
+    pub fn fromStandard(gradient: *const Gradient, allocator: Allocator) ?WebKitGradient {
+        switch (gradient.*) {
+            .linear => |*linear| {
+                // Convert from line direction to a from and to point, if possible.
+                const from: struct { f32, f32 }, const to: struct { f32, f32 } = switch (linear.direction) {
+                    .horizontal => |horizontal| switch (horizontal) {
+                        .left => .{ .{ 1.0, 0.0 }, .{ 0.0, 0.0 } },
+                        .right => .{ .{ 0.0, 0.0 }, .{ 1.0, 0.0 } },
+                    },
+                    .vertical => |vertical| switch (vertical) {
+                        .top => .{ .{ 0.0, 1.0 }, .{ 0.0, 0.0 } },
+                        .bottom => .{ .{ 0.0, 0.0 }, .{ 0.0, 1.0 } },
+                    },
+                    .corner => |corner| switch (corner.horizontal) {
+                        .left => switch (corner.vertical) {
+                            .top => .{ .{ 1.0, 1.0 }, .{ 0.0, 0.0 } },
+                            .bottom => .{ .{ 1.0, 0.0 }, .{ 0.0, 1.0 } },
+                        },
+                        .right => switch (corner.vertical) {
+                            .top => .{ .{ 0.0, 1.0 }, .{ 1.0, 0.0 } },
+                            .bottom => .{ .{ 0.0, 0.0 }, .{ 1.0, 1.0 } },
+                        },
+                    },
+                    .angle => |angle| brk: {
+                        const degrees = angle.toDegrees();
+                        if (degrees == 0.0) {
+                            break :brk .{ .{ 0.0, 1.0 }, .{ 0.0, 0.0 } };
+                        } else if (degrees == 90.0) {
+                            break :brk .{ .{ 0.0, 0.0 }, .{ 1.0, 0.0 } };
+                        } else if (degrees == 180.0) {
+                            break :brk .{ .{ 0.0, 0.0 }, .{ 0.0, 1.0 } };
+                        } else if (degrees == 270.0) {
+                            break :brk .{ .{ 1.0, 0.0 }, .{ 0.0, 0.0 } };
+                        } else {
+                            return null;
+                        }
+                    },
+                };
+
+                return WebKitGradient{
+                    .linear = .{
+                        .from = .{
+                            .x = .{ .number = .{ .percentage = .{ .v = from[0] } } },
+                            .y = .{ .number = .{ .percentage = .{ .v = from[1] } } },
+                        },
+                        .to = .{
+                            .x = .{ .number = .{ .percentage = .{ .v = to[0] } } },
+                            .y = .{ .number = .{ .percentage = .{ .v = to[1] } } },
+                        },
+                        .stops = convertStopsToWebkit(allocator, &linear.items) orelse return null,
+                    },
+                };
+            },
+            .radial => |*radial| {
+                // Webkit radial gradients are always circles, not ellipses, and must be specified in pixels.
+                const radius = switch (radial.shape) {
+                    .circle => |*circle| switch (circle.*) {
+                        .radius => |r| if (r.toPx()) |px| px else return null,
+                        else => return null,
+                    },
+                    else => return null,
+                };
+
+                const x = WebKitGradientPointComponent(HorizontalPositionKeyword).fromPosition(&radial.position.x, allocator) orelse return null;
+                const y = WebKitGradientPointComponent(VerticalPositionKeyword).fromPosition(&radial.position.y, allocator) orelse return null;
+                const point = WebKitGradientPoint{ .x = x, .y = y };
+                return WebKitGradient{
+                    .radial = .{
+                        .from = point.deepClone(allocator),
+                        .r0 = 0.0,
+                        .to = point,
+                        .r1 = radius,
+                        .stops = convertStopsToWebkit(allocator, &radial.items) orelse return null,
+                    },
+                };
+            },
+            else => return null,
+        }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const WebKitGradient, other: *const WebKitGradient) bool {
+        return switch (this.*) {
+            .linear => |*a| switch (other.*) {
+                .linear => a.from.eql(&other.linear.from) and a.to.eql(&other.linear.to) and css.generic.eqlList(WebKitColorStop, &a.stops, &other.linear.stops),
+                else => false,
+            },
+            .radial => |*a| switch (other.*) {
+                .radial => a.from.eql(&other.radial.from) and a.to.eql(&other.radial.to) and a.r0 == other.radial.r0 and a.r1 == other.radial.r1 and css.generic.eqlList(WebKitColorStop, &a.stops, &other.radial.stops),
+                else => false,
+            },
+        };
     }
 };
 
@@ -765,6 +1045,34 @@ pub fn GradientItem(comptime D: type) type {
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
         }
+
+        pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+            return switch (this.*) {
+                .color_stop => |*c| c.color.isCompatible(browsers),
+                .hint => css.compat.Feature.isCompatible(.gradient_interpolation_hints, browsers),
+            };
+        }
+
+        /// Returns a fallback gradient item for the given color fallback type.
+        pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) GradientItem(D) {
+            return switch (this.*) {
+                .color_stop => |*stop| .{
+                    .color_stop = .{
+                        .color = stop.color.getFallback(allocator, kind),
+                        .position = if (stop.position) |*p| p.deepClone(allocator) else null,
+                    },
+                },
+                .hint => this.deepClone(allocator),
+            };
+        }
+
+        /// Returns the color fallback types needed for the given browser targets.
+        pub fn getNecessaryFallbacks(this: *const @This(), targets: css.targets.Targets) css.ColorFallbackKind {
+            return switch (this.*) {
+                .color_stop => |*stop| stop.color.getNecessaryFallbacks(targets),
+                .hint => css.ColorFallbackKind.empty(),
+            };
+        }
     };
 }
 
@@ -891,6 +1199,27 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
             }
         }
 
+        /// Attempts to convert a standard position to a webkit gradient point.
+        pub fn fromPosition(this: *const css.css_values.position.PositionComponent(S), allocator: Allocator) ?WebKitGradientPointComponent(S) {
+            return switch (this.*) {
+                .center => .center,
+                .length => |len| .{
+                    .number = switch (len) {
+                        .percentage => |p| .{ .percentage = p },
+                        // Webkit gradient points can only be specified in pixels.
+                        .dimension => |*d| if (d.toPx()) |px| .{ .number = px } else return null,
+                        else => return null,
+                    },
+                },
+                .side => |s| if (s.offset != null)
+                    return null
+                else
+                    .{
+                        .side = s.side.deepClone(allocator),
+                    },
+            };
+        }
+
         pub fn eql(this: *const This, other: *const This) bool {
             return switch (this.*) {
                 .center => switch (other.*) {
@@ -971,6 +1300,13 @@ pub const WebKitColorStop = struct {
             try this.color.toCss(W, dest);
         }
         try dest.writeChar(')');
+    }
+
+    pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) WebKitColorStop {
+        return WebKitColorStop{
+            .color = this.color.getFallback(allocator, kind),
+            .position = this.position,
+        };
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -1288,4 +1624,39 @@ pub fn serializeItems(
         try item.toCss(W, dest);
         last = item;
     }
+}
+
+pub fn convertStopsToWebkit(allocator: Allocator, items: *const ArrayList(GradientItem(LengthPercentage))) ?ArrayList(WebKitColorStop) {
+    var stops: ArrayList(WebKitColorStop) = ArrayList(WebKitColorStop).initCapacity(allocator, items.items.len) catch bun.outOfMemory();
+    for (items.items, 0..) |*item, i| {
+        switch (item.*) {
+            .color_stop => |*stop| {
+                // webkit stops must always be percentage based, not length based.
+                const position: f32 = if (stop.position) |pos| brk: {
+                    break :brk switch (pos) {
+                        .percentage => |percentage| percentage.v,
+                        else => {
+                            stops.deinit(allocator);
+                            return null;
+                        },
+                    };
+                } else if (i == 0) brk: {
+                    break :brk 0.0;
+                } else if (i == items.items.len - 1) brk: {
+                    break :brk 1.0;
+                } else {
+                    stops.deinit(allocator);
+                    return null;
+                };
+
+                stops.append(allocator, .{
+                    .color = stop.color.deepClone(allocator),
+                    .position = position,
+                }) catch return null;
+            },
+            else => return null,
+        }
+    }
+
+    return stops;
 }

@@ -999,7 +999,7 @@ pub const Blob = struct {
                 globalThis.throwInvalidArguments("Blob is detached", .{});
                 return .zero;
             } else {
-                // TODO only reset last_modified on success pathes instead of
+                // TODO only reset last_modified on success paths instead of
                 // resetting last_modified at the beginning for better performance.
                 if (path_or_blob.blob.store.?.data == .file) {
                     // reset last_modified to force getLastModified() to reload after writing.

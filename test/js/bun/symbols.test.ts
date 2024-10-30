@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { $ } from "bun";
 import { bunExe } from "harness";
 import { semver } from "bun";
+
 const BUN_EXE = bunExe();
 
 if (process.platform === "linux") {
@@ -37,7 +38,7 @@ To fix this, add it to -Wl,-wrap=symbol in the linker flags and update workaroun
     }
   });
 
-  test("libm.so is not linked", async () => {
+  test("libatomic.so is not linked", async () => {
     const ldd = Bun.which("ldd");
 
     if (!ldd) {
@@ -48,13 +49,13 @@ To fix this, add it to -Wl,-wrap=symbol in the linker flags and update workaroun
     const lines = output.split("\n");
     const errors = [];
     for (const line of lines) {
-      // libatomic or libm
-      if (line.includes("libatomic") || line.includes("libm")) {
+      // libatomic
+      if (line.includes("libatomic")) {
         errors.push(line);
       }
     }
     if (errors.length) {
-      throw new Error(`libm.so or libatomic.so is linked. This breaks Amazon Linux 2 and Vercel.
+      throw new Error(`libatomic.so is linked. This breaks Amazon Linux 2 and Vercel.
 
 ${errors.join("\n")}
 

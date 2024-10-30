@@ -1300,7 +1300,7 @@ pub const RunCommand = struct {
 
         // This doesn't cover every case
         if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or
-            (script_name_to_search.len >= 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
+            (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
             Run.boot(ctx, ".") catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());

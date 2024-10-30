@@ -588,7 +588,6 @@ bar\n`,
       .ensureTempDir()
       .file("code.ts", printArgs)
       .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
-      .todo()
       .runAsTest("single");
 
     TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
@@ -602,7 +601,6 @@ bar\n`,
       .stdout(out =>
         expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "and", "a", "few", "others!"]),
       )
-      .todo()
       .runAsTest("many");
 
     TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
@@ -613,7 +611,6 @@ booga"
       .ensureTempDir()
       .file("code.ts", printArgs)
       .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "ooga\nbooga"]))
-      .todo()
       .runAsTest("quotes");
   });
 

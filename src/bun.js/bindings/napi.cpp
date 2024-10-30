@@ -1468,10 +1468,17 @@ extern "C" napi_status node_api_symbol_for(napi_env env,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
-    NAPI_CHECK_ARG(env, utf8description);
 
     auto* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
+
+    if (utf8description == nullptr) {
+        if (length == 0) {
+            utf8description = "";
+        } else {
+            NAPI_CHECK_ARG(env, utf8description);
+        }
+    }
 
     auto description = WTF::String::fromUTF8({ utf8description, length == NAPI_AUTO_LENGTH ? strlen(utf8description) : length });
     *result = toNapi(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)), globalObject);

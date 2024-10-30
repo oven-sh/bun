@@ -3508,7 +3508,7 @@ pub const Parser = struct {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
-        if (p.options.target == Target.browse) {
+        if (p.options.target == Target.browser or !p.options.transform_only) {
             if (uses_dirname or uses_filename) {
                 const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
                 var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;

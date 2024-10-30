@@ -10,7 +10,7 @@
 # increment the version number, `v`, to indicate that a new image should be built.
 # Otherwise, the existing image will be retroactively updated.
 
-# curl -fsSL "https://raw.githubusercontent.com/oven-sh/bun/refs/heads/main/scripts/bootstrap.sh" | CI=true sh
+# curl -fsSL "https://raw.githubusercontent.com/oven-sh/bun/refs/heads/ci-automated-build-image/scripts/bootstrap.sh" | CI=true sh
 
 v="3"
 pid=$$
@@ -44,7 +44,7 @@ execute_sudo() {
 execute_as_user() {
   if [ "$sudo" = "1" ] && [ -n "$user" ]; then
     if [ -f "$(which sudo)" ]; then
-      execute sudo -u "$user" "$@"
+      execute sudo -u "$user" "$*"
     elif [ -f "$(which su)" ]; then
       execute su -s /bin/sh "$user" -c "$*"
     else

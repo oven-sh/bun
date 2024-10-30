@@ -23,7 +23,7 @@ script_version() {
   cat "$path" | grep 'v=' | sed 's/v=\"//;s/\"//' | head -n 1
 }
 
-build_image() {
+build_docker_image() {
   case "$1" in
   x64 | amd64 | x86_64)
     arch="x64"
@@ -82,7 +82,7 @@ main() {
   distro="${2:-"debian"}"
   release="${3:-"11"}"
 
-  build_image "$arch" "$distro" "$release"
+  build_docker_image "$arch" "$distro" "$release"
 }
 
 main "$@"

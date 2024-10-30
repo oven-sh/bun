@@ -111,14 +111,3 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
 //     "/index.rsc": rscPayloadBuffer,
 //   };
 // }
-
-// This is a hack to make react-server-dom-webpack work with Bun's bundler.
-// It will be removed once Bun acquires react-server-dom-bun.
-if (!import.meta.env.DEV) {
-  globalThis.__webpack_require__ = (id: string) => {
-    console.log("Bun: __webpack_require__", id);
-    const y = import.meta.require(join(import.meta.dir, id));
-    console.log({ y });
-    return y;
-  };
-}

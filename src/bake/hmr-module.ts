@@ -176,16 +176,13 @@ if (side === "client") {
     bundleRouteForDevelopment: async () => {},
   };
   registry.set(server_module.id, server_module);
+
+  // TODO: Remove this after `react-server-dom-bun` is uploaded
+  globalThis.__webpack_require__ = (id: string) => {
+    return loadModule(id, LoadModuleType.UserDynamic).exports;
+  };
 }
 
-// TODO: Remove this after `react-server-dom-bun` is uploaded
-globalThis.__webpack_require__ = (id: string) => {
-  if (side == "server" && config.separateSSRGraph && !id.startsWith("ssr:")) {
-    return loadModule("ssr:" + id, LoadModuleType.UserDynamic).exports;
-  } else {
-    return loadModule(id, LoadModuleType.UserDynamic).exports;
-  }
-};
 
 runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
 runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");

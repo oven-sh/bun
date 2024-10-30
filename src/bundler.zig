@@ -1368,7 +1368,7 @@ pub const Bundler = struct {
 
                 opts.tree_shaking = bundler.options.tree_shaking;
                 opts.features.inlining = bundler.options.inlining;
-
+                opts.target = bundler.options.target;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();

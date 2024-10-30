@@ -3749,7 +3749,7 @@ pub const ParseTask = struct {
             bundler.options.react_fast_refresh and
             loader.isJSX() and
             !source.path.isNodeModule();
-
+        opts.target = target;
         opts.features.server_components = if (bundler.options.server_components) switch (target) {
             .browser => .client_side,
             else => switch (use_directive) {

@@ -14,6 +14,7 @@ const _runtime = @import("./runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
+const Target = options.Target;
 pub const fs = @import("./fs.zig");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -2873,7 +2874,7 @@ pub const Parser = struct {
         suppress_warnings_about_weird_code: bool = true,
         filepath_hash_for_hmr: u32 = 0,
         features: RuntimeFeatures = .{},
-
+        target: Target = Target.browser,
         tree_shaking: bool = false,
         bundle: bool = false,
         package_version: string = "",
@@ -3507,7 +3508,7 @@ pub const Parser = struct {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
-        if (p.options.bundle or !p.options.features.commonjs_at_runtime) {
+        if (p.options.target == Target.browse) {
             if (uses_dirname or uses_filename) {
                 const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
                 var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
@@ -3549,6 +3550,53 @@ pub const Parser = struct {
                 }) catch unreachable;
                 uses_dirname = false;
                 uses_filename = false;
+            }
+        } else if (p.options.output_format == options.Format.esm) {
+            if (uses_dirname or uses_filename) {
+                const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
+                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
+                var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+                if (uses_dirname) {
+                    // var __dirname = import.meta
+                    decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            E.Dot{
+                                .name = if (p.options.target == Target.node) "dirname" else "dir",
+                                .name_loc = logger.Loc.Empty,
+                                .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                            },
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
+                }
+                if (uses_filename) {
+                    // var __filename = import.meta.path
+                    decls[@as(usize, @intFromBool(uses_dirname))] = .{
+                        .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        .value = p.newExpr(
+                            E.Dot{
+                                .name = if (p.options.target == Target.node) "filename" else "path",
+                                .name_loc = logger.Loc.Empty,
+                                .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
+                            },
+                            logger.Loc.Empty,
+                        ),
+                    };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
+                }
+
+                var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                part_stmts[0] = p.s(S.Local{
+                    .kind = .k_var,
+                    .decls = Decl.List.init(decls),
+                }, logger.Loc.Empty);
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .tag = .dirname_filename,
+                }) catch unreachable;
             }
         }
 
@@ -3954,7 +4002,7 @@ pub const Parser = struct {
                         exports_kind = .esm;
 
                         // Otherwise, if they use CommonJS features its CommonJS
-                    } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
+                    } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0) {
                         exports_kind = .cjs;
                     } else {
                         // If unknown, we default to ESM
@@ -3968,61 +4016,7 @@ pub const Parser = struct {
             }
         }
 
-        // Handle dirname and filename at runtime.
-        //
-        // If we reach this point, it means:
-        //
-        // 1) we are building an ESM file that uses __dirname or __filename
-        // 2) we are targeting bun's runtime.
-        // 3) we are not bundling.
-        //
-        if (exports_kind == .esm and (uses_dirname or uses_filename)) {
-            bun.assert(!p.options.bundle);
-            const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
-            var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-            if (uses_dirname) {
-                // var __dirname = import.meta
-                decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.Dot{
-                            .name = "dir",
-                            .name_loc = logger.Loc.Empty,
-                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
-                        },
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.dirname_ref, .is_top_level = true });
-            }
-            if (uses_filename) {
-                // var __filename = import.meta.path
-                decls[@as(usize, @intFromBool(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.Dot{
-                            .name = "path",
-                            .name_loc = logger.Loc.Empty,
-                            .target = p.newExpr(E.ImportMeta{}, logger.Loc.Empty),
-                        },
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols.appendAssumeCapacity(.{ .ref = p.filename_ref, .is_top_level = true });
-            }
-
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = Decl.List.init(decls),
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
-        }
+       
 
         if (exports_kind == .esm and p.commonjs_named_exports.count() > 0 and !p.unwrap_all_requires and !force_esm) {
             exports_kind = .esm_with_dynamic_fallback_from_cjs;

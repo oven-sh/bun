@@ -65,3 +65,5 @@ release-npm.test.js
 
 # Bad tests
 tls-wrap-no-abort.test.js
+
+*.js.txt

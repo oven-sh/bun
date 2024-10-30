@@ -127,7 +127,7 @@ pub const Run = struct {
 
     fn doPreconnect(preconnect: []const string) void {
         if (preconnect.len == 0) return;
-        bun.HTTPThread.init();
+        bun.HTTPThread.init(&.{});
 
         for (preconnect) |url_str| {
             const url = bun.URL.parse(url_str);
@@ -500,7 +500,7 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
     }
 }
 
-noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
+pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
     @setCold(true);
     dumpBuildError(vm);
     Global.exit(1);

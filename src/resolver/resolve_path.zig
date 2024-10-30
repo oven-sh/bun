@@ -1147,6 +1147,12 @@ pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []
     return normalizeBufT(u8, str, buf, _platform);
 }
 
+pub fn normalizeBufZ(str: []const u8, buf: []u8, comptime _platform: Platform) [:0]u8 {
+    const norm = normalizeBufT(u8, str, buf, _platform);
+    buf[norm.len] = 0;
+    return buf[0..norm.len :0];
+}
+
 pub fn normalizeBufT(comptime T: type, str: []const T, buf: []T, comptime _platform: Platform) []T {
     if (str.len == 0) {
         buf[0] = '.';
@@ -1231,10 +1237,8 @@ pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, p
     return slice;
 }
 
-pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
-    const parts = [_][]const u8{part};
-    const slice = joinAbsString(_cwd, &parts, _platform);
-    return slice;
+pub fn joinAbs(cwd: []const u8, comptime _platform: Platform, part: []const u8) []const u8 {
+    return joinAbsString(cwd, &.{part}, _platform);
 }
 
 // Convert parts of potentially invalid file paths into a single valid filpeath

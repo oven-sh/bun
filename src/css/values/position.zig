@@ -10,6 +10,7 @@ const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
 const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 const LengthPercentage = css.css_values.length.LengthPercentage;
+const Percentage = css.css_values.percentage.Percentage;
 
 /// A CSS `<position>` value,
 /// as used in the `background-position` property, gradients, masks, etc.
@@ -18,15 +19,6 @@ pub const Position = struct {
     x: HorizontalPosition,
     /// The y-position.
     y: VerticalPosition,
-
-    /// Returns whether both the x and y positions are centered.
-    pub fn isCenter(this: *const @This()) bool {
-        this.x.isCenter() and this.y.isCenter();
-    }
-
-    pub fn center() Position {
-        return .{ .x = .center, .y = .center };
-    }
 
     pub fn parse(input: *css.Parser) Result(Position) {
         // Try parsing a horizontal position first
@@ -152,15 +144,15 @@ pub const Position = struct {
     }
 
     pub fn toCss(this: *const Position, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        if (this.x == .side and this.y == .length and this.x.side != .left) {
+        if (this.x == .side and this.y == .length and this.x.side.side != .left) {
             try this.x.toCss(W, dest);
             try dest.writeStr(" top ");
             try this.y.length.toCss(W, dest);
-        } else if (this.x == .side and this.x.side != .left and this.y.isCenter()) {
+        } else if (this.x == .side and this.x.side.side != .left and this.y.isCenter()) {
             // If there is a side keyword with an offset, "center" must be a keyword not a percentage.
             try this.x.toCss(W, dest);
             try dest.writeStr(" center");
-        } else if (this.x == .length and this.y == .side and this.y.side != .top) {
+        } else if (this.x == .length and this.y == .side and this.y.side.side != .top) {
             try dest.writeStr("left ");
             try this.x.length.toCss(W, dest);
             try dest.writeStr(" ");
@@ -175,7 +167,7 @@ pub const Position = struct {
             const p: LengthPercentage = this.x.side.side.intoLengthPercentage();
             try p.toCss(W, dest);
         } else if (this.y == .side and this.y.side.offset == null and this.x.isCenter()) {
-            this.y.toCss(W, dest);
+            try this.y.toCss(W, dest);
         } else if (this.x == .side and this.x.side.offset == null and this.y == .side and this.y.side.offset == null) {
             const x: LengthPercentage = this.x.side.side.intoLengthPercentage();
             const y: LengthPercentage = this.y.side.side.intoLengthPercentage();
@@ -206,7 +198,6 @@ pub const Position = struct {
                         }
                     },
                     .center => break :x_len &fifty,
-                    else => {},
                 }
                 break :x_len null;
             };
@@ -214,7 +205,7 @@ pub const Position = struct {
             const y_len: ?*const LengthPercentage = y_len: {
                 switch (this.y) {
                     .side => |side| {
-                        if (side.side == .left) {
+                        if (side.side == .top) {
                             if (side.offset) |*offset| {
                                 if (offset.isZero()) {
                                     break :y_len &zero;
@@ -232,7 +223,6 @@ pub const Position = struct {
                         }
                     },
                     .center => break :y_len &fifty,
-                    else => {},
                 }
                 break :y_len null;
             };
@@ -248,6 +238,34 @@ pub const Position = struct {
             }
         }
     }
+
+    pub fn default() @This() {
+        return .{
+            .x = HorizontalPosition{ .length = LengthPercentage{ .percentage = .{ .v = 0.0 } } },
+            .y = VerticalPosition{ .length = LengthPercentage{ .percentage = .{ .v = 0.0 } } },
+        };
+    }
+
+    /// Returns whether both the x and y positions are centered.
+    pub fn isCenter(this: *const @This()) bool {
+        return this.x.isCenter() and this.y.isCenter();
+    }
+
+    pub fn center() Position {
+        return .{ .x = .center, .y = .center };
+    }
+
+    pub fn eql(this: *const Position, other: *const Position) bool {
+        return this.x.eql(&other.x) and this.y.eql(&other.y);
+    }
+
+    pub fn isZero(this: *const Position) bool {
+        return this.x.isZero() and this.y.isZero();
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub fn PositionComponent(comptime S: type) type {
@@ -262,15 +280,45 @@ pub fn PositionComponent(comptime S: type) type {
             side: S,
             /// Offset from the side.
             offset: ?LengthPercentage,
+
+            pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+                return css.implementDeepClone(@This(), this, allocator);
+            }
         },
 
         const This = @This();
+
+        pub fn isZero(this: *const This) bool {
+            if (this.* == .length and this.length.isZero()) return true;
+            return false;
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return switch (this.*) {
+                .center => switch (other.*) {
+                    .center => true,
+                    else => false,
+                },
+                .length => |*a| switch (other.*) {
+                    .length => a.eql(&other.length),
+                    else => false,
+                },
+                .side => |*a| switch (other.*) {
+                    .side => a.side.eql(&other.side.side) and css.generic.eql(?LengthPercentage, &a.offset, &other.side.offset),
+                    else => false,
+                },
+            };
+        }
 
         pub fn parse(input: *css.Parser) Result(This) {
             if (input.tryParse(
                 struct {
                     fn parse(i: *css.Parser) Result(void) {
-                        if (i.expectIdentMatching("center").asErr()) |e| return .{ .err = e };
+                        return i.expectIdentMatching("center");
                     }
                 }.parse,
                 .{},
@@ -314,7 +362,7 @@ pub fn PositionComponent(comptime S: type) type {
             switch (this.*) {
                 .center => return true,
                 .length => |*l| {
-                    if (l == .percentage) return l.percentage.v == 0.5;
+                    if (l.* == .percentage) return l.percentage.v == 0.5;
                 },
                 else => {},
             }
@@ -328,6 +376,14 @@ pub const HorizontalPositionKeyword = enum {
     left,
     /// The `right` keyword.
     right,
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) HorizontalPositionKeyword {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const HorizontalPositionKeyword, other: *const HorizontalPositionKeyword) bool {
+        return this.* == other.*;
+    }
 
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
@@ -355,6 +411,14 @@ pub const VerticalPositionKeyword = enum {
     /// The `bottom` keyword.
     bottom,
 
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(this: *const VerticalPositionKeyword, other: *const VerticalPositionKeyword) bool {
+        return this.* == other.*;
+    }
+
     pub fn asStr(this: *const @This()) []const u8 {
         return css.enum_property_util.asStr(@This(), this);
     }
@@ -365,6 +429,13 @@ pub const VerticalPositionKeyword = enum {
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return css.enum_property_util.toCss(@This(), this, W, dest);
+    }
+
+    pub fn intoLengthPercentage(this: *const @This()) LengthPercentage {
+        return switch (this.*) {
+            .top => LengthPercentage.zero(),
+            .bottom => LengthPercentage{ .percentage = Percentage{ .v = 1.0 } },
+        };
     }
 };
 

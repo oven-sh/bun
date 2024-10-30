@@ -140,6 +140,18 @@ pub const ErrorLocation = struct {
     line: u32,
     /// The column number, starting from 1.
     column: u32,
+
+    pub fn withFilename(this: ErrorLocation, filename: []const u8) ErrorLocation {
+        return ErrorLocation{
+            .filename = filename,
+            .line = this.line,
+            .column = this.column,
+        };
+    }
+
+    pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}:{d}:{d}", .{ this.filename, this.line, this.column });
+    }
 };
 
 /// A printer error type.
@@ -272,6 +284,7 @@ pub const SelectorError = union(enum) {
     unexpected_token_in_attribute_selector: css.Token,
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
+    unexpected_selector_after_pseudo_element: css.Token,
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
@@ -304,6 +317,9 @@ pub fn ErrorWithLocation(comptime T: type) type {
     };
 }
 
+pub const MinifyErr = error{
+    minify_err,
+};
 pub const MinifyError = ErrorWithLocation(MinifyErrorKind);
 /// A transformation error.
 pub const MinifyErrorKind = union(enum) {
@@ -322,4 +338,18 @@ pub const MinifyErrorKind = union(enum) {
         /// The source location of the `@custom-media` rule with unsupported boolean logic.
         custom_media_loc: Location,
     },
+
+    pub fn format(this: *const @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        return switch (this.*) {
+            .circular_custom_media => |name| try writer.print("Circular @custom-media rule: \"{s}\"", .{name.name}),
+            .custom_media_not_defined => |name| try writer.print("Custom media rule \"{s}\" not defined", .{name.name}),
+            .unsupported_custom_media_boolean_logic => |custom_media_loc| try writer.print(
+                "Unsupported boolean logic in custom media rule at line {d}, column {d}",
+                .{
+                    custom_media_loc.custom_media_loc.line,
+                    custom_media_loc.custom_media_loc.column,
+                },
+            ),
+        };
+    }
 };

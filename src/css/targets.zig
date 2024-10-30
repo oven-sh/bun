@@ -19,7 +19,7 @@ pub const Targets = struct {
 
     pub fn prefixes(this: *const Targets, prefix: css.VendorPrefix, feature: css.prefixes.Feature) css.VendorPrefix {
         if (prefix.contains(css.VendorPrefix{ .none = true }) and !this.exclude.contains(css.targets.Features{ .vendor_prefixes = true })) {
-            if (this.includes(css.targets.Features{ .vendor_prefixes = true })) {
+            if (this.include.contains(css.targets.Features{ .vendor_prefixes = true })) {
                 return css.VendorPrefix.all();
             } else {
                 return if (this.browsers) |b| feature.prefixesFor(b) else prefix;
@@ -27,6 +27,10 @@ pub const Targets = struct {
         } else {
             return prefix;
         }
+    }
+
+    pub fn shouldCompileLogical(this: *const Targets, feature: css.compat.Feature) bool {
+        return this.shouldCompile(feature, css.Features{ .logical_properties = true });
     }
 
     pub fn shouldCompile(this: *const Targets, feature: css.compat.Feature, flag: Features) bool {
@@ -42,6 +46,11 @@ pub const Targets = struct {
         };
 
         return shouldCompile(this, compat_feature, target_feature);
+    }
+
+    pub fn shouldCompileSelectors(this: *const Targets) bool {
+        return this.include.intersects(Features.selectors) or
+            (!this.exclude.intersects(Features.selectors) and this.browsers != null);
     }
 
     pub fn isCompatible(this: *const Targets, feature: css.compat.Feature) bool {

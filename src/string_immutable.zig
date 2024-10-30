@@ -4397,7 +4397,7 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
 /// e.g.
 /// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
-    const pattern: u16 = comptime @as(u16, byte1) << 8 | @as(u16, byte2);
+    const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
     var slice = slice_;
     while (slice.len >= 2) {
         const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
@@ -6381,6 +6381,13 @@ pub fn withoutSuffixComptime(input: []const u8, comptime suffix: []const u8) []c
 }
 
 pub fn withoutPrefixComptime(input: []const u8, comptime prefix: []const u8) []const u8 {
+    if (hasPrefixComptime(input, prefix)) {
+        return input[prefix.len..];
+    }
+    return input;
+}
+
+pub fn withoutPrefixComptimeZ(input: [:0]const u8, comptime prefix: []const u8) [:0]const u8 {
     if (hasPrefixComptime(input, prefix)) {
         return input[prefix.len..];
     }

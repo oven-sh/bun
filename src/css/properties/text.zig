@@ -170,6 +170,96 @@ pub const TextShadow = struct {
     blur: Length,
     /// The spread distance of the text shadow.
     spread: Length, // added in Level 4 spec
+
+    pub fn parse(input: *css.Parser) css.Result(@This()) {
+        var color: ?CssColor = null;
+        const Lengths = struct { Length, Length, Length, Length };
+        var lengths: ?Lengths = null;
+
+        while (true) {
+            if (lengths == null) {
+                const value = input.tryParse(struct {
+                    pub fn parseFn(i: *css.Parser) css.Result(Lengths) {
+                        const horizontal = switch (Length.parse(i)) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
+                        const vertical = switch (Length.parse(i)) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
+                        const blur = i.tryParse(Length.parse, .{}).asValue() orelse Length.zero();
+                        const spread = i.tryParse(Length.parse, .{}).asValue() orelse Length.zero();
+                        return .{ .result = .{ horizontal, vertical, blur, spread } };
+                    }
+                }.parseFn, .{});
+
+                if (value.asValue()) |v| {
+                    lengths = v;
+                    continue;
+                }
+            }
+
+            if (color == null) {
+                if (input.tryParse(CssColor.parse, .{}).asValue()) |value| {
+                    color = value;
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        const l = lengths orelse return .{ .err = input.newError(.qualified_rule_invalid) };
+        return .{
+            .result = .{
+                .color = color orelse CssColor.current_color,
+                .x_offset = l[0],
+                .y_offset = l[1],
+                .blur = l[2],
+                .spread = l[3],
+            },
+        };
+    }
+
+    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        try this.x_offset.toCss(W, dest);
+        try dest.writeChar(' ');
+        try this.y_offset.toCss(W, dest);
+
+        if (!this.blur.eql(&Length.zero()) or !this.spread.eql(&Length.zero())) {
+            try dest.writeChar(' ');
+            try this.blur.toCss(W, dest);
+
+            if (!this.spread.eql(&Length.zero())) {
+                try dest.writeChar(' ');
+                try this.spread.toCss(W, dest);
+            }
+        }
+
+        if (!this.color.eql(&CssColor{ .current_color = {} })) {
+            try dest.writeChar(' ');
+            try this.color.toCss(W, dest);
+        }
+
+        return;
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return this.color.isCompatible(browsers) and
+            this.x_offset.isCompatible(browsers) and
+            this.y_offset.isCompatible(browsers) and
+            this.blur.isCompatible(browsers) and
+            this.spread.isCompatible(browsers);
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return css.implementEql(@This(), this, other);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 /// A value for the [text-size-adjust](https://w3c.github.io/csswg-drafts/css-size-adjust/#adjustment-control) property.
@@ -183,7 +273,14 @@ pub const TextSizeAdjust = union(enum) {
 };
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
-pub const Direction = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));
+pub const Direction = enum {
+    /// This value sets inline base direction (bidi directionality) to line-left-to-line-right.
+    ltr,
+    /// This value sets inline base direction (bidi directionality) to line-right-to-line-left.
+    rtl,
+
+    pub usingnamespace css.DefineEnumProperty(@This());
+};
 
 /// A value for the [unicode-bidi](https://drafts.csswg.org/css-writing-modes-3/#unicode-bidi) property.
 pub const UnicodeBidi = css.DefineEnumProperty(@compileError(css.todo_stuff.depth));

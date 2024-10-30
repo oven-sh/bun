@@ -1649,6 +1649,24 @@ describe("should error with invalid options", async () => {
       });
     }).toThrow("Expected lowMemoryMode to be a boolean");
   });
+  it("multiple missing server name", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: [
+          {
+            key: "lkwejflkwjeflkj",
+          },
+          {
+            key: "lkwjefhwlkejfklwj",
+          },
+        ],
+      });
+    }).toThrow("SNI tls object must have a serverName");
+  });
 });
 it("should resolve pending promise if requested ended with pending read", async () => {
   let error: Error;
@@ -2055,3 +2073,75 @@ it("allow custom timeout per request", async () => {
   expect(res.status).toBe(200);
   expect(res.text()).resolves.toBe("Hello, World!");
 }, 20_000);
+
+it("#6462", async () => {
+  let headers: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      for (const key of request.headers.keys()) {
+        headers = headers.concat([[key, request.headers.get(key)]]);
+      }
+      return new Response(
+        JSON.stringify({
+          "headers": headers,
+        }),
+        { status: 200 },
+      );
+    },
+  });
+
+  const bytes = Buffer.from(`GET / HTTP/1.1\r\nConnection: close\r\nHost: ${server.hostname}\r\nTest!: test\r\n\r\n`);
+  const { promise, resolve } = Promise.withResolvers();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    socket: {
+      open(socket) {
+        const wrote = socket.write(bytes);
+        console.log("wrote", wrote);
+      },
+      data(socket, data) {
+        console.log(data.toString("utf8"));
+      },
+      close(socket) {
+        resolve();
+      },
+    },
+  });
+  await promise;
+
+  expect(headers).toStrictEqual([
+    ["connection", "close"],
+    ["host", "localhost"],
+    ["test!", "test"],
+  ]);
+});
+
+it("#6583", async () => {
+  const callback = mock();
+  using server = Bun.serve({
+    fetch: callback,
+    port: 0,
+    hostname: "localhost",
+  });
+  const { promise, resolve } = Promise.withResolvers();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    tls: true,
+    socket: {
+      open(socket) {
+        socket.write("GET / HTTP/1.1\r\nConnection: close\r\nHost: localhost\r\n\r\n");
+      },
+      data(socket, data) {
+        console.log(data.toString("utf8"));
+      },
+      close(socket) {
+        resolve();
+      },
+    },
+  });
+  await promise;
+  expect(callback).not.toHaveBeenCalled();
+});

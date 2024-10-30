@@ -962,6 +962,32 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.asProperty("ca")) |query| {
+        if (query.expr.asUtf8StringLiteral()) |str| {
+            install.ca = .{
+                .str = str,
+            };
+        } else if (query.expr.isArray()) {
+            const arr = query.expr.data.e_array;
+            var list = try allocator.alloc([]const u8, arr.items.len);
+            var i: usize = 0;
+            for (arr.items.slice()) |item| {
+                list[i] = try item.asStringCloned(allocator) orelse continue;
+                i += 1;
+            }
+
+            install.ca = .{
+                .list = list,
+            };
+        }
+    }
+
+    if (out.asProperty("cafile")) |query| {
+        if (try query.expr.asStringCloned(allocator)) |cafile| {
+            install.cafile = cafile;
+        }
+    }
+
     var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
 
     // Process scopes
@@ -1133,7 +1159,6 @@ pub fn loadNpmrc(
                     continue;
                 }
 
-                var matched_at_least_one = false;
                 for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
                     const url = url_map.get(k.*) orelse unreachable;
 
@@ -1143,7 +1168,6 @@ pub fn loadNpmrc(
                                 continue;
                             }
                         }
-                        matched_at_least_one = true;
                         switch (conf_item.optname) {
                             ._authToken => {
                                 if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
@@ -1162,19 +1186,6 @@ pub fn loadNpmrc(
                         // We have to keep going as it could match multiple scopes
                         continue;
                     }
-                }
-
-                if (!matched_at_least_one) {
-                    log.addWarningFmt(
-                        source,
-                        iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
-                        allocator,
-                        "The following .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
-                        .{
-                            conf_item,
-                            conf_item.registry_url,
-                        },
-                    ) catch bun.outOfMemory();
                 }
             }
         }

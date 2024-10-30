@@ -53,14 +53,17 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 }
 
 // this function is mostly copied from node
-template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    if (UNLIKELY(!arg.isString())) {
+        return std::nullopt;
+    }
+    return parseEnumeration2(lexicalGlobalObject, asString(arg)->getString(&lexicalGlobalObject));
+}
+
+std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, WTF::String encoding)
 {
     // caller must check if value is a string
-    JSC::JSString* str = asString(value);
-    if (UNLIKELY(!str))
-        return std::nullopt;
-
-    String encoding = str->value(&lexicalGlobalObject);
     switch (encoding.length()) {
     case 0: {
         return BufferEncodingType::utf8;

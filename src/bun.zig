@@ -37,6 +37,19 @@ else
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
+const cmath = struct {
+    extern "c" fn powf(x: f32, y: f32) f32;
+    extern "c" fn pow(x: f64, y: f64) f64;
+};
+
+pub inline fn powf(x: f32, y: f32) f32 {
+    return cmath.powf(x, y);
+}
+
+pub inline fn pow(x: f64, y: f64) f64 {
+    return cmath.pow(x, y);
+}
+
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
     bun.debugAssert(min <= max);
@@ -109,6 +122,7 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
+pub const bun_js = @import("./bun_js.zig");
 
 /// Copied from Zig std.trait
 pub const trait = @import("./trait.zig");
@@ -718,7 +732,7 @@ pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
 
-pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
         var value: ReturnType = undefined;
         var ran = false;
@@ -3132,8 +3146,8 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             const ptr = bun.new(T, t);
 
             if (Environment.enable_logs) {
-                if (ptr.ref_count != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                if (ptr.ref_count == 0) {
+                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
                 }
             }
 
@@ -3315,15 +3329,22 @@ pub inline fn resolveSourcePath(
     };
 }
 
+const RuntimeEmbedRoot = enum {
+    codegen,
+    src,
+    src_eager,
+    codegen_eager,
+};
+
 pub fn runtimeEmbedFile(
-    comptime root: enum { codegen, src, src_eager },
+    comptime root: RuntimeEmbedRoot,
     comptime sub_path: []const u8,
 ) []const u8 {
     comptime assert(Environment.isDebug);
     comptime assert(!Environment.codegen_embed);
 
     const abs_path = switch (root) {
-        .codegen => resolveSourcePath(.codegen, sub_path),
+        .codegen, .codegen_eager => resolveSourcePath(.codegen, sub_path),
         .src, .src_eager => resolveSourcePath(.src, sub_path),
     };
 
@@ -3344,7 +3365,7 @@ pub fn runtimeEmbedFile(
         }
     };
 
-    if (root == .src_eager and static.once.done) {
+    if ((root == .src_eager or root == .codegen_eager) and static.once.done) {
         static.once.done = false;
         default_allocator.free(static.storage);
     }
@@ -3851,19 +3872,26 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 pub const DebugThreadLock = if (Environment.allow_assert)
     struct {
         owning_thread: ?std.Thread.Id = null,
+        locked_at: crash_handler.StoredTrace = crash_handler.StoredTrace.empty,
 
         pub fn lock(impl: *@This()) void {
-            bun.assert(impl.owning_thread == null);
+            if (impl.owning_thread) |thread| {
+                Output.err("assertion failure", "Locked by thread {d} here:", .{thread});
+                crash_handler.dumpStackTrace(impl.locked_at.trace());
+                Output.panic("Safety lock violated on thread {d}", .{std.Thread.getCurrentId()});
+            }
             impl.owning_thread = std.Thread.getCurrentId();
+            impl.locked_at = crash_handler.StoredTrace.capture(@returnAddress());
         }
 
         pub fn unlock(impl: *@This()) void {
             impl.assertLocked();
-            impl.owning_thread = null;
+            impl.* = .{};
         }
 
         pub fn assertLocked(impl: *const @This()) void {
-            assert(std.Thread.getCurrentId() == impl.owning_thread);
+            assert(impl.owning_thread != null); // not locked
+            assert(impl.owning_thread == std.Thread.getCurrentId());
         }
     }
 else
@@ -3894,30 +3922,43 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         /// Prefer this over @enumFromInt to assert the int is in range
-        pub fn init(int: backing_int) callconv(callconv_inline) Index {
+        pub inline fn init(int: backing_int) Index {
             bun.assert(int != null_value); // would be confused for null
             return @enumFromInt(int);
         }
 
         /// Prefer this over @intFromEnum because of type confusion with `.Optional`
-        pub fn get(i: @This()) callconv(callconv_inline) backing_int {
+        pub inline fn get(i: @This()) backing_int {
             bun.assert(@intFromEnum(i) != null_value); // memory corruption
             return @intFromEnum(i);
         }
 
-        pub fn toOptional(oi: @This()) callconv(callconv_inline) Optional {
+        pub inline fn toOptional(oi: @This()) Optional {
             return @enumFromInt(oi.get());
+        }
+
+        pub fn sortFnAsc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn sortFnDesc(_: void, a: @This(), b: @This()) bool {
+            return a.get() < b.get();
+        }
+
+        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            comptime bun.assert(strings.eql(f, "d"));
+            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 
         pub const Optional = enum(backing_int) {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub fn init(maybe: ?Index) callconv(callconv_inline) ?Index {
+            pub inline fn init(maybe: ?Index) ?Index {
                 return if (maybe) |i| i.toOptional() else .none;
             }
 
-            pub fn unwrap(oi: Optional) callconv(callconv_inline) ?Index {
+            pub inline fn unwrap(oi: Optional) ?Index {
                 return if (oi == .none) null else @enumFromInt(@intFromEnum(oi));
             }
         };
@@ -3929,12 +3970,120 @@ comptime {
     assert(GenericIndex(u32, opaque {}) != GenericIndex(u32, opaque {}));
 }
 
+pub fn splitAtMut(comptime T: type, slice: []T, mid: usize) struct { []T, []T } {
+    bun.assert(mid <= slice.len);
+
+    return .{ slice[0..mid], slice[mid..] };
+}
+
 /// Reverse of the slice index operator.
 /// Given `&slice[index] == item`, returns the `index` needed.
 /// The item must be in the slice.
 pub fn indexOfPointerInSlice(comptime T: type, slice: []const T, item: *const T) usize {
-    bun.assert(isSliceInBufferT(T, slice, item[0..1]));
-    const offset = @intFromPtr(slice.ptr) - @intFromPtr(item);
+    bun.assert(isSliceInBufferT(T, item[0..1], slice));
+    const offset = @intFromPtr(item) - @intFromPtr(slice.ptr);
     const index = @divExact(offset, @sizeOf(T));
     return index;
+}
+
+pub fn getThreadCount() u16 {
+    const max_threads = 1024;
+    const min_threads = 2;
+    const ThreadCount = struct {
+        pub var cached_thread_count: u16 = 0;
+        var cached_thread_count_once = std.once(getThreadCountOnce);
+        fn getThreadCountFromUser() ?u16 {
+            inline for (.{ "UV_THREADPOOL_SIZE", "GOMAXPROCS" }) |envname| {
+                if (getenvZ(envname)) |env| {
+                    if (std.fmt.parseInt(u16, env, 10) catch null) |parsed| {
+                        if (parsed >= min_threads) {
+                            if (bun.logger.Log.default_log_level.atLeast(.debug)) {
+                                Output.note("Using {d} threads from {s}={d}", .{ parsed, envname, parsed });
+                                Output.flush();
+                            }
+                            return @min(parsed, max_threads);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+        fn getThreadCountOnce() void {
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+        }
+    };
+    ThreadCount.cached_thread_count_once.call();
+    return ThreadCount.cached_thread_count;
+}
+
+/// Copied from zig std. Modified to accept arguments.
+pub fn once(comptime f: anytype) Once(f) {
+    return Once(f){};
+}
+
+/// Copied from zig std. Modified to accept arguments.
+///
+/// An object that executes the function `f` just once.
+/// It is undefined behavior if `f` re-enters the same Once instance.
+pub fn Once(comptime f: anytype) type {
+    return struct {
+        done: bool = false,
+        mutex: std.Thread.Mutex = std.Thread.Mutex{},
+
+        /// Call the function `f`.
+        /// If `call` is invoked multiple times `f` will be executed only the
+        /// first time.
+        /// The invocations are thread-safe.
+        pub fn call(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            if (@atomicLoad(bool, &self.done, .acquire))
+                return;
+
+            return self.callSlow(args);
+        }
+
+        fn callSlow(self: *@This(), args: std.meta.ArgsTuple(@TypeOf(f))) void {
+            @setCold(true);
+
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // The first thread to acquire the mutex gets to run the initializer
+            if (!self.done) {
+                @call(.auto, f, args);
+                @atomicStore(bool, &self.done, true, .release);
+            }
+        }
+    };
+}
+
+/// `val` must be a pointer to an optional type (e.g. `*?T`)
+///
+/// This function takes the value out of the optional, replacing it with null, and returns the value.
+pub inline fn take(val: anytype) ?bun.meta.OptionalChild(@TypeOf(val)) {
+    if (val.*) |v| {
+        val.* = null;
+        return v;
+    }
+    return null;
+}
+
+pub inline fn wrappingNegation(val: anytype) @TypeOf(val) {
+    return 0 -% val;
+}
+
+fn assertNoPointers(T: type) void {
+    switch (@typeInfo(T)) {
+        .Pointer => @compileError("no pointers!"),
+        inline .Struct, .Union => |s| for (s.fields) |field| {
+            assertNoPointers(field.type);
+        },
+        .Array => |a| assertNoPointers(a.child),
+        else => {},
+    }
+}
+
+pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
+    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
+    hasher.update(std.mem.asBytes(&thing));
 }

@@ -16,4 +16,4 @@ for (let key in harness.bunEnv) {
   process.env[key] = harness.bunEnv[key] + "";
 }
 
-Bun.$.env(process.env);
+if (Bun.$?.env) Bun.$.env(process.env);

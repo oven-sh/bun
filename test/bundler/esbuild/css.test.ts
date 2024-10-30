@@ -6,7 +6,7 @@ import { itBundled } from "../expectBundled";
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/css
 
-describe('bundler', () => {
+describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
     experimentalCss: true,
     files: {
@@ -16,17 +16,51 @@ describe('bundler', () => {
           color: black }
       `,
     },
-    outfile: '/out.js',
+    outfile: "/out.js",
     onAfterBundle(api) {
-      api.expectFile('/out.js').toEqualIgnoringWhitespace(`
+      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
 /* entry.css */
 body {
-        background: white;
         color: #000;
-}`)
+        background: #fff;
+}`);
     },
   });
 
+  itBundled("css/CSSEntryPointEmpty", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `\n`,
+    },
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+/* entry.css */`);
+    },
+  });
+
+  itBundled("css/CSSNesting", {
+    experimentalCss: true,
+    files: {
+      "/entry.css": /* css */ `
+body {
+	h1 {
+		color: white;
+	}
+}`,
+    },
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+/* entry.css */
+body {
+	&h1 {
+		color: #fff;
+	}
+}
+`);
+    },
+  });
 
   itBundled("css/CSSAtImportMissing", {
     experimentalCss: true,
@@ -49,15 +83,15 @@ body {
         .before { color: red }
       `,
     },
-    outfile: '/out.css',
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile('/out.css').toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* internal.css */
-.before { 
-  color: red; 
+.before {
+  color: red;
 }
 /* entry.css */
-`)
+`);
     },
   });
 
@@ -82,29 +116,28 @@ body {
         .second { color: red }
       `,
     },
-    outfile: '/out.css',
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile('/out.css').toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* b.css */
-.first { 
-  color: red; 
+.first {
+  color: red;
 }
 /* d.css */
-.second { 
-  color: red; 
+.second {
+  color: red;
 }
 /* c.css */
-.third { 
-  color: red; 
+.third {
+  color: red;
 }
 /* a.css */
-.last { 
-  color: red; 
+.last {
+  color: red;
 }
-`)
+`);
     },
   });
-
 
   itBundled("css/CSSAtImportCycle", {
     experimentalCss: true,
@@ -114,17 +147,16 @@ body {
         .hehe { color: red }
       `,
     },
-    outfile: '/out.css',
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile('/out.css').toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
-.hehe { 
-  color: red; 
+.hehe {
+  color: red;
 }
-`)
+`);
     },
   });
-
 
   itBundled("css/CSSUrlImport", {
     experimentalCss: true,
@@ -140,17 +172,17 @@ body {
 </svg>
       `,
     },
-    outdir: '/out',
+    outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile('/out/a.css').toEqualIgnoringWhitespace(`
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
 /* a.css */
 .hello {
   background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iYmx1ZSIgLz4KPC9zdmc+");
 }
-`)
+`);
     },
   });
-})
+});
 
 describe.todo("bundler", () => {
   itBundled("css/CSSEntryPoint", {

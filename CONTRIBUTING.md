@@ -30,7 +30,7 @@ $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config 
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+$ sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
 ```
 
 {% /codetabs %}
@@ -77,8 +77,8 @@ $ sudo pacman -S llvm clang lld
 
 ```bash#Fedora
 $ sudo dnf install 'dnf-command(copr)'
-$ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
-$ sudo dnf install llvm clang lld
+$ sudo dnf copr enable -y @fedora-llvm-team/llvm17
+$ sudo dnf install llvm16 clang16 lld16-devel
 ```
 
 ```bash#openSUSE Tumbleweed

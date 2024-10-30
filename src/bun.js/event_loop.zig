@@ -545,6 +545,7 @@ pub const GarbageCollectionController = struct {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+        actual.internal_loop_data.jsc_vm = vm.jsc;
 
         if (comptime Environment.isDebug) {
             if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
@@ -876,6 +877,17 @@ pub const EventLoop = struct {
 
         _ = callback.call(globalObject, thisValue, arguments) catch |err|
             globalObject.reportActiveExceptionAsUnhandled(err);
+    }
+
+    pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
+        this.enter();
+        defer this.exit();
+
+        const result = callback.call(globalObject, thisValue, arguments) catch |err| {
+            globalObject.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+        return result;
     }
 
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {

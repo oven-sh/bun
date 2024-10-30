@@ -474,14 +474,10 @@ pub export fn Bun__Process__send(
     };
 
     if (message.isUndefined()) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalObject.throwMissingArgumentsValue(&.{"message"});
     }
     if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
-        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
-            ZigString.static("message"),
-            ZigString.static("string, object, number, or boolean"),
-            message,
-        ));
+        return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
     }
 
     const good = ipc_instance.data.serializeAndSend(globalObject, message);
@@ -787,7 +783,6 @@ pub const VirtualMachine = struct {
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -1661,7 +1656,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1769,7 +1763,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1905,7 +1898,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1998,7 +1990,6 @@ pub const VirtualMachine = struct {
             .bundler = bundler,
             .console = console,
             .log = log,
-            .flush_list = std.ArrayList(string).init(allocator),
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -2208,7 +2199,6 @@ pub const VirtualMachine = struct {
                     if (!blob.needsToReadFile()) {
                         virtual_source_to_use = logger.Source{
                             .path = path,
-                            .key_path = path,
                             .contents = blob.sharedView(),
                         };
                     }
@@ -3358,6 +3348,7 @@ pub const VirtualMachine = struct {
         if (frames.len == 0) return;
 
         var top = &frames[0];
+        var top_frame_is_builtin = false;
         if (this.hide_bun_stackframes) {
             for (frames) |*frame| {
                 if (frame.source_url.hasPrefixComptime("bun:") or
@@ -3365,10 +3356,12 @@ pub const VirtualMachine = struct {
                     frame.source_url.isEmpty() or
                     frame.source_url.eqlComptime("native"))
                 {
+                    top_frame_is_builtin = true;
                     continue;
                 }
 
                 top = frame;
+                top_frame_is_builtin = false;
                 break;
             }
         }
@@ -3417,8 +3410,14 @@ pub const VirtualMachine = struct {
                     }
                 }
 
+                if (top_frame_is_builtin) {
+                    // Avoid printing "export default 'native'"
+                    break :code ZigString.Slice.empty;
+                }
+
                 var log = logger.Log.init(bun.default_allocator);
                 defer log.deinit();
+
                 var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
                 must_reset_parser_arena_later.* = true;
                 break :code original_source.source_code.toUTF8(bun.default_allocator);

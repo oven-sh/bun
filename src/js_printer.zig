@@ -2953,7 +2953,7 @@ fn NewPrinter(
                             p.indent();
                         }
 
-                        if (e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
                             p.printSpace();
                         } else {
                             p.printNewline();
@@ -2965,7 +2965,7 @@ fn NewPrinter(
                             for (props[1..]) |property| {
                                 p.print(",");
 
-                                if (e.is_single_line) {
+                                if (e.is_single_line and !is_json) {
                                     p.printSpace();
                                 } else {
                                     p.printNewline();
@@ -2975,12 +2975,12 @@ fn NewPrinter(
                             }
                         }
 
-                        if (!e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
+                            p.printSpace();
+                        } else {
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else {
-                            p.printSpace();
                         }
                     }
                     if (e.close_brace_loc.start > expr.loc.start) {
@@ -4940,15 +4940,8 @@ fn NewPrinter(
                     p.printExpr(s.value, .lowest, ExprFlag.ExprResultIsUnused());
                     p.printSemicolonAfterStatement();
                 },
-                else => {
-                    var slice = p.writer.slice();
-                    const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
-
-                    if (to_print.len > 0) {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
-                    } else {
-                        Output.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
-                    }
+                else => |tag| {
+                    Output.panic("Unexpected tag in printStmt: .{s}", .{@tagName(tag)});
                 },
             }
         }
@@ -5804,7 +5797,7 @@ const FileWriterInternal = struct {
         ctx: *FileWriterInternal,
     ) anyerror!void {
         defer buffer.reset();
-        const result_ = buffer.toOwnedSliceLeaky();
+        const result_ = buffer.slice();
         var result = result_;
 
         while (result.len > 0) {
@@ -5954,10 +5947,10 @@ pub const BufferWriter = struct {
         }
 
         if (ctx.append_null_byte) {
-            ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.sentinel = ctx.buffer.sliceWithSentinel();
+            ctx.written = ctx.buffer.slice();
         } else {
-            ctx.written = ctx.buffer.toOwnedSliceLeaky();
+            ctx.written = ctx.buffer.slice();
         }
     }
 

@@ -54,7 +54,7 @@ pub const default_permission = if (Environment.isPosix)
         Syscall.S.IROTH |
         Syscall.S.IWOTH
 else
-    // TODO:
+    // Windows does not have permissions
     0;
 
 const ArrayBuffer = JSC.MarkedArrayBuffer;
@@ -1638,11 +1638,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!uid_value.isNumber()) {
-                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE_static(
-                        JSC.ZigString.static("uid"),
-                        JSC.ZigString.static("number"),
-                        uid_value,
-                    ));
+                    _ = ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
                     return null;
                 }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
@@ -1663,11 +1659,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!gid_value.isNumber()) {
-                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE_static(
-                        JSC.ZigString.static("gid"),
-                        JSC.ZigString.static("number"),
-                        gid_value,
-                    ));
+                    _ = ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
                     return null;
                 }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
@@ -4865,21 +4857,11 @@ pub const NodeFS = struct {
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSliceZ = if (!Environment.isWindows)
-            args.path.osPath(&buf)
-        else brk: {
-            // TODO(@paperdave): clean this up a lot.
-            var joined_buf: bun.PathBuffer = undefined;
-            if (std.fs.path.isAbsolute(args.path.slice())) {
-                const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
-                    return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, utf8);
-            } else {
-                var cwd_buf: bun.PathBuffer = undefined;
-                const cwd = std.posix.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
-            }
-        };
+        const path: bun.OSPathSliceZ = if (Environment.isWindows)
+            strings.toNTPath(&buf, args.path.slice())
+        else
+            args.path.osPath(&buf);
+
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),
@@ -4929,7 +4911,12 @@ pub const NodeFS = struct {
                         return .{ .result = .{ .none = {} } };
                     },
                     // continue
-                    .NOENT => {},
+                    .NOENT => {
+                        if (len == 0) {
+                            // no path to copy
+                            return .{ .err = err };
+                        }
+                    },
                 }
             },
             .result => {

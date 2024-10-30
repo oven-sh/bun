@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
+import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -1344,6 +1345,8 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
+    todo: isBroken && isWindows,
+    debugTimeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -2027,6 +2030,49 @@ describe("bundler", () => {
     run: {
       stdout: "Disposing\ntrue",
     },
+  });
+
+  itBundled("edgecase/NoOutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: false,
+    backend: "api",
+    onAfterApiBundle: async build => {
+      expect(build.success).toEqual(true);
+      expect(build.outputs).toBeArrayOfSize(2);
+
+      expect(build.outputs[0].path).toEqual("./entry.js");
+      expect(build.outputs[0].loader).toEqual("ts");
+      expect(build.outputs[0].kind).toEqual("entry-point");
+
+      expect(build.outputs[1].loader).toEqual("file");
+      expect(build.outputs[1].kind).toEqual("asset");
+      expect(await build.outputs[1].text()).toEqual("<head></head>");
+    },
+  });
+
+  itBundled("edgecase/OutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: true,
+    bundleErrors: {
+      "<bun>": ["cannot write multiple output files without an output directory"],
+    },
+    run: true,
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

@@ -1,5 +1,3 @@
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
 const tests = require("./build/Debug/napitests.node");
 
 function assert(ok) {
@@ -129,13 +127,15 @@ async function removeWrapStrongTest() {
   // no finalizer called :(
 }
 
-await noRefTest();
-await reallyGC();
-await weakRefTest();
-await reallyGC();
-await strongRefTest();
-await reallyGC();
-await removeWrapWeakTest();
-await reallyGC();
-await removeWrapStrongTest();
-await reallyGC();
+(async () => {
+  await noRefTest();
+  await reallyGC();
+  await weakRefTest();
+  await reallyGC();
+  await strongRefTest();
+  await reallyGC();
+  await removeWrapWeakTest();
+  await reallyGC();
+  await removeWrapStrongTest();
+  await reallyGC();
+})();

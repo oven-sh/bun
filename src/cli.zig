@@ -777,7 +777,7 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-            if (args.flag("--app")) {
+            if (FeatureFlags.bake and args.flag("--app")) {
                 ctx.bundler_options.bake = true;
                 ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
             }
@@ -941,7 +941,7 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (args.flag("--server-components")) {
+            if (bun.FeatureFlags.bake and args.flag("--server-components")) {
                 if (!bun.FeatureFlags.cli_server_components) {
                     // TODO: i want to disable this in non-canary
                     // but i also want to have tests that can run for PRs

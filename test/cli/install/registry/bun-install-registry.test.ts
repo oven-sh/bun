@@ -41,6 +41,8 @@ expect.extend({
 var verdaccioServer: ChildProcess;
 var port: number = randomPort();
 var packageDir: string;
+/** packageJson = join(packageDir, "package.json"); */
+var packageJson: string;
 
 let users: Record<string, string> = {};
 
@@ -90,6 +92,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   packageDir = tmpdirSync();
+  packageJson = join(packageDir, "package.json");
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
   users = {};
@@ -419,7 +422,7 @@ registry = http://localhost:${port}/
             .join("\n")
         : "";
 
-      const ini = /* ini */ `
+      const ini = `
 registry = http://localhost:${port}/
 ${Object.keys(opts)
   .map(
@@ -534,7 +537,7 @@ describe("certificate authority", () => {
     });
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.1.1",
@@ -576,7 +579,7 @@ describe("certificate authority", () => {
     });
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.1.1",
@@ -603,7 +606,7 @@ describe("certificate authority", () => {
       env,
     });
     let out = await Bun.readableStreamToText(stdout);
-    let err = await Bun.readableStreamToText(stderr);
+    let err = stderrForInstall(await Bun.readableStreamToText(stderr));
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(await exited).toBe(1);
 
@@ -623,10 +626,7 @@ describe("certificate authority", () => {
     expect(await exited).toBe(0);
   });
   test(`non-existent --cafile`, async () => {
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }),
-    );
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--cafile", "does-not-exist"],
@@ -645,7 +645,7 @@ describe("certificate authority", () => {
   test("cafile from bunfig does not exist", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -681,7 +681,7 @@ describe("certificate authority", () => {
   test("invalid cafile", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -717,7 +717,7 @@ ljelkjwelkgjw;lekj;lkejflkj
   });
   test("invalid --ca", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -756,7 +756,7 @@ export async function publish(
   });
 
   const out = await Bun.readableStreamToText(stdout);
-  const err = await Bun.readableStreamToText(stderr);
+  const err = stderrForInstall(await Bun.readableStreamToText(stderr));
   const exitCode = await exited;
   return { out, err, exitCode };
 }
@@ -775,7 +775,7 @@ describe("whoami", async () => {
     const bunfig = await authBunfig("whoami");
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "whoami-pkg",
           version: "1.1.1",
@@ -809,7 +809,7 @@ describe("whoami", async () => {
     //localhost:${port}/:_password=123456
     `;
     await Promise.all([
-      write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(join(packageDir, ".npmrc"), npmrc),
     ]);
@@ -834,7 +834,7 @@ describe("whoami", async () => {
     //localhost:${port}/:_authToken=${token}
     registry=http://localhost:${port}/`;
     await Promise.all([
-      write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
       write(join(packageDir, ".npmrc"), npmrc),
     ]);
     const { stdout, stderr, exited } = spawn({
@@ -851,7 +851,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("not logged in", async () => {
-    await write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
+    await write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "pm", "whoami"],
       cwd: packageDir,
@@ -873,7 +873,7 @@ describe("whoami", async () => {
     cache = false
     registry = { url = "http://localhost:${port}/", token = "1234567" }`;
     await Promise.all([
-      write(join(packageDir, "package.json"), JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
       write(join(packageDir, "bunfig.toml"), bunfig),
     ]);
     const { stdout, stderr, exited } = spawn({
@@ -971,7 +971,7 @@ describe("publish", async () => {
           rm(join(import.meta.dir, "packages", "otp-pkg-1"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "otp-pkg-1",
               version: "2.2.2",
@@ -1003,7 +1003,7 @@ describe("publish", async () => {
         rm(join(import.meta.dir, "packages", "otp-pkg-2"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "otp-pkg-2",
             version: "1.1.1",
@@ -1041,7 +1041,7 @@ describe("publish", async () => {
           rm(join(import.meta.dir, "packages", "otp-pkg-3"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "otp-pkg-3",
               version: "3.3.3",
@@ -1084,7 +1084,7 @@ describe("publish", async () => {
           rm(join(import.meta.dir, "packages", "otp-pkg-4"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
           write(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "otp-pkg-4",
               version: "4.4.4",
@@ -1109,7 +1109,7 @@ describe("publish", async () => {
     await Promise.all([
       rm(join(import.meta.dir, "packages", "publish-pkg-1"), { recursive: true, force: true }),
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "publish-pkg-1",
           version: "1.1.1",
@@ -1140,7 +1140,7 @@ describe("publish", async () => {
     };
     await Promise.all([
       rm(join(import.meta.dir, "packages", "publish-pkg-2"), { recursive: true, force: true }),
-      write(join(packageDir, "package.json"), JSON.stringify(json)),
+      write(packageJson, JSON.stringify(json)),
       write(join(packageDir, "bunfig.toml"), bunfig),
     ]);
 
@@ -1197,7 +1197,7 @@ describe("publish", async () => {
         write(join(publishDir, "bins", "moredir", "bin4.js"), `#!/usr/bin/env bun\nconsole.log("bin4!")`),
 
         write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             dependencies: {
@@ -1268,7 +1268,7 @@ describe("publish", async () => {
       ),
       write(join(publishDir, "bunfig.toml"), bunfig),
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -1308,7 +1308,7 @@ describe("publish", async () => {
       rm(join(import.meta.dir, "packages", "publish-pkg-3"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "root",
           workspaces: ["packages/*"],
@@ -1319,10 +1319,7 @@ describe("publish", async () => {
 
     await publish(env, join(packageDir, "packages", "publish-pkg-3"));
 
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name: "root", "dependencies": { "publish-pkg-3": "3.3.3" } }),
-    );
+    await write(packageJson, JSON.stringify({ name: "root", "dependencies": { "publish-pkg-3": "3.3.3" } }));
 
     await runBunInstall(env, packageDir);
 
@@ -1336,7 +1333,7 @@ describe("publish", async () => {
         rm(join(import.meta.dir, "packages", "dry-run-1"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "dry-run-1",
             version: "1.1.1",
@@ -1358,7 +1355,7 @@ describe("publish", async () => {
         rm(join(import.meta.dir, "packages", "dry-run-2"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "dry-run-2",
             version: "2.2.2",
@@ -1409,7 +1406,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         const bunfig = await authBunfig("lifecycle" + (arg ? "dry" : ""));
         await Promise.all([
           rm(join(import.meta.dir, "packages", "publish-pkg-4"), { recursive: true, force: true }),
-          write(join(packageDir, "package.json"), JSON.stringify(json)),
+          write(packageJson, JSON.stringify(json)),
           write(join(packageDir, "script.js"), script),
           write(join(packageDir, "bunfig.toml"), bunfig),
         ]);
@@ -1441,7 +1438,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       const bunfig = await authBunfig("ignorescripts");
       await Promise.all([
         rm(join(import.meta.dir, "packages", "publish-pkg-5"), { recursive: true, force: true }),
-        write(join(packageDir, "package.json"), JSON.stringify(json)),
+        write(packageJson, JSON.stringify(json)),
         write(join(packageDir, "script.js"), script),
         write(join(packageDir, "bunfig.toml"), bunfig),
       ]);
@@ -1467,7 +1464,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
     await Promise.all([
       rm(join(import.meta.dir, "packages", "publish-pkg-6"), { recursive: true, force: true }),
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "publish-pkg-6",
           version: "6.6.6",
@@ -1501,7 +1498,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         rm(join(import.meta.dir, "packages", "publish-pkg-7"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "publish-pkg-7",
             version: "7.7.7",
@@ -1538,7 +1535,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
         await Promise.all([
           rm(join(import.meta.dir, "packages", "@secret", "publish-pkg-8"), { recursive: true, force: true }),
           write(join(packageDir, "bunfig.toml"), bunfig),
-          write(join(packageDir, "package.json"), JSON.stringify(pkgJson)),
+          write(packageJson, JSON.stringify(pkgJson)),
         ]);
 
         let { out, err, exitCode } = await publish(env, packageDir);
@@ -1566,7 +1563,7 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
       await Promise.all([
         rm(join(import.meta.dir, "packages", "publish-pkg-9"), { recursive: true, force: true }),
         write(join(packageDir, "bunfig.toml"), bunfig),
-        write(join(packageDir, "package.json"), JSON.stringify(pkgJson)),
+        write(packageJson, JSON.stringify(pkgJson)),
       ]);
 
       let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
@@ -1582,7 +1579,7 @@ describe("package.json indentation", async () => {
   test("works for root and workspace packages", async () => {
     await Promise.all([
       // 5 space indentation
-      write(join(packageDir, "package.json"), `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"]\n}`),
+      write(packageJson, `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"]\n}`),
       // 1 tab indentation
       write(join(packageDir, "packages", "bar", "package.json"), `\n{\n\n\t"name": "bar",\n}`),
     ]);
@@ -1598,7 +1595,7 @@ describe("package.json indentation", async () => {
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    const rootPackageJson = await file(join(packageDir, "package.json")).text();
+    const rootPackageJson = await file(packageJson).text();
 
     expect(rootPackageJson).toBe(
       `{\n     "name": "foo",\n     "workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
@@ -1616,9 +1613,22 @@ describe("package.json indentation", async () => {
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).text()).toBe(rootPackageJson);
+    expect(await file(packageJson).text()).toBe(rootPackageJson);
     const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
     expect(workspacePackageJson).toBe(`{\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}`);
+  });
+
+  test("install maintains indentation", async () => {
+    await write(packageJson, `{\n  "dependencies": {}\n  }\n`);
+    let { exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+    expect(await exited).toBe(0);
+    expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
   });
 });
 
@@ -1626,7 +1636,7 @@ describe("optionalDependencies", () => {
   for (const optional of [true, false]) {
     test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           [optional ? "optionalDependencies" : "dependencies"]: {
@@ -1655,7 +1665,7 @@ describe("optionalDependencies", () => {
   for (const rootOptional of [true, false]) {
     test(`exit code is 0 when ${rootOptional ? "root" : ""} optional dependency does not exist in registry`, async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           [rootOptional ? "optionalDependencies" : "dependencies"]: {
@@ -1673,9 +1683,6 @@ describe("optionalDependencies", () => {
       expect(err).toMatch(`warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry - 404`);
     });
   }
-});
-
-describe("optionalDependencies", () => {
   test("should not install optional deps if false in bunfig", async () => {
     await writeFile(
       join(packageDir, "bunfig.toml"),
@@ -1687,7 +1694,7 @@ describe("optionalDependencies", () => {
   `,
     );
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify(
         {
           name: "publish-pkg-deps",
@@ -1725,17 +1732,43 @@ describe("optionalDependencies", () => {
       "",
       "1 package installed",
     ]);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      "no-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps"]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  });
+
+  test("lifecycle scripts failures from transitive dependencies are ignored", async () => {
+    // Dependency with a transitive optional dependency that fails during its preinstall script.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "2.2.2",
+        dependencies: {
+          "optional-lifecycle-fail": "1.1.1",
+        },
+        trustedDependencies: ["lifecycle-fail"],
+      }),
+    );
+
+    const { err, exited } = await runBunInstall(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(
+      await Promise.all([
+        exists(join(packageDir, "node_modules", "optional-lifecycle-fail", "package.json")),
+        exists(join(packageDir, "node_modules", "lifecycle-fail", "package.json")),
+      ]),
+    ).toEqual([true, false]);
   });
 });
 
 test("tarball override does not crash", async () => {
   await write(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -1766,7 +1799,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
   if (prod) {
     test("modifying package.json with --production should not save lockfile", async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -1863,7 +1896,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
 
   test(`should prefer ${order[+prod % 2]} over ${order[1 - (+prod % 2)]}`, async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -1967,7 +2000,7 @@ test("hardlinks on windows dont fail with long paths", async () => {
   );
 
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.2.3",
@@ -2005,7 +2038,7 @@ test("hardlinks on windows dont fail with long paths", async () => {
 
 test("basic 1", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -2081,7 +2114,7 @@ registry = "http://localhost:${port}"
       `,
     ),
     write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -2126,7 +2159,7 @@ cache = "${cacheDir}"
 
 test("dependency from root satisfies range from dependency", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -2214,7 +2247,7 @@ test("duplicate names and versions in a manifest do not install incorrect packag
    * (`a-dep@1.0.1` would become `no-deps@1.0.1`)
    */
   await write(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -2257,7 +2290,7 @@ describe("peerDependency index out of bounds", async () => {
       if (firstDep === secondDep) continue;
       test(`replacing ${firstDep} with ${secondDep}`, async () => {
         await write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             dependencies: {
@@ -2287,7 +2320,7 @@ describe("peerDependency index out of bounds", async () => {
           rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
           rm(join(packageDir, ".bun-cache"), { recursive: true, force: true }),
           write(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies: {
@@ -2324,7 +2357,7 @@ describe("peerDependency index out of bounds", async () => {
   // task is created for it.
   test("optional", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -2340,7 +2373,7 @@ describe("peerDependency index out of bounds", async () => {
     // update version and delete node_modules and cache
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -2364,7 +2397,7 @@ describe("peerDependency index out of bounds", async () => {
 
 test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -2405,7 +2438,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -2447,7 +2480,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
 
 test("package added after install", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -2488,7 +2521,7 @@ test("package added after install", async () => {
   // add `no-deps` to root package.json with a smaller but still compatible
   // version for `one-range-dep`.
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -2564,7 +2597,7 @@ test("package added after install", async () => {
 test("--production excludes devDependencies in workspaces", async () => {
   await Promise.all([
     write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         workspaces: ["packages/*"],
@@ -2659,7 +2692,7 @@ test("--production excludes devDependencies in workspaces", async () => {
 
 test("--production without a lockfile will install and not save lockfile", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.2.3",
@@ -2702,7 +2735,7 @@ describe("binaries", () => {
       test("existing non-symlink", async () => {
         await Promise.all([
           write(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies: {
@@ -2731,7 +2764,7 @@ describe("binaries", () => {
         "uses-what-bin": "1.5.0",
       },
     };
-    await writeFile(join(packageDir, "package.json"), JSON.stringify(json));
+    await writeFile(packageJson, JSON.stringify(json));
 
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
@@ -2795,7 +2828,7 @@ describe("binaries", () => {
   test("will link binaries for packages installed multiple times", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -2844,7 +2877,7 @@ describe("binaries", () => {
 
   test("it should re-symlink binaries that become invalid when updating package versions", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -2885,7 +2918,7 @@ describe("binaries", () => {
     expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
 
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -2939,7 +2972,7 @@ describe("binaries", () => {
         );
       } else {
         await write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
           }),
@@ -2999,7 +3032,7 @@ describe("binaries", () => {
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -3023,10 +3056,73 @@ describe("binaries", () => {
   });
 });
 
+test("it should invalid cached package if package.json is missing", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  let { out } = await runBunInstall(env, packageDir);
+  expect(out).toContain("+ no-deps@2.0.0");
+
+  // node_modules and cache should be populated
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules", "no-deps")),
+      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+    ]),
+  ).toEqual([
+    ["index.js", "package.json"],
+    ["index.js", "package.json"],
+  ]);
+
+  // with node_modules package.json deleted, the package should be reinstalled
+  await rm(join(packageDir, "node_modules", "no-deps", "package.json"));
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).toContain("+ no-deps@2.0.0");
+
+  // another install is a no-op
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).not.toContain("+ no-deps@2.0.0");
+
+  // with cache package.json deleted, install is a no-op and cache is untouched
+  await rm(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1", "package.json"));
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).not.toContain("+ no-deps@2.0.0");
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules", "no-deps")),
+      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+    ]),
+  ).toEqual([["index.js", "package.json"], ["index.js"]]);
+
+  // now with node_modules package.json deleted, the package AND the cache should
+  // be repopulated
+  await rm(join(packageDir, "node_modules", "no-deps", "package.json"));
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).toContain("+ no-deps@2.0.0");
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules", "no-deps")),
+      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+    ]),
+  ).toEqual([
+    ["index.js", "package.json"],
+    ["index.js", "package.json"],
+  ]);
+});
+
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {
   // first clean install
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.0.0",
@@ -3308,7 +3404,7 @@ describe("hoisting", async () => {
   for (const { dependencies, expected, situation } of tests) {
     test(`it should hoist ${expected} when ${situation}`, async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies,
@@ -3470,7 +3566,7 @@ describe("hoisting", async () => {
         `it should hoist ${expected} when ${situation}`,
         async () => {
           await writeFile(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies,
@@ -3552,7 +3648,7 @@ describe("hoisting", async () => {
 
   test("hoisting/using incorrect peer dep after install", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -3604,7 +3700,7 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
 
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -3657,7 +3753,7 @@ describe("hoisting", async () => {
   test("root workspace (other than root) dependency will not hoist incorrect peer", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           workspaces: ["bar"],
@@ -3728,7 +3824,7 @@ describe("hoisting", async () => {
 
   test("hoisting/using incorrect peer dep on initial install", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -3780,7 +3876,7 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
 
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -3837,7 +3933,7 @@ describe("hoisting", async () => {
       // `normal-dep-and-dev-dep` should install `no-deps@1.0.0` and `normal-dep@1.0.1`.
       // It should not hoist (skip) `no-deps` for `normal-dep-and-dev-dep`.
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -3884,7 +3980,7 @@ describe("hoisting", async () => {
 
     test("from workspace", async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -3945,7 +4041,7 @@ describe("hoisting", async () => {
 
     test("from linked package", async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -4013,7 +4109,7 @@ describe("hoisting", async () => {
 
     test("dependency with normal dependency same as root", async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -4060,7 +4156,7 @@ describe("hoisting", async () => {
 describe("workspaces", async () => {
   test("adding packages in a subdirectory of a workspace", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "root",
         workspaces: ["foo"],
@@ -4095,7 +4191,7 @@ describe("workspaces", async () => {
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "root",
       workspaces: ["foo"],
       dependencies: {
@@ -4179,7 +4275,7 @@ describe("workspaces", async () => {
   });
   test("adding packages in workspaces", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         workspaces: ["packages/*"],
@@ -4252,7 +4348,7 @@ describe("workspaces", async () => {
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       workspaces: ["packages/*"],
       dependencies: {
@@ -4343,7 +4439,7 @@ describe("workspaces", async () => {
   });
   test("it should detect duplicate workspace dependencies", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         workspaces: ["packages/*"],
@@ -4391,7 +4487,7 @@ describe("workspaces", async () => {
     for (const packageVersion of versions) {
       test(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             version: "1.0.0",
@@ -4521,7 +4617,7 @@ describe("workspaces", async () => {
   for (const version of versions) {
     test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           workspaces: ["packages/*"],
@@ -4783,7 +4879,7 @@ describe("transitive file dependencies", () => {
   test("from hoisted workspace dependencies", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           workspaces: ["pkg1"],
@@ -4906,7 +5002,7 @@ describe("transitive file dependencies", () => {
   test("from non-hoisted workspace dependencies", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           workspaces: ["pkg1"],
@@ -5056,7 +5152,7 @@ describe("transitive file dependencies", () => {
 
   test("from root dependencies", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -5196,7 +5292,7 @@ describe("transitive file dependencies", () => {
     await writePackages(2);
 
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -5248,7 +5344,7 @@ describe("transitive file dependencies", () => {
 
 test("name from manifest is scoped and url encoded", async () => {
   await write(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -5277,7 +5373,7 @@ test("name from manifest is scoped and url encoded", async () => {
 describe("update", () => {
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -5292,7 +5388,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "no-deps": "^1.1.0",
@@ -5308,7 +5404,7 @@ describe("update", () => {
   });
   test("dist-tags", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -5329,7 +5425,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "a-dep": "latest",
@@ -5340,7 +5436,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir, ["a-dep"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "a-dep": "^1.0.10",
@@ -5349,7 +5445,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir, ["--latest"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "a-dep": "^1.0.10",
@@ -5363,7 +5459,7 @@ describe("update", () => {
     ];
     for (const { version, dependency } of runs) {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -5379,7 +5475,7 @@ describe("update", () => {
           version: version.replace(/.*@/, ""),
         });
 
-        expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
+        expect(await file(packageJson).json()).toMatchObject({
           dependencies: {
             [dependency]: version,
           },
@@ -5405,7 +5501,7 @@ describe("update", () => {
   describe("tilde", () => {
     test("without args", async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -5430,7 +5526,7 @@ describe("update", () => {
         "",
         "Checked 1 install across 2 packages (no changes)",
       ]);
-      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      expect(await file(packageJson).json()).toEqual({
         name: "foo",
         dependencies: {
           "no-deps": "~1.0.1",
@@ -5446,7 +5542,7 @@ describe("update", () => {
         "",
         "Checked 1 install across 2 packages (no changes)",
       ]);
-      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      expect(await file(packageJson).json()).toEqual({
         name: "foo",
         dependencies: {
           "no-deps": "~1.0.1",
@@ -5457,7 +5553,7 @@ describe("update", () => {
     for (const latest of [true, false]) {
       test(`update no args${latest ? " --latest" : ""}`, async () => {
         await write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             dependencies: {
@@ -5484,7 +5580,7 @@ describe("update", () => {
           await runBunUpdate(env, packageDir, ["--latest"]);
           assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
               "a1": "npm:no-deps@^2.0.0",
@@ -5508,7 +5604,7 @@ describe("update", () => {
           await runBunUpdate(env, packageDir);
           assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
               "a1": "npm:no-deps@^1.1.0",
@@ -5562,7 +5658,7 @@ describe("update", () => {
 
     test("with package name in args", async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -5591,7 +5687,7 @@ describe("update", () => {
         expect.stringContaining("done"),
         "",
       ]);
-      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      expect(await file(packageJson).json()).toEqual({
         name: "foo",
         dependencies: {
           "a-dep": "1.0.3",
@@ -5610,7 +5706,7 @@ describe("update", () => {
         "",
         "1 package installed",
       ]);
-      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      expect(await file(packageJson).json()).toEqual({
         name: "foo",
         dependencies: {
           "a-dep": "1.0.3",
@@ -5622,7 +5718,7 @@ describe("update", () => {
   describe("alises", () => {
     test("update all", async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -5634,7 +5730,7 @@ describe("update", () => {
       await runBunUpdate(env, packageDir);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      expect(await file(packageJson).json()).toEqual({
         name: "foo",
         dependencies: {
           "aliased-dep": "npm:no-deps@^1.1.0",
@@ -5647,7 +5743,7 @@ describe("update", () => {
     });
     test("update specific aliased package", async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -5659,7 +5755,7 @@ describe("update", () => {
       await runBunUpdate(env, packageDir, ["aliased-dep"]);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      expect(await file(packageJson).json()).toEqual({
         name: "foo",
         dependencies: {
           "aliased-dep": "npm:no-deps@^1.1.0",
@@ -5672,7 +5768,7 @@ describe("update", () => {
     });
     test("with pre and build tags", async () => {
       await write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -5684,7 +5780,7 @@ describe("update", () => {
       await runBunUpdate(env, packageDir);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
+      expect(await file(packageJson).json()).toMatchObject({
         name: "foo",
         dependencies: {
           "aliased-dep": "npm:prereleases-3@5.0.0-alpha.150",
@@ -5706,7 +5802,7 @@ describe("update", () => {
         "",
         "1 package installed",
       ]);
-      expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
+      expect(await file(packageJson).json()).toMatchObject({
         name: "foo",
         dependencies: {
           "aliased-dep": "npm:prereleases-3@5.0.0-alpha.153",
@@ -5716,7 +5812,7 @@ describe("update", () => {
   });
   test("--no-save will update packages in node_modules and not save to package.json", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -5729,7 +5825,7 @@ describe("update", () => {
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(out).toEqual([expect.stringContaining("bun update v1."), "", "+ a-dep@1.0.1", "", "1 package installed"]);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "a-dep": "1.0.1",
@@ -5737,7 +5833,7 @@ describe("update", () => {
     });
 
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -5750,7 +5846,7 @@ describe("update", () => {
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(out).toEqual([expect.stringContaining("bun update v1."), "", "+ a-dep@1.0.10", "", "1 package installed"]);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "a-dep": "^1.0.1",
@@ -5766,7 +5862,7 @@ describe("update", () => {
       "",
       "Checked 1 install across 2 packages (no changes)",
     ]);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "a-dep": "^1.0.10",
@@ -5775,7 +5871,7 @@ describe("update", () => {
   });
   test("update won't update beyond version range unless the specified version allows it", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -5787,7 +5883,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "dep-with-tags": "^1.0.1",
@@ -5800,7 +5896,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir, ["dep-with-tags"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "dep-with-tags": "^1.0.1",
@@ -5814,7 +5910,7 @@ describe("update", () => {
     await runBunUpdate(env, packageDir, ["dep-with-tags@^2.0.0"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "dep-with-tags": "^2.0.1",
@@ -5826,7 +5922,7 @@ describe("update", () => {
   });
   test("update should update all packages in the current workspace", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         workspaces: ["packages/*"],
@@ -5901,7 +5997,7 @@ describe("update", () => {
     let lockfile = parseLockfile(packageDir);
     // make sure this is valid
     expect(lockfile).toMatchNodeModulesAt(packageDir);
-    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+    expect(await file(packageJson).json()).toEqual({
       name: "foo",
       workspaces: ["packages/*"],
       dependencies: {
@@ -6012,7 +6108,7 @@ describe("update", () => {
     for (const args of [true, false]) {
       for (const group of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
         await write(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             [group]: {
@@ -6031,7 +6127,7 @@ describe("update", () => {
           "",
           "1 package installed",
         ]);
-        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        expect(await file(packageJson).json()).toEqual({
           name: "foo",
           [group]: {
             "a-dep": "^1.0.10",
@@ -6045,7 +6141,7 @@ describe("update", () => {
   });
   test("it should update packages from update requests", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -6131,7 +6227,7 @@ describe("update", () => {
 
     // update root package.json no-deps to ^1.0.0 and update it
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -6158,7 +6254,7 @@ describe("update", () => {
 
   test("--latest works with packages from arguments", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -6172,7 +6268,7 @@ describe("update", () => {
 
     const files = await Promise.all([
       file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
-      file(join(packageDir, "package.json")).json(),
+      file(packageJson).json(),
     ]);
 
     expect(files).toMatchObject([{ version: "2.0.0" }, { dependencies: { "no-deps": "2.0.0" } }]);
@@ -6181,7 +6277,7 @@ describe("update", () => {
 
 test("packages dependening on each other with aliases does not infinitely loop", async () => {
   await write(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -6210,7 +6306,7 @@ test("packages dependening on each other with aliases does not infinitely loop",
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -6292,7 +6388,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
 
 test("one version with binary map", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -6331,7 +6427,7 @@ test("one version with binary map", async () => {
 
 test("multiple versions with binary map", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       version: "1.2.3",
@@ -6375,7 +6471,7 @@ test("multiple versions with binary map", async () => {
 
 test("duplicate dependency in optionalDependencies maintains sort order", async () => {
   await write(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -6412,7 +6508,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
 
 test("missing package on reinstall, some with binaries", async () => {
   await writeFile(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "fooooo",
       dependencies: {
@@ -6555,7 +6651,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       };
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -6607,7 +6703,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // add a dependency with all lifecycle scripts
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -6722,7 +6818,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -6819,7 +6915,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -6863,7 +6959,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -6912,7 +7008,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // add to trusted dependencies
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -6957,7 +7053,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7023,7 +7119,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await rm(join(packageDir, "bun.lockb"));
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7085,7 +7181,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       // add it to trusted dependencies
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7126,7 +7222,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7192,7 +7288,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7254,7 +7350,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7287,7 +7383,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "fooooooooo",
           version: "1.0.0",
@@ -7318,7 +7414,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7358,7 +7454,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -7398,7 +7494,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7446,7 +7542,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           "binding-gyp-scripts": "1.5.0",
         },
       };
-      await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJSON));
+      await writeFile(packageJson, JSON.stringify(packageJSON));
 
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -7478,7 +7574,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeFalse();
 
       packageJSON.trustedDependencies = ["binding-gyp-scripts"];
-      await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJSON));
+      await writeFile(packageJson, JSON.stringify(packageJSON));
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -7489,7 +7585,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -7505,7 +7601,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7564,7 +7660,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7622,7 +7718,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             [script]: "exit 0",
           },
         };
-        await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJSON));
+        await writeFile(packageJson, JSON.stringify(packageJSON));
         await writeFile(join(packageDir, "binding.gyp"), "");
 
         const { stdout, stderr, exited } = spawn({
@@ -7657,7 +7753,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7702,7 +7798,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeFalse();
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7722,7 +7818,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -7743,7 +7839,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7814,7 +7910,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "stress-test",
           version: "1.0.0",
@@ -7905,7 +8001,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       // - node_modules/uses-what-bin/node_modules/.bin/what-bin@1.0.0
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7955,7 +8051,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await rm(join(packageDir, "bun.lockb"));
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -7979,7 +8075,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8027,7 +8123,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -8062,7 +8158,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -8103,7 +8199,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -8152,7 +8248,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       await rm(join(packageDir, "bun.lockb"));
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -8202,7 +8298,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -8250,7 +8346,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -8293,7 +8389,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -8336,7 +8432,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
         await Promise.all([
           write(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies: {
@@ -8514,7 +8610,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
           await writeFile(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
             }),
@@ -8544,7 +8640,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           ]);
           expect(await exited).toBe(0);
           expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
-          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
               "no-deps": "1.0.0",
@@ -8555,7 +8651,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
           await writeFile(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
             }),
@@ -8584,7 +8680,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           ]);
           expect(await exited).toBe(0);
           expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
-          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
               "no-deps": "^2.0.0",
@@ -8622,7 +8718,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           ]);
           expect(await exited).toBe(0);
           expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
-          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
               "no-deps": "^2.0.0",
@@ -8637,7 +8733,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             trustedDependencies: ["uses-what-bin"],
@@ -8673,7 +8769,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        expect(await file(packageJson).json()).toEqual({
           name: "foo",
           dependencies: {
             "uses-what-bin": "1.0.0",
@@ -8710,7 +8806,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             trustedDependencies: ["uses-what-bin"],
@@ -8746,7 +8842,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        expect(await file(packageJson).json()).toEqual({
           name: "foo",
           dependencies: {
             "uses-what-bin": "1.0.0",
@@ -8755,7 +8851,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
 
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             dependencies: {
@@ -8790,7 +8886,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        expect(await file(packageJson).json()).toEqual({
           name: "foo",
           dependencies: {
             "uses-what-bin": "1.0.0",
@@ -8803,7 +8899,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             dependencies: {
@@ -8821,7 +8917,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         });
 
-        let err = await Bun.readableStreamToText(stderr);
+        let err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8838,7 +8934,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
-        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        expect(await file(packageJson).json()).toEqual({
           name: "foo",
           dependencies: {
             "electron": "1.0.0",
@@ -8846,7 +8942,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
 
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             trustedDependencies: ["electron"],
@@ -8870,7 +8966,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           env: testEnv,
         }));
 
-        err = await Bun.readableStreamToText(stderr);
+        err = stderrForInstall(await Bun.readableStreamToText(stderr));
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
@@ -8892,7 +8988,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -8916,7 +9012,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8931,7 +9027,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -8955,7 +9051,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       env.PATH = originalPath;
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -8968,7 +9064,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -8985,7 +9081,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9015,7 +9111,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("bun pm untrusted");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9047,7 +9143,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
           await writeFile(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies: {
@@ -9065,7 +9161,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           });
 
-          let err = await Bun.readableStreamToText(stderr);
+          let err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -9095,7 +9191,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
@@ -9103,7 +9199,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(await exited).toBe(0);
 
           expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          expect(await file(packageJson).json()).toEqual({
             name: "foo",
             dependencies: {
               "no-deps": "1.0.0",
@@ -9122,7 +9218,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
               env: testEnv,
             }));
 
-            err = await Bun.readableStreamToText(stderr);
+            err = stderrForInstall(await Bun.readableStreamToText(stderr));
             expect(err).toContain("Saved lockfile");
             expect(err).not.toContain("not found");
             expect(err).not.toContain("error:");
@@ -9133,7 +9229,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             expect(await exited).toBe(0);
           }
           await writeFile(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies: {
@@ -9150,7 +9246,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -9167,7 +9263,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           // add again, bun pm untrusted should report it as untrusted
 
           await writeFile(
-            join(packageDir, "package.json"),
+            packageJson,
             JSON.stringify({
               name: "foo",
               dependencies: {
@@ -9185,7 +9281,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
@@ -9213,7 +9309,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             env: testEnv,
           }));
 
-          err = await Bun.readableStreamToText(stderr);
+          err = stderrForInstall(await Bun.readableStreamToText(stderr));
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
@@ -9228,7 +9324,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             version: "1.0.0",
@@ -9259,7 +9355,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
         const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             version: "1.0.0",
@@ -9305,7 +9401,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -9325,7 +9421,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(err.split(/\r?\n/)).toEqual([
@@ -9355,7 +9451,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       const exe = bunExe().replace(/\\/g, "\\\\");
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.2.3",
@@ -9378,7 +9474,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await Bun.readableStreamToText(stderr);
+      const err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
       expect(err.split(/\r?\n/)).toEqual([
@@ -9411,7 +9507,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 describe("pm trust", async () => {
   test("--default", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
       }),
@@ -9425,7 +9521,7 @@ describe("pm trust", async () => {
       env,
     });
 
-    let err = await Bun.readableStreamToText(stderr);
+    let err = stderrForInstall(await Bun.readableStreamToText(stderr));
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
@@ -9438,7 +9534,7 @@ describe("pm trust", async () => {
   describe("--all", async () => {
     test("no dependencies", async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
         }),
@@ -9452,7 +9548,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).toContain("error: Lockfile not found");
       let out = await Bun.readableStreamToText(stdout);
       expect(out).toBeEmpty();
@@ -9461,7 +9557,7 @@ describe("pm trust", async () => {
 
     test("some dependencies, non with scripts", async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           dependencies: {
@@ -9478,7 +9574,7 @@ describe("pm trust", async () => {
         env,
       });
 
-      let err = await Bun.readableStreamToText(stderr);
+      let err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9505,7 +9601,7 @@ describe("pm trust", async () => {
         env,
       }));
 
-      err = await Bun.readableStreamToText(stderr);
+      err = stderrForInstall(await Bun.readableStreamToText(stderr));
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
@@ -9673,7 +9769,7 @@ describe("semver", () => {
   for (const { title, depVersion, expected } of taggedVersionTests) {
     test(title, async () => {
       await writeFile(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
@@ -9711,7 +9807,7 @@ describe("semver", () => {
 
   test.todo("only tagged versions in range errors", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -9899,7 +9995,7 @@ for (let i = 0; i < prereleaseTests.length; i++) {
     for (const { title, depVersion, expected } of tests) {
       test(title, async () => {
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             version: "1.0.0",
@@ -10045,7 +10141,7 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
     for (const { title, depVersion } of tests) {
       test(title, async () => {
         await writeFile(
-          join(packageDir, "package.json"),
+          packageJson,
           JSON.stringify({
             name: "foo",
             version: "1.0.0",
@@ -10078,7 +10174,7 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
 describe("yarn tests", () => {
   test("dragon test 1", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "dragon-test-1",
         version: "1.0.0",
@@ -10142,7 +10238,7 @@ describe("yarn tests", () => {
 
   test("dragon test 2", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "dragon-test-2",
         version: "1.0.0",
@@ -10216,7 +10312,7 @@ describe("yarn tests", () => {
 
   test("dragon test 3", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "dragon-test-3",
         version: "1.0.0",
@@ -10268,7 +10364,7 @@ describe("yarn tests", () => {
 
   test("dragon test 4", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         "name": "dragon-test-4",
         "version": "1.0.0",
@@ -10330,7 +10426,7 @@ describe("yarn tests", () => {
 
   test("dragon test 5", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         "name": "dragon-test-5",
         "version": "1.0.0",
@@ -10413,7 +10509,7 @@ describe("yarn tests", () => {
 
   test.todo("dragon test 6", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         "name": "dragon-test-6",
         "version": "1.0.0",
@@ -10530,7 +10626,7 @@ describe("yarn tests", () => {
 
   test.todo("dragon test 7", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         "name": "dragon-test-7",
         "version": "1.0.0",
@@ -10613,7 +10709,7 @@ describe("yarn tests", () => {
 
   test("dragon test 8", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         "name": "dragon-test-8",
         version: "1.0.0",
@@ -10656,7 +10752,7 @@ describe("yarn tests", () => {
 
   test("dragon test 9", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "dragon-test-9",
         version: "1.0.0",
@@ -10699,7 +10795,7 @@ describe("yarn tests", () => {
 
   test.todo("dragon test 10", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "dragon-test-10",
         version: "1.0.0",
@@ -10774,7 +10870,7 @@ describe("yarn tests", () => {
 
   test("dragon test 12", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "dragon-test-12",
         version: "1.0.0",
@@ -10847,7 +10943,7 @@ describe("yarn tests", () => {
 
   test("it should not warn when the peer dependency resolution is compatible", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "compatible-peer-deps",
         version: "1.0.0",
@@ -10888,7 +10984,7 @@ describe("yarn tests", () => {
 
   test("it should warn when the peer dependency resolution is incompatible", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "incompatible-peer-deps",
         version: "1.0.0",
@@ -10929,7 +11025,7 @@ describe("yarn tests", () => {
 
   test("it should install in such a way that two identical packages with different peer dependencies are different instances", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -11037,7 +11133,7 @@ describe("yarn tests", () => {
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (simple)", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -11101,7 +11197,7 @@ describe("yarn tests", () => {
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (complex)", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -11167,7 +11263,7 @@ describe("yarn tests", () => {
 
   test("it shouldn't deduplicate two packages with similar peer dependencies but different names", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -11227,7 +11323,7 @@ describe("yarn tests", () => {
 
   test("it should reinstall and rebuild dependencies deleted by the user on the next install", async () => {
     await writeFile(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
@@ -11289,7 +11385,7 @@ describe("yarn tests", () => {
 
 test("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
   await write(
-    join(packageDir, "package.json"),
+    packageJson,
     JSON.stringify({
       name: "foo",
       dependencies: {
@@ -11462,7 +11558,7 @@ describe("outdated", () => {
   test("in workspace", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           workspaces: ["pkg1"],
@@ -11519,7 +11615,7 @@ describe("outdated", () => {
 
   test("NO_COLOR works", async () => {
     await write(
-      join(packageDir, "package.json"),
+      packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
@@ -11557,7 +11653,7 @@ describe("outdated", () => {
   async function setupWorkspace() {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "foo",
           workspaces: ["packages/*"],
@@ -11654,7 +11750,7 @@ describe("outdated", () => {
   test("scoped workspace names", async () => {
     await Promise.all([
       write(
-        join(packageDir, "package.json"),
+        packageJson,
         JSON.stringify({
           name: "@foo/bar",
           workspaces: ["packages/*"],
@@ -11847,4 +11943,3 @@ registry = "http://localhost:${port}/"
     });
   }
 });
-

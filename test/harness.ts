@@ -307,174 +307,174 @@ const binaryTypes = {
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
-
-expect.extend({
-  toHaveTestTimedOutAfter(actual: any, expected: number) {
-    if (typeof actual !== "string") {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to be a string`,
-      };
-    }
-
-    const preStartI = actual.indexOf("timed out after ");
-    if (preStartI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "timed out after "`,
-      };
-    }
-    const startI = preStartI + "timed out after ".length;
-    const endI = actual.indexOf("ms", startI);
-    if (endI === -1) {
-      return {
-        pass: false,
-        message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
-      };
-    }
-    const int = parseInt(actual.slice(startI, endI));
-    if (!Number.isSafeInteger(int)) {
-      return {
-        pass: false,
-        message: () => `Expected ${int} to be a safe integer`,
-      };
-    }
-
-    return {
-      pass: int >= expected,
-      message: () => `Expected ${int} to be >= ${expected}`,
-    };
-  },
-  toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
-    switch (expected) {
-      case "buffer":
+if (expect.extend)
+  expect.extend({
+    toHaveTestTimedOutAfter(actual: any, expected: number) {
+      if (typeof actual !== "string") {
         return {
-          pass: Buffer.isBuffer(actual),
-          message: () => `Expected ${actual} to be buffer`,
+          pass: false,
+          message: () => `Expected ${actual} to be a string`,
         };
-      case "arraybuffer":
+      }
+
+      const preStartI = actual.indexOf("timed out after ");
+      if (preStartI === -1) {
         return {
-          pass: actual instanceof ArrayBuffer,
-          message: () => `Expected ${actual} to be ArrayBuffer`,
+          pass: false,
+          message: () => `Expected ${actual} to contain "timed out after "`,
         };
-      default: {
-        const ctor = binaryTypes[expected];
-        if (!ctor) {
+      }
+      const startI = preStartI + "timed out after ".length;
+      const endI = actual.indexOf("ms", startI);
+      if (endI === -1) {
+        return {
+          pass: false,
+          message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
+        };
+      }
+      const int = parseInt(actual.slice(startI, endI));
+      if (!Number.isSafeInteger(int)) {
+        return {
+          pass: false,
+          message: () => `Expected ${int} to be a safe integer`,
+        };
+      }
+
+      return {
+        pass: int >= expected,
+        message: () => `Expected ${int} to be >= ${expected}`,
+      };
+    },
+    toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
+      switch (expected) {
+        case "buffer":
+          return {
+            pass: Buffer.isBuffer(actual),
+            message: () => `Expected ${actual} to be buffer`,
+          };
+        case "arraybuffer":
+          return {
+            pass: actual instanceof ArrayBuffer,
+            message: () => `Expected ${actual} to be ArrayBuffer`,
+          };
+        default: {
+          const ctor = binaryTypes[expected];
+          if (!ctor) {
+            return {
+              pass: false,
+              message: () => `Expected ${expected} to be a binary type`,
+            };
+          }
+
+          return {
+            pass: actual instanceof ctor,
+            message: () => `Expected ${actual} to be ${expected}`,
+          };
+        }
+      }
+    },
+    toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...cmds],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "inherit"],
+      });
+
+      if (result.exitCode !== expectedCode) {
+        return {
+          pass: false,
+          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+        };
+      }
+
+      if (optionalStdout != null) {
+        return {
+          pass: result.stdout.toString("utf-8") === optionalStdout,
+          message: () =>
+            `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+        };
+      }
+
+      return {
+        pass: true,
+        message: () => `Expected ${cmds.join(" ")} to fail`,
+      };
+    },
+    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        fn();
+        return {
+          pass: false,
+          message: () => `Received function did not throw`,
+        };
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected ${expected} to be a binary type`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
+
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
           };
         }
 
         return {
-          pass: actual instanceof ctor,
-          message: () => `Expected ${actual} to be ${expected}`,
+          pass: true,
         };
       }
-    }
-  },
-  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), ...cmds],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-
-    if (result.exitCode !== expectedCode) {
-      return {
-        pass: false,
-        message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
-      };
-    }
-
-    if (optionalStdout != null) {
-      return {
-        pass: result.stdout.toString("utf-8") === optionalStdout,
-        message: () =>
-          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
-      };
-    }
-
-    return {
-      pass: true,
-      message: () => `Expected ${cmds.join(" ")} to fail`,
-    };
-  },
-  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
-    try {
-      fn();
-      return {
-        pass: false,
-        message: () => `Received function did not throw`,
-      };
-    } catch (e) {
-      // expect(e).toBeInstanceOf(cls);
-      if (!(e instanceof cls)) {
+    },
+    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+      try {
+        await fn();
         return {
           pass: false,
-          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          message: () => `Received function did not throw`,
         };
-      }
+      } catch (e) {
+        // expect(e).toBeInstanceOf(cls);
+        if (!(e instanceof cls)) {
+          return {
+            pass: false,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+          };
+        }
 
-      // expect(e).toHaveProperty("code");
-      if (!("code" in e)) {
+        // expect(e).toHaveProperty("code");
+        if (!("code" in e)) {
+          return {
+            pass: false,
+            message: () => `Expected error to have property 'code'; got ${e}`,
+          };
+        }
+
+        // expect(e.code).toEqual(code);
+        if (e.code !== code) {
+          return {
+            pass: false,
+            message: () => `Expected error to have code '${code}'; got ${e.code}`,
+          };
+        }
+
         return {
-          pass: false,
-          message: () => `Expected error to have property 'code'; got ${e}`,
+          pass: true,
         };
       }
-
-      // expect(e.code).toEqual(code);
-      if (e.code !== code) {
-        return {
-          pass: false,
-          message: () => `Expected error to have code '${code}'; got ${e.code}`,
-        };
-      }
-
-      return {
-        pass: true,
-      };
-    }
-  },
-  async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
-    try {
-      await fn();
-      return {
-        pass: false,
-        message: () => `Received function did not throw`,
-      };
-    } catch (e) {
-      // expect(e).toBeInstanceOf(cls);
-      if (!(e instanceof cls)) {
-        return {
-          pass: false,
-          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
-        };
-      }
-
-      // expect(e).toHaveProperty("code");
-      if (!("code" in e)) {
-        return {
-          pass: false,
-          message: () => `Expected error to have property 'code'; got ${e}`,
-        };
-      }
-
-      // expect(e.code).toEqual(code);
-      if (e.code !== code) {
-        return {
-          pass: false,
-          message: () => `Expected error to have code '${code}'; got ${e.code}`,
-        };
-      }
-
-      return {
-        pass: true,
-      };
-    }
-  },
-});
+    },
+  });
 
 export function ospath(path: string) {
   if (isWindows) {
@@ -1115,34 +1115,35 @@ String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
-expect.extend({
-  toBeLatin1String(actual: unknown) {
-    if ((actual as string).isLatin1()) {
+if (expect.extend)
+  expect.extend({
+    toBeLatin1String(actual: unknown) {
+      if ((actual as string).isLatin1()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a Latin1 string`,
+        };
+      }
+
       return {
-        pass: true,
+        pass: false,
         message: () => `Expected ${actual} to be a Latin1 string`,
       };
-    }
+    },
+    toBeUTF16String(actual: unknown) {
+      if ((actual as string).isUTF16()) {
+        return {
+          pass: true,
+          message: () => `Expected ${actual} to be a UTF16 string`,
+        };
+      }
 
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a Latin1 string`,
-    };
-  },
-  toBeUTF16String(actual: unknown) {
-    if ((actual as string).isUTF16()) {
       return {
-        pass: true,
+        pass: false,
         message: () => `Expected ${actual} to be a UTF16 string`,
       };
-    }
-
-    return {
-      pass: false,
-      message: () => `Expected ${actual} to be a UTF16 string`,
-    };
-  },
-});
+    },
+  });
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;

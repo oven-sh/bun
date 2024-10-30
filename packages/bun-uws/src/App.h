@@ -16,8 +16,7 @@
  * limitations under the License.
  */
 // clang-format off
-#ifndef UWS_APP_H
-#define UWS_APP_H
+
 
 #include <string>
 #include <charconv>
@@ -619,4 +618,3 @@ typedef TemplatedApp<true> SSLApp;
 
 }
 
-#endif // UWS_APP_H

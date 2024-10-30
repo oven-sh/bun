@@ -28,7 +28,7 @@ pub fn MediaRule(comptime R: type) type {
             _ = this; // autofix
             _ = context; // autofix
             _ = parent_is_unused; // autofix
-            @panic(css.todo_stuff.depth);
+            return false;
         }
 
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {

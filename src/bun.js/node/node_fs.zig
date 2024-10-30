@@ -54,7 +54,7 @@ pub const default_permission = if (Environment.isPosix)
         Syscall.S.IROTH |
         Syscall.S.IWOTH
 else
-    // TODO:
+    // Windows does not have permissions
     0;
 
 const ArrayBuffer = JSC.MarkedArrayBuffer;

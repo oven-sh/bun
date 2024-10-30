@@ -1346,6 +1346,7 @@ describe("bundler", () => {
     target: "bun",
     run: true,
     todo: isBroken && isWindows,
+    debugTimeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {

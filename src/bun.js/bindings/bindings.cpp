@@ -4935,6 +4935,7 @@ enum class BuiltinNamesMap : uint8_t {
     name,
     message,
     error,
+    defaultKeyword,
 };
 
 static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -4992,6 +4993,9 @@ static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, u
     }
     case BuiltinNamesMap::error: {
         return vm.propertyNames->error;
+    }
+    case BuiltinNamesMap::defaultKeyword: {
+        return vm.propertyNames->defaultKeyword;
     }
     default: {
         ASSERT_NOT_REACHED();

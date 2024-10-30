@@ -1,6 +1,11 @@
-// @ts-nocheck
-import { bunExe } from "bun:harness";
-import { bunEnv, randomPort } from "harness";
+/**
+ * All new tests in this file should also run in Node.js.
+ *
+ * Do not add any tests that only run in Bun.
+ *
+ * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
+ */
+import { bunEnv, randomPort, bunExe } from "harness";
 import { createTest } from "node-harness";
 import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
@@ -23,10 +28,9 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as stream from "node:stream";
 import { PassThrough } from "node:stream";
-import url from "node:url";
 import * as zlib from "node:zlib";
+import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
-
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
@@ -782,72 +786,7 @@ describe("node:http", () => {
     });
 
     it("request via http proxy, issue#4295", async () => {
-      const http = require("http");
-      const defer = Promise.withResolvers();
-      let wentThroughProxy = false;
-
-      const proxyServer = http.createServer((req, res) => {
-        fetch("http://example.com/" + req.url, {
-          headers: {
-            "X-Bun": "true",
-          },
-        })
-          .then(response => {
-            response.body.pipeTo(
-              new WritableStream({
-                write(chunk) {
-                  res.write(chunk);
-                },
-                close() {
-                  res.end();
-                  wentThroughProxy = true;
-                },
-              }),
-            );
-          })
-          .catch(error => {
-            defer.reject(error);
-          });
-      });
-
-      proxyServer.listen({ port: 0 }, () => {
-        const options = {
-          protocol: "http:",
-          hostname: "127.0.0.1",
-          port: proxyServer.address().port,
-          path: "http://example.com/something",
-          headers: {
-            Host: "example.com",
-          },
-        };
-
-        const req = http.request(options, res => {
-          let data = "";
-
-          res.on("data", chunk => {
-            data += chunk;
-          });
-
-          res.on("error", error => {
-            defer.reject(error);
-          });
-
-          res.on("end", () => {
-            defer.resolve(data);
-          });
-        });
-
-        req.on("error", error => {
-          defer.reject(error);
-        });
-
-        req.end();
-      });
-
-      const result = await defer.promise;
-      proxyServer.close();
-      expect(result.toLowerCase()).toStartWith(`<!doctype html>\n<html>\n<h`);
-      expect(wentThroughProxy).toBe(true);
+      await runHTTPProxyTest();
     });
 
     it("should correctly stream a multi-chunk response #5320", async done => {

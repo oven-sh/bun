@@ -17,6 +17,8 @@ const MediaFeatureName = css.media_query.MediaFeatureName;
 const MediaFeatureValue = css.media_query.MediaFeatureValue;
 const MediaFeatureId = css.media_query.MediaFeatureId;
 
+const UnparsedProperty = css.css_properties.custom.UnparsedProperty;
+
 pub const SupportsEntry = struct {
     condition: css.SupportsCondition,
     declarations: ArrayList(css.Property),
@@ -77,6 +79,19 @@ pub const PropertyHandlerContext = struct {
             .context = context,
             .unused_symbols = this.unused_symbols,
         };
+    }
+
+    pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
+        this.ltr.append(allocator, ltr) catch unreachable;
+        this.rtl.append(allocator, rtl) catch unreachable;
+    }
+
+    pub fn shouldCompileLogical(this: *const @This(), feature: css.compat.Feature) bool {
+        // Don't convert logical properties in style attributes because
+        // our fallbacks rely on extra rules to define --ltr and --rtl.
+        if (this.context == DeclarationContext.style_attribute) return false;
+
+        return this.targets.shouldCompileLogical(feature);
     }
 
     pub fn getSupportsRules(
@@ -205,20 +220,20 @@ pub const PropertyHandlerContext = struct {
                     .dir = .{ .direction = @field(css.selector.parser.Direction, dir) },
                 },
             });
-
-            const rule = css.StyleRule(T){
-                .selectors = selectors,
-                .vendor_prefix = css.VendorPrefix{ .none = true },
-                .declarations = css.DeclarationBlock{
-                    .declarations = css.deepClone(css.Property, this.allocator, &@field(this, decls)),
-                    .important_declarations = .{},
-                },
-                .rules = .{},
-                .loc = sty.loc,
-            };
-
-            dest.append(this.allocator, .{ .style = rule }) catch bun.outOfMemory();
         }
+
+        const rule = css.StyleRule(T){
+            .selectors = selectors,
+            .vendor_prefix = css.VendorPrefix{ .none = true },
+            .declarations = css.DeclarationBlock{
+                .declarations = css.deepClone(css.Property, this.allocator, &@field(this, decls)),
+                .important_declarations = .{},
+            },
+            .rules = .{},
+            .loc = sty.loc,
+        };
+
+        dest.append(this.allocator, .{ .style = rule }) catch bun.outOfMemory();
     }
 
     pub fn reset(this: *@This()) void {
@@ -241,5 +256,52 @@ pub const PropertyHandlerContext = struct {
             dark.deinit(this.allocator);
         }
         this.dark.clearRetainingCapacity();
+    }
+
+    pub fn addConditionalProperty(this: *@This(), condition: css.SupportsCondition, property: css.Property) void {
+        if (this.context != DeclarationContext.style_rule) return;
+
+        if (brk: {
+            for (this.supports.items) |*supp| {
+                if (condition.eql(&supp.condition)) break :brk supp;
+            }
+            break :brk null;
+        }) |entry| {
+            if (this.is_important) {
+                entry.important_declarations.append(this.allocator, property) catch bun.outOfMemory();
+            } else {
+                entry.declarations.append(this.allocator, property) catch bun.outOfMemory();
+            }
+        } else {
+            var important_declarations = ArrayList(css.Property){};
+            var declarations = ArrayList(css.Property){};
+            if (this.is_important) {
+                important_declarations.append(this.allocator, property) catch bun.outOfMemory();
+            } else {
+                declarations.append(this.allocator, property) catch bun.outOfMemory();
+            }
+            this.supports.append(this.allocator, SupportsEntry{
+                .condition = condition,
+                .declarations = declarations,
+                .important_declarations = important_declarations,
+            }) catch bun.outOfMemory();
+        }
+    }
+
+    pub fn addUnparsedFallbacks(this: *@This(), unparsed: *UnparsedProperty) void {
+        if (this.context != DeclarationContext.style_rule and this.context != DeclarationContext.style_attribute) {
+            return;
+        }
+
+        const fallbacks = unparsed.value.getFallbacks(this.allocator, this.targets);
+
+        for (fallbacks.slice()) |condition_and_fallback| {
+            this.addConditionalProperty(condition_and_fallback[0], css.Property{
+                .unparsed = UnparsedProperty{
+                    .property_id = unparsed.property_id.deepClone(this.allocator),
+                    .value = condition_and_fallback[1],
+                },
+            });
+        }
     }
 };

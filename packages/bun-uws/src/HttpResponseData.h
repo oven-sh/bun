@@ -15,8 +15,7 @@
  * limitations under the License.
  */
 // clang-format off
-#ifndef UWS_HTTPRESPONSEDATA_H
-#define UWS_HTTPRESPONSEDATA_H
+#pragma once
 
 /* This data belongs to the HttpResponse */
 
@@ -109,4 +108,4 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
 }
 
-#endif // UWS_HTTPRESPONSEDATA_H
+

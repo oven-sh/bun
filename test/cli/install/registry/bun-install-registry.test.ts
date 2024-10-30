@@ -3056,6 +3056,69 @@ describe("binaries", () => {
   });
 });
 
+test("it should invalid cached package if package.json is missing", async () => {
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "2.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  let { out } = await runBunInstall(env, packageDir);
+  expect(out).toContain("+ no-deps@2.0.0");
+
+  // node_modules and cache should be populated
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules", "no-deps")),
+      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+    ]),
+  ).toEqual([
+    ["index.js", "package.json"],
+    ["index.js", "package.json"],
+  ]);
+
+  // with node_modules package.json deleted, the package should be reinstalled
+  await rm(join(packageDir, "node_modules", "no-deps", "package.json"));
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).toContain("+ no-deps@2.0.0");
+
+  // another install is a no-op
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).not.toContain("+ no-deps@2.0.0");
+
+  // with cache package.json deleted, install is a no-op and cache is untouched
+  await rm(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1", "package.json"));
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).not.toContain("+ no-deps@2.0.0");
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules", "no-deps")),
+      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+    ]),
+  ).toEqual([["index.js", "package.json"], ["index.js"]]);
+
+  // now with node_modules package.json deleted, the package AND the cache should
+  // be repopulated
+  await rm(join(packageDir, "node_modules", "no-deps", "package.json"));
+  ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+  expect(out).toContain("+ no-deps@2.0.0");
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules", "no-deps")),
+      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+    ]),
+  ).toEqual([
+    ["index.js", "package.json"],
+    ["index.js", "package.json"],
+  ]);
+});
+
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {
   // first clean install
   await writeFile(

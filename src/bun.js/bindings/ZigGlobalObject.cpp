@@ -128,6 +128,7 @@
 #include "ModuleLoader.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
+#include "napi_type_tag.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -3025,6 +3026,14 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
+    });
+
+    m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+    });
+
+    m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
+        init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
 
     m_cachedNodeVMGlobalObjectStructure.initLater(

@@ -313,6 +313,12 @@ describe("napi", () => {
       checkSameOutput("test_create_error_functions_exhaustive", []);
     });
   });
+
+  describe("napi_type_tag_object", () => {
+    it("works", () => {
+      checkSameOutput("test_type_tag", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

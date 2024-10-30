@@ -61,9 +61,6 @@ bundling_failures: std.ArrayHashMapUnmanaged(
     false,
 ) = .{},
 
-// TODO: remove server_global
-server_global: *DevGlobalObject,
-
 // These values are handles to the functions in server_exports.
 // For type definitions, see `./bake.private.d.ts`
 server_fetch_function_callback: JSC.Strong,
@@ -217,8 +214,6 @@ pub fn init(options: Options) !*DevServer {
         .client_bundler = undefined,
         .ssr_bundler = undefined,
 
-        .server_global = undefined,
-
         .bun_watcher = undefined,
         .watch_events = undefined,
 
@@ -262,7 +257,7 @@ pub fn init(options: Options) !*DevServer {
         return error.FrameworkInitialization;
     };
 
-    dev.server_global = @ptrCast(dev.vm.global);
+    dev.vm.global = @ptrCast(dev.vm.global);
 
     dev.configuration_hash_key = hash_key: {
         var hash = std.hash.Wyhash.init(128);
@@ -323,6 +318,9 @@ pub fn init(options: Options) !*DevServer {
         const client_files = dev.client_graph.bundled_files.values();
         client_files[IncrementalGraph(.client).framework_entry_point_index.get()].flags.is_special_framework_file = true;
     }
+
+    // TODO: move pre-bundling to be one tick after server startup. this way the
+    // line saying the server is ready shows quicker
 
     // Pre-bundle the framework code
     {
@@ -516,6 +514,8 @@ fn bundleRouteFirstTime(dev: *DevServer, route: *Route) void {
 
 fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
     const dev = route.dev;
+    const global = dev.vm.global;
+    const server = dev.server.?;
 
     if (route.server_state == .unqueued) {
         dev.bundleRouteFirstTime(route);
@@ -549,101 +549,37 @@ fn onServerRequest(route: *Route, req: *Request, resp: *Response) void {
         .loaded => {},
     }
 
-    // TODO: this does not move the body, reuse memory, and many other things
-    // that server.zig does.
-    const url_bun_string = bun.String.init(req.url());
-    defer url_bun_string.deref();
-
-    const headers = JSC.FetchHeaders.createFromUWS(req);
-    const request_object = JSC.WebCore.Request.init(
-        url_bun_string,
-        headers,
-        dev.vm.initRequestBodyValue(.Null) catch bun.outOfMemory(),
-        bun.http.Method.which(req.method()) orelse .GET,
-    ).new();
-
-    const js_request = request_object.toJS(dev.server_global.js());
-
-    const global = dev.server_global.js();
-
     const server_request_callback = dev.server_fetch_function_callback.get() orelse
         unreachable; // did not bundle
 
-    var result = server_request_callback.call(
-        global,
-        .undefined,
-        &.{
-            // req
-            js_request,
+    server.onRequestExtra(
+        req,
+        resp,
+        server_request_callback,
+        3,
+        .{
             // routeModuleId
             route.module_name_string.get() orelse str: {
                 const js = bun.String.createUTF8(
                     bun.path.relative(dev.root, route.entry_point),
-                ).toJS(dev.server_global.js());
-                route.module_name_string = JSC.Strong.create(js, dev.server_global.js());
+                ).toJS(dev.vm.global);
+                route.module_name_string = JSC.Strong.create(js, global);
                 break :str js;
             },
             // clientId
             route.client_bundle_url_value.get() orelse str: {
                 const js = bun.String.createUTF8(route.client_bundled_url).toJS(global);
-                route.client_bundle_url_value = JSC.Strong.create(js, dev.server_global.js());
+                route.client_bundle_url_value = JSC.Strong.create(js, global);
                 break :str js;
             },
             // styles
             route.css_file_array.get() orelse arr: {
                 const js = dev.generateCssList(route) catch bun.outOfMemory();
-                route.css_file_array = JSC.Strong.create(js, dev.server_global.js());
+                route.css_file_array = JSC.Strong.create(js, global);
                 break :arr js;
             },
         },
-    ) catch |err| {
-        const exception = global.takeException(err);
-        dev.vm.printErrorLikeObjectToConsole(exception);
-        // const fail = try SerializedFailure.initFromJs(.none, exception);
-        // defer fail.deinit();
-        // dev.sendSerializedFailures(resp, &.{fail}, .runtime);
-        dev.sendStubErrorMessage(route, resp, exception);
-        return;
-    };
-
-    if (result.asAnyPromise()) |promise| {
-        dev.vm.waitForPromise(promise);
-        switch (promise.unwrap(dev.vm.jsc, .mark_handled)) {
-            .pending => unreachable, // was waited for
-            .fulfilled => |r| result = r,
-            .rejected => |exception| {
-                dev.vm.printErrorLikeObjectToConsole(exception);
-                dev.sendStubErrorMessage(route, resp, exception);
-                // const fail = try SerializedFailure.initFromJs(.none, e);
-                // defer fail.deinit();
-                // dev.sendSerializedFailures(resp, &.{fail}, .runtime);
-                return;
-            },
-        }
-    }
-
-    // TODO: This interface and implementation is very poor. It is fine as
-    // the runtime currently emulates returning a `new Response`
-    //
-    // It probably should use code from `server.zig`, but most importantly it should
-    // not have a tie to DevServer, but instead be generic with a context structure
-    // containing just a *uws.App, *JSC.EventLoop, and JSValue response object.
-    //
-    // This would allow us to support all of the nice things `new Response` allows
-
-    bun.assert(result.isString());
-    const bun_string = result.toBunString(dev.server_global.js());
-    defer bun_string.deref();
-    if (bun_string.tag == .Dead) {
-        bun.outOfMemory();
-    }
-
-    const utf8 = bun_string.toUTF8(dev.allocator);
-    defer utf8.deinit();
-
-    resp.writeStatus("200 OK");
-    resp.writeHeader("Content-Type", MimeType.html.value);
-    resp.end(utf8.slice(), true); // TODO: You should never call res.end(huge buffer)
+    );
 }
 
 pub fn onSrcRequest(dev: *DevServer, req: *uws.Request, resp: *App.Response) void {
@@ -771,14 +707,14 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
         defer dev.allocator.free(server_bundle);
 
         if (is_first_server_chunk) {
-            const server_code = c.BakeLoadInitialServerCode(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
-                dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
+            const server_code = c.BakeLoadInitialServerCode(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
                 {
                     // TODO: document the technical reasons this should not be allowed to fail
                     bun.todoPanic(@src(), "First Server Load Fails. This should become a bundler bug.", .{});
                 }
                 _ = &err; // autofix
-                // fail.* = Failure.fromJSServerLoad(dev.server_global.js().takeException(err), dev.server_global.js());
+                // fail.* = Failure.fromJSServerLoad(dev.vm.global.takeException(err), dev.vm.global);
                 return error.ServerLoadFailed;
             };
             dev.vm.waitForPromise(.{ .internal = server_code.promise });
@@ -791,48 +727,48 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
                         bun.todoPanic(@src(), "First Server Load Fails. This should become a bundler bug.", .{});
                     }
                     _ = &err; // autofix
-                    // fail.* = Failure.fromJSServerLoad(err, dev.server_global.js());
+                    // fail.* = Failure.fromJSServerLoad(err, dev.vm.global);
                     return error.ServerLoadFailed;
                 },
                 .fulfilled => |v| bun.assert(v == .undefined),
             }
 
-            const default_export = c.BakeGetDefaultExportFromModule(dev.server_global.js(), server_code.key.toJS());
+            const default_export = c.BakeGetDefaultExportFromModule(dev.vm.global, server_code.key.toJS());
             if (!default_export.isObject())
                 @panic("Internal assertion failure: expected interface from HMR runtime to be an object");
-            const fetch_function: JSValue = default_export.get(dev.server_global.js(), "handleRequest") orelse
+            const fetch_function: JSValue = default_export.get(dev.vm.global, "handleRequest") orelse
                 @panic("Internal assertion failure: expected interface from HMR runtime to contain handleRequest");
             bun.assert(fetch_function.isCallable(dev.vm.jsc));
-            dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.server_global.js());
-            const register_update = default_export.get(dev.server_global.js(), "registerUpdate") orelse
+            dev.server_fetch_function_callback = JSC.Strong.create(fetch_function, dev.vm.global);
+            const register_update = default_export.get(dev.vm.global, "registerUpdate") orelse
                 @panic("Internal assertion failure: expected interface from HMR runtime to contain registerUpdate");
-            dev.server_register_update_callback = JSC.Strong.create(register_update, dev.server_global.js());
+            dev.server_register_update_callback = JSC.Strong.create(register_update, dev.vm.global);
 
             fetch_function.ensureStillAlive();
             register_update.ensureStillAlive();
         } else {
-            const server_modules = c.BakeLoadServerHmrPatch(dev.server_global, bun.String.createLatin1(server_bundle)) catch |err| {
+            const server_modules = c.BakeLoadServerHmrPatch(@ptrCast(dev.vm.global), bun.String.createLatin1(server_bundle)) catch |err| {
                 // No user code has been evaluated yet, since everything is to
                 // be wrapped in a function clousure. This means that the likely
                 // error is going to be a syntax error, or other mistake in the
                 // bundler.
-                dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
                 @panic("Error thrown while evaluating server code. This is always a bug in the bundler.");
             };
             const errors = dev.server_register_update_callback.get().?.call(
-                dev.server_global.js(),
-                dev.server_global.js().toJSValue(),
+                dev.vm.global,
+                dev.vm.global.toJSValue(),
                 &.{
                     server_modules,
-                    dev.makeArrayForServerComponentsPatch(dev.server_global.js(), dev.incremental_result.client_components_added.items),
-                    dev.makeArrayForServerComponentsPatch(dev.server_global.js(), dev.incremental_result.client_components_removed.items),
+                    dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_added.items),
+                    dev.makeArrayForServerComponentsPatch(dev.vm.global, dev.incremental_result.client_components_removed.items),
                 },
             ) catch |err| {
                 // One module replacement error should NOT prevent follow-up
                 // module replacements to fail. It is the HMR runtime's
                 // responsibility to collect all module load errors, and
                 // bubble them up.
-                dev.vm.printErrorLikeObjectToConsole(dev.server_global.js().takeException(err));
+                dev.vm.printErrorLikeObjectToConsole(dev.vm.global.takeException(err));
                 @panic("Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime.");
             };
             _ = errors; // TODO:
@@ -1027,11 +963,11 @@ fn generateCssList(dev: *DevServer, route: *Route) bun.OOM!JSC.JSValue {
     );
 
     const names = dev.client_graph.current_css_files.items;
-    const arr = JSC.JSArray.createEmpty(dev.server_global.js(), names.len);
+    const arr = JSC.JSArray.createEmpty(dev.vm.global, names.len);
     for (names, 0..) |item, i| {
         const str = bun.String.createUTF8(item);
         defer str.deref();
-        arr.putIndex(dev.server_global.js(), @intCast(i), str.toJS(dev.server_global.js()));
+        arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
     }
     return arr;
 }

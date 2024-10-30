@@ -55,10 +55,51 @@ declare var server_exports: {
  */
 declare const IS_BUN_DEVELOPMENT: any;
 
-declare module "react-server-dom-webpack/client.browser" {
-  export function createFromReadableStream<T = any>(readable: ReadableStream, manifest?: any): Promise<T>;
+declare var __bun_f: any;
+
+// The following interfaces have been transcribed manually.
+
+declare module "react-server-dom-webpack/client.node.unbundled.js" {
+  import type { ReactClientManifest } from "bun:bake/server";
+  import type { Readable } from "node:stream";
+  export interface Manifest {
+    moduleMap: ReactClientManifest;
+    moduleLoading?: ModuleLoading;
+  }
+  export interface ModuleLoading {
+    prefix: string;
+    crossOrigin?: string;
+  }
+  export interface Options {
+    encodeFormAction?: any;
+    findSourceMapURL?: any;
+    environmentName?: string;
+  }
+  export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
-declare module "react-server-dom-webpack/server.browser" {
-  export function renderToReadableStream<T = any>(element: JSX.Element, manifest: any): ReadableStream;
+declare module "react-server-dom-webpack/server.node.unbundled.js" {
+  import type { ReactServerManifest } from "bun:bake/server";
+  import type { ReactElement } from "react";
+  import type { Writable } from "node:stream";
+
+  export interface PipeableStream<T> {
+    /** Returns the input */
+    pipe: <T extends Writable>(destination: T) => T;
+  }
+
+  export function renderToPipeableStream<T = any>(
+    model: ReactElement,
+    webpackMap: ReactServerManifest,
+    options?: RenderToPipeableStreamOptions,
+  ): PipeableStream<T>;
+
+  export interface RenderToPipeableStreamOptions {
+    onError?: Function;
+    identifierPrefix?: string;
+    onPostpone?: Function;
+    temporaryReferences?: any;
+    environmentName?: string;
+    filterStackFrame?: Function;
+  }
 }

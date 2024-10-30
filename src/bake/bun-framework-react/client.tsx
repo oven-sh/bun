@@ -7,26 +7,27 @@ import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-webpack/client.browser";
 import { bundleRouteForDevelopment } from "bun:bake/client";
 
-function assertionFailed(msg: string) {
-  throw new Error(`Assertion Failure: ${msg}. This is a bug in Bun's React integration`);
-}
+let encoder = new TextEncoder();
+let promise = createFromReadableStream(
+  new ReadableStream({
+    start(controller) {
+      let handleChunk = chunk =>
+        typeof chunk === "string" //
+          ? controller.enqueue(encoder.encode(chunk))
+          : controller.enqueue(chunk);
 
-// In development, verify that React 19 is being used. Using `React.*` makes the import
-// not fail at build time, allowing this better error message to surface.
-if (import.meta.env.DEV && !React.use) {
-  throw new Error("Bun's React integration requires React 19");
-}
+      (self.__bun_f ||= []).forEach((__bun_f.push = handleChunk));
 
-// Client-side entry point expects an RSC payload. In development, let's fail
-// loudly if this is somehow missing.
-const initialPayload = document.getElementById("rsc_payload");
-if (import.meta.env.DEV) {
-  if (!initialPayload) assertionFailed("Missing #rsc_payload in HTML response");
-}
-
-// React takes in a ReadableStream with the payload.
-let promise = createFromReadableStream(new Response(initialPayload!.innerText).body!);
-initialPayload!.remove();
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", () => {
+          controller.close();
+        });
+      } else {
+        controller.close();
+      }
+    },
+  }),
+);
 
 // This is a function component that uses the `use` hook, which unwraps a promise.
 // The promise results in a component containing suspense boundaries.
@@ -44,18 +45,21 @@ const root = hydrateRoot(document, <Async />, {
 // navigation. Callers of `goto` are expected to manage history state.
 let currentReloadCtrl: AbortController | null = null;
 async function goto(href: string) {
-  if (currentReloadCtrl) {
-    currentReloadCtrl.abort();
-  }
-  const signal = (currentReloadCtrl = new AbortController()).signal;
+  // TODO: this abort signal stuff doesnt work
+  // if (currentReloadCtrl) {
+  //   currentReloadCtrl.abort();
+  // }
+  // const signal = (currentReloadCtrl = new AbortController()).signal;
 
-  const wait100ms = new Promise<void>(resolve => setTimeout(resolve, 100))
+  const wait100ms = new Promise<void>(resolve => setTimeout(resolve, 100));
 
   // Due to the current implementation of the Dev Server, it must be informed of
   // client-side routing so it can load client components. This is not necessary
   // in production, and calling this in that situation will fail to compile.
   if (import.meta.env.DEV) {
-    await bundleRouteForDevelopment(href, { signal });
+    await bundleRouteForDevelopment(href, { 
+      // signal
+    });
   }
 
   let response;
@@ -71,7 +75,7 @@ async function goto(href: string) {
         headers: {
           Accept: "text/x-component",
         },
-        signal: signal,
+        // signal: signal,
       },
     );
     if (!response.ok) {
@@ -84,7 +88,7 @@ async function goto(href: string) {
     return;
   }
 
-  if (signal.aborted) return;
+  // if (signal.aborted) return;
 
   // TODO: error handling? abort handling?
   const p = createFromReadableStream(response.body!);
@@ -93,16 +97,13 @@ async function goto(href: string) {
   // Right now you can see a flash of unstyled content, since react does not
   // wait for new link tags to load before they are injected.
 
-  // Wait up to 100ms before updating the page promise.
-  await Promise.race([p, wait100ms]);
-
-  if (signal.aborted) return;
-
   // Use a react transition to update the page promise.
-  React.startTransition(() => {
-    if (signal.aborted) return;
-    setPage((promise = p));
-  });
+  // TODO: How to get this show after 100ms
+  // React.startTransition(() => {
+  //   if (signal.aborted) return;
+  //   setPage((promise = p));
+  // });
+  setPage?.((promise = p));
 }
 
 // Instead of relying on a "<Link />" component, a global event listener on all
@@ -135,7 +136,7 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
         // Bail out to browser logic
         return;
       }
-      
+
       let pathname = url.pathname;
       if (pathname.endsWith("/")) {
         pathname = pathname.slice(0, -1);
@@ -172,5 +173,5 @@ window.addEventListener("popstate", () => goto(location.href));
 // Frameworks can export a `onServerSideReload` function to hook into server-side
 // hot module reloading. This export is not used in production and tree-shaken.
 export async function onServerSideReload() {
-  goto(location.href);
+  await goto(location.href);
 }

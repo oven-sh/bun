@@ -121,7 +121,7 @@ declare module "bun" {
       reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
     }
 
-    type BuiltInModule = { import: string, code: string } | { import: string, path: string };
+    type BuiltInModule = { import: string; code: string } | { import: string; path: string };
 
     /**
      * A high-level overview of what server components means exists
@@ -330,8 +330,8 @@ declare module "bun" {
      * is not safe to mutate it at all.
      */
     interface RouteMetadata {
-      readonly routeModule: unknown;
-      readonly layouts: ReadonlyArray<LayoutMetadata>;
+      // readonly routeModule: unknown;
+      // readonly layouts: ReadonlyArray<LayoutMetadata>;
       /**
        * A list of js files that the route will need to be interactive.
        */
@@ -373,6 +373,40 @@ declare module "bun:bake/server" {
 
   /** (insert teaser trailer) */
   declare const actionManifest: never;
+
+  declare interface ReactClientManifest {
+    [id: string]: {
+      [name: string]: {
+        /** Valid specifier to import */
+        specifier: string;
+        /** Export name */
+        name: string;
+      };
+    };
+  }
+
+  declare interface ReactServerManifest {
+    /**
+     * Concatenation of the component file ID and the instance id with '#'
+     * Example: 'components/Navbar.tsx#default' (dev) or 'l2#a' (prod/minified)
+     *
+     * The component file ID and the instance id are both passed to `registerClientReference`
+     */
+    [combinedComponentId: string]: {
+      /**
+       * The `id` in ReactClientManifest.
+       * Correlates but is not required to be the filename
+       */
+      id: string;
+      /**
+       * The `name` in ReactServerManifest
+       * Correlates but is not required to be the export name
+       */
+      name: string;
+      /** Currently not implemented; always an empty array */
+      chunks: [];
+    };
+  }
 }
 
 declare module "bun:bake/client" {
@@ -382,38 +416,4 @@ declare module "bun:bake/client" {
    * in production, and calling this in that situation will fail to compile.
    */
   declare function bundleRouteForDevelopment(href: string, options?: { signal?: AbortSignal }): Promise<void>;
-}
-
-declare interface ReactClientManifest {
-  [id: string]: {
-    [name: string]: {
-      /** Valid specifier to import */
-      specifier: string;
-      /** Export name */
-      name: string;
-    };
-  };
-}
-
-declare interface ReactServerManifest {
-  /**
-   * Concatenation of the component file ID and the instance id with '#'
-   * Example: 'components/Navbar.tsx#default' (dev) or 'l2#a' (prod/minified)
-   *
-   * The component file ID and the instance id are both passed to `registerClientReference`
-   */
-  [combinedComponentId: string]: {
-    /**
-     * The `id` in ReactClientManifest.
-     * Correlates but is not required to be the filename
-     */
-    id: string;
-    /**
-     * The `name` in ReactServerManifest
-     * Correlates but is not required to be the export name
-     */
-    name: string;
-    /** Currently not implemented; always an empty array */
-    chunks: [];
-  };
 }

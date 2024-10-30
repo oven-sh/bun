@@ -29,8 +29,7 @@ server_exports = {
       throw new Error(`Server-side request handler was expected to return a Response object.`);
     }
 
-    // TODO: support streaming
-    return await response.text();
+    return response;
   },
   registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     replaceModules(modules);
@@ -42,13 +41,19 @@ server_exports = {
           const { exports, __esModule } = mod;
           const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
 
+          const client = {};
           for (const exportName of Object.keys(exp)) {
             serverManifest[uid] = {
               id: uid,
               name: exportName,
               chunks: [],
             };
+            client[exportName] = {
+              specifier: 'ssr:' + uid,
+              name: exportName,
+            };
           }
+          clientManifest[uid] = client;
         } catch (err) {
           console.log(err);
         }

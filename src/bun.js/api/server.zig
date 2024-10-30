@@ -6936,10 +6936,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return false;
         }
 
-        pub fn onRequest(
+        pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            this.onRequestExtra(req, resp, this.config.onRequest, 1, .{this.thisObject});
+        }
+
+        pub fn onRequestExtra(
             this: *ThisServer,
             req: *uws.Request,
             resp: *App.Response,
+            callback: JSC.JSValue,
+            comptime extra_arg_count: usize,
+            extra_args: [extra_arg_count]JSValue,
         ) void {
             JSC.markBinding(@src());
             this.onPendingRequest();
@@ -7032,20 +7039,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
             }
             const js_request = request_object.toJS(this.globalThis);
-            js_request.ensureStillAlive();
 
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-            var args = [_]JSC.JSValue{
-                js_request,
-                this.thisObject,
-            };
+            const args = [_]JSC.JSValue{js_request} ++ extra_args;
 
-            const request_value = args[0];
-            request_value.ensureStillAlive();
-
-            bun.assert(this.config.onRequest != .zero);
-            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch |err|
+            bun.assert(callback != .zero);
+            const response_value = callback.call(this.globalThis, this.thisObject, &args) catch |err|
                 this.globalThis.takeException(err);
+
+            // Ensure that the arguments are all on the stack after the js callback was run
+            inline for (args) |a| a.ensureStillAlive();
+
             defer {
                 // uWS request will not live longer than this function
                 request_object.request_context.detachRequest();
@@ -7057,10 +7061,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this,
                 req,
                 request_object,
-                request_value,
+                js_request,
                 response_value,
             );
             ctx.defer_deinit_until_callback_completes = original_state;
+
+            js_request.ensureStillAlive();
 
             if (should_deinit_context) {
                 ctx.deinit();
@@ -7399,6 +7405,22 @@ pub const AnyServer = union(enum) {
     pub fn publish(this: AnyServer, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
         return switch (this) {
             inline else => |server| server.app.?.publish(topic, message, opcode, compress),
+        };
+    }
+
+    // TODO: support TLS
+    pub fn onRequestExtra(
+        this: AnyServer,
+        req: *uws.Request,
+        resp: *uws.NewApp(false).Response,
+        callback: JSC.JSValue,
+        comptime extra_arg_count: usize,
+        extra_args: [extra_arg_count]JSValue,
+    ) void {
+        return switch (this) {
+            inline else => |server| server.onRequestExtra(req, resp, callback, extra_arg_count, extra_args),
+            .HTTPSServer => @panic("TODO: https"),
+            .DebugHTTPSServer => @panic("TODO: https"),
         };
     }
 

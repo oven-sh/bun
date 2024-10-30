@@ -1,12 +1,17 @@
 import type { Bake } from "bun";
-import { renderToReadableStream } from "react-server-dom-webpack/server.browser";
+// Bun uses `node.unbundled` from react to
+// - The `node` variant avoids ReadableStream, a slower streaming API
+// - The `unbundled` variant uses `import` instead of `__webpack_require__`
+import { renderToPipeableStream } from "react-server-dom-webpack/server.node.unbundled.js";
 import { renderToHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import { Suspense } from "react";
 
 function getPage(route, meta: Bake.RouteMetadata) {
   const Route = route.default;
-  const { styles } = meta;
+  const { styles, scripts } = meta;
 
   if (import.meta.env.DEV) {
     if (typeof Route !== "function") {
@@ -29,7 +34,12 @@ function getPage(route, meta: Bake.RouteMetadata) {
         ))}
       </head>
       <body>
-        <Route />
+        <Suspense fallback={<div>loader</div>}>
+          <Route />
+        </Suspense>
+        {scripts.map(url => (
+          <script key={url} src={url} async />
+        ))}
       </body>
     </html>
   );
@@ -50,73 +60,56 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
   const page = getPage(route, meta);
 
   // This renders Server Components to a ReadableStream "RSC Payload"
-  const rscPayload = renderToReadableStream(page, serverManifest);
+  console.log("serverManifest", serverManifest);
+  const rscPayload = renderToPipeableStream(page, serverManifest)
+    // TODO: write a lightweight version of PassThrough
+    .pipe(new PassThrough());
   if (skipSSR) {
-    return new Response(rscPayload, {
+    return new Response(rscPayload as any, {
       status: 200,
       headers: { "Content-Type": "text/x-component" },
     });
   }
 
-  // One straem is used to render SSR. The second is embedded into the html for browser hydration.
-  // Note: This approach does not stream the response. That practice is called "react flight" and should be added
-  const [rscPayload1, rscPayload2] = rscPayload.tee();
-  const rscPayloadBuffer = Bun.readableStreamToText(rscPayload1);
-  const rw = new HTMLRewriter();
-  rw.on("body", {
-    element(element) {
-      element.onEndTag(async end => {
-        end.before(
-          `<script id="rsc_payload" type="json">${await rscPayloadBuffer}</script>` +
-            meta.scripts.map(url => `<script src=${JSON.stringify(url)}></script>`).join(""),
-          { html: true },
-        );
-      });
+  return new Response(await renderToHtml(rscPayload), {
+    headers: {
+      "Content-Type": "text/html; charset=utf8",
     },
   });
-  // TODO: readableStreamToText is needed due to https://github.com/oven-sh/bun/issues/14216
-  const output = await Bun.readableStreamToText(await renderToHtml(rscPayload2));
-  return rw.transform(
-    new Response(output, {
-      headers: {
-        "Content-Type": "text/html; charset=utf8",
-      },
-    }),
-  );
 }
 
 // For static site generation, a different function is given, one without a request object.
-export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
-  const page = getPage(route, meta);
-  const rscPayload = renderToReadableStream(page, serverManifest);
-  const [rscPayload1, rscPayload2] = rscPayload.tee();
+// export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
+//   const page = getPage(route, meta);
+//   const rscPayload = renderToReadableStream(page, serverManifest);
+//   const [rscPayload1, rscPayload2] = rscPayload.tee();
 
-  // Prepare both files in parallel
-  let [html, rscPayloadBuffer] = await Promise.all([
-    Bun.readableStreamToText(await renderToHtml(rscPayload2)),
-    Bun.readableStreamToText(rscPayload1),
-  ]);
-  const scripts = meta.scripts.map(url => `<script src=${JSON.stringify(url)}></script>`);
-  html = html.replace(
-    "</body>",
-    `<script id="rsc_payload" type="json">${rscPayloadBuffer}</script>${scripts.join("\n")}</body>`,
-  );
+//   // Prepare both files in parallel
+//   let [html, rscPayloadBuffer] = await Promise.all([
+//     Bun.readableStreamToText(await renderToHtml(rscPayload2)),
+//     Bun.readableStreamToText(rscPayload1),
+//   ]);
+//   const scripts = meta.scripts.map(url => `<script src=${JSON.stringify(url)}></script>`);
+//   html = html.replace(
+//     "</body>",
+//     `<script id="rsc_payload" type="json">${rscPayloadBuffer}</script>${scripts.join("\n")}</body>`,
+//   );
 
-  // Each route generates a directory with framework-provided files. Keys are
-  // files relative to the route path, and values are anything `Bun.write`
-  // supports. Streams may result in lower memory usage.
-  return {
-    // Directories like `blog/index.html` are preferred over `blog.html` because
-    // certain static hosts do not support this conversion. By using `index.html`,
-    // the static build is more portable.
-    "/index.html": html,
+//   // Each route generates a directory with framework-provided files. Keys are
+//   // files relative to the route path, and values are anything `Bun.write`
+//   // supports. Streams may result in lower memory usage.
+//   return {
+//     // Directories like `blog/index.html` are preferred over `blog.html` because
+//     // certain static hosts do not support this conversion. By using `index.html`,
+//     // the static build is more portable.
+//     "/index.html": html,
 
-    // The RSC payload is provided so client-side can use this file for seamless
-    // client-side navigation. This is equivalent to 'Accept: text/x-component'
-    // for the non-static build.s
-    "/index.rsc": rscPayloadBuffer,
-  };
-}
+//     // The RSC payload is provided so client-side can use this file for seamless
+//     // client-side navigation. This is equivalent to 'Accept: text/x-component'
+//     // for the non-static build.s
+//     "/index.rsc": rscPayloadBuffer,
+//   };
+// }
 
 // This is a hack to make react-server-dom-webpack work with Bun's bundler.
 // It will be removed once Bun acquires react-server-dom-bun.

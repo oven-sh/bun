@@ -52,12 +52,12 @@ pub const Bunfig = struct {
         ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
-            this.log.addError(this.source, loc, text) catch unreachable;
+            this.log.addRedactedError(this.source, loc, text) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
         fn addErrorFormat(this: *Parser, loc: logger.Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
-            this.log.addErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
+            this.log.addRedactedErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
@@ -791,7 +791,7 @@ pub const Bunfig = struct {
             switch (expr.data) {
                 .e_string, .e_utf8_string => {},
                 else => {
-                    this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
+                    this.log.addRedactedErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
                         @as(js_ast.Expr.Tag, expr.data),
                     }) catch unreachable;
                     return error.@"Invalid Bunfig";
@@ -801,7 +801,7 @@ pub const Bunfig = struct {
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
-                this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected {} but received {}", .{
+                this.log.addRedactedErrorFmt(this.source, expr.loc, this.allocator, "expected {} but received {}", .{
                     token,
                     @as(js_ast.Expr.Tag, expr.data),
                 }) catch unreachable;
@@ -815,12 +815,12 @@ pub const Bunfig = struct {
 
         const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
-                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+                ctx.log.addRedactedErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }
             return err;
         } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
-                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+                ctx.log.addRedactedErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
             }
             return err;
         };

@@ -314,7 +314,7 @@ pub const PublishCommand = struct {
                             }
 
                             if (manager.log.hasErrors()) {
-                                manager.log.print(Output.errorWriter(), .other) catch {};
+                                manager.log.print(Output.errorWriter()) catch {};
                             }
 
                             Global.crash();
@@ -363,7 +363,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("failed to find package.json in tarball '{s}'", .{cli.positionals[1]});
                     },
                     error.InvalidPackageJSON => {
-                        manager.log.print(Output.errorWriter(), .other) catch {};
+                        manager.log.print(Output.errorWriter()) catch {};
                         Output.errGeneric("failed to parse tarball package.json", .{});
                     },
                     error.PrivatePackage => {

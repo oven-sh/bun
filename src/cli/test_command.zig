@@ -1161,7 +1161,7 @@ pub const TestCommand = struct {
             js_ast.Stmt.Data.Store.reset();
 
             if (vm.log.errors > 0) {
-                vm.log.print(Output.errorWriter(), .other) catch {};
+                vm.log.print(Output.errorWriter()) catch {};
                 vm.log.msgs.clearRetainingCapacity();
                 vm.log.errors = 0;
             }

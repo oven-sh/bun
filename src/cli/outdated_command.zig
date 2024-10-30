@@ -77,7 +77,7 @@ pub const OutdatedCommand = struct {
                     }
 
                     if (ctx.log.hasErrors()) {
-                        try manager.log.print(Output.errorWriter(), .other);
+                        try manager.log.print(Output.errorWriter());
                     }
                 }
 

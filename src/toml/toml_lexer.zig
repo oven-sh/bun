@@ -93,7 +93,7 @@ pub const Lexer = struct {
             return;
         }
 
-        self.log.addErrorFmt(&self.source, __loc, self.log.msgs.allocator, format, args) catch unreachable;
+        self.log.addRedactedErrorFmt(&self.source, __loc, self.log.msgs.allocator, format, args) catch unreachable;
         self.prev_error_loc = __loc;
     }
 
@@ -118,7 +118,7 @@ pub const Lexer = struct {
         }
 
         const errorMessage = std.fmt.allocPrint(self.log.msgs.allocator, format, args) catch unreachable;
-        try self.log.addRangeError(&self.source, r, errorMessage);
+        try self.log.addRedactedRangeError(&self.source, r, errorMessage);
         self.prev_error_loc = r.loc;
 
         // if (panic) {

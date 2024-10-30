@@ -272,7 +272,7 @@ pub const UpgradeCommand = struct {
                 refresher.?.refresh();
 
                 if (log.errors > 0) {
-                    try log.print(Output.errorWriter(), .other);
+                    try log.print(Output.errorWriter());
 
                     Global.exit(1);
                 } else {
@@ -289,7 +289,7 @@ pub const UpgradeCommand = struct {
                 progress.?.end();
                 refresher.?.refresh();
 
-                try log.print(Output.errorWriter(), .other);
+                try log.print(Output.errorWriter());
                 Global.exit(1);
             }
 

@@ -5017,8 +5017,10 @@ const InternalTestingAPIs = struct {
         var buffer = MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
-        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
-        formatter.limited = false;
+        const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+            .enable_colors = true,
+            .check_for_unhighlighted_write = false,
+        });
         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
             globalThis.throwError(err, "Error formatting code");
             return .zero;

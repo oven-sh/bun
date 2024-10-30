@@ -23,15 +23,6 @@ const Index = @import("./ast/base.zig").Index;
 const OOM = bun.OOM;
 const JSError = bun.JSError;
 
-const SourceType = enum {
-    other,
-
-    /// passwords and tokens are redacted
-    npmrc,
-    /// passwords and tokens are redacted
-    bunfig,
-};
-
 pub const Kind = enum(u8) {
     err = 0,
     warn = 1,
@@ -263,10 +254,9 @@ pub const Data = struct {
         this: *const Data,
         to: anytype,
         kind: Kind,
-        source_type: SourceType,
+        redact_sensitive_information: bool,
         comptime enable_ansi_colors: bool,
     ) !void {
-        _ = source_type;
         if (this.text.len == 0) return;
 
         const message_color = switch (kind) {
@@ -305,7 +295,10 @@ pub const Data = struct {
                         line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
                     }
 
-                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, enable_ansi_colors)});
+                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, .{
+                        .enable_colors = enable_ansi_colors,
+                        .redact_sensitive_information = redact_sensitive_information,
+                    })});
 
                     try to.writeByteNTimes(' ', line_offset_for_second_line);
                     if ((comptime enable_ansi_colors) and message_color.len > 0) {
@@ -336,7 +329,11 @@ pub const Data = struct {
             try to.writeAll(message_color);
         }
 
-        try to.print(comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
+        if (redact_sensitive_information) {
+            try to.print(comptime Output.prettyFmt("{}<r>", enable_ansi_colors), .{bun.fmt.redactedSource(this.text)});
+        } else {
+            try to.print(comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
+        }
 
         if (this.location) |*location| {
             if (location.file.len > 0) {
@@ -393,6 +390,7 @@ pub const Msg = struct {
     data: Data,
     metadata: Metadata = .build,
     notes: []Data = &.{},
+    redact_sensitive_information: bool = false,
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) OOM!Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
@@ -507,10 +505,9 @@ pub const Msg = struct {
     pub fn writeFormat(
         msg: *const Msg,
         to: anytype,
-        source_type: SourceType,
         comptime enable_ansi_colors: bool,
     ) !void {
-        try msg.data.writeFormat(to, msg.kind, source_type, enable_ansi_colors);
+        try msg.data.writeFormat(to, msg.kind, msg.redact_sensitive_information, enable_ansi_colors);
 
         if (msg.notes.len > 0) {
             try to.writeAll("\n");
@@ -519,7 +516,7 @@ pub const Msg = struct {
         for (msg.notes) |note| {
             try to.writeAll("\n");
 
-            try note.writeFormat(to, .note, source_type, enable_ansi_colors);
+            try note.writeFormat(to, .note, msg.redact_sensitive_information, enable_ansi_colors);
         }
     }
 
@@ -931,6 +928,16 @@ pub const Log = struct {
         });
     }
 
+    pub fn addRedactedRangeError(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
+        @setCold(true);
+        log.errors += 1;
+        try log.addMsg(.{
+            .kind = .err,
+            .data = rangeData(source, r, text),
+            .redact_sensitive_information = true,
+        });
+    }
+
     pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
@@ -968,6 +975,7 @@ pub const Log = struct {
         try log.addMsg(.{
             .kind = .err,
             .data = try rangeData(source, .{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .redact_sensitive_information = true,
         });
     }
 
@@ -1174,7 +1182,11 @@ pub const Log = struct {
     pub fn addRedactedError(self: *Log, _source: ?*const Source, loc: Loc, text: string) OOM!void {
         @setCold(true);
         self.errors += 1;
-        try self.addMsg(.{ .kind = .err, .data = rangeData(_source, .{ .loc = loc }, text) });
+        try self.addMsg(.{
+            .kind = .err,
+            .data = rangeData(_source, .{ .loc = loc }, text),
+            .redact_sensitive_information = true,
+        });
     }
 
     pub fn addSymbolAlreadyDeclaredError(self: *Log, allocator: std.mem.Allocator, source: *const Source, name: string, new_loc: Loc, old_loc: Loc) OOM!void {
@@ -1195,13 +1207,13 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *Log, to: anytype, source_type: SourceType) !void {
+    pub fn print(self: *Log, to: anytype) !void {
         return switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, source_type, enable_ansi_colors),
+            inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }
 
-    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, source_type: SourceType, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
@@ -1213,7 +1225,7 @@ pub const Log = struct {
                 if (msg.kind != .err) {
                     if (msg.kind.shouldPrint(self.level)) {
                         if (needs_newline) try to.writeAll("\n\n");
-                        try msg.writeFormat(to, source_type, enable_ansi_colors);
+                        try msg.writeFormat(to, enable_ansi_colors);
                         needs_newline = true;
                     }
                 }
@@ -1223,7 +1235,7 @@ pub const Log = struct {
                 if (msg.kind == .err) {
                     if (msg.kind.shouldPrint(self.level)) {
                         if (needs_newline) try to.writeAll("\n\n");
-                        try msg.writeFormat(to, source_type, enable_ansi_colors);
+                        try msg.writeFormat(to, enable_ansi_colors);
                         needs_newline = true;
                     }
                 }
@@ -1232,7 +1244,7 @@ pub const Log = struct {
             for (self.msgs.items) |*msg| {
                 if (msg.kind.shouldPrint(self.level)) {
                     if (needs_newline) try to.writeAll("\n\n");
-                    try msg.writeFormat(to, source_type, enable_ansi_colors);
+                    try msg.writeFormat(to, enable_ansi_colors);
                     needs_newline = true;
                 }
             }

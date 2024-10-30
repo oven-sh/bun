@@ -1257,7 +1257,7 @@ pub const Printer = struct {
                     }),
                 }
                 if (log.errors > 0) {
-                    try log.print(Output.errorWriter(), .other);
+                    try log.print(Output.errorWriter());
                 }
                 Global.crash();
             },
@@ -3942,7 +3942,7 @@ pub const Package = extern struct {
     ) !void {
         initializeStore();
         const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
-            log.print(Output.errorWriter(), .other) catch {};
+            log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
         };

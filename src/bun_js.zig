@@ -495,7 +495,7 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 
     const writer = buffered_writer.writer();
 
-    vm.log.print(writer, .other) catch {};
+    vm.log.print(writer) catch {};
 }
 
 pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {

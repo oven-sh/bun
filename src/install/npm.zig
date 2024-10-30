@@ -1204,7 +1204,14 @@ pub const PackageManifest = struct {
             const file_name = try manifestFileName(&file_path_buf, file_id, scope);
             const cache_file = File.openat(cache_dir, file_name, bun.O.RDONLY, 0).unwrap() catch return null;
             defer cache_file.close();
-            return loadByFile(allocator, scope, cache_file);
+
+            delete: {
+                return loadByFile(allocator, scope, cache_file) catch break :delete orelse break :delete;
+            }
+
+            // delete the outdated/invalid manifest
+            try bun.sys.unlinkat(bun.toFD(cache_dir), file_name).unwrap();
+            return null;
         }
 
         pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: File) !?PackageManifest {

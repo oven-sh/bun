@@ -696,7 +696,7 @@ pub const Task = struct {
                     if (pt.callback.apply.logger.errors > 0) {
                         defer pt.callback.apply.logger.deinit();
                         // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                        pt.callback.apply.logger.print(Output.writer(), .other) catch {};
+                        pt.callback.apply.logger.print(Output.writer()) catch {};
                     }
                 }
             }
@@ -2754,7 +2754,7 @@ pub const PackageManager = struct {
 
     pub fn crash(this: *PackageManager) noreturn {
         if (this.options.log_level != .silent) {
-            this.log.print(Output.errorWriter(), .other) catch {};
+            this.log.print(Output.errorWriter()) catch {};
         }
         Global.crash();
     }
@@ -6580,7 +6580,7 @@ pub const PackageManager = struct {
             _ = manager.decrementPendingTasks();
 
             if (task.log.msgs.items.len > 0) {
-                try task.log.print(Output.errorWriter(), .other);
+                try task.log.print(Output.errorWriter());
             }
 
             switch (task.tag) {
@@ -8960,7 +8960,7 @@ pub const PackageManager = struct {
                 error.InvalidPackageJSON,
                 => {
                     const log = &bun.CLI.Cli.log_;
-                    log.print(bun.Output.errorWriter(), .other) catch {};
+                    log.print(bun.Output.errorWriter()) catch {};
                     bun.Global.exit(1);
                     return;
                 },
@@ -10400,7 +10400,7 @@ pub const PackageManager = struct {
     ) !void {
         if (manager.log.errors > 0) {
             if (comptime log_level != .silent) {
-                manager.log.print(Output.errorWriter(), .other) catch {};
+                manager.log.print(Output.errorWriter()) catch {};
             }
             Global.crash();
         }
@@ -10415,7 +10415,7 @@ pub const PackageManager = struct {
             },
         )) {
             .parse_err => |err| {
-                manager.log.print(Output.errorWriter(), .other) catch {};
+                manager.log.print(Output.errorWriter()) catch {};
                 Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
                     manager.original_package_json_path,
                     @errorName(err),
@@ -10615,7 +10615,7 @@ pub const PackageManager = struct {
                 },
             )) {
                 .parse_err => |err| {
-                    manager.log.print(Output.errorWriter(), .other) catch {};
+                    manager.log.print(Output.errorWriter()) catch {};
                     Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
                         root_package_json_path,
                         @errorName(err),
@@ -11043,7 +11043,7 @@ pub const PackageManager = struct {
 
                 initializeStore();
                 const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
-                    manager.log.print(Output.errorWriter(), .other) catch {};
+                    manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
                 };
@@ -11456,7 +11456,7 @@ pub const PackageManager = struct {
 
                 initializeStore();
                 const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
-                    manager.log.print(Output.errorWriter(), .other) catch {};
+                    manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
                 };
@@ -13960,7 +13960,7 @@ pub const PackageManager = struct {
                     }
 
                     if (ctx.log.errors > 0) {
-                        try manager.log.print(Output.errorWriter(), .other);
+                        try manager.log.print(Output.errorWriter());
                     }
                     Output.flush();
                 }
@@ -14389,7 +14389,7 @@ pub const PackageManager = struct {
         }
 
         const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
-        try manager.log.print(Output.errorWriter(), .other);
+        try manager.log.print(Output.errorWriter());
         manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
@@ -14506,7 +14506,7 @@ pub const PackageManager = struct {
         }
 
         if (comptime log_level != .silent) {
-            try manager.log.print(Output.errorWriter(), .other);
+            try manager.log.print(Output.errorWriter());
         }
         if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
 

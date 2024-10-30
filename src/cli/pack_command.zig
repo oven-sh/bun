@@ -136,7 +136,7 @@ pub const PackCommand = struct {
                     }
 
                     if (manager.log.hasErrors()) {
-                        try manager.log.print(Output.errorWriter(), .other);
+                        try manager.log.print(Output.errorWriter());
                     }
 
                     Global.crash();
@@ -1085,7 +1085,7 @@ pub const PackCommand = struct {
             },
             .parse_err => |err| {
                 Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
-                manager.log.print(Output.errorWriter(), .other) catch {};
+                manager.log.print(Output.errorWriter()) catch {};
                 Global.crash();
             },
             .entry => |entry| entry,

@@ -850,7 +850,10 @@ else()
   endif()
 
   if (IS_ARM64)
-    set(ARCH_WRAP_FLAGS "")
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=statx
+    )
   elseif(IS_X86_64)
     set(ARCH_WRAP_FLAGS
       -Wl,--wrap=fcntl

@@ -136,7 +136,7 @@ void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
 
 extern "C" {
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 
 int __wrap_fcntl(int fd, int cmd, ...)
 {
@@ -241,6 +241,10 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
         return -1;
     }
 }
+
+#endif
+
+#if defined(__x86_64__)
 
 #ifndef _MKNOD_VER
 #define _MKNOD_VER 1

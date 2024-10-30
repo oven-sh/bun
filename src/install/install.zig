@@ -2341,13 +2341,29 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 supported_method;
         }
 
-        pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID) bool {
+        pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID, resolution_tag: Resolution.Tag) bool {
             const state = manager.getPreinstallState(package_id);
             return switch (state) {
                 .done => false,
                 else => brk: {
                     if (this.patch.isNull()) {
-                        const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+                        const exists = switch (resolution_tag) {
+                            .npm => package_json_exists: {
+                                var buf = &PackageManager.cached_package_folder_name_buf;
+
+                                if (comptime Environment.isDebug) {
+                                    bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, buf), @src());
+                                }
+
+                                const subpath_len = strings.withoutTrailingSlash(this.cache_dir_subpath).len;
+                                buf[subpath_len] = std.fs.path.sep;
+                                defer buf[subpath_len] = 0;
+                                @memcpy(buf[subpath_len + 1 ..][0.."package.json\x00".len], "package.json\x00");
+                                const subpath = buf[0 .. subpath_len + 1 + "package.json".len :0];
+                                break :package_json_exists Syscall.existsAt(bun.toFD(this.cache_dir.fd), subpath);
+                            },
+                            else => Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false,
+                        };
                         if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                         break :brk !exists;
                     }
@@ -2377,13 +2393,8 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, resolution_tag: Resolution.Tag) Result {
-            // If this fails, we don't care.
-            // we'll catch it the next error
-            if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
-
-            if (comptime kind == .regular) return this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
-
             const result = this.installImpl(skip_delete, destination_dir, this.getInstallMethod(), resolution_tag);
+            if (comptime kind == .regular) return result;
             if (result == .fail) return result;
             const fd = bun.toFD(destination_dir.fd);
             const subpath = bun.path.joinZ(&[_][]const u8{ this.destination_dir_subpath, ".bun-patch-tag" });
@@ -12634,7 +12645,6 @@ pub const PackageManager = struct {
             var installer = PackageInstall{
                 .progress = this.progress,
                 .cache_dir = undefined,
-                .cache_dir_subpath = undefined,
                 .destination_dir_subpath = destination_dir_subpath,
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
@@ -12781,7 +12791,7 @@ pub const PackageManager = struct {
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
-                if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id)) {
+                if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
                     if (comptime Environment.allow_assert) {
                         bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
                     }

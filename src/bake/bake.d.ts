@@ -359,31 +359,21 @@ declare module "bun:bake/server" {
   // NOTE: The format of these manifests will likely be customizable in the future.
 
   /**
-   * Entries in this manifest can be loaded by using dynamic `await import()` or
-   * `require`. The bundler always ensures that all modules are ready on the server.
-   */
-  declare const clientManifest: ReactClientManifest;
-  /**
    * This follows the requirements for React's Server Components manifest, which
-   * does not actually include usable module specifiers. Calling `import()` on
-   * these specifiers wont work, but they will work client-side. Use
-   * `clientManifest` on the server for SSR.
+   * is a mapping of component IDs to the client-side file it is exported in.
+   * The specifiers from here are to be imported in the client.
+   * 
+   * To perform SSR with client components, see `clientManifest`
    */
   declare const serverManifest: ReactServerManifest;
+  /**
+   * Entries in this manifest map from client-side files to their respective SSR
+   * bundles. They can be loaded by `await import()` or `require()`.
+   */
+  declare const clientManifest: ReactClientManifest;
 
   /** (insert teaser trailer) */
   declare const actionManifest: never;
-
-  declare interface ReactClientManifest {
-    [id: string]: {
-      [name: string]: {
-        /** Valid specifier to import */
-        specifier: string;
-        /** Export name */
-        name: string;
-      };
-    };
-  }
 
   declare interface ReactServerManifest {
     /**
@@ -405,6 +395,19 @@ declare module "bun:bake/server" {
       name: string;
       /** Currently not implemented; always an empty array */
       chunks: [];
+    };
+  }
+
+  declare interface ReactClientManifest {
+    /** ReactServerManifest[...].id */
+    [id: string]: {
+      /** ReactServerManifest[...].name */
+      [name: string]: {
+        /** Valid specifier to import */
+        specifier: string;
+        /** Export name */
+        name: string;
+      };
     };
   }
 }

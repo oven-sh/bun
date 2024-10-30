@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { Suspense } from "react";
 
-function getPage(route, meta: Bake.RouteMetadata) {
+function getPage(route, meta: Bake.RouteMetadata, includeScriptTags = true) {
   const Route = route.default;
   const { styles, scripts } = meta;
 
@@ -37,7 +37,8 @@ function getPage(route, meta: Bake.RouteMetadata) {
         <Suspense fallback={<div>loader</div>}>
           <Route />
         </Suspense>
-        {scripts.map(url => (
+        {/* Only include script tags on hard navigations */}
+        {includeScriptTags && scripts.map(url => (
           <script key={url} src={url} async />
         ))}
       </body>
@@ -57,7 +58,7 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
   // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  const page = getPage(route, meta);
+  const page = getPage(route, meta, !skipSSR);
 
   // This renders Server Components to a ReadableStream "RSC Payload"
   console.log("serverManifest", serverManifest);

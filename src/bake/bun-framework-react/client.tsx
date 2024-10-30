@@ -98,7 +98,7 @@ async function goto(href: string) {
   // wait for new link tags to load before they are injected.
 
   // Use a react transition to update the page promise.
-  // TODO: How to get this show after 100ms
+  // TODO: How to get this show after 100ms, it hangs until all suspenses resolve
   // React.startTransition(() => {
   //   if (signal.aborted) return;
   //   setPage((promise = p));

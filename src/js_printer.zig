@@ -2953,7 +2953,7 @@ fn NewPrinter(
                             p.indent();
                         }
 
-                        if (e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
                             p.printSpace();
                         } else {
                             p.printNewline();
@@ -2965,7 +2965,7 @@ fn NewPrinter(
                             for (props[1..]) |property| {
                                 p.print(",");
 
-                                if (e.is_single_line) {
+                                if (e.is_single_line and !is_json) {
                                     p.printSpace();
                                 } else {
                                     p.printNewline();
@@ -2975,12 +2975,12 @@ fn NewPrinter(
                             }
                         }
 
-                        if (!e.is_single_line) {
+                        if (e.is_single_line and !is_json) {
+                            p.printSpace();
+                        } else {
                             p.unindent();
                             p.printNewline();
                             p.printIndent();
-                        } else {
-                            p.printSpace();
                         }
                     }
                     if (e.close_brace_loc.start > expr.loc.start) {

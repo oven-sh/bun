@@ -826,9 +826,7 @@ pub fn constructor(
     bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
     bundler.options.inlining = transpiler_options.runtime.inlining;
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
-    bundler.options.react_fast_refresh = bundler.options.hot_module_reloading and
-        bundler.options.allow_runtime and
-        transpiler_options.runtime.react_fast_refresh;
+    bundler.options.react_fast_refresh = false;
 
     const transpiler = allocator.create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{

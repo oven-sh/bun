@@ -10,6 +10,7 @@ import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
+import filenamify from "filenamify";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -552,7 +553,20 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    let root = path.join(tempDirectory, id);
+    let root = path.join(
+      tempDirectory,
+      id
+        .replaceAll("\\", "/")
+        .replaceAll(":", "-")
+        .replaceAll(" ", "-")
+        .replaceAll("\r\n", "-")
+        .replaceAll("\n", "-")
+        .replaceAll(".", "-")
+        .split("/")
+        .map(a => filenamify(a))
+        .join("/"),
+    );
+
     mkdirSync(root, { recursive: true });
     root = realpathSync(root);
     if (DEBUG) console.log("root:", root);

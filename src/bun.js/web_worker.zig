@@ -459,7 +459,9 @@ pub const WebWorker = struct {
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
+        var loop: ?*bun.uws.Loop = null;
         if (this.vm) |vm| {
+            loop = vm.uwsLoop();
             this.vm = null;
             vm.is_shutting_down = true;
             vm.onExit();
@@ -470,6 +472,9 @@ pub const WebWorker = struct {
         var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+        if (loop) |loop_| {
+            loop_.internal_loop_data.jsc_vm = null;
+        }
         bun.uws.onThreadExit();
         this.deinit();
 

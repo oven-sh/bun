@@ -173,13 +173,14 @@ pub const TrustCommand = struct {
         Output.print("\n", .{});
         if (trust_all) {
             Output.warn("0 scripts ran. This means all dependencies are already trusted or none have scripts.", .{});
+            Global.exit(0);
         } else {
-            Output.warn("0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n", .{});
+            Output.errGeneric("0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n", .{});
             for (packages_to_trust) |arg| {
                 Output.prettyError(" <d>-<r> {s}\n", .{arg});
             }
+            Global.exit(1);
         }
-        Global.exit(0);
     }
 
     pub fn exec(ctx: Command.Context, pm: *PackageManager, args: [][:0]u8) !void {

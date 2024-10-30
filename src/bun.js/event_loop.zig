@@ -394,6 +394,7 @@ const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
 const ShellCpTask = bun.shell.Interpreter.Builtin.Cp.ShellCpTask;
 const ShellCondExprStatTask = bun.shell.Interpreter.CondExpr.ShellCondExprStatTask;
 const ShellAsync = bun.shell.Interpreter.Async;
+const ShellYesTask = bun.shell.Interpreter.Builtin.Yes.YesTask;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
@@ -478,8 +479,8 @@ pub const Task = TaggedPointerUnion(.{
     ShellCondExprStatTask,
     ShellAsync,
     ShellAsyncSubprocessDone,
+    ShellYesTask,
     TimerObject,
-    bun.shell.Interpreter.Builtin.Yes.YesTask,
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
@@ -932,6 +933,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
                     var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
                     shell_ls_task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellYesTask))) => {
+                    var shell_yes_task: *ShellYesTask = task.get(ShellYesTask).?;
+                    shell_yes_task.runFromMainThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
                     var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;

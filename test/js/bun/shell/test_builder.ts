@@ -43,6 +43,7 @@ export function createTestBuilder(path: string) {
     _skipExecOnUnknownType: boolean = false;
 
     __todo: boolean | string = false;
+    __only: boolean = false;
 
     constructor(_scriptStr: TemplateStringsArray, _expressions: any[]) {
       this._scriptStr = _scriptStr;
@@ -297,11 +298,21 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
+    only(): this {
+      this.__only = true;
+      return this;
+    }
+
     runAsTest(name: string) {
       // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
       const tb = this;
       if (this.__todo) {
         test.todo(typeof this.__todo === "string" ? `${name} skipped: ${this.__todo}` : name, async () => {
+          await tb.run();
+        });
+        return;
+      } else if (this.__only) {
+        test.only(name, async () => {
           await tb.run();
         });
         return;

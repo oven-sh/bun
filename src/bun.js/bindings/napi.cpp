@@ -1882,8 +1882,35 @@ extern "C" napi_status napi_get_all_property_names(
 
     auto globalObject = toJS(env);
 
-    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
-    // TODO: filter
+    JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
+
+    napi_key_filter filter_by_any_descriptor = static_cast<napi_key_filter>(napi_key_enumerable | napi_key_writable | napi_key_configurable);
+    // avoid expensive iteration if they don't care whether keys are enumerable, writable, or configurable
+    if (key_filter & filter_by_any_descriptor) {
+        JSArray* filteredKeys = JSArray::create(globalObject->vm(), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
+        for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
+            JSValue key = exportKeys->get(globalObject, i);
+            PropertyDescriptor desc;
+            object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc);
+
+            bool include = true;
+            if (key_filter & napi_key_enumerable) {
+                include = include && desc.enumerable();
+            }
+            if (key_filter & napi_key_writable) {
+                include = include && desc.writable();
+            }
+            if (key_filter & napi_key_configurable) {
+                include = include && desc.configurable();
+            }
+
+            if (include) {
+                filteredKeys->push(globalObject, key);
+            }
+        }
+        exportKeys = filteredKeys;
+    }
+
     *result = toNapi(JSValue(exportKeys), globalObject);
     NAPI_RETURN_SUCCESS(env);
 }

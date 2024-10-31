@@ -277,27 +277,15 @@ pub fn shellEscape(
     var outbuf = std.ArrayList(u8).init(bun.default_allocator);
     defer outbuf.deinit();
 
-    if (bunstr.isUTF16()) {
-        if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
-            const result = bun.shell.escapeUtf16(bunstr.utf16(), &outbuf, true) catch {
-                globalThis.throwOutOfMemory();
-                return .undefined;
-            };
-            if (result.is_invalid) {
-                globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
-                return .undefined;
-            }
-            var str = bun.String.createUTF8(outbuf.items[0..]);
-            return str.transferToJS(globalThis);
-        }
-        return jsval;
-    }
-
-    if (bun.shell.needsEscapeUtf8AsciiLatin1(bunstr.latin1())) {
-        bun.shell.escape8Bit(bunstr.byteSlice(), &outbuf, true) catch {
+    if (bun.shell.needsEscapeBunstr(bunstr)) {
+        const result = bun.shell.escapeBunStr(bunstr, &outbuf, true) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
         };
+        if (!result) {
+            globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
+            return .undefined;
+        }
         var str = bun.String.createUTF8(outbuf.items[0..]);
         return str.transferToJS(globalThis);
     }

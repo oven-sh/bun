@@ -3156,8 +3156,8 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             const ptr = bun.new(T, t);
 
             if (Environment.enable_logs) {
-                if (ptr.ref_count != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                if (ptr.ref_count == 0) {
+                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
                 }
             }
 

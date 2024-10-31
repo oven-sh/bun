@@ -954,6 +954,65 @@ napi_value make_empty_array(const Napi::CallbackInfo &info) {
   return array;
 }
 
+// add_tag(object, lower, upper)
+static napi_value add_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  assert(napi_get_value_uint32(env, info[1], &lower) == napi_ok);
+  assert(napi_get_value_uint32(env, info[2], &upper) == napi_ok);
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+
+  napi_status status = napi_type_tag_object(env, object, &tag);
+  if (status != napi_ok) {
+    char buf[1024];
+    snprintf(buf, sizeof buf, "status = %d", status);
+    napi_throw_error(env, nullptr, buf);
+  }
+  return env.Undefined();
+}
+
+// check_tag(object, lower, upper): bool
+static napi_value check_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  assert(napi_get_value_uint32(env, info[1], &lower) == napi_ok);
+  assert(napi_get_value_uint32(env, info[2], &upper) == napi_ok);
+
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+  bool matches;
+  assert(napi_check_object_type_tag(env, object, &tag, &matches) == napi_ok);
+  return Napi::Boolean::New(env, matches);
+}
+
+// try_add_tag(object, lower, upper): bool
+// true if success
+static napi_value try_add_tag(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value object = info[0];
+
+  uint32_t lower, upper;
+  assert(napi_get_value_uint32(env, info[1], &lower) == napi_ok);
+  assert(napi_get_value_uint32(env, info[2], &upper) == napi_ok);
+
+  napi_type_tag tag = {.lower = lower, .upper = upper};
+
+  napi_status status = napi_type_tag_object(env, object, &tag);
+  bool pending;
+  assert(napi_is_exception_pending(env, &pending) == napi_ok);
+  if (pending) {
+    napi_value ignore_exception;
+    assert(napi_get_and_clear_last_exception(env, &ignore_exception) ==
+           napi_ok);
+    (void)ignore_exception;
+  }
+
+  return Napi::Boolean::New(env, status == napi_ok);
+}
+
 Napi::Value RunCallback(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // this function is invoked without the GC callback
@@ -1017,6 +1076,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("throw_error", Napi::Function::New(env, throw_error));
   exports.Set("create_and_throw_error",
               Napi::Function::New(env, create_and_throw_error));
+  exports.Set("add_tag", Napi::Function::New(env, add_tag));
+  exports.Set("try_add_tag", Napi::Function::New(env, try_add_tag));
+  exports.Set("check_tag", Napi::Function::New(env, check_tag));
 
   return exports;
 }

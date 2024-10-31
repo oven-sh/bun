@@ -557,6 +557,12 @@ function expectBundled(
     let root = path.join(
       tempDirectory,
       id
+        .replaceAll("\\", "/")
+        .replaceAll(":", "-")
+        .replaceAll(" ", "-")
+        .replaceAll("\r\n", "-")
+        .replaceAll("\n", "-")
+        .replaceAll(".", "-")
         .split("/")
         .map(a => filenamify(a))
         .join("/"),

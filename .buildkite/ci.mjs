@@ -73,6 +73,52 @@ async function getChangedFiles() {
   }
 }
 
+function getBuildId() {
+  return getEnv("BUILDKITE_BUILD_NUMBER");
+}
+
+function getBuildUrl() {
+  return getEnv("BUILDKITE_BUILD_URL");
+}
+
+async function getBuildIdWithArtifacts() {
+  let depth = 0;
+  let buildId = getBuildId();
+  let buildUrl = getBuildUrl();
+
+  while (buildUrl) {
+    const response = await fetch(`${buildUrl}.json`, {
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const { prev_branch_build: lastBuild, steps } = await response.json();
+    if (depth++) {
+      const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
+      if (buildSteps.length) {
+        if (buildSteps.every(({ outcome }) => outcome === "passed")) {
+          break;
+        }
+        return;
+      }
+    }
+
+    if (!lastBuild) {
+      return;
+    }
+
+    buildId = lastBuild["number"];
+    url = url.replace(/\/builds\/[0-9]+/, `/builds/${buildId}`);
+  }
+
+  return buildId;
+}
+
 function isDocumentation(filename) {
   return /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/.test(filename);
 }
@@ -125,7 +171,7 @@ function toYaml(obj, indent = 0) {
   return result;
 }
 
-function getPipeline() {
+function getPipeline(buildId) {
   /**
    * Helpers
    */
@@ -299,16 +345,27 @@ function getPipeline() {
       parallelism = 10;
     }
 
+    let depends;
+    let env;
+    if (buildId) {
+      env = {
+        BUILDKITE_ARTIFACT_BUILD_ID: buildId,
+      };
+    } else {
+      depends = [`${getKey(platform)}-build-bun`];
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
-      depends_on: [`${getKey(platform)}-build-bun`],
+      depends_on: depends,
       agents,
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
       parallelism,
       command,
+      env,
     };
   };
 
@@ -370,6 +427,7 @@ function getPipeline() {
 
 async function main() {
   console.log("Checking environment...");
+  console.log(" - Build Id:", getBuildId());
   console.log(" - Repository:", getRepository());
   console.log(" - Branch:", getBranch());
   console.log(" - Commit:", getCommit());
@@ -377,6 +435,7 @@ async function main() {
   console.log(" - Is Merge Queue:", isMergeQueue());
   console.log(" - Is Pull Request:", isPullRequest());
 
+  let buildId;
   const changedFiles = await getChangedFiles();
   if (changedFiles) {
     console.log(
@@ -389,11 +448,16 @@ async function main() {
     }
 
     if (changedFiles.every(filename => isTest(filename) || isDocumentation(filename))) {
-      // TODO: console.log("Since changed files contain tests, skipping build...");
+      buildId = await getBuildIdWithArtifacts();
+      if (buildId) {
+        console.log("Since changed files are only tests, using build artifacts from previous build...", buildId);
+      } else {
+        console.log("Changed files are only tests, but could not find previous build artifacts...");
+      }
     }
   }
 
-  const pipeline = getPipeline();
+  const pipeline = getPipeline(buildId);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);

@@ -2094,7 +2094,7 @@ pub const Process = struct {
 
                 const len = fs.top_level_dir.len;
                 // Ensure the path ends with a slash
-                if(fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
+                if (fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
                     fs.top_level_dir_buf[len] = std.fs.path.sep;
                     fs.top_level_dir_buf[len + 1] = 0;
                     fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];

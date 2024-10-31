@@ -40,10 +40,6 @@ pub const Parser = struct {
         this.arena.deinit();
     }
 
-    pub fn parse(this: *Parser, arena_allocator: Allocator) OOM!void {
-        try this.parseImpl(arena_allocator);
-    }
-
     inline fn shouldSkipLine(line: []const u8) bool {
         if (line.len == 0 or
             // comments
@@ -61,7 +57,7 @@ pub const Parser = struct {
         return true;
     }
 
-    fn parseImpl(this: *Parser, arena_allocator: Allocator) OOM!void {
+    fn parse(this: *Parser, arena_allocator: Allocator) OOM!void {
         var iter = std.mem.splitScalar(u8, this.src, '\n');
         var head: *E.Object = this.out.data.e_object;
 
@@ -742,12 +738,14 @@ pub const ConfigIterator = struct {
                 var slice = try allocator.alloc(u8, len);
                 const result = bun.base64.decode(slice[0..], this.value);
                 if (result.status != .success) {
-                    try log.addErrorFmt(
-                        source,
-                        this.loc,
+                    try log.addErrorFmtOpts(
                         allocator,
                         "{s} is not valid base64",
                         .{@tagName(this.optname)},
+                        .{
+                            .source = source,
+                            .loc = this.loc,
+                        },
                     );
                     return null;
                 }

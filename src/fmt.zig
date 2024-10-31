@@ -1062,9 +1062,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 try writer.writeByteNTimes('*', len);
                                 try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                             } else {
-                                const len = text[0..i].len - 1;
-                                try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                try writer.writeByteNTimes('*', len);
+                                try writer.writeByteNTimes('*', text[0..i].len);
                             }
                             text = text[i..];
                             continue;

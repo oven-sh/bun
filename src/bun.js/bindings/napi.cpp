@@ -2808,7 +2808,6 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
         return napi_invalid_arg;
     }
 
-    // TODO(@190n) maybe use a BigInt?
     auto* new_tag = Bun::NapiTypeTag::create(globalObject->vm(), globalObject->NapiTypeTagStructure(), *type_tag);
     globalObject->napiTypeTags()->set(globalObject->vm(), js_object, new_tag);
     return napi_ok;

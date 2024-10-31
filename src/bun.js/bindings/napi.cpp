@@ -527,15 +527,12 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
     }
 
     if (property.method) {
-        const char* utf8name = nullptr;
-        size_t length = 0;
+        WTF::String name;
         if (!propertyName.isSymbol()) {
-            // TODO(@heimskr): do this better
-            utf8name = reinterpret_cast<const char*>(propertyName.string().span8().data());
-            length = propertyName.string().length();
+            name = propertyName.string();
         }
 
-        JSValue value = NapiClass::create(vm, globalObject, utf8name, length, property.method, dataPtr, 0, nullptr);
+        JSValue value = NapiClass::create(vm, globalObject, name, property.method, dataPtr, 0, nullptr);
         to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
         return;
     }
@@ -547,7 +544,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
-            getter = NapiClass::create(vm, globalObject, reinterpret_cast<const char*>(name.span8().data()), name.length(), property.getter, dataPtr, 0, nullptr);
+            getter = NapiClass::create(vm, globalObject, name, property.getter, dataPtr, 0, nullptr);
         } else {
             JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
                 globalObject->vm(), globalObject, 0, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
@@ -558,7 +555,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
-            setter = NapiClass::create(vm, globalObject, reinterpret_cast<const char*>(name.span8().data()), name.length(), property.setter, dataPtr, 0, nullptr);
+            setter = NapiClass::create(vm, globalObject, name, property.setter, dataPtr, 0, nullptr);
         }
 
         auto getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
@@ -1048,12 +1045,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
         name = WTF::String::fromUTF8({ utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length });
     }
 
-    NapiClass* function {};
-    if (utf8name != nullptr) {
-        function = NapiClass::create(vm, globalObject, utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length, cb, data, 0, nullptr);
-    } else {
-        function = NapiClass::create(vm, globalObject, nullptr, 0, cb, data, 0, nullptr);
-    }
+    auto function = NapiClass::create(vm, globalObject, name, cb, data, 0, nullptr);
 
     ASSERT(function->isCallable());
     *result = toNapi(JSValue(function), globalObject);
@@ -1754,14 +1746,12 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     }
 }
 
-NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char* utf8name,
-    size_t length,
+NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, WTF::String name,
     napi_callback constructor,
     void* data,
     size_t property_count,
     const napi_property_descriptor* properties)
 {
-    WTF::String name = WTF::String::fromUTF8({ utf8name, length }).isolatedCopy();
     NativeExecutable* executable = vm.getHostFunction(
         // for normal call
         NapiClass_ConstructorFunction<false>,
@@ -1770,16 +1760,16 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
         NapiClass_ConstructorFunction<true>, name);
     Structure* structure = globalObject->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, globalObject, structure, data);
-    napiClass->finishCreation(vm, executable, length, name, constructor, data, property_count, properties);
+    napiClass->finishCreation(vm, executable, name, constructor, data, property_count, properties);
     return napiClass;
 }
 
-void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name, napi_callback constructor,
+void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, const String& name, napi_callback constructor,
     void* data,
     size_t property_count,
     const napi_property_descriptor* properties)
 {
-    Base::finishCreation(vm, executable, length, name);
+    Base::finishCreation(vm, executable, 0, name);
     ASSERT(inherits(info()));
     this->m_constructor = constructor;
     auto globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
@@ -1888,7 +1878,8 @@ extern "C" napi_status napi_define_class(napi_env env,
     if (len == NAPI_AUTO_LENGTH) {
         len = strlen(utf8name);
     }
-    NapiClass* napiClass = NapiClass::create(vm, globalObject, utf8name, len, constructor, data, property_count, properties);
+    auto name = WTF::String::fromUTF8(std::span { utf8name, len }).isolatedCopy();
+    NapiClass* napiClass = NapiClass::create(vm, globalObject, name, constructor, data, property_count, properties);
     JSValue value = JSValue(napiClass);
     JSC::EnsureStillAliveScope ensureStillAlive1(value);
     if (data != nullptr) {

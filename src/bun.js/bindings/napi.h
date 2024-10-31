@@ -205,8 +205,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JS_EXPORT_PRIVATE static NapiClass* create(VM&, Zig::GlobalObject*, const char* utf8name,
-        size_t length,
+    JS_EXPORT_PRIVATE static NapiClass* create(VM&, Zig::GlobalObject*, WTF::String name,
         napi_callback constructor,
         void* data,
         size_t property_count,
@@ -232,7 +231,7 @@ private:
         , dataPtr(data)
     {
     }
-    void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name, napi_callback constructor,
+    void finishCreation(VM&, NativeExecutable*, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);

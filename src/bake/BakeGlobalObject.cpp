@@ -20,10 +20,10 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     if (keyString.startsWith("bake:/"_s)) {
         JSC::VM& vm = global->vm();
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::jsUndefined(), parameters, JSC::jsUndefined()); 
+            JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
 
-    if(!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
+    if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
         JSC::VM& vm = global->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -38,7 +38,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        
+
         return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
             JSC::jsUndefined(), parameters, JSC::jsUndefined());
     }
@@ -66,7 +66,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
         return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
-    } 
+    }
 
     // Use Zig::GlobalObject's function
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);

@@ -87,6 +87,7 @@ __asm__(".symver log2,log2@GLIBC_2.2.5");
 __asm__(".symver log2f,log2f@GLIBC_2.2.5");
 __asm__(".symver logf,logf@GLIBC_2.2.5");
 __asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver powf,powf@GLIBC_2.2.5");
 __asm__(".symver sincosf,sincosf@GLIBC_2.2.5");
 __asm__(".symver sinf,sinf@GLIBC_2.2.5");
 __asm__(".symver tanf,tanf@GLIBC_2.2.5");
@@ -94,7 +95,6 @@ __asm__(".symver tanf,tanf@GLIBC_2.2.5");
 __asm__(".symver cosf,cosf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
 __asm__(".symver expf,expf@GLIBC_2.17");
-__asm__(".symver fcntl,fcntl@GLIBC_2.17");
 __asm__(".symver fmod,fmod@GLIBC_2.17");
 __asm__(".symver fmodf,fmodf@GLIBC_2.17");
 __asm__(".symver log,log@GLIBC_2.17");
@@ -103,6 +103,7 @@ __asm__(".symver log2,log2@GLIBC_2.17");
 __asm__(".symver log2f,log2f@GLIBC_2.17");
 __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
+__asm__(".symver powf,powf@GLIBC_2.17");
 __asm__(".symver sincosf,sincosf@GLIBC_2.17");
 __asm__(".symver sinf,sinf@GLIBC_2.17");
 __asm__(".symver tanf,tanf@GLIBC_2.17");
@@ -134,6 +135,9 @@ void BUN_WRAP_GLIBC_SYMBOL(sincosf)(float, float*, float*);
 }
 
 extern "C" {
+
+#if defined(__x86_64__) || defined(__aarch64__)
+
 int __wrap_fcntl(int fd, int cmd, ...)
 {
     va_list args;
@@ -150,6 +154,10 @@ static void init_real_fcntl64()
 {
     if (!real_fcntl64) {
         real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+
+        if (!real_fcntl64) {
+            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+        }
     }
 }
 
@@ -233,32 +241,10 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
         return -1;
     }
 }
-double __wrap_exp(double x) { return exp(x); }
-double __wrap_fmod(double x, double y) { return fmod(x, y); }
-double __wrap_log(double x) { return log(x); }
-double __wrap_log2(double x) { return log2(x); }
-double __wrap_pow(double x, double y) { return pow(x, y); }
-float __wrap_cosf(float x) { return cosf(x); }
-float __wrap_expf(float x) { return expf(x); }
-float __wrap_fmodf(float x, float y) { return fmodf(x, y); }
-float __wrap_log10f(float x) { return log10f(x); }
-float __wrap_log2f(float x) { return log2f(x); }
-float __wrap_logf(float x) { return logf(x); }
-float __wrap_sinf(float x) { return sinf(x); }
-float __wrap_tanf(float x) { return tanf(x); }
-void __wrap_sincosf(float x, float* sin_x, float* cos_x) { sincosf(x, sin_x, cos_x); }
-}
 
-// ban statx, for now
-extern "C" int __wrap_statx(int fd, const char* path, int flags,
-    unsigned int mask, struct statx* buf)
-{
-    errno = ENOSYS;
-#ifdef BUN_DEBUG
-    abort();
 #endif
-    return -1;
-}
+
+#if defined(__x86_64__)
 
 #ifndef _MKNOD_VER
 #define _MKNOD_VER 1
@@ -322,6 +308,36 @@ extern "C" int __xmknodat(int ver, int dirfd, const char* path, __mode_t mode, _
 extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_t dev)
 {
     return __xmknodat(_MKNOD_VER, dirfd, path, mode, dev);
+}
+
+#endif
+
+double __wrap_exp(double x) { return exp(x); }
+double __wrap_fmod(double x, double y) { return fmod(x, y); }
+double __wrap_log(double x) { return log(x); }
+double __wrap_log2(double x) { return log2(x); }
+double __wrap_pow(double x, double y) { return pow(x, y); }
+float __wrap_powf(float x, float y) { return powf(x, y); }
+float __wrap_cosf(float x) { return cosf(x); }
+float __wrap_expf(float x) { return expf(x); }
+float __wrap_fmodf(float x, float y) { return fmodf(x, y); }
+float __wrap_log10f(float x) { return log10f(x); }
+float __wrap_log2f(float x) { return log2f(x); }
+float __wrap_logf(float x) { return logf(x); }
+float __wrap_sinf(float x) { return sinf(x); }
+float __wrap_tanf(float x) { return tanf(x); }
+void __wrap_sincosf(float x, float* sin_x, float* cos_x) { sincosf(x, sin_x, cos_x); }
+}
+
+// ban statx, for now
+extern "C" int __wrap_statx(int fd, const char* path, int flags,
+    unsigned int mask, struct statx* buf)
+{
+    errno = ENOSYS;
+#ifdef BUN_DEBUG
+    abort();
+#endif
+    return -1;
 }
 
 #endif

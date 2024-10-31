@@ -8,6 +8,7 @@
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
 #include "napi_handle_scope.h"
+#include "napi_type_tag.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -50,6 +51,7 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
@@ -2786,4 +2788,51 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     RELEASE_AND_RETURN(scope, napi_ok);
+}
+
+extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, const napi_type_tag* type_tag)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !type_tag) {
+        return napi_invalid_arg;
+    }
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSObject* js_object = toJS(value).getObject();
+    if (!js_object) {
+        return napi_object_expected;
+    }
+
+    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    // cannot tag an object that is already tagged
+    if (existing_tag) {
+        return napi_invalid_arg;
+    }
+
+    auto& vm = globalObject->vm();
+    auto* new_tag = Bun::NapiTypeTag::create(vm, globalObject->NapiTypeTagStructure(), *type_tag);
+    globalObject->napiTypeTags()->set(vm, js_object, new_tag);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value, const napi_type_tag* type_tag, bool* result)
+{
+    NAPI_PREMABLE
+    if (!env || !value || !type_tag) {
+        return napi_invalid_arg;
+    }
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSObject* js_object = toJS(value).getObject();
+    if (!js_object) {
+        return napi_object_expected;
+    }
+
+    bool match = false;
+    auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    if (found_tag && found_tag->matches(*type_tag)) {
+        match = true;
+    }
+    if (LIKELY(result)) {
+        *result = match;
+    }
+    return napi_ok;
 }

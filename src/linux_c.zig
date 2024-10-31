@@ -771,3 +771,17 @@ pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8
 pub const netdb = @cImport({
     @cInclude("netdb.h");
 });
+
+export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
+    return @bitCast(
+        std.os.linux.syscall6(
+            .epoll_pwait2,
+            @bitCast(@as(isize, @intCast(epfd))),
+            @intFromPtr(events),
+            @bitCast(@as(isize, @intCast(maxevents))),
+            @intFromPtr(timeout),
+            @intFromPtr(sigmask),
+            8,
+        ),
+    );
+}

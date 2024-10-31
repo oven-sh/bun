@@ -407,18 +407,25 @@ function getPipeline(buildId) {
       ...buildPlatforms.map(platform => {
         const { os, arch, baseline } = platform;
 
-        return {
-          key: getKey(platform),
-          group: getLabel(platform),
-          steps: [
+        let steps = [
+          ...testPlatforms
+            .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
+            .map(platform => getTestBunStep(platform)),
+        ];
+
+        if (!buildId) {
+          steps.unshift(
             getBuildVendorStep(platform),
             getBuildCppStep(platform),
             getBuildZigStep(platform),
             getBuildBunStep(platform),
-            ...testPlatforms
-              .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
-              .map(platform => getTestBunStep(platform)),
-          ],
+          );
+        }
+
+        return {
+          key: getKey(platform),
+          group: getLabel(platform),
+          steps,
         };
       }),
     ],

@@ -329,11 +329,7 @@ pub const Data = struct {
             try to.writeAll(message_color);
         }
 
-        if (redact_sensitive_information) {
-            try to.print(comptime Output.prettyFmt("{}<r>", enable_ansi_colors), .{bun.fmt.redactedSource(this.text)});
-        } else {
-            try to.print(comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
-        }
+        try to.print(comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
 
         if (this.location) |*location| {
             if (location.file.len > 0) {

@@ -305,12 +305,15 @@ fn startsWithRedactedItem(text: string, comptime item: string) ?struct { usize, 
         whitespace = true;
     }
     if (offset == text.len) return null;
-    // if whitespace is seen, make sure what follows is redacted
-    if (!whitespace and text[offset] != '=' and text[offset] != ':') return null;
-    offset += 1;
+    const cont = js_lexer.isIdentifierContinue(text[offset]);
+
+    // must be another identifier
+    if (!whitespace and cont) return null;
 
     // `null` is not returned after this point. Redact to the next
     // newline if anything is unexpected
+    if (cont) return .{ offset, indexOfChar(text[offset..], '\n') orelse text[offset..].len };
+    offset += 1;
 
     var end = offset;
     while (end < text.len and std.ascii.isWhitespace(text[end])) {

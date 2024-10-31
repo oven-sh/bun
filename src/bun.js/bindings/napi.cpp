@@ -561,6 +561,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         auto getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
         to->putDirectAccessor(globalObject, propertyName, getterSetter, PropertyAttribute::Accessor | getPropertyAttributes(property));
+
     } else {
         JSValue value = toJS(property.value);
 
@@ -568,7 +569,8 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
             value = JSC::jsUndefined();
         }
 
-        to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
+        PropertyDescriptor descriptor(value, getPropertyAttributes(property));
+        to->methodTable()->defineOwnProperty(to, globalObject, propertyName, descriptor, false);
     }
 }
 
@@ -595,12 +597,50 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
 
     JSValue jsValue = toJS(value);
 
-    bool putResult = object->put(object, globalObject, identifier, jsValue, slot);
+    bool putResult = object->methodTable()->put(object, globalObject, identifier, jsValue, slot);
     NAPI_RETURN_IF_EXCEPTION(env);
     if (!putResult) return napi_set_last_error(env, napi_generic_failure);
 
     // we should have returned if there is an exception
     NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_set_element(napi_env env, napi_value object_,
+    uint32_t index, napi_value value_)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, object_);
+    NAPI_CHECK_ARG(env, value_);
+
+    JSValue object = toJS(object_);
+    JSValue value = toJS(value_);
+    NAPI_RETURN_EARLY_IF_FALSE(env, !object.isEmpty() && !value.isEmpty(), napi_invalid_arg);
+
+    JSObject* jsObject = object.getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_array_expected);
+
+    jsObject->methodTable()->putByIndex(jsObject, toJS(env), index, value, false);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_has_element(napi_env env, napi_value object_,
+    uint32_t index, bool* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, object_);
+    NAPI_CHECK_ARG(env, result);
+
+    JSValue object = toJS(object_);
+    NAPI_RETURN_EARLY_IF_FALSE(env, !object.isEmpty(), napi_invalid_arg);
+
+    JSObject* jsObject = object.getObject();
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_array_expected);
+
+    bool has_property = jsObject->hasProperty(toJS(env), index);
+    *result = has_property;
+
+    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
 extern "C" napi_status napi_has_property(napi_env env, napi_value object,
@@ -725,7 +765,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     // TODO should maybe be false
     PutPropertySlot slot(target, false);
 
-    target->put(target, globalObject, identifier, jsValue, slot);
+    target->methodTable()->put(target, globalObject, identifier, jsValue, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
@@ -1077,7 +1117,7 @@ extern "C" napi_status
 napi_define_properties(napi_env env, napi_value object, size_t property_count,
     const napi_property_descriptor* properties)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, object);
     NAPI_RETURN_EARLY_IF_FALSE(env, properties || property_count == 0, napi_invalid_arg);
 
@@ -1097,7 +1137,7 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     }
 
     throwScope.release();
-    NAPI_RETURN_SUCCESS(env);
+    return napi_set_last_error(env, napi_ok);
 }
 
 static JSC::ErrorInstance* createErrorWithCode(JSC::JSGlobalObject* globalObject, const WTF::String& code, const WTF::String& message, JSC::ErrorType type)
@@ -1821,13 +1861,17 @@ extern "C" napi_status napi_get_all_property_names(
         jsc_property_mode = PropertyNameMode::Strings;
     } else if (key_filter & napi_key_skip_strings) {
         jsc_property_mode = PropertyNameMode::Symbols;
+    } else {
+        jsc_key_mode = DontEnumPropertiesMode::Include;
     }
 
     auto globalObject = toJS(env);
 
     JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
 
-    napi_key_filter filter_by_any_descriptor = static_cast<napi_key_filter>(napi_key_enumerable | napi_key_writable | napi_key_configurable);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    auto filter_by_any_descriptor = static_cast<napi_key_filter>(napi_key_enumerable | napi_key_writable | napi_key_configurable);
     // avoid expensive iteration if they don't care whether keys are enumerable, writable, or configurable
     if (key_filter & filter_by_any_descriptor) {
         JSArray* filteredKeys = JSArray::create(globalObject->vm(), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
@@ -2288,7 +2332,7 @@ extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
     NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_object_expected);
 
     if (LIKELY(result)) {
-        *result = JSObject::deletePropertyByIndex(jsObject, toJS(env), index);
+        *result = jsObject->methodTable()->deletePropertyByIndex(jsObject, toJS(env), index);
     }
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }

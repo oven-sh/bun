@@ -549,41 +549,8 @@ pub export fn napi_get_prototype(env_: napi_env, object_: napi_value, result_: ?
 
 //     result.* =
 // }
-pub export fn napi_set_element(env_: napi_env, object_: napi_value, index: c_uint, value_: napi_value) napi_status {
-    log("napi_set_element", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    const object = object_.get();
-    const value = value_.get();
-    if (value.isEmpty() or object.isEmpty())
-        return env.invalidArg();
-    if (!object.jsType().isIndexable()) {
-        return env.setLastError(.array_expected);
-    }
-    JSC.C.JSObjectSetPropertyAtIndex(env.toJS().ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
-    return env.ok();
-}
-pub export fn napi_has_element(env_: napi_env, object_: napi_value, index: c_uint, result_: ?*bool) napi_status {
-    log("napi_has_element", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    const object = object_.get();
-    if (object.isEmpty()) {
-        return env.invalidArg();
-    }
-
-    if (!object.jsType().isIndexable()) {
-        return env.setLastError(.array_expected);
-    }
-
-    result.* = object.getLength(env.toJS()) > index;
-    return env.ok();
-}
+pub extern fn napi_set_element(env_: napi_env, object_: napi_value, index: c_uint, value_: napi_value) napi_status;
+pub extern fn napi_has_element(env_: napi_env, object_: napi_value, index: c_uint, result_: ?*bool) napi_status;
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;

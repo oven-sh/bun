@@ -37,7 +37,7 @@ describe("inspect.table (ansi)", () => {
 });
 
 const withProperties = [
-  [{ a: 1, b: 3 }, ["b"]],
+  [{ a: 1, b: 2 }, ["b"]],
   [{ a: 1, b: 2 }, ["a"]],
 ];
 

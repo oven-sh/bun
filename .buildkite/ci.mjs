@@ -60,7 +60,7 @@ function isPullRequest() {
 async function getChangedFiles() {
   const repository = getRepository();
   const head = getCommit();
-  const base = isMainBranch() ? `${head}^1` : getMainBranch();
+  const base = `${head}^1`;
 
   try {
     const response = await fetch(`https://api.github.com/repos/${repository}/compare/${base}...${head}`);
@@ -70,6 +70,46 @@ async function getChangedFiles() {
     }
   } catch (error) {
     console.error(error);
+  }
+}
+
+function getBuildUrl() {
+  return getEnv("BUILDKITE_BUILD_URL");
+}
+
+async function getBuildIdWithArtifacts() {
+  let depth = 0;
+  let url = getBuildUrl();
+
+  while (url) {
+    const response = await fetch(`${url}.json`, {
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const { id, state, prev_branch_build: lastBuild, steps } = await response.json();
+    if (depth++) {
+      if (state === "failed" || state === "passed") {
+        const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
+        if (buildSteps.length) {
+          if (buildSteps.every(({ outcome }) => outcome === "passed")) {
+            return id;
+          }
+          return;
+        }
+      }
+    }
+
+    if (!lastBuild) {
+      return;
+    }
+
+    url = url.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
   }
 }
 
@@ -86,6 +126,10 @@ function toYaml(obj, indent = 0) {
   let result = "";
 
   for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+
     if (value === null) {
       result += `${spaces}${key}: null\n`;
       continue;
@@ -125,7 +169,7 @@ function toYaml(obj, indent = 0) {
   return result;
 }
 
-function getPipeline() {
+function getPipeline(buildId) {
   /**
    * Helpers
    */
@@ -299,16 +343,27 @@ function getPipeline() {
       parallelism = 10;
     }
 
+    let depends;
+    let env;
+    if (buildId) {
+      env = {
+        BUILDKITE_ARTIFACT_BUILD_ID: buildId,
+      };
+    } else {
+      depends = [`${getKey(platform)}-build-bun`];
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
-      depends_on: [`${getKey(platform)}-build-bun`],
+      depends_on: depends,
       agents,
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
       parallelism,
       command,
+      env,
     };
   };
 
@@ -350,18 +405,25 @@ function getPipeline() {
       ...buildPlatforms.map(platform => {
         const { os, arch, baseline } = platform;
 
-        return {
-          key: getKey(platform),
-          group: getLabel(platform),
-          steps: [
+        let steps = [
+          ...testPlatforms
+            .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
+            .map(platform => getTestBunStep(platform)),
+        ];
+
+        if (!buildId) {
+          steps.unshift(
             getBuildVendorStep(platform),
             getBuildCppStep(platform),
             getBuildZigStep(platform),
             getBuildBunStep(platform),
-            ...testPlatforms
-              .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
-              .map(platform => getTestBunStep(platform)),
-          ],
+          );
+        }
+
+        return {
+          key: getKey(platform),
+          group: getLabel(platform),
+          steps,
         };
       }),
     ],
@@ -377,6 +439,7 @@ async function main() {
   console.log(" - Is Merge Queue:", isMergeQueue());
   console.log(" - Is Pull Request:", isPullRequest());
 
+  let buildId;
   const changedFiles = await getChangedFiles();
   if (changedFiles) {
     console.log(
@@ -389,11 +452,16 @@ async function main() {
     }
 
     if (changedFiles.every(filename => isTest(filename) || isDocumentation(filename))) {
-      // TODO: console.log("Since changed files contain tests, skipping build...");
+      buildId = await getBuildIdWithArtifacts();
+      if (buildId) {
+        console.log("Since changed files are only tests, using build artifacts from previous build...", buildId);
+      } else {
+        console.log("Changed files are only tests, but could not find previous build artifacts...");
+      }
     }
   }
 
-  const pipeline = getPipeline();
+  const pipeline = getPipeline(buildId);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);

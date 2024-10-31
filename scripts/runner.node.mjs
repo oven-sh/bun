@@ -1010,9 +1010,16 @@ async function getExecPathFromBuildKite(target) {
 
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
+
+  const args = ["artifact", "download", "**", releasePath, "--step", target];
+  const buildId = process.env["BUILDKITE_ARTIFACT_BUILD_ID"];
+  if (buildId) {
+    args.push("--build", buildId);
+  }
+
   await spawnSafe({
     command: "buildkite-agent",
-    args: ["artifact", "download", "**", releasePath, "--step", target],
+    args,
   });
 
   let zipPath;

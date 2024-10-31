@@ -3157,22 +3157,7 @@ const HmrSocket = struct {
     }
 };
 
-/// Bake uses a special global object extending Zig::GlobalObject
-pub const DevGlobalObject = opaque {
-    /// Safe downcast to use other Bun APIs
-    pub fn js(ptr: *DevGlobalObject) *JSC.JSGlobalObject {
-        return @ptrCast(ptr);
-    }
-
-    pub fn vm(ptr: *DevGlobalObject) *JSC.VM {
-        return ptr.js().vm();
-    }
-};
-
 const c = struct {
-    // BakeDevGlobalObject.cpp
-    extern fn BakeCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
-
     // BakeSourceProvider.cpp
     extern fn BakeGetDefaultExportFromModule(global: *JSC.JSGlobalObject, module: JSValue) JSValue;
 
@@ -3181,25 +3166,25 @@ const c = struct {
         key: *JSC.JSString,
     };
 
-    fn BakeLoadServerHmrPatch(global: *DevGlobalObject, code: bun.String) !JSValue {
-        const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) JSValue.MaybeException, .{
+    fn BakeLoadServerHmrPatch(global: *JSC.JSGlobalObject, code: bun.String) !JSValue {
+        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String) callconv(.C) JSValue.MaybeException, .{
             .name = "BakeLoadServerHmrPatch",
         });
         return f(global, code).unwrap();
     }
 
-    fn BakeLoadInitialServerCode(global: *DevGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
+    fn BakeLoadInitialServerCode(global: *JSC.JSGlobalObject, code: bun.String) bun.JSError!LoadServerCodeResult {
         const Return = extern struct {
             promise: ?*JSInternalPromise,
             key: *JSC.JSString,
         };
-        const f = @extern(*const fn (*DevGlobalObject, bun.String) callconv(.C) Return, .{
+        const f = @extern(*const fn (*JSC.JSGlobalObject, bun.String) callconv(.C) Return, .{
             .name = "BakeLoadInitialServerCode",
         });
         const result = f(global, code);
         return .{
             .promise = result.promise orelse
-                return global.js().jsErrorFromCPP(),
+                return global.jsErrorFromCPP(),
             .key = result.key,
         };
     }
@@ -3475,7 +3460,8 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
             },
             .directory => {
                 // bust the directory cache since this directory has changed
-                _ = dev.server_bundler.resolver.bustDirCache(file_path);
+                // TODO: correctly solve https://github.com/oven-sh/bun/issues/14913
+                _ = dev.server_bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlash(file_path));
 
                 // if a directory watch exists for resolution
                 // failures, check those now.

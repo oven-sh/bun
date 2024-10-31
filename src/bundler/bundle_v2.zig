@@ -1064,8 +1064,8 @@ pub const BundleV2 = struct {
         const fw = this.framework orelse return;
         const sc = fw.server_components orelse return;
 
-        if (this.graph.kit_referenced_client_data) bun.todoPanic(@src(), "implement generation for 'bun:bake/client'", .{});
-        if (!this.graph.kit_referenced_server_data) return;
+        if (!this.graph.kit_referenced_server_data and
+            !this.graph.kit_referenced_client_data) return;
 
         const alloc = this.graph.allocator;
 
@@ -1134,7 +1134,7 @@ pub const BundleV2 = struct {
                         .key = server.newExpr(E.String{ .data = server_key_string }),
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
-                                .{ .key = id_string, .value = ssr_path },
+                                .{ .key = id_string, .value = client_path },
                                 .{ .key = name_string, .value = export_name },
                                 .{ .key = chunks_string, .value = empty_array },
                             }),
@@ -1145,14 +1145,14 @@ pub const BundleV2 = struct {
                         .value = server.newExpr(E.Object{
                             .properties = try G.Property.List.fromSlice(alloc, &.{
                                 .{ .key = name_string, .value = export_name },
-                                .{ .key = specifier_string, .value = client_path },
+                                .{ .key = specifier_string, .value = ssr_path },
                             }),
                         }),
                     };
                 }
 
                 try client_manifest_props.append(alloc, .{
-                    .key = ssr_path,
+                    .key = client_path,
                     .value = server.newExpr(E.Object{
                         .properties = G.Property.List.init(client_manifest_items),
                     }),

@@ -3,17 +3,16 @@ import type { Bake } from "bun";
 // - The `node` variant avoids ReadableStream, a slower streaming API
 // - The `unbundled` variant uses `import` instead of `__webpack_require__`
 import { renderToPipeableStream } from "react-server-dom-webpack/server.node.unbundled.js";
-import { renderToHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
+import { renderToHtml, renderToStaticHtml } from "bun-framework-react/ssr.tsx" with { bunBakeGraph: "ssr" };
 import { serverManifest } from "bun:bake/server";
-import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { Suspense } from "react";
 
-function getPage(route, meta: Bake.RouteMetadata, includeScriptTags = true) {
+function getPage(route, meta: Bake.RouteMetadata) {
   const Route = route.default;
-  const { styles, scripts } = meta;
+  const { styles } = meta;
 
-  if (import.meta.env.DEV) {
+  // Avoid running this on every production request
+  if (import.meta.env.DEV || import.meta.env.STATIC) {
     if (typeof Route !== "function") {
       throw new Error(
         "Expected the default export of " +
@@ -34,13 +33,7 @@ function getPage(route, meta: Bake.RouteMetadata, includeScriptTags = true) {
         ))}
       </head>
       <body>
-        <Suspense fallback={<div>loader</div>}>
-          <Route />
-        </Suspense>
-        {/* Only include script tags on hard navigations */}
-        {includeScriptTags && scripts.map(url => (
-          <script key={url} src={url} async />
-        ))}
+        <Route />
       </body>
     </html>
   );
@@ -58,10 +51,9 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
   // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  const page = getPage(route, meta, !skipSSR);
+  const page = getPage(route, meta);
 
   // This renders Server Components to a ReadableStream "RSC Payload"
-  console.log("serverManifest", serverManifest);
   const rscPayload = renderToPipeableStream(page, serverManifest)
     // TODO: write a lightweight version of PassThrough
     .pipe(new PassThrough());
@@ -72,42 +64,48 @@ export default async function render(request: Request, route: any, meta: Bake.Ro
     });
   }
 
-  return new Response(await renderToHtml(rscPayload), {
+  // Then the RSC payload is rendered into HTML
+  return new Response(await renderToHtml(rscPayload, meta.scripts), {
     headers: {
       "Content-Type": "text/html; charset=utf8",
     },
   });
 }
 
-// For static site generation, a different function is given, one without a request object.
-// export async function renderStatic(route: any, meta: Bake.RouteMetadata) {
-//   const page = getPage(route, meta);
-//   const rscPayload = renderToReadableStream(page, serverManifest);
-//   const [rscPayload1, rscPayload2] = rscPayload.tee();
+// When a production build is performed, pre-rendering is invoked here. If this
+// function returns no files, the route is always dynamic. When building an app
+// to static files, all routes get pre-rendered (build failure if not possible).
+export async function prerender(route: any, meta: Bake.RouteMetadata) {
+  const page = getPage(route, meta);
 
-//   // Prepare both files in parallel
-//   let [html, rscPayloadBuffer] = await Promise.all([
-//     Bun.readableStreamToText(await renderToHtml(rscPayload2)),
-//     Bun.readableStreamToText(rscPayload1),
-//   ]);
-//   const scripts = meta.scripts.map(url => `<script src=${JSON.stringify(url)}></script>`);
-//   html = html.replace(
-//     "</body>",
-//     `<script id="rsc_payload" type="json">${rscPayloadBuffer}</script>${scripts.join("\n")}</body>`,
-//   );
+  const rscPayload = renderToPipeableStream(page, serverManifest)
+    // TODO: write a lightweight version of PassThrough
+    .pipe(new PassThrough());
 
-//   // Each route generates a directory with framework-provided files. Keys are
-//   // files relative to the route path, and values are anything `Bun.write`
-//   // supports. Streams may result in lower memory usage.
-//   return {
-//     // Directories like `blog/index.html` are preferred over `blog.html` because
-//     // certain static hosts do not support this conversion. By using `index.html`,
-//     // the static build is more portable.
-//     "/index.html": html,
+  let rscChunks: Uint8Array[] = [];
+  rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-//     // The RSC payload is provided so client-side can use this file for seamless
-//     // client-side navigation. This is equivalent to 'Accept: text/x-component'
-//     // for the non-static build.s
-//     "/index.rsc": rscPayloadBuffer,
-//   };
-// }
+  const html = await renderToStaticHtml(rscPayload, meta.scripts);
+  const rsc = new Blob(rscChunks, { type: "text/x-component" });
+
+  return {
+    // Each route generates a directory with framework-provided files. Keys are
+    // files relative to the route path, and values are anything `Bun.write`
+    // supports. Streams may result in lower memory usage.
+    files: {
+      // Directories like `blog/index.html` are preferred over `blog.html` because
+      // certain static hosts do not support this conversion. By using `index.html`,
+      // the static build is more portable.
+      "/index.html": html,
+
+      // The RSC payload is provided so client-side can use this file for seamless
+      // client-side navigation. This is equivalent to 'Accept: text/x-component'
+      // for the non-static build.s
+      "/index.rsc": rsc,
+    },
+
+    // In the future, it will be possible to return data for a partially
+    // pre-rendered page instead of a fully rendered route. Bun might also
+    // expose caching options here.
+  };
+}

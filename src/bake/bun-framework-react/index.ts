@@ -6,8 +6,8 @@ import type { Bake } from "bun";
 
 export function react(): Bake.Framework {
   return {
-    // When the files are embedded in the Bun binary, relative
-    // path resolution does not work.
+    // When the files are embedded in the Bun binary,
+    // relative path resolution does not work.
     builtInModules: [
       { import: "bun-framework-react/client.tsx", path: require.resolve("./client.tsx") },
       { import: "bun-framework-react/server.tsx", path: require.resolve("./server.tsx") },
@@ -23,5 +23,10 @@ export function react(): Bake.Framework {
       serverRegisterClientReferenceExport: "registerClientReference",
       serverRuntimeImportSource: "react-server-dom-webpack/server",
     },
+    bundlerOptions: {
+      ssr: {
+        conditions: ['react-server'],
+      },
+    }
   };
 }

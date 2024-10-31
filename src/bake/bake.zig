@@ -168,8 +168,6 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !J
     return .undefined;
 }
 
-extern fn BakeInitProcessIdentifier() void;
-
 /// A "Framework" in our eyes is simply set of bundler options that a framework
 /// author would set in order to integrate the framework with the application.
 ///

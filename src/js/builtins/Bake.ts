@@ -2,7 +2,7 @@
 /// <reference path="../../bake/bake.d.ts" />
 import type { Bake } from "bun";
 
-type RenderStatic = Bake.ServerEntryPoint['staticRender'];
+type RenderStatic = Bake.ServerEntryPoint['prerender'];
 
 /**
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
@@ -17,6 +17,7 @@ export function renderRoutesForProd(
   styles: string[][],
 ): Promise<void> {
   const { join: pathJoin } = require('node:path');
+  $assert(renderStatic != null);
 
   return Promise.all(files.map(async(file, i) => {
     const pattern = patterns[i];
@@ -25,10 +26,16 @@ export function renderRoutesForProd(
       scripts: [clientEntryUrl],
       styles: styles[i],
     });
-    if (!results || typeof results !== 'object') {
-      // TODO: retrieve original filename
-      throw new Error(`Rendering route ${JSON.stringify(pattern)} did not return an object, got ${Bun.inspect(results)}`);
+    if (results == null) {
+      throw new Error(`Route ${JSON.stringify(pattern)} cannot be pre-rendered to a static page.`);
     }
-    await Promise.all(Object.entries(results).map(([key, value]) => Bun.write(pathJoin(outBase, pattern + key), value)));
+    if (typeof results !== 'object') {
+      throw new Error(`Rendering route ${JSON.stringify(pattern)} did not return an object, got ${Bun.inspect(results)}. This is a bug in the framework.`);
+    }
+    const { files } = results;
+    if (files == null) {
+      throw new Error(`Route ${JSON.stringify(pattern)} cannot be pre-rendered to a static page.`);
+    }
+    await Promise.all(Object.entries(files).map(([key, value]) => Bun.write(pathJoin(outBase, pattern + key), value)));
   }));
 }

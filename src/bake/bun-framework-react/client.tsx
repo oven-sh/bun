@@ -29,14 +29,19 @@ let promise = createFromReadableStream(
   }),
 );
 
-// This is a function component that uses the `use` hook, which unwraps a promise.
-// The promise results in a component containing suspense boundaries.
+// This is a function component that uses the `use` hook, which unwraps a
+// promise.  The promise results in a component containing suspense boundaries.
+// This is the same logic that happens on the server, except there is also a
+// hook to update the promise when the client navigates.
 let setPage;
-const Async = () => {
+const Root = () => {
   setPage = React.useState(promise)[1];
-  return React.use(promise);
+  // return React.use(promise);
+  const y = React.use(promise);
+  console.log(y);
+  return y;
 };
-const root = hydrateRoot(document, <Async />, {
+const root = hydrateRoot(document, <Root />, {
   // handle `onUncaughtError` here
 });
 
@@ -51,13 +56,11 @@ async function goto(href: string) {
   // }
   // const signal = (currentReloadCtrl = new AbortController()).signal;
 
-  const wait100ms = new Promise<void>(resolve => setTimeout(resolve, 100));
-
   // Due to the current implementation of the Dev Server, it must be informed of
   // client-side routing so it can load client components. This is not necessary
   // in production, and calling this in that situation will fail to compile.
   if (import.meta.env.DEV) {
-    await bundleRouteForDevelopment(href, { 
+    await bundleRouteForDevelopment(href, {
       // signal
     });
   }
@@ -107,8 +110,8 @@ async function goto(href: string) {
 }
 
 // Instead of relying on a "<Link />" component, a global event listener on all
-// clicks can be used. Care must be taken to filter out only anchors that
-// did not have their default behavior prevented, as well as non-left clicks.
+// clicks can be used. Care must be taken to intercept only anchor elements that
+// did not have their default behavior prevented, non-left clicks, and more.
 //
 // This technique was inspired by SvelteKit which was inspired by https://github.com/visionmedia/page.js
 document.addEventListener("click", async (event, element = event.target as HTMLAnchorElement) => {

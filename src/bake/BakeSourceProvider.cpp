@@ -109,6 +109,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
 
   String string = virtualPathName.toWTFString();
   JSC::JSString* key = JSC::jsString(vm, string);
+  printf("Registering production chunk: %s\n", string.utf8().data());
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(DevSourceProvider::create(
     source.toWTFString(),

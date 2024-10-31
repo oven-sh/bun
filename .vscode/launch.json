@@ -152,8 +152,8 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${fileBasename}"],
-      "cwd": "${fileDirname}",
+      "args": ["build", "--app", "./bun.app.ts"],
+      "cwd": "/Users/dave/code/sample",
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",

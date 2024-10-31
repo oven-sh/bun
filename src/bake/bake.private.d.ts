@@ -59,6 +59,10 @@ declare var __bun_f: any;
 
 // The following interfaces have been transcribed manually.
 
+declare module "react-server-dom-webpack/client.browser" {
+  export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array>): Promise<T>;
+}
+
 declare module "react-server-dom-webpack/client.node.unbundled.js" {
   import type { ReactClientManifest } from "bun:bake/server";
   import type { Readable } from "node:stream";
@@ -80,12 +84,13 @@ declare module "react-server-dom-webpack/client.node.unbundled.js" {
 
 declare module "react-server-dom-webpack/server.node.unbundled.js" {
   import type { ReactServerManifest } from "bun:bake/server";
-  import type { ReactElement } from "react";
+  import type { ReactElement, ReactElement } from "react";
   import type { Writable } from "node:stream";
 
   export interface PipeableStream<T> {
-    /** Returns the input */
-    pipe: <T extends Writable>(destination: T) => T;
+    /** Returns the input, which should match the Node.js writable interface */
+    pipe: <T>(destination: T) => T;
+    abort: () => void;
   }
 
   export function renderToPipeableStream<T = any>(
@@ -102,4 +107,15 @@ declare module "react-server-dom-webpack/server.node.unbundled.js" {
     environmentName?: string;
     filterStackFrame?: Function;
   }
+}
+
+declare module "react-dom/server.node" {
+  import type { PipeableStream } from "react-server-dom-webpack/server.node.unbundled.js";
+  import type { ReactElement } from "react";
+ 
+  export type RenderToPipeableStreamOptions = any;
+  export function renderToPipeableStream(
+    model: ReactElement,
+    options: RenderToPipeableStreamOptions,
+  ): PipeableStream<Uint8Array>;
 }

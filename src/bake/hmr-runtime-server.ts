@@ -49,7 +49,7 @@ server_exports = {
               chunks: [],
             };
             client[exportName] = {
-              specifier: 'ssr:' + uid,
+              specifier: "ssr:" + uid,
               name: exportName,
             };
           }

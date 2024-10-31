@@ -1,11 +1,6 @@
 //! Implements building a Bake application to production
 
 pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
-    if (!bun.Environment.isDebug) {
-        Output.errGeneric("Not yet stable. Sorry!", .{});
-        bun.Global.crash();
-    }
-
     Output.warn(
         \\Be advised that Bun Bake is highly experimental, and its API
         \\will have breaking changes. Join the <magenta>#bake<r> Discord
@@ -26,24 +21,32 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     }
 
     var cwd_buf: bun.PathBuffer = undefined;
-    const cwd = try bun.getcwd(&cwd_buf);
+    const cwd = bun.getcwd(&cwd_buf) catch |err| {
+        Output.err(err, "Could not query current working directory", .{});
+        bun.Global.crash();
+    };
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
     bun.JSC.initialize(false);
     bun.JSAst.Expr.Data.Store.create();
     bun.JSAst.Stmt.Data.Store.create();
+
     var arena = try bun.MimallocArena.init();
     defer arena.deinit();
-    const allocator = bun.default_allocator;
-    const vm = try VirtualMachine.init(.{
+
+    const vm = try VirtualMachine.initBake(.{
         .allocator = arena.allocator(),
         .log = ctx.log,
         .args = ctx.args,
         .smol = ctx.runtime_options.smol,
     });
     defer vm.deinit();
-    var b = &vm.bundler;
+    vm.global = BakeCreateProdGlobal(vm.console);
+    vm.regular_event_loop.global = vm.global;
+    vm.jsc = vm.global.vm();
+    vm.event_loop.ensureWaker();
+    const b = &vm.bundler;
     vm.preload = ctx.preloads;
     vm.argv = ctx.passthrough;
     vm.arena = &arena;
@@ -83,8 +86,24 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
     const api_lock = vm.jsc.getAPILock();
     defer api_lock.release();
+    buildWithVm(ctx, cwd, vm) catch |err| switch (err) {
+        error.JSError => |e| {
+            vm.printErrorLikeObjectToConsole(vm.global.takeException(e));
+            if (vm.exit_handler.exit_code == 0) {
+                vm.exit_handler.exit_code = 1;
+            }
+            vm.globalExit();
+        },
+        else => |e| return e,
+    };
+}
 
+pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMachine) !void {
     // Load and evaluate the configuration module
+    const global = vm.global;
+    const b = &vm.bundler;
+    const allocator = bun.default_allocator;
+
     Output.prettyErrorln("Loading configuration", .{});
     Output.flush();
     const unresolved_config_entry_point = if (ctx.args.entry_points.len > 0) ctx.args.entry_points[0] else "./bun.app";
@@ -110,9 +129,10 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
     const config_entry_point_string = bun.String.createUTF8(config_entry_point.pathConst().?.text);
     defer config_entry_point_string.deref();
-    const config_promise = bun.JSC.JSModuleLoader.loadAndEvaluateModule(vm.global, &config_entry_point_string) orelse {
-        @panic("TODO");
-    };
+
+    const config_promise = bun.JSC.JSModuleLoader.loadAndEvaluateModule(global, &config_entry_point_string) orelse
+        return global.jsErrorFromCPP();
+
     vm.waitForPromise(.{ .internal = config_promise });
     var options = switch (config_promise.unwrap(vm.jsc, .mark_handled)) {
         .pending => unreachable,
@@ -124,17 +144,11 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
                 Output.panic("TODO: print this error better, default export is not an object", .{});
             }
 
-            const app = default.get(vm.global, "app") orelse {
+            const app = try default.get2(vm.global, "app") orelse {
                 Output.panic("TODO: print this error better, default export needs an 'app' object", .{});
             };
 
-            if (vm.global.hasException()) {
-                @panic("pending exception");
-            }
-
-            break :config bake.UserOptions.fromJS(app, vm.global) catch |err| {
-                Output.panic("TODO, print this error better: {}", .{err});
-            };
+            break :config try bake.UserOptions.fromJS(app, vm.global);
         },
         .rejected => |err| {
             // dont run on rejected since we fail the build here
@@ -186,8 +200,6 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     const root_path_trailing = root_dir_path.ptr[0 .. root_dir_path.len + 1];
     _ = root_path_trailing; // autofix
     root_dir_buf[root_dir_path.len] = std.fs.path.sep;
-    // server_bundler.options.public_path = root_path_trailing;
-    // server_bundler.resolver.opts.public_path = root_path_trailing;
 
     var entry_points = std.ArrayList(BakeEntryPoint).init(allocator);
     // the ordering of these entrypoints is relied on when inspecting the output chunks.
@@ -213,28 +225,25 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
     Output.prettyErrorln("Rendering routes", .{});
     Output.flush();
 
-    // A separate global object is used for isolation + controlling the available modules
-    const render_global = BakeCreateProdGlobal(vm.jsc, vm.console);
-
     var root_dir = try std.fs.cwd().makeOpenPath("dist", .{});
     defer root_dir.close();
 
     var client_entry_id: u32 = std.math.maxInt(u32);
 
     var server_entry_module_key: JSValue = .undefined;
-    const route_module_keys = JSValue.createEmptyArray(render_global, options.routes.len);
+    const route_module_keys = JSValue.createEmptyArray(global, options.routes.len);
     const route_output_indices = try allocator.alloc(OutputFile.Index, options.routes.len);
     var css_chunks_count: usize = 0;
     var css_chunks_first: usize = 0;
 
     for (bundled_outputs.items, 0..) |file, i| {
-        // std.debug.print("{s} - {s} : {s} - {?d}\n", .{
-        //     if (file.side) |s| @tagName(s) else "null",
-        //     file.src_path.text,
-        //     file.dest_path,
-        //     file.entry_point_index,
-        // });
-        // std.debug.print("css: {d}\n", .{bun.fmt.fmtSlice(file.referenced_css_files, ", ")});
+        std.debug.print("{s} - {s} : {s} - {?d}\n", .{
+            if (file.side) |s| @tagName(s) else "null",
+            file.src_path.text,
+            file.dest_path,
+            file.entry_point_index,
+        });
+        std.debug.print("css: {d}\n", .{bun.fmt.fmtSlice(file.referenced_css_files, ", ")});
         if (file.loader == .css) {
             if (css_chunks_count == 0) css_chunks_first = i;
             css_chunks_count += 1;
@@ -258,24 +267,22 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
 
                 switch (file.output_kind) {
                     .@"entry-point", .chunk => {
-                        var buf: bun.PathBuffer = undefined;
+                        const without_prefix = if (bun.strings.hasPrefixComptime(file.dest_path, "./") or
+                            (Environment.isWindows and bun.strings.hasPrefixComptime(file.dest_path, ".\\")))
+                            file.dest_path[2..]
+                        else
+                            file.dest_path;
+
                         // TODO: later we can lazily register modules
                         const module_key = BakeRegisterProductionChunk(
-                            render_global,
-                            bun.String.createUTF8(bun.path.joinAbsStringBuf(cwd, &buf, &.{
-                                root_dir_path,
-                                file.dest_path,
-                            }, .auto)),
+                            global,
+                            try bun.String.createFormat("bake:/{s}", .{without_prefix}),
                             file.value.toBunString(),
                         ) catch |err| {
-                            vm.printErrorLikeObjectToConsole(render_global.takeException(err));
-                            if (vm.exit_handler.exit_code == 0) {
-                                vm.exit_handler.exit_code = 1;
-                            }
                             Output.errGeneric("could not load bundled chunk {} for server-side rendering", .{
-                                bun.fmt.quote(file.dest_path),
+                                bun.fmt.quote(without_prefix),
                             });
-                            vm.globalExit();
+                            return err;
                         };
 
                         if (file.entry_point_index) |entry_point| {
@@ -304,34 +311,31 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         }
     }
 
-    // TODO: umm...
-    // const primary_global = vm.global;
-    // vm.global = render_global;
-    // _ = primary_global;
-
     bun.assert(client_entry_id != std.math.maxInt(u32));
     bun.assert(server_entry_module_key != .undefined);
 
-    // HACK: react-server-dom-webpack assigns to `__webpack_require__.u`
-    // We never call this in this context, so we will just make '__webpack_require__' an empty object.
-    // Right now server.tsx is what controls the value, but imports happen first.
-    render_global.toJSValue().put(render_global, "__webpack_require__", JSValue.createEmptyObject(render_global, 0));
-
     // Static site generator
-    const server_entry_point = loadModule(vm, render_global, server_entry_module_key);
-    const server_render_func: JSValue = BakeGetOnModuleNamespace(render_global, server_entry_point, "renderStatic") orelse {
+    const server_entry_point = try loadModule(vm, global, server_entry_module_key);
+    const server_render_func = brk: {
+        const raw = BakeGetOnModuleNamespace(global, server_entry_point, "prerender") orelse
+            break :brk null;
+        if (!raw.isCallable(vm.jsc)) {
+            break :brk null;
+        }
+        break :brk raw;
+    } orelse {
         Output.errGeneric("Framework does not support static site generation", .{});
-        Output.note("The file {s} is missing the \"renderStatic\" export", .{bun.fmt.quote(framework.entry_server)});
+        Output.note("The file {s} is missing the \"prerender\" export", .{bun.fmt.quote(framework.entry_server)});
         bun.Global.crash();
     };
 
-    const route_patterns = JSValue.createEmptyArray(render_global, options.routes.len);
-    const route_style_references = JSValue.createEmptyArray(render_global, options.routes.len);
+    const route_patterns = JSValue.createEmptyArray(global, options.routes.len);
+    const route_style_references = JSValue.createEmptyArray(global, options.routes.len);
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs.items[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
         bun.assert(output_file.loader == .css);
-        str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(render_global);
+        str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 
     for (
@@ -339,23 +343,23 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
         route_output_indices,
         0..,
     ) |route, output_file_i, i| {
-        route_patterns.putIndex(render_global, @intCast(i), bun.String.createUTF8(route.pattern).toJS(render_global));
+        route_patterns.putIndex(global, @intCast(i), bun.String.createUTF8(route.pattern).toJS(global));
         const output_file = &bundled_outputs.items[output_file_i.get()];
 
-        const styles = JSValue.createEmptyArray(render_global, output_file.referenced_css_files.len);
+        const styles = JSValue.createEmptyArray(global, output_file.referenced_css_files.len);
         for (output_file.referenced_css_files, 0..) |ref, j| {
-            styles.putIndex(render_global, @intCast(j), css_chunk_js_strings[ref.get() - css_chunks_first]);
+            styles.putIndex(global, @intCast(j), css_chunk_js_strings[ref.get() - css_chunks_first]);
         }
-        route_style_references.putIndex(render_global, @intCast(i), styles);
+        route_style_references.putIndex(global, @intCast(i), styles);
     }
 
     const client_entry_url = (try bun.String.createFormat("{s}{s}", .{
         public_path,
         bundled_outputs.items[client_entry_id].dest_path,
-    })).toJS(render_global);
+    })).toJS(global);
 
     const render_promise = BakeRenderRoutesForProd(
-        render_global,
+        global,
         bun.String.init(root_dir_path),
         server_render_func,
         client_entry_url,
@@ -371,18 +375,15 @@ pub fn buildCommand(ctx: bun.CLI.Command.Context) !void {
             Output.flush();
         },
         .rejected => |err| {
-            vm.printErrorLikeObjectToConsole(err);
-            if (vm.exit_handler.exit_code == 0) {
-                vm.exit_handler.exit_code = 1;
-            }
-            vm.globalExit();
+            vm.global.throwValue(err);
+            return error.JSError;
         },
     }
 }
 
 /// unsafe function, must be run outside of the event loop
 /// quits the process on exception
-fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) JSValue {
+fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) !JSValue {
     const promise = BakeLoadModuleByKey(global, key).asAnyPromise().?.internal;
     vm.waitForPromise(.{ .internal = promise });
     switch (promise.unwrap(vm.jsc, .mark_handled)) {
@@ -392,11 +393,8 @@ fn loadModule(vm: *VirtualMachine, global: *JSC.JSGlobalObject, key: JSValue) JS
             return BakeGetModuleNamespace(global, key);
         },
         .rejected => |err| {
-            vm.printErrorLikeObjectToConsole(err);
-            if (vm.exit_handler.exit_code == 0) {
-                vm.exit_handler.exit_code = 1;
-            }
-            vm.globalExit();
+            vm.global.throwValue(err);
+            return error.JSError;
         },
     }
 }
@@ -427,7 +425,7 @@ extern fn BakeRenderRoutesForProd(
     styles: JSValue,
 ) *JSC.JSPromise;
 
-extern fn BakeCreateProdGlobal(vm: *JSC.VM, console_ptr: *anyopaque) *JSC.JSGlobalObject;
+extern fn BakeCreateProdGlobal(console_ptr: *anyopaque) *JSC.JSGlobalObject;
 
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.
@@ -463,11 +461,14 @@ fn BakeProdResolve(global: *JSC.JSGlobalObject, a_str: bun.String, specifier_str
         return bun.String.dead;
     }
 
-    return bun.String.createUTF8(bun.path.joinAbs(
-        bun.Dirname.dirname(u8, referrer.slice()) orelse referrer.slice(),
+    if (Environment.allow_assert)
+        bun.assert(bun.strings.hasPrefix(referrer.slice(), "bake:"));
+
+    return bun.String.createFormat("bake:{s}", .{bun.path.joinAbs(
+        bun.Dirname.dirname(u8, referrer.slice()[5..]) orelse referrer.slice()[5..],
         .auto,
         specifier.slice(),
-    ));
+    )}) catch return bun.String.dead;
 }
 
 comptime {

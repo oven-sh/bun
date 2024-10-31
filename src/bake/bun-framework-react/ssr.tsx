@@ -2,22 +2,27 @@
 // no longer set. This means we can import client components, using `react-dom`
 // to perform Server-side rendering (creating HTML) out of the RSC payload.
 import * as React from "react";
-import { createFromNodeStream } from "react-server-dom-webpack/client.node.unbundled.js";
-import { renderToPipeableStream } from "react-dom/server.node";
 import { clientManifest } from "bun:bake/server";
-import { type Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
+import { createFromNodeStream, type Manifest } from "react-server-dom-webpack/client.node.unbundled.js";
+import { renderToPipeableStream } from "react-dom/server.node";
 
 // Verify that React 19 is being used.
 if (!React.use) {
   throw new Error("Bun's React integration requires React 19");
 }
 
+const createFromNodeStreamOptions: Manifest = {
+  moduleMap: clientManifest,
+  moduleLoading: { prefix: "/" },
+};
+
 // The `renderToHtml` function not only implements converting the RSC payload
 // into HTML via react-dom, but also streaming the RSC payload via injected
 // script tags.  While the page is streaming, the client is loading the RSC
-// payload in the `__bun_f` ('f' meaning flight) global. `client.tsx` uses this
-// to hydrate client components as they are streamed in.
+// payload in the `__bun_f` ('f' meaning flight) global. `client.tsx` can
+// convert that array into a `ReadableStream` to incrementally hydrate the page.
 //
 // Some techniques have been taken from what Next.js and `rsc-html-stream` do,
 // but this version is [1] uses more efficient streaming APIs and [2] streams
@@ -26,32 +31,67 @@ if (!React.use) {
 // References:
 // - https://github.com/vercel/next.js/blob/15.0.2/packages/next/src/server/app-render/use-flight-response.tsx
 // - https://github.com/devongovett/rsc-html-stream
-export function renderToHtml(rscPayload: Readable): ReadableStream {
+export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly string[]): ReadableStream {
   // Bun supports a special type of readable stream type called "direct",
   // which provides a raw handle to the controller. We can bypass all of
   // the Web Streams API (slow) and use the controller directly.
   let stream: RscInjectionStream | null = null;
+  let abort: () => void;
   return new ReadableStream({
     type: "direct",
-    async pull(controller) {
+    pull(controller) {
+      // Initialize the injection stream so it gets the first "data" listener.
       stream = new RscInjectionStream(rscPayload, controller);
-      console.log("clientManifest", clientManifest);
+
+      // `createFromNodeStream` turns the RSC payload into a React component.
       const promise = createFromNodeStream(rscPayload, {
+        // React takes in a manifest mapping client-side assets
+        // to the imports needed for server-side rendering.
         moduleMap: clientManifest,
         moduleLoading: { prefix: "/" },
       });
-      const Async = () => React.use(promise);
-      renderToPipeableStream(<Async />).pipe(stream);
-      await stream.finished;
+      // The root is this "Root" component that unwraps the streamed promise
+      // with `use`, and then returning the parsed React component for the UI.
+      const Root = () => React.use(promise);
+
+      // `renderToPipeableStream` is what actually generates HTML.
+      // Here is where React is told what script tags to inject.
+      let pipe: (stream: any) => void;
+      ({ pipe, abort } = renderToPipeableStream(<Root />, {
+        // TODO: stop using react-server-dom-webpack
+        bootstrapScriptContent: "self.__webpack_require__=i=>import(i);",
+        bootstrapModules,
+      }));
+      pipe(stream);
+
+      // Promise resolved after all data is combined.
+      return stream.finished;
     },
     cancel() {
-      stream && stream.destroy();
+      stream?.destroy();
+      abort?.();
     },
   } as Bun.DirectUnderlyingSource as any);
 }
 
+// Static builds can not stream suspense boundaries as they finish, but instead
+// produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
+export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
+  const stream = new StaticRscInjectionStream(rscPayload);
+  const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
+  const Root = () => React.use(promise);
+  const { pipe } = renderToPipeableStream(<Root />, {
+    bootstrapScriptContent: "self.__webpack_require__=i=>import(i);",
+    bootstrapModules,
+    // Only begin flowing HTML once all of it is ready. This tells React
+    // to not emit the flight chunks, just the entire HTML.
+    onAllReady: () => pipe(stream),
+  });
+  return stream.result;
+}
+
 const closingBodyTag = "</body></html>";
-const startScriptTag = "<script>(self.__bun_f=self.__bun_f||[]).push(";
+const startScriptTag = "<script>(self.__bun_f||=[]).push(";
 const continueScriptTag = "<script>__bun_f.push(";
 
 const enum HtmlState {
@@ -103,11 +143,14 @@ class RscInjectionStream extends EventEmitter {
 
   write(data: Uint8Array) {
     if (endsWithClosingScript(data)) {
+      // The HTML is not done yet, but it's a suitible time to inject RSC data.
       const { controller } = this;
       controller.write(data);
       this.html = HtmlState.Boundary;
       this.drainRscChunks();
     } else if (endsWithClosingBody(data)) {
+      // The HTML is about to finish. When this happens there cannot be more RSC
+      // chunks, since if that was truly the case, the HTML wouldn't be done.
       const { controller } = this;
       controller.write(data.subarray(0, data.length - closingBodyTag.length));
       this.drainRscChunks();
@@ -155,6 +198,10 @@ class RscInjectionStream extends EventEmitter {
     }
   }
 
+  flush() {
+    // Ignore flush requests from React. Bun will automatically flush when reasonable.
+  }
+
   destroy() {
     // TODO:
   }
@@ -164,16 +211,67 @@ class RscInjectionStream extends EventEmitter {
   }
 }
 
+class StaticRscInjectionStream extends EventEmitter {
+  rscPayloadChunks: Uint8Array[] = [];
+  chunks: (Uint8Array | string)[] = [];
+  result: Promise<Blob>;
+  finalize: (blob: Blob) => void;
+  reject: (error: Error) => void;
+
+  constructor(rscPayload: Readable) {
+    super();
+    const { resolve, promise, reject } = Promise.withResolvers<Blob>();
+    this.result = promise;
+    this.finalize = resolve;
+    this.reject = reject;
+
+    rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
+  }
+
+  write(chunk) {
+    this.chunks.push(chunk);
+  }
+
+  end() {
+    // Inject the finalized RSC payload into the last chunk
+    const lastChunk = this.chunks[this.chunks.length - 1];
+
+    // Release assertions for React's behavior. If these break there will be malformed HTML.
+    if (typeof lastChunk === "string") {
+      this.destroy(new Error("The last chunk was expected to be a Uint8Array"));
+      return;
+    }
+    if (!endsWithClosingBody(lastChunk)) {
+      this.destroy(new Error("The last chunk did not end with a closing </body></html> tag"));
+      return;
+    }
+    this.chunks[this.chunks.length - 1] = lastChunk.slice(0, lastChunk.length - closingBodyTag.length);
+
+    let string = startScriptTag;
+    writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8"), { write: str => (string += str) });
+    this.chunks.push(string + closingBodyTag);
+    this.finalize(new Blob(this.chunks, { type: "text/html" }));
+  }
+
+  flush() {
+    // Ignore flush requests from React.
+  }
+
+  destroy(error) {
+    console.error(error);
+    this.reject(error);
+  }
+}
+
 /** Assumes the opening script tag and function call have been written */
 function writeSingleFlightScriptData(
   chunk: Uint8Array,
   decoder: TextDecoder,
-  controller: ReadableStreamDirectController,
+  controller: { write: (str: string) => void },
 ) {
   try {
     // `decode()` will throw on invalid UTF-8 sequences.
-    controller.write("'" + toSingleQuote(decoder.decode(chunk, { stream: true })));
-    controller.write("')</script>");
+    controller.write("'" + toSingleQuote(decoder.decode(chunk, { stream: true })) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // No data should have been written yet, so a base64 fallback can be used.
@@ -189,7 +287,7 @@ function writeSingleFlightScriptData(
 function writeManyFlightScriptData(
   chunks: Uint8Array[],
   decoder: TextDecoder,
-  controller: ReadableStreamDirectController,
+  controller: { write: (str: string) => void },
 ) {
   if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
 

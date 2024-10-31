@@ -301,16 +301,17 @@ declare module "bun" {
        * A common pattern would be to enforce the object is
        * `{ default: ReactComponent }`
        */
-      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
+      render: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
       /**
        * Static rendering does not take a response in, and can generate
        * multiple output files. Note that `import.meta.env.STATIC` will
        * be inlined to true during a static build.
        */
-      staticRender: (
-        routeModule: unknown,
-        routeMetadata: RouteMetadata,
-      ) => Awaitable<Record<string, Blob | ArrayBuffer>>;
+      prerender: (routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<PrerenderResult | null>;
+    }
+
+    interface PrerenderResult {
+      files?: Record<string, Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[]>;
     }
 
     interface ClientEntryPoint {
@@ -362,7 +363,7 @@ declare module "bun:bake/server" {
    * This follows the requirements for React's Server Components manifest, which
    * is a mapping of component IDs to the client-side file it is exported in.
    * The specifiers from here are to be imported in the client.
-   * 
+   *
    * To perform SSR with client components, see `clientManifest`
    */
   declare const serverManifest: ReactServerManifest;

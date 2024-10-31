@@ -75,8 +75,10 @@ pub const StandaloneModuleGraph = struct {
         name: Schema.StringPointer = .{},
         contents: Schema.StringPointer = .{},
         sourcemap: Schema.StringPointer = .{},
+        bytecode: Schema.StringPointer = .{},
         encoding: Encoding = .latin1,
         loader: bun.options.Loader = .file,
+        module_format: ModuleFormat = .none,
     };
 
     pub const Encoding = enum(u8) {
@@ -88,6 +90,12 @@ pub const StandaloneModuleGraph = struct {
         utf8 = 2,
     };
 
+    pub const ModuleFormat = enum(u8) {
+        none = 0,
+        esm = 1,
+        cjs = 2,
+    };
+
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
@@ -96,6 +104,8 @@ pub const StandaloneModuleGraph = struct {
         cached_blob: ?*bun.JSC.WebCore.Blob = null,
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
+        bytecode: []u8 = "",
+        module_format: ModuleFormat = .none,
 
         pub fn lessThanByIndex(ctx: []const File, lhs_i: u32, rhs_i: u32) bool {
             const lhs = ctx[lhs_i];
@@ -225,7 +235,7 @@ pub const StandaloneModuleGraph = struct {
         };
 
         const modules_list_bytes = sliceTo(raw_bytes, offsets.modules_ptr);
-        const modules_list = std.mem.bytesAsSlice(CompiledModuleGraphFile, modules_list_bytes);
+        const modules_list: []align(1) const CompiledModuleGraphFile = std.mem.bytesAsSlice(CompiledModuleGraphFile, modules_list_bytes);
 
         if (offsets.entry_point_id > modules_list.len) {
             return error.@"Corrupted module graph: entry point ID is greater than module list count";
@@ -246,6 +256,8 @@ pub const StandaloneModuleGraph = struct {
                         } }
                     else
                         .none,
+                    .bytecode = if (module.bytecode.length > 0) @constCast(sliceTo(raw_bytes, module.bytecode)) else &.{},
+                    .module_format = module.module_format,
                 },
             );
         }
@@ -271,14 +283,14 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format) ![]u8 {
         var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
-        for (output_files, 0..) |output_file, i| {
+        for (output_files) |output_file| {
             string_builder.countZ(output_file.dest_path);
             string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
@@ -288,10 +300,13 @@ pub const StandaloneModuleGraph = struct {
                     // the exact amount is not possible without allocating as it
                     // involves a JSON parser.
                     string_builder.cap += output_file.value.buffer.bytes.len * 2;
+                } else if (output_file.output_kind == .bytecode) {
+                    // Allocate up to 256 byte alignment for bytecode
+                    string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
-                            entry_point_id = i;
+                            entry_point_id = module_count;
                         }
                     }
 
@@ -320,7 +335,7 @@ pub const StandaloneModuleGraph = struct {
         defer source_map_arena.deinit();
 
         for (output_files) |output_file| {
-            if (output_file.output_kind == .sourcemap) {
+            if (!output_file.output_kind.isFileInStandaloneMode()) {
                 continue;
             }
 
@@ -329,6 +344,23 @@ pub const StandaloneModuleGraph = struct {
             }
 
             const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
+
+            const bytecode: StringPointer = brk: {
+                if (output_file.bytecode_index != std.math.maxInt(u32)) {
+                    // Use up to 256 byte alignment for bytecode
+                    // Not aligning it correctly will cause a runtime assertion error, or a segfault.
+                    const bytecode = output_files[output_file.bytecode_index].value.buffer.bytes;
+                    const aligned = std.mem.alignInSlice(string_builder.writable(), 128).?;
+                    @memcpy(aligned[0..bytecode.len], bytecode[0..bytecode.len]);
+                    const unaligned_space = aligned[bytecode.len..];
+                    const offset = @intFromPtr(aligned.ptr) - @intFromPtr(string_builder.ptr.?);
+                    const len = bytecode.len + @min(unaligned_space.len, 128);
+                    string_builder.len += len;
+                    break :brk StringPointer{ .offset = @truncate(offset), .length = @truncate(len) };
+                } else {
+                    break :brk .{};
+                }
+            };
 
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCountZ("{s}{s}", .{
@@ -341,7 +373,14 @@ pub const StandaloneModuleGraph = struct {
                     .js, .jsx, .ts, .tsx => .latin1,
                     else => .binary,
                 },
+                .module_format = if (output_file.loader.isJavaScriptLike()) switch (output_format) {
+                    .cjs => .cjs,
+                    .esm => .esm,
+                    else => .none,
+                } else .none,
+                .bytecode = bytecode,
             };
+
             if (output_file.source_map_index != std.math.maxInt(u32)) {
                 defer source_map_header_list.clearRetainingCapacity();
                 defer source_map_string_list.clearRetainingCapacity();
@@ -619,8 +658,9 @@ pub const StandaloneModuleGraph = struct {
         module_prefix: []const u8,
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
+        output_format: bun.options.Format,
     ) !void {
-        const bytes = try toBytes(allocator, module_prefix, output_files);
+        const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
 
         const fd = inject(
@@ -999,7 +1039,7 @@ pub const StandaloneModuleGraph = struct {
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch
+        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse

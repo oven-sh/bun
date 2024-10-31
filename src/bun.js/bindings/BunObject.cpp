@@ -31,6 +31,7 @@
 #include "PathInlines.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "BunObject+exports.h"
+#include "ErrorCode.h"
 
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
@@ -50,7 +51,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
-
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 namespace Bun {
 
 using namespace JSC;
@@ -120,8 +121,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 
         if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
             if (UNLIKELY(typedArray->isDetached())) {
-                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
-                return {};
+                return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
             size_t current = typedArray->byteLength();
             any_typed = true;
@@ -133,8 +133,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
         } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
             auto* impl = arrayBuffer->impl();
             if (UNLIKELY(!impl)) {
-                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBuffer is detached"_s);
-                return {};
+                return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject, "Cannot validate on a detached buffer"_s);
             }
 
             size_t current = impl->byteLength();
@@ -259,6 +258,11 @@ static JSValue constructBunRevision(VM& vm, JSObject*)
     return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
+static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
+{
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_with_sha)));
+}
+
 static JSValue constructIsMainThread(VM&, JSObject* object)
 {
     return jsBoolean(jsCast<Zig::GlobalObject*>(object->globalObject())->scriptExecutionContext()->isMainThread());
@@ -320,7 +324,8 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 
 // This value currently depends on a zig feature flag
 extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
-static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
+static JSValue constructBunKit(VM& vm, JSObject* bunObject)
+{
     return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 
@@ -579,6 +584,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
+    color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
@@ -606,10 +612,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
+    version_with_sha                               constructBunVersionWithSha                                          ReadOnly|DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
@@ -637,7 +645,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    wipDevServerDoNotUseYet                        constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
+    wipDevServerExpectHugeBreakingChanges          constructBunKit                                                     DontEnum|ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

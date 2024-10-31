@@ -21,12 +21,13 @@ const assert = bun.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
-pub const Kind = enum(i8) {
-    err,
-    warn,
-    note,
-    debug,
-    verbose,
+
+pub const Kind = enum(u8) {
+    err = 0,
+    warn = 1,
+    note = 2,
+    debug = 3,
+    verbose = 4,
 
     pub inline fn shouldPrint(this: Kind, other: Log.Level) bool {
         return switch (other) {
@@ -379,6 +380,7 @@ pub const Msg = struct {
     kind: Kind = Kind.err,
     data: Data,
     metadata: Metadata = .{ .build = 0 },
+    // TODO: make this non-optional, empty slice for no notes
     notes: ?[]Data = null,
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) !Msg {
@@ -598,7 +600,9 @@ pub const Range = struct {
 
 pub const Log = struct {
     debug: bool = false,
+    // TODO: make u32
     warnings: usize = 0,
+    // TODO: make u32
     errors: usize = 0,
     msgs: ArrayList(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
@@ -1051,6 +1055,26 @@ pub const Log = struct {
         });
     }
 
+    pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        @setCold(true);
+        if (!Kind.shouldPrint(.warn, log.level)) return;
+        log.warnings += 1;
+
+        // TODO: do this properly
+
+        try log.addMsg(.{
+            .kind = .warn,
+            .data = Data.cloneLineText(Data{
+                .text = allocPrint(allocator, text, args) catch unreachable,
+                .location = Location{
+                    .file = filepath,
+                    .line = @intCast(line),
+                    .column = @intCast(col),
+                },
+            }, log.clone_line_text, allocator) catch unreachable,
+        });
+    }
+
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
@@ -1285,7 +1309,6 @@ pub inline fn usize2Loc(loc: usize) Loc {
 
 pub const Source = struct {
     path: fs.Path,
-    key_path: fs.Path,
 
     contents: string,
     contents_is_recycled: bool = false,
@@ -1332,13 +1355,12 @@ pub const Source = struct {
 
     pub fn initEmptyFile(filepath: string) Source {
         const path = fs.Path.init(filepath);
-        return Source{ .path = path, .key_path = path, .contents = "" };
+        return Source{ .path = path, .contents = "" };
     }
 
     pub fn initFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
-            .key_path = fs.Path.init(file.path.text),
             .contents = file.contents,
         };
         source.path.namespace = "file";
@@ -1348,7 +1370,6 @@ pub const Source = struct {
     pub fn initRecycledFile(file: fs.PathContentsPair, _: std.mem.Allocator) !Source {
         var source = Source{
             .path = file.path,
-            .key_path = fs.Path.init(file.path.text),
             .contents = file.contents,
             .contents_is_recycled = true,
         };
@@ -1359,7 +1380,7 @@ pub const Source = struct {
 
     pub fn initPathString(pathString: string, contents: string) Source {
         const path = fs.Path.init(pathString);
-        return Source{ .key_path = path, .path = path, .contents = contents };
+        return Source{ .path = path, .contents = contents };
     }
 
     pub fn textForRange(self: *const Source, r: Range) string {

@@ -627,7 +627,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.get(globalThis, "symbols") orelse .undefined;
+        const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -647,7 +647,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "library")) |library_value| {
+        if (object.getOwn(globalThis, "library")) |library_value| {
             compile_c.libraries = StringArray.fromJS(globalThis, library_value, "library");
         }
 
@@ -730,7 +730,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "source")) |source_value| {
+        if (object.getOwn(globalThis, "source")) |source_value| {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
                 var iter = source_value.arrayIterator(globalThis);
@@ -1301,7 +1301,7 @@ pub const FFI = struct {
 
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
-        if (value.get(global, "args")) |args| {
+        if (value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
                 return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
@@ -1517,7 +1517,7 @@ pub const FFI = struct {
         };
 
         pub fn ffiHeader() string {
-            return if (Environment.embed_code)
+            return if (Environment.codegen_embed)
                 @embedFile("./FFI.h")
             else
                 bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
@@ -1800,7 +1800,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  void* handleScope = NapiHandleScope__push(JS_GLOBAL_OBJECT, false);
+                    \\  void* handleScope = NapiHandleScope__open(JS_GLOBAL_OBJECT, false);
                     \\
                 );
             }
@@ -1913,7 +1913,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  NapiHandleScope__pop(JS_GLOBAL_OBJECT, handleScope);
+                    \\  NapiHandleScope__close(JS_GLOBAL_OBJECT, handleScope);
                     \\
                 );
             }
@@ -2487,8 +2487,8 @@ const CompilerRT = struct {
     pub fn inject(state: *TCC.TCCState) void {
         _ = TCC.tcc_add_symbol(state, "memset", &memset);
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close);
 
         _ = TCC.tcc_add_symbol(
             state,

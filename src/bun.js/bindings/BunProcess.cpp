@@ -32,6 +32,7 @@
 #include "wtf/text/OrdinalNumber.h"
 
 #include "AsyncContextFrame.h"
+#include "ErrorCode.h"
 
 #include "napi_handle_scope.h"
 
@@ -442,24 +443,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     JSValue numberValue = callFrame->argument(0);
 
     if (!numberValue.isNumber()) {
-        throwTypeError(globalObject, throwScope, "The \"mask\" argument must be a number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "mask"_s, "number"_s, numberValue);
     }
 
     if (!numberValue.isAnyInt()) {
-        throwNodeRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, "an integer"_s, numberValue);
     }
 
     double number = numberValue.toNumber(globalObject);
     int64_t newUmask = isInt52(number) ? tryConvertToInt52(number) : numberValue.toInt32(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
     if (newUmask < 0 || newUmask > 4294967295) {
-        StringBuilder messageBuilder;
-        messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
-        messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
-        throwNodeRangeError(globalObject, throwScope, messageBuilder.toString());
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(throwScope, globalObject, "mask"_s, 0, 4294967295, numberValue);
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
@@ -781,6 +776,12 @@ static void loadSignalNumberMap()
 #endif
 #endif
     });
+}
+
+bool isSignalName(WTF::String input)
+{
+    loadSignalNumberMap();
+    return signalNameToNumberMap->contains(input);
 }
 
 #if OS(WINDOWS)
@@ -2895,11 +2896,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    int pid = callFrame->argument(0).toInt32(globalObject);
+    auto pid_value = callFrame->argument(0);
+    int pid = pid_value.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (pid < 0) {
-        throwNodeRangeError(globalObject, scope, "pid must be a positive integer"_s);
-        return {};
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "pid"_s, "a positive integer"_s, pid_value);
     }
     JSC::JSValue signalValue = callFrame->argument(1);
     int signal = SIGTERM;
@@ -2912,13 +2913,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
             signal = num;
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            throwNodeRangeError(globalObject, scope, "Unknown signal name"_s);
-            return {};
+            return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
         }
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!signalValue.isUndefinedOrNull()) {
-        throwTypeError(globalObject, scope, "signal must be a string or number"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "signal"_s, "string or number"_s, signalValue);
     }
 
     auto global = jsCast<Zig::GlobalObject*>(globalObject);

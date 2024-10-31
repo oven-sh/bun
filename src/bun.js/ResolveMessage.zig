@@ -69,22 +69,22 @@ pub const ResolveMessage = struct {
         switch (err) {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
-                    return try std.fmt.allocPrint(allocator, "Module not found \"{s}\"", .{specifier});
+                    return try std.fmt.allocPrint(allocator, "Module not found '{s}'", .{specifier});
                 }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
-                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find package '{s}' from '{s}'", .{ specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find module '{s}' from '{s}'", .{ specifier, referrer });
                 }
             },
             error.InvalidDataURL => {
-                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving package '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{s} while resolving '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 }
             },
         }
@@ -142,7 +142,7 @@ pub const ResolveMessage = struct {
         _: *JSC.CallFrame,
     ) JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 7);
-        object.put(globalThis, ZigString.static("name"), ZigString.init("ResolveMessage").toJS(globalThis));
+        object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));

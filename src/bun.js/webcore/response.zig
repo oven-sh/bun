@@ -206,10 +206,10 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
         if (this.init.status_code < 200) {
-            return ZigString.init("error").toJS(globalThis);
+            return bun.String.static("error").toJS(globalThis);
         }
 
-        return ZigString.init("default").toJS(globalThis);
+        return bun.String.static("default").toJS(globalThis);
     }
 
     pub fn getStatusText(
@@ -1797,7 +1797,7 @@ pub const Fetch = struct {
             fetch_options: FetchOptions,
             promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
-            http.HTTPThread.init();
+            http.HTTPThread.init(&.{});
             var node = try get(
                 allocator,
                 global,

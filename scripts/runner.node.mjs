@@ -233,8 +233,13 @@ async function runTests() {
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
-  if (!isCI) console.log("-------");
-  if (!isCI) console.log("passing", results.length - failedTests.length, "/", results.length);
+  if (!isCI) {
+    console.log("-------");
+    console.log("passing", results.length - failedTests.length, "/", results.length);
+    for (const { testPath } of failedTests) {
+      console.log("-", testPath);
+    }
+  }
   return results;
 }
 

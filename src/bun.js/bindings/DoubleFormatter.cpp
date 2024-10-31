@@ -4,12 +4,14 @@
 #include "JavaScriptCore/JSGlobalObjectFunctions.h"
 #include <cstring>
 
+using namespace WTF;
+
 /// Must be called with a buffer of exactly 124
 /// Find the length by scanning for the 0
 extern "C" size_t WTF__dtoa(char* buf_124_bytes, double number)
 {
     NumberToStringBuffer& buf = *reinterpret_cast<NumberToStringBuffer*>(buf_124_bytes);
-    return WTF::numberToStringAndSize(number, buf);
+    return WTF::numberToStringAndSize(number, buf).size();
 }
 
 /// This is the equivalent of the unary '+' operator on a JS string

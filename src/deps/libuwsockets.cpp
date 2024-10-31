@@ -20,7 +20,7 @@ extern "C"
       uWS::SocketContextOptions socket_context_options;
       memcpy(&socket_context_options, &options,
              sizeof(uWS::SocketContextOptions));
-      return (uws_app_t *)new uWS::SSLApp(socket_context_options);
+      return (uws_app_t *)uWS::SSLApp::create(socket_context_options);
     }
 
     return (uws_app_t *)new uWS::App();
@@ -530,23 +530,25 @@ extern "C"
       uwsApp->addServerName(hostname_pattern);
     }
   }
-  void uws_add_server_name_with_options(
+  int uws_add_server_name_with_options(
       int ssl, uws_app_t *app, const char *hostname_pattern,
       struct us_bun_socket_context_options_t options)
   {
     uWS::SocketContextOptions sco;
     memcpy(&sco, &options, sizeof(uWS::SocketContextOptions));
+    bool success = false;
 
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->addServerName(hostname_pattern, sco);
+      uwsApp->addServerName(hostname_pattern, sco, &success);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->addServerName(hostname_pattern, sco);
+      uwsApp->addServerName(hostname_pattern, sco, &success);
     }
+    return !success;
   }
 
   void uws_missing_server_name(int ssl, uws_app_t *app,

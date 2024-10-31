@@ -5,6 +5,9 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
+const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
+const { validateInteger } = require("internal/validators");
+
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
@@ -830,6 +833,18 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
 
   // Get the stream controller
   // We need the pointer to the underlying stream controller for the NativeReadable
+  if (start !== undefined) {
+    validateInteger(start, "start", 0);
+  }
+  if (end === undefined) {
+    end = Infinity;
+  } else if (end !== Infinity) {
+    validateInteger(end, "end", 0);
+    if (start !== undefined && start > end) {
+      throw new ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
+    }
+  }
+
   const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
   var ptr = stream.$bunNativePtr;
   if (!ptr) {
@@ -1067,6 +1082,11 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
     fd = defaultWriteStreamOptions.fd,
     pos = defaultWriteStreamOptions.pos,
   } = options;
+
+  if (start !== undefined) {
+    validateInteger(start, "start", 0);
+    options.pos = start;
+  }
 
   var tempThis = {};
   var handle = null;
@@ -1542,7 +1562,6 @@ setName(chown, "chown");
 setName(chownSync, "chownSync");
 setName(close, "close");
 setName(closeSync, "closeSync");
-setName(constants, "constants");
 setName(copyFile, "copyFile");
 setName(copyFileSync, "copyFileSync");
 setName(cp, "cp");
@@ -1579,7 +1598,6 @@ setName(mkdtemp, "mkdtemp");
 setName(mkdtempSync, "mkdtempSync");
 setName(open, "open");
 setName(openSync, "openSync");
-setName(promises, "promises");
 setName(read, "read");
 setName(readFile, "readFile");
 setName(readFileSync, "readFileSync");

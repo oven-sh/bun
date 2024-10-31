@@ -147,7 +147,6 @@ it("utf16 property name", () => {
         笑: "😀",
       },
     ],
-    null,
     2,
   );
   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);

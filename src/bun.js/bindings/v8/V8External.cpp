@@ -1,7 +1,9 @@
 #include "V8External.h"
 #include "V8HandleScope.h"
-
+#include "v8_compatibility_assertions.h"
 #include "napi_external.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::External)
 
 namespace v8 {
 
@@ -23,4 +25,4 @@ void* External::Value() const
     return external->value();
 }
 
-}
+} // namespace v8

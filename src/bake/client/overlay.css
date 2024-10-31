@@ -1,0 +1,176 @@
+/*
+ * This file is mounted within Shadow DOM so interference with
+ * the user's application causes no issue. This sheet is used to
+ * style error popups and other elements provided by DevServer.
+ */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.root {
+  color-scheme: light dark;
+
+  --modal-bg: light-dark(#efefef, #202020);
+  --modal-text: light-dark(#0a0a0a, #fafafa);
+  --modal-text-faded: light-dark(#0a0a0a88, #fafafa88);
+  --item-bg: light-dark(#d4d4d4, #0f0f0f);
+  --item-bg-hover: light-dark(#cccccc, #171717);
+  --red: #ff5858;
+  --log-error: light-dark(#dc0000, #ff5858);
+  --log-warn: light-dark(#eab308, #fbbf24);
+  --log-note: light-dark(#008ae6, #22d3ee);
+  --log-colon: light-dark(#888, #888);
+
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    "Open Sans",
+    "Helvetica Neue",
+    sans-serif;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+code,
+.file-name,
+.message {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.modal {
+  color: var(--modal-text);
+  background-color: var(--modal-bg);
+  border-top: 8px solid var(--red);
+  border-radius: 8px;
+  margin: 4rem 2rem 2rem 2rem;
+  max-width: 940px;
+  width: 100%;
+  box-shadow:
+    0 2px 6px #0004,
+    0 2px 32px #0003;
+}
+
+header {
+  margin: 1rem 1rem;
+  color: var(--red);
+  font-size: 2rem;
+  font-weight: bold;
+}
+
+footer {
+  color: var(--modal-text-faded);
+  margin: 1rem;
+}
+
+pre {
+  font: unset;
+}
+
+.message-group {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--item-bg);
+}
+
+/* this is a <button> */
+.file-name {
+  appearance: none;
+  background-color: transparent;
+  border: none;
+  font-size: unset;
+  font-weight: bold;
+  padding: 0.5rem 1rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-name:hover,
+.file-name:focus-visible {
+  background-color: var(--item-bg-hover);
+}
+
+.file-name::after {
+  color: var(--modal-text-faded);
+  font-size: 70%;
+}
+
+.file-name:hover::after,
+.file-name:focus-visible {
+  content: " (click to open in editor)";
+}
+
+.message {
+  margin: 1rem;
+  margin-bottom: 0;
+}
+
+button + .message {
+  margin-top: 0.5rem;
+}
+
+.message-text > span {
+  color: var(--color);
+}
+
+.log-error {
+  --color: var(--log-error);
+  font-weight: bold;
+}
+
+.log-warn {
+  --color: var(--log-warn);
+}
+
+.log-note {
+  --color: var(--log-note);
+}
+
+.log-colon {
+  --color: var(--log-colon);
+}
+
+.code-line {
+  display: flex;
+  margin: 0.5rem 0;
+}
+
+.line-num {
+  color: var(--modal-text-faded);
+  margin-right: 10px;
+}
+
+.highlight-wrap {
+  color: transparent;
+  user-select: none;
+  pointer-events: none;
+  transform: translateY(-20px);
+  margin-bottom: -5px;
+}
+
+.highlight-wrap .line {
+  margin-left: 10px;
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color);
+}
+
+@media (prefers-color-scheme: light) {
+  .log-warn,
+  .log-note {
+    font-weight: bold;
+  }
+}

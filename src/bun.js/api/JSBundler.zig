@@ -70,6 +70,13 @@ pub const JSBundler = struct {
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         packages: options.PackagesOption = .bundle,
+        format: options.Format = .esm,
+        bytecode: bool = false,
+        banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        experimental_css: bool = false,
+        css_chunking: bool = false,
+        drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -92,6 +99,18 @@ pub const JSBundler = struct {
             errdefer this.deinit(allocator);
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
+            if (config.getTruthy(globalThis, "experimentalCss")) |enable_css| {
+                this.experimental_css = if (enable_css.isBoolean())
+                    enable_css.toBoolean()
+                else if (enable_css.isObject()) true: {
+                    if (enable_css.getTruthy(globalThis, "chunking")) |enable_chunking| {
+                        this.css_chunking = if (enable_chunking.isBoolean()) enable_css.toBoolean() else false;
+                    }
+
+                    break :true true;
+                } else false;
+            }
+
             // Plugins must be resolved first as they are allowed to mutate the config JSValue
             if (try config.getArray(globalThis, "plugins")) |array| {
                 var iter = array.arrayIterator(globalThis);
@@ -100,59 +119,6 @@ pub const JSBundler = struct {
                         globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                         return error.JSError;
                     }
-                    if (try plugin.getObject(globalThis, "SECRET_SERVER_COMPONENTS_INTERNALS")) |internals| {
-                        if (internals.get(globalThis, "router")) |router_value| {
-                            if (router_value.as(JSC.API.FileSystemRouter) != null) {
-                                this.server_components.router.set(globalThis, router_value);
-                            } else {
-                                globalThis.throwInvalidArguments("Expected router to be a Bun.FileSystemRouter", .{});
-                                return error.JSError;
-                            }
-                        }
-
-                        const directive_object = (try internals.getObject(globalThis, "directive")) orelse {
-                            globalThis.throwInvalidArguments("Expected directive to be an object", .{});
-                            return error.JSError;
-                        };
-
-                        if (try directive_object.getArray(globalThis, "client")) |client_names_array| {
-                            var array_iter = client_names_array.arrayIterator(globalThis);
-                            while (array_iter.next()) |client_name| {
-                                var slice = client_name.toSliceOrNull(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                                    return error.JSError;
-                                };
-                                defer slice.deinit();
-                                try this.server_components.client.append(allocator, try OwnedString.initCopy(allocator, slice.slice()));
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("Expected directive.client to be an array of strings", .{});
-                            return error.JSError;
-                        }
-
-                        if (try directive_object.getArray(globalThis, "server")) |server_names_array| {
-                            var array_iter = server_names_array.arrayIterator(globalThis);
-                            while (array_iter.next()) |server_name| {
-                                var slice = server_name.toSliceOrNull(globalThis) orelse {
-                                    globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                                    return error.JSError;
-                                };
-                                defer slice.deinit();
-                                try this.server_components.server.append(allocator, try OwnedString.initCopy(allocator, slice.slice()));
-                            }
-                        } else {
-                            globalThis.throwInvalidArguments("Expected directive.server to be an array of strings", .{});
-                            return error.JSError;
-                        }
-
-                        continue;
-                    }
-
-                    // var decl = PluginDeclaration{
-                    //     .name = OwnedString.initEmpty(allocator),
-                    //     .setup = .{},
-                    // };
-                    // defer decl.deinit();
 
                     if (plugin.getOptional(globalThis, "name", ZigString.Slice) catch null) |slice| {
                         defer slice.deinit();
@@ -204,8 +170,23 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOptional(globalThis, "bytecode", bool)) |bytecode| {
+                this.bytecode = bytecode;
+
+                if (bytecode) {
+                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    this.format = .cjs;
+                    this.target = .bun;
+                }
+            }
+
             if (try config.getOptionalEnum(globalThis, "target", options.Target)) |target| {
                 this.target = target;
+
+                if (target != .bun and this.bytecode) {
+                    globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
+                    return error.JSError;
+                }
             }
 
             var has_out_dir = false;
@@ -213,6 +194,16 @@ pub const JSBundler = struct {
                 defer slice.deinit();
                 try this.outdir.appendSliceExact(slice.slice());
                 has_out_dir = true;
+            }
+
+            if (try config.getOptional(globalThis, "banner", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.banner.appendSliceExact(slice.slice());
+            }
+
+            if (try config.getOptional(globalThis, "footer", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.footer.appendSliceExact(slice.slice());
             }
 
             if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
@@ -237,12 +228,11 @@ pub const JSBundler = struct {
             }
 
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
-                switch (format) {
-                    .esm => {},
-                    else => {
-                        globalThis.throwInvalidArguments("Formats besides 'esm' are not implemented", .{});
-                        return error.JSError;
-                    },
+                this.format = format;
+
+                if (this.bytecode and format != .cjs) {
+                    globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    return error.JSError;
                 }
             }
 
@@ -358,7 +348,7 @@ pub const JSBundler = struct {
                 try this.rootdir.appendSliceExact(rootdir);
             }
 
-            if (try config.getArray(globalThis, "external")) |externals| {
+            if (try config.getOwnArray(globalThis, "external")) |externals| {
                 var iter = externals.arrayIterator(globalThis);
                 while (iter.next()) |entry_point| {
                     var slice = entry_point.toSliceOrNull(globalThis) orelse {
@@ -367,6 +357,18 @@ pub const JSBundler = struct {
                     };
                     defer slice.deinit();
                     try this.external.insert(slice.slice());
+                }
+            }
+
+            if (try config.getOwnArray(globalThis, "drop")) |drops| {
+                var iter = drops.arrayIterator(globalThis);
+                while (iter.next()) |entry| {
+                    var slice = entry.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected drop to be an array of strings", .{});
+                        return error.JSError;
+                    };
+                    defer slice.deinit();
+                    try this.drop.insert(slice.slice());
                 }
             }
 
@@ -425,7 +427,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getObject(globalThis, "define")) |define| {
+            if (try config.getOwnObject(globalThis, "define")) |define| {
                 if (!define.isObject()) {
                     globalThis.throwInvalidArguments("define must be an object", .{});
                     return error.JSError;
@@ -463,7 +465,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            if (try config.getObject(globalThis, "loader")) |loaders| {
+            if (try config.getOwnObject(globalThis, "loader")) |loaders| {
                 var loader_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
@@ -563,6 +565,9 @@ pub const JSBundler = struct {
             self.rootdir.deinit();
             self.public_path.deinit();
             self.conditions.deinit();
+            self.drop.deinit();
+            self.banner.deinit();
+            self.footer.deinit();
         }
     };
 
@@ -967,6 +972,8 @@ pub const JSBundler = struct {
             else
                 bun.String.createUTF8(path.namespace);
             const path_string = bun.String.createUTF8(path.text);
+            defer namespace_string.deref();
+            defer path_string.deref();
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 
@@ -1089,10 +1096,12 @@ pub const BuildArtifact = struct {
         chunk,
         asset,
         @"entry-point",
-        @"component-manifest",
-        @"use client",
-        @"use server",
         sourcemap,
+        bytecode,
+
+        pub fn isFileInStandaloneMode(this: OutputKind) bool {
+            return this != .sourcemap and this != .bytecode;
+        }
     };
 
     pub fn deinit(this: *BuildArtifact) void {
@@ -1169,7 +1178,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1253,7 +1262,7 @@ pub const BuildArtifact = struct {
                         "<r>hash<r>: <green>\"{any}\"<r>",
                         enable_ansi_colors,
                     ),
-                    .{options.PathTemplate.hashFormatter(this.hash)},
+                    .{bun.fmt.truncatedHash32(this.hash)},
                 );
             }
 

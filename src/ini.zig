@@ -242,7 +242,7 @@ pub const Parser = struct {
             var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
             // Try to parse it and it if fails will just treat it as a string
-            const json_val: Expr = bun.JSON.ParseJSONUTF8Impl(&src, &log, arena_allocator, true) catch {
+            const json_val: Expr = bun.JSON.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
                 break :out;
             };
 
@@ -439,16 +439,13 @@ pub const Parser = struct {
             }
 
             const env_var = val[i + 2 .. j];
-            const expanded = this.expandEnvVar(env_var);
+            // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
+            const expanded = this.env.get(env_var) orelse return null;
             unesc.appendSlice(expanded) catch bun.outOfMemory();
 
             return j;
         }
         return null;
-    }
-
-    fn expandEnvVar(this: *Parser, name: []const u8) []const u8 {
-        return this.env.get(name) orelse "";
     }
 
     fn singleStrRope(ropealloc: Allocator, str: []const u8) *Rope {
@@ -574,7 +571,7 @@ pub const IniTestingAPIs = struct {
 
         const install = allocator.create(bun.Schema.Api.BunInstall) catch bun.outOfMemory();
         install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
-        loadNpmrc(allocator, install, env, false, &log, &source) catch {
+        loadNpmrc(allocator, install, env, false, ".npmrc", &log, &source) catch {
             return log.toJS(globalThis, allocator, "error");
         };
 
@@ -878,35 +875,19 @@ pub fn loadNpmrcFromFile(
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
+    npmrc_path: [:0]const u8,
 ) void {
     var log = bun.logger.Log.init(allocator);
     defer log.deinit();
-    const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), ".npmrc", bun.O.RDONLY, 0)) {
-        .result => |fd| fd,
-        .err => |err| {
-            if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening .npmrc \"{s}\"", .{
-                err,
-                ".npmrc",
-            });
-            Global.exit(1);
-        },
-    };
-    defer _ = bun.sys.close(npmrc_file);
 
-    const source = switch (bun.sys.File.toSource(".npmrc", allocator)) {
-        .result => |s| s,
-        .err => |e| {
-            Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
-                e,
-                ".npmrc",
-            });
-            Global.exit(1);
-        },
+    const source = bun.sys.File.toSource(npmrc_path, allocator).unwrap() catch |err| {
+        if (auto_loaded) return;
+        Output.err(err, "failed to read .npmrc: \"{s}\"", .{npmrc_path});
+        Global.crash();
     };
     defer allocator.free(source.contents);
 
-    loadNpmrc(allocator, install, env, auto_loaded, &log, &source) catch {
+    loadNpmrc(allocator, install, env, auto_loaded, npmrc_path, &log, &source) catch {
         if (log.errors == 1)
             Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
         else
@@ -920,10 +901,11 @@ pub fn loadNpmrc(
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
+    npmrc_path: [:0]const u8,
     log: *bun.logger.Log,
     source: *const bun.logger.Source,
 ) !void {
-    var parser = bun.ini.Parser.init(allocator, ".npmrc", source.contents, env);
+    var parser = bun.ini.Parser.init(allocator, npmrc_path, source.contents, env);
     defer parser.deinit();
     parser.parse(parser.arena.allocator()) catch |e| {
         if (e == error.ParserError) {
@@ -933,13 +915,13 @@ pub fn loadNpmrc(
         if (auto_loaded) {
             Output.warn("{}\nwhile reading .npmrc \"{s}\"", .{
                 e,
-                ".npmrc",
+                npmrc_path,
             });
             return;
         }
         Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
             e,
-            ".npmrc",
+            npmrc_path,
         });
         Global.exit(1);
     };
@@ -977,6 +959,32 @@ pub fn loadNpmrc(
             install.dry_run = bun.strings.eqlComptime(str, "true");
         } else if (query.expr.asBool()) |b| {
             install.dry_run = b;
+        }
+    }
+
+    if (out.asProperty("ca")) |query| {
+        if (query.expr.asUtf8StringLiteral()) |str| {
+            install.ca = .{
+                .str = str,
+            };
+        } else if (query.expr.isArray()) {
+            const arr = query.expr.data.e_array;
+            var list = try allocator.alloc([]const u8, arr.items.len);
+            var i: usize = 0;
+            for (arr.items.slice()) |item| {
+                list[i] = try item.asStringCloned(allocator) orelse continue;
+                i += 1;
+            }
+
+            install.ca = .{
+                .list = list,
+            };
+        }
+    }
+
+    if (out.asProperty("cafile")) |query| {
+        if (try query.expr.asStringCloned(allocator)) |cafile| {
+            install.cafile = cafile;
         }
     }
 
@@ -1151,7 +1159,6 @@ pub fn loadNpmrc(
                     continue;
                 }
 
-                var matched_at_least_one = false;
                 for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
                     const url = url_map.get(k.*) orelse unreachable;
 
@@ -1161,7 +1168,6 @@ pub fn loadNpmrc(
                                 continue;
                             }
                         }
-                        matched_at_least_one = true;
                         switch (conf_item.optname) {
                             ._authToken => {
                                 if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
@@ -1180,19 +1186,6 @@ pub fn loadNpmrc(
                         // We have to keep going as it could match multiple scopes
                         continue;
                     }
-                }
-
-                if (!matched_at_least_one) {
-                    log.addWarningFmt(
-                        source,
-                        iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
-                        allocator,
-                        "The following .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
-                        .{
-                            conf_item,
-                            conf_item.registry_url,
-                        },
-                    ) catch bun.outOfMemory();
                 }
             }
         }

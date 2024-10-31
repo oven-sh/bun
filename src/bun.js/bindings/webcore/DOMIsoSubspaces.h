@@ -50,6 +50,13 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiHandleScopeImpl;
+    std::unique_ptr<IsoSubspace> m_subspaceForNapiTypeTag;
+    std::unique_ptr<IsoSubspace> m_subspaceForObjectTemplate;
+    std::unique_ptr<IsoSubspace> m_subspaceForInternalFieldObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
+    std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
+    std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
@@ -892,8 +899,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathNSResolver;
     // std::unique_ptr<IsoSubspace> m_subspaceForXPathResult;
     // std::unique_ptr<IsoSubspace> m_subspaceForXSLTProcessor;
-    
-    std::unique_ptr<IsoSubspace> m_subspaceForKitGlobalScope;
+
+    std::unique_ptr<IsoSubspace> m_subspaceForBakeGlobalScope;
 
     std::unique_ptr<IsoSubspace> m_subspaceForAbortController;
     std::unique_ptr<IsoSubspace> m_subspaceForAbortSignal;
@@ -913,13 +920,6 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
-    // todo(@190n) move up
-    std::unique_ptr<IsoSubspace> m_subspaceForObjectTemplate;
-    std::unique_ptr<IsoSubspace> m_subspaceForInternalFieldObject;
-    std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
-    std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
-    std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
-    std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
 };
 } // namespace WebCore
 

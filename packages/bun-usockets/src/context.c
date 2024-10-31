@@ -212,12 +212,13 @@ void us_socket_context_add_server_name(int ssl, struct us_socket_context_t *cont
     }
 #endif
 }
-void us_bun_socket_context_add_server_name(int ssl, struct us_socket_context_t *context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user) {
+int us_bun_socket_context_add_server_name(int ssl, struct us_socket_context_t *context, const char *hostname_pattern, struct us_bun_socket_context_options_t options, void *user) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        us_bun_internal_ssl_socket_context_add_server_name((struct us_internal_ssl_socket_context_t *) context, hostname_pattern, options, user);
+        return us_bun_internal_ssl_socket_context_add_server_name((struct us_internal_ssl_socket_context_t *) context, hostname_pattern, options, user);
     }
 #endif
+    return 0;
 }
 
 /* Remove SNI context */
@@ -278,11 +279,11 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     return context;
 }
 
-struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options) {
+struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop, int context_ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         /* This function will call us, again, with SSL = false and a bigger ext_size */
-        return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options);
+        return (struct us_socket_context_t *) us_internal_bun_create_ssl_socket_context(loop, context_ext_size, options, err);
     }
 #endif
 

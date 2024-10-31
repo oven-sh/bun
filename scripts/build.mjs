@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, mkdirSync, cpSync, chmodSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, mkdirSync, cpSync, chmodSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -118,26 +118,6 @@ async function build(args) {
     .flatMap(([flag, value]) => [flag, value]);
   await spawn("cmake", buildArgs, { env }, "compilation");
 
-  const buildFiles = ["ccache.log", "compile_commands.json"];
-  const buildPaths = [buildPath, ...readdirSync(buildPath).map(path => join(buildPath, path))];
-  const buildArtifacts = [];
-  for (const buildPath of buildPaths) {
-    for (const buildFile of buildFiles) {
-      const path = join(buildPath, buildFile);
-      if (existsSync(path)) {
-        buildArtifacts.push(path);
-      }
-    }
-  }
-
-  if (isBuildkite()) {
-    await Promise.all(
-      buildArtifacts.map(path =>
-        spawn("buildkite-agent", ["artifact", "upload", relative(buildPath, path)], { cwd: buildPath, env }),
-      ),
-    );
-  }
-
   printDuration("total", Date.now() - startTime);
 }
 
@@ -150,7 +130,10 @@ function getCachePath(branch) {
   const repository = process.env.BUILDKITE_REPO;
   const fork = process.env.BUILDKITE_PULL_REQUEST_REPO;
   const repositoryKey = (fork || repository).replace(/[^a-z0-9]/gi, "-");
-  const branchKey = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const branchName = (branch || process.env.BUILDKITE_BRANCH).replace(/[^a-z0-9]/gi, "-");
+  const branchKey = branchName.startsWith("gh-readonly-queue-")
+    ? branchName.slice(18, branchName.indexOf("-pr-"))
+    : branchName;
   const stepKey = process.env.BUILDKITE_STEP_KEY.replace(/[^a-z0-9]/gi, "-");
   return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
 }

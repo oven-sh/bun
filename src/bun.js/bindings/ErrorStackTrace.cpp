@@ -16,6 +16,8 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <wtf/IterationStatus.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/FunctionCodeBlock.h>
 
 #include "ErrorStackFrame.h"
 
@@ -23,6 +25,69 @@ using namespace JSC;
 using namespace WebCore;
 
 namespace Zig {
+
+static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* codeBlock)
+{
+
+    if (auto* executable = codeBlock->ownerExecutable()) {
+        return executable->implementationVisibility();
+    }
+
+    return ImplementationVisibility::Public;
+}
+
+static bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
+{
+    ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
+        if (visitor->callee().isCell()) {
+            if (auto* callee = visitor->callee().asCell()) {
+                if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
+                    if (auto* executable = jsFunction->executable())
+                        return executable->implementationVisibility();
+                }
+            }
+        }
+
+        if (auto* codeBlock = visitor->codeBlock()) {
+            return getImplementationVisibility(codeBlock);
+        }
+
+#if ENABLE(WEBASSEMBLY)
+        if (visitor->isNativeCalleeFrame())
+            return visitor->callee().asNativeCallee()->implementationVisibility();
+#endif
+
+        return ImplementationVisibility::Public;
+    }();
+
+    return implementationVisibility != ImplementationVisibility::Public;
+}
+
+static bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
+{
+    ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
+
+#if ENABLE(WEBASSEMBLY)
+        if (frame.isWasmFrame())
+            return ImplementationVisibility::Public;
+#endif
+
+        if (auto* callee = frame.callee()) {
+            if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
+                if (auto* executable = jsFunction->executable())
+                    return executable->implementationVisibility();
+            }
+        }
+
+        if (auto* codeBlock = frame.codeBlock()) {
+            return getImplementationVisibility(codeBlock);
+        }
+
+        return ImplementationVisibility::Public;
+    }();
+
+    return implementationVisibility != ImplementationVisibility::Public;
+}
 
 JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames)
 {
@@ -35,41 +100,155 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 
     newFrames.reserveInitialCapacity(frameCount);
     for (size_t i = 0; i < frameCount; i++) {
-        newFrames.constructAndAppend(vm, existingFrames.at(i));
+        if (!isImplementationVisibilityPrivate(existingFrames.at(i))) {
+            newFrames.constructAndAppend(vm, existingFrames.at(i));
+        }
     }
 
     return JSCStackTrace(newFrames);
 }
 
-static bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
+void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
-    ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
-        if (auto* codeBlock = visitor->codeBlock()) {
-            if (auto* executable = codeBlock->ownerExecutable()) {
-                return executable->implementationVisibility();
-            }
-            return ImplementationVisibility::Public;
+    size_t framesCount = 0;
+
+    bool belowCaller = false;
+    int32_t skipFrames = 0;
+
+    WTF::String callerName {};
+    if (JSC::JSFunction* callerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(caller)) {
+        callerName = callerFunction->name(vm);
+        if (callerName.isEmpty() && callerFunction->jsExecutable()) {
+            callerName = callerFunction->jsExecutable()->name().string();
         }
+    }
+    if (JSC::InternalFunction* callerFunctionInternal = JSC::jsDynamicCast<JSC::InternalFunction*>(caller)) {
+        callerName = callerFunctionInternal->name();
+    }
 
-#if ENABLE(WEBASSEMBLY)
-        if (visitor->isNativeCalleeFrame())
-            return visitor->callee().asNativeCallee()->implementationVisibility();
-#endif
+    size_t totalFrames = 0;
 
-        if (visitor->callee().isCell()) {
-            if (auto* callee = visitor->callee().asCell()) {
-                if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
-                    if (auto* executable = jsFunction->executable())
-                        return executable->implementationVisibility();
-                    return ImplementationVisibility::Public;
+    if (!callerName.isEmpty()) {
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            // skip caller frame and all frames above it
+            if (!belowCaller) {
+                skipFrames += 1;
+
+                if (visitor->functionName() == callerName) {
+                    belowCaller = true;
+                    return WTF::IterationStatus::Continue;
                 }
             }
+
+            totalFrames += 1;
+
+            if (totalFrames > stackTraceLimit) {
+                return WTF::IterationStatus::Done;
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    } else if (caller && caller.isCell()) {
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            // skip caller frame and all frames above it
+            if (!belowCaller) {
+                auto callee = visitor->callee();
+                skipFrames += 1;
+                if (callee.isCell() && callee.asCell() == caller) {
+                    belowCaller = true;
+                    return WTF::IterationStatus::Continue;
+                }
+            }
+
+            totalFrames += 1;
+
+            if (totalFrames > stackTraceLimit) {
+                return WTF::IterationStatus::Done;
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    } else if (caller.isEmpty() || caller.isUndefined()) {
+        // Skip the first frame.
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            if (!belowCaller) {
+                skipFrames += 1;
+                belowCaller = true;
+            }
+
+            totalFrames += 1;
+
+            if (totalFrames > stackTraceLimit) {
+                return WTF::IterationStatus::Done;
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    }
+    size_t i = 0;
+    totalFrames = 0;
+    stackTrace.reserveInitialCapacity(framesCount);
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        // Skip native frames
+        if (isImplementationVisibilityPrivate(visitor)) {
+            return WTF::IterationStatus::Continue;
         }
 
-        return ImplementationVisibility::Public;
-    }();
+        // Skip frames if needed
+        if (skipFrames > 0) {
+            skipFrames--;
+            return WTF::IterationStatus::Continue;
+        }
 
-    return implementationVisibility != ImplementationVisibility::Public;
+        totalFrames += 1;
+
+        if (totalFrames > stackTraceLimit) {
+            return WTF::IterationStatus::Done;
+        }
+
+        if (visitor->isNativeCalleeFrame()) {
+
+            auto* nativeCallee = visitor->callee().asNativeCallee();
+            switch (nativeCallee->category()) {
+            case NativeCallee::Category::Wasm: {
+                stackTrace.append(StackFrame(visitor->wasmFunctionIndexOrName()));
+                break;
+            }
+            case NativeCallee::Category::InlineCache: {
+                break;
+            }
+            }
+#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+        } else if (!!visitor->codeBlock())
+#else
+            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+#endif
+            stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
+        else
+            stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell()));
+
+        i++;
+
+        return (i == framesCount) ? WTF::IterationStatus::Done : WTF::IterationStatus::Continue;
+    });
 }
 
 JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, size_t frameLimit, JSC::JSValue caller)
@@ -203,6 +382,22 @@ JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSVal
     return fromExisting(vm, *jscStackTrace);
 }
 
+static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
+{
+    if (!codeBlock->ownerExecutable()) {
+        return false;
+    }
+
+    const JSC::SourceCode& source = codeBlock->source();
+    if (auto* provider = source.provider()) {
+        const auto& url = provider->sourceURL();
+        if (!url.isEmpty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     : m_vm(vm)
     , m_codeBlock(nullptr)
@@ -228,9 +423,18 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
             break;
         }
         }
-    } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
-        m_codeBlock = visitor->codeBlock();
-        m_bytecodeIndex = visitor->bytecodeIndex();
+    } else if (auto* codeBlock = visitor->codeBlock()) {
+        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
+            m_codeBlock = codeBlock;
+            m_bytecodeIndex = visitor->bytecodeIndex();
+        }
+    }
+
+    if (!m_bytecodeIndex && visitor->hasLineAndColumnInfo()) {
+        auto lineColumn = visitor->computeLineAndColumn();
+        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
+        m_sourcePositionsState = SourcePositionsState::Calculated;
     }
 }
 
@@ -250,11 +454,18 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     if (frame.isWasmFrame()) {
         m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
-    } else {
-        m_codeBlock = frame.codeBlock();
-        if (frame.hasBytecodeIndex()) {
+    } else if (auto* codeBlock = frame.codeBlock()) {
+        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
+            m_codeBlock = codeBlock;
             m_bytecodeIndex = frame.bytecodeIndex();
         }
+    }
+
+    if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
+        auto lineColumn = frame.computeLineAndColumn();
+        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
+        m_sourcePositionsState = SourcePositionsState::Calculated;
     }
 }
 
@@ -308,16 +519,36 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
+    if (m_callee && m_callee->isObject()) {
+        if (auto* jsFunction = jsDynamicCast<JSFunction*>(m_callee)) {
+            if (auto* executable = jsFunction->executable()) {
+                if (!executable->isHostFunction()) {
+                    auto* jsExectuable = jsFunction->jsExecutable();
+                    if (jsExectuable) {
+                        const auto* sourceProvider = jsExectuable->source().provider();
+                        if (sourceProvider) {
+                            return sourceProvider->sourceURL();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (!m_codeBlock) {
         return String(sourceURLNativeString);
     }
 
-    return m_codeBlock->ownerExecutable()->sourceURL();
+    auto* provider = m_codeBlock->source().provider();
+    if (provider) {
+        return provider->sourceURL();
+    }
+
+    return String();
 }
 
 ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
-    static auto functionNameEvalCodeString = MAKE_STATIC_STRING_IMPL("eval code");
     static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
     static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 
@@ -328,7 +559,8 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode:
-            return String(functionNameEvalCodeString);
+            // Node returns null here.
+            return String();
         case JSC::ModuleCode:
             return String(functionNameModuleCodeString);
         case JSC::FunctionCode:
@@ -340,13 +572,26 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
         }
     }
 
-    String name;
     if (m_callee) {
-        if (m_callee->isObject())
-            name = getCalculatedDisplayName(m_vm, jsCast<JSObject*>(m_callee)).impl();
+        if (auto* callee = m_callee->getObject()) {
+            // Does the code block have a user-defined name property?
+            JSC::JSValue name = callee->getDirect(m_vm, m_vm.propertyNames->name);
+            if (name && name.isString()) {
+                auto scope = DECLARE_CATCH_SCOPE(m_vm);
+                auto nameString = name.toWTFString(callee->globalObject());
+                if (scope.exception()) {
+                    scope.clearException();
+                }
+                if (!nameString.isEmpty()) {
+                    return nameString;
+                }
+            }
+
+            return JSC::getCalculatedDisplayName(m_vm, callee);
+        }
     }
 
-    return name.isNull() ? emptyString() : name;
+    return emptyString();
 }
 
 ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()

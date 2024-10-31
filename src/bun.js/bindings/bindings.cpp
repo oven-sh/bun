@@ -123,6 +123,7 @@
 #include "JavaScriptCore/CustomGetterSetter.h"
 
 #include "ErrorStackFrame.h"
+#include "ObjectBindings.h"
 
 #if OS(DARWIN)
 #if BUN_DEBUG
@@ -736,7 +737,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto iter1 = JSSetIterator::create(globalObject, set1->structure(), set1, IterationKind::Keys);
+        auto iter1 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
             if (set2->has(globalObject, key1)) {
@@ -745,7 +746,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(globalObject, set2->structure(), set2, IterationKind::Keys);
+            auto iter2 = JSSetIterator::create(globalObject, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
@@ -775,7 +776,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        auto iter1 = JSMapIterator::create(globalObject, map1->structure(), map1, IterationKind::Entries);
+        auto iter1 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {
             JSValue value2 = map2->get(globalObject, key1);
@@ -783,7 +784,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // We couldn't find the key in the second map. This may be a false positive due to
                 // how JSValues are represented in JSC, so we need to fall back to a linear search
                 // to be sure.
-                auto iter2 = JSMapIterator::create(globalObject, map2->structure(), map2, IterationKind::Entries);
+                auto iter2 = JSMapIterator::create(globalObject, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
                 JSValue key2;
                 bool foundMatchingKey = false;
                 while (iter2->nextKeyValue(globalObject, key2, value2)) {
@@ -3708,23 +3709,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
-    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
-}
-
-extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
-{
-    ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    JSValue value = JSC::JSValue::decode(JSValue0);
-    if (UNLIKELY(!value.isObject()))
-        return JSValue::encode({});
-
-    JSC::VM& vm = globalObject->vm();
-    JSC::JSObject* object = value.getObject();
-    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::String(""_s) : propertyName->toWTFString(BunString::ZeroCopy);
-    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
-    auto property = JSC::PropertyName(identifier);
-
-    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, object, property));
 }
 
 extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
@@ -4212,7 +4197,7 @@ public:
             end = offset;
         }
 
-        if (end == start || start == WTF::notFound) {
+        if (start >= end || start == WTF::notFound) {
             return false;
         }
 
@@ -4394,9 +4379,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     if (except->code == SYNTAX_ERROR_CODE) {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-
         except->message = Bun::toStringRef(global, message);
-
     } else {
         except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
@@ -4465,42 +4448,44 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
+                if (!stack.isEmpty()) {
 
-                V8StackTraceIterator iterator(stack);
-                const uint8_t frame_count = except->stack.frames_len;
+                    V8StackTraceIterator iterator(stack);
+                    const uint8_t frame_count = except->stack.frames_len;
 
-                except->stack.frames_len = 0;
+                    except->stack.frames_len = 0;
 
-                iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
-                    ASSERT(except->stack.frames_len < frame_count);
-                    auto& current = except->stack.frames_ptr[except->stack.frames_len];
-                    current = {};
+                    iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                        ASSERT(except->stack.frames_len < frame_count);
+                        auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                        current = {};
 
-                    String functionName = frame.functionName.toString();
-                    String sourceURL = frame.sourceURL.toString();
-                    current.function_name = Bun::toStringRef(functionName);
-                    current.source_url = Bun::toStringRef(sourceURL);
-                    current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
-                    current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
+                        String functionName = frame.functionName.toString();
+                        String sourceURL = frame.sourceURL.toString();
+                        current.function_name = Bun::toStringRef(functionName);
+                        current.source_url = Bun::toStringRef(sourceURL);
+                        current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                        current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
-                    current.remapped = true;
+                        current.remapped = true;
 
-                    if (frame.isConstructor) {
-                        current.code_type = ZigStackFrameCodeConstructor;
-                    } else if (frame.isGlobalCode) {
-                        current.code_type = ZigStackFrameCodeGlobal;
+                        if (frame.isConstructor) {
+                            current.code_type = ZigStackFrameCodeConstructor;
+                        } else if (frame.isGlobalCode) {
+                            current.code_type = ZigStackFrameCodeGlobal;
+                        }
+
+                        except->stack.frames_len += 1;
+
+                        stop = except->stack.frames_len >= frame_count;
+                    });
+
+                    if (except->stack.frames_len > 0) {
+                        getFromSourceURL = false;
+                        except->remapped = true;
+                    } else {
+                        except->stack.frames_len = frame_count;
                     }
-
-                    except->stack.frames_len += 1;
-
-                    stop = except->stack.frames_len >= frame_count;
-                });
-
-                if (except->stack.frames_len > 0) {
-                    getFromSourceURL = false;
-                    except->remapped = true;
-                } else {
-                    except->stack.frames_len = frame_count;
                 }
             }
         }
@@ -4787,7 +4772,7 @@ void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject*
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            fromErrorInstance(exception, global, error, &jscException->stack(), value);
+            fromErrorInstance(exception, global, error, &jscException->stack(), jscException->value());
             return;
         }
     }
@@ -4883,7 +4868,7 @@ extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
     vm->apiLock().lock();
 }
 
-extern "C"  void JSC__VM__releaseAPILock(JSC::VM* vm)
+extern "C" void JSC__VM__releaseAPILock(JSC::VM* vm)
 {
     // https://github.com/WebKit/WebKit/blob/6cb5017d237ef7cb898582a22f05acca22322845/Source/JavaScriptCore/runtime/JSLock.cpp#L72
     RefPtr<JSLock> apiLock(&vm->apiLock());
@@ -5018,6 +5003,7 @@ enum class BuiltinNamesMap : uint8_t {
     name,
     message,
     error,
+    defaultKeyword,
 };
 
 static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -5076,6 +5062,9 @@ static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, u
     case BuiltinNamesMap::error: {
         return vm.propertyNames->error;
     }
+    case BuiltinNamesMap::defaultKeyword: {
+        return vm.propertyNames->defaultKeyword;
+    }
     default: {
         ASSERT_NOT_REACHED();
         return Identifier();
@@ -5095,6 +5084,20 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
     return JSValue::encode(value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+}
+
+extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    ASSERT(value.isCell());
+    PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
+    const Identifier name = builtinNameMap(globalObject, arg2);
+    auto* object = value.getObject();
+    if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
+        return JSValue::encode(slot.getValue(globalObject, name));
+    }
+
+    return JSValue::encode({});
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)
@@ -5148,7 +5151,7 @@ restart:
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol)
+                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -5245,7 +5248,7 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol)
+                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
                         continue;
                 }
 

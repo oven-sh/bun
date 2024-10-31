@@ -3337,6 +3337,8 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         var config: JSC.API.ServerConfig = .{};
+        errdefer config.deinit();
+
         JSC.API.ServerConfig.fromJS(
             globalObject,
             &config,
@@ -3345,16 +3347,11 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.
             exception,
         );
         if (exception[0] != null) {
-            config.deinit();
-
-            globalObject.throwValue(exception_[0].?.value());
-            return .zero;
+            return globalObject.throwValue2(exception_[0].?.value());
         }
 
         if (globalObject.hasException()) {
-            config.deinit();
-
-            return .zero;
+            return globalObject.jsErrorFromCPP();
         }
 
         break :brk config;
@@ -3409,12 +3406,21 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.
                         },
                     };
 
-                    const server = try ServerType.init(config, globalObject);
+                    const server = ServerType.init(config, globalObject) catch |e| {
+                        config.deinit();
+                        return e;
+                    };
+                    errdefer server.deinit();
+
+                    if (globalObject.hasException()) {
+                        return globalObject.jsErrorFromCPP();
+                    }
+
                     server.listen();
                     if (globalObject.hasException()) {
-                        server.deinit();
-                        return .zero;
+                        return globalObject.jsErrorFromCPP();
                     }
+
                     const obj = server.toJS(globalObject);
                     obj.protect();
                     server.thisObject = obj;

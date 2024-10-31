@@ -1315,6 +1315,26 @@ pub const ServerConfig = struct {
                 }
             }
 
+            if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
+                if (!websocket_object.isObject()) {
+                    JSC.throwInvalidArguments("Expected websocket to be an object", .{}, global, exception);
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return;
+                }
+
+                if (WebSocketServer.onCreate(global, websocket_object)) |wss| {
+                    args.websocket = wss;
+                } else {
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return;
+                }
+            }
+            if (global.hasException()) return;
+
             if (arg.getTruthy(global, "port")) |port_| {
                 args.address.tcp.port = @as(
                     u16,
@@ -1450,42 +1470,16 @@ pub const ServerConfig = struct {
                     JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return;
                 }
-
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else if (args.bake == null) {
+            } else {
                 if (global.hasException()) return;
                 JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                 return;
             }
 
-            if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
-                if (!websocket_object.isObject()) {
-                    JSC.throwInvalidArguments("Expected websocket to be an object", .{}, global, exception);
-                    if (args.ssl_config) |*conf| {
-                        conf.deinit();
-                    }
-                    return;
-                }
-
-                if (WebSocketServer.onCreate(global, websocket_object)) |wss| {
-                    args.websocket = wss;
-                } else {
-                    if (args.ssl_config) |*conf| {
-                        conf.deinit();
-                    }
-                    return;
-                }
-            }
-            if (global.hasException()) return;
-
             if (arg.getTruthy(global, "tls")) |tls| {
-                if (args.bake != null) {
-                    JSC.throwInvalidArguments("TODO: Cannot provide 'tls' option with 'app' yet", .{}, global, exception);
-                    return;
-                }
-
                 if (tls.jsType().isArray()) {
                     var value_iter = tls.arrayIterator(global);
                     if (value_iter.len == 1) {
@@ -6659,32 +6653,38 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn init(config: ServerConfig, global: *JSGlobalObject) bun.JSOOM!*ThisServer {
+            const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
+            errdefer bun.default_allocator.free(base_url);
+
+            const dev_server = if (bun.FeatureFlags.bake) if (config.bake) |bake_options| dev_server: {
+                bun.Output.warn(
+                    \\Be advised that Bun Bake is highly experimental, and its API
+                    \\will have breaking changes. Join the <magenta>#bake<r> Discord
+                    \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
+                    \\
+                    \\
+                , .{});
+                bun.Output.flush();
+
+                break :dev_server bun.bake.DevServer.init(.{
+                    .root = bake_options.root,
+                    .framework = bake_options.framework,
+                    .routes = bake_options.routes,
+                    .vm = global.bunVM(),
+                }) catch |err| {
+                    global.throwError(err, "while initializing Bun Dev Server");
+                    return error.JSError;
+                };
+            } else null else null;
+            errdefer if (dev_server) |d| d.deinit();
+
             var server = ThisServer.new(.{
                 .globalThis = global,
                 .config = config,
-                .base_url_string_for_joining = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")),
+                .base_url_string_for_joining = base_url,
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
-                .dev_server = if (bun.FeatureFlags.bake) if (config.bake) |bake_options| dev_server: {
-                    bun.Output.warn(
-                        \\Be advised that Bun Bake is highly experimental, and its API
-                        \\will have breaking changes. Join the <magenta>#bake<r> Discord
-                        \\channel to help us find bugs: <blue>https://bun.sh/discord<r>
-                        \\
-                        \\
-                    , .{});
-                    bun.Output.flush();
-
-                    break :dev_server bun.bake.DevServer.init(.{
-                        .root = bake_options.root,
-                        .framework = bake_options.framework,
-                        .routes = bake_options.routes,
-                        .vm = global.bunVM(),
-                    }) catch |err| {
-                        global.throwError(err, "while initializing Bun Dev Server");
-                        return error.JSError;
-                    };
-                } else null else null,
+                .dev_server = dev_server,
             });
 
             if (RequestContext.pool == null) {

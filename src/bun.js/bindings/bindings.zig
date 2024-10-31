@@ -3384,13 +3384,11 @@ pub const JSGlobalObject = opaque {
         this.vm().throwError(this, value);
     }
 
-    // eventually merge this with throwValue, but that's a big diff
-    pub fn throwValueRet(
+    pub fn throwValue2(
         this: *JSGlobalObject,
         value: JSC.JSValue,
-    ) JSValue {
-        this.vm().throwError(this, value);
-        return .zero;
+    ) JSError {
+        return this.vm().throwError2(this, value);
     }
 
     pub fn throwError(

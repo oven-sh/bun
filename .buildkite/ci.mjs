@@ -97,14 +97,16 @@ async function getBuildIdWithArtifacts() {
       return;
     }
 
-    const { prev_branch_build: lastBuild, steps } = await response.json();
+    const { state, prev_branch_build: lastBuild, steps } = await response.json();
     if (depth++) {
-      const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
-      if (buildSteps.length) {
-        if (buildSteps.every(({ outcome }) => outcome === "passed")) {
-          break;
+      if (state === "failed" || state === "passed") {
+        const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
+        if (buildSteps.length) {
+          if (buildSteps.every(({ outcome }) => outcome === "passed")) {
+            break;
+          }
+          return;
         }
-        return;
       }
     }
 

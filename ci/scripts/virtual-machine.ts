@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { exists, readdir, readFile } from "node:fs/promises";
 import { inspect, parseArgs } from "node:util";
 
 type Platform = {
-  os: "linux";
+  os: "linux" | "windows";
   arch: "aarch64" | "x64";
   distro: string;
   release: string;
@@ -16,11 +19,9 @@ type Image = {
   username: string;
 };
 
-type Machine = Platform & {
-  hostname: string;
-  username: string;
-  spawn(command: string[]): Promise<SpawnResult>;
-  shell(): Promise<unknown>;
+type Machine = {
+  exec(command: string[]): Promise<SpawnResult>;
+  attach(): Promise<void>;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
@@ -54,35 +55,128 @@ type AwsCloud = Cloud & {
   terminateInstances(...instanceIds: string[]): Promise<void>;
 };
 
+type DockerCloud = Cloud & {
+  getPlatform(platform: Platform): string;
+};
+
+const docker: DockerCloud = {
+  getPlatform(platform) {
+    const { os, arch } = platform;
+
+    if (os === "linux" || os === "windows") {
+      if (arch === "aarch64") {
+        return `${os}/arm64`;
+      } else if (arch === "x64") {
+        return `${os}/amd64`;
+      }
+    }
+
+    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+  },
+
+  async createMachine(platform) {
+    const { id } = await docker.getImage(platform);
+    const platformString = docker.getPlatform(platform);
+
+    const command = ["sleep", "1d"];
+    const { stdout } = await spawnSafe(["docker", "run", "--rm", "--platform", platformString, "-d", id, ...command]);
+    const containerId = stdout.trim();
+
+    const exec = async (command: string[]) => {
+      return spawnSafe(["docker", "exec", containerId, ...command]);
+    };
+
+    const attach = async () => {
+      const { exitCode, spawnError } = await spawn(["docker", "exec", "-it", containerId, "bash"], {
+        stdio: "inherit",
+      });
+
+      if (exitCode === 0 || exitCode === 130) {
+        return;
+      }
+
+      throw spawnError;
+    };
+
+    const kill = async () => {
+      await spawnSafe(["docker", "kill", containerId]);
+    };
+
+    return {
+      exec,
+      attach,
+      close: kill,
+      [Symbol.asyncDispose]: kill,
+    };
+  },
+
+  async getImage(platform) {
+    const { os, distro, release } = platform;
+
+    let url: string | undefined;
+    if (os === "linux") {
+      if (distro === "debian") {
+        url = `docker.io/library/debian:${release}`;
+      } else if (distro === "ubuntu") {
+        url = `docker.io/library/ubuntu:${release}`;
+      } else if (distro === "amazonlinux") {
+        url = `public.ecr.aws/amazonlinux/amazonlinux:${release}`;
+      }
+    }
+
+    if (url) {
+      await spawnSafe(["docker", "pull", "--platform", docker.getPlatform(platform), url]);
+      const { stdout } = await spawnSafe(["docker", "image", "inspect", url, "--format", "json"]);
+      const [{ Id }] = JSON.parse(stdout);
+      return {
+        id: Id,
+        name: url,
+        username: "root",
+      };
+    }
+
+    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+  },
+};
+
 const aws: AwsCloud = {
   async createMachine(platform) {
     const image = await aws.getImage(platform);
     const userData = await getUserData(platform, image);
-    console.log(userData);
     const { id, username } = image;
+    const { arch } = platform;
+
     const [instance] = await aws.runInstances(
       {
         ["image-id"]: id,
-        ["instance-type"]: "t4g.large",
+        ["instance-type"]: arch === "aarch64" ? "t4g.large" : "t3.large",
         ["user-data"]: Buffer.from(userData).toString("base64"),
       },
       {
         wait: true,
       },
     );
+
     const { InstanceId, PublicIpAddress } = instance;
     const options = { hostname: PublicIpAddress, username };
-    const spawn = (command?: string[] | undefined) => spawnSsh({ ...options, command });
-    const close = () => aws.terminateInstances(InstanceId);
-    process.on("SIGINT", () => close().finally(() => process.exit(1)));
+
+    const exec = (command?: string[] | undefined) => {
+      return spawnSsh({ ...options, command });
+    };
+
+    const attach = async () => {
+      await spawnSsh({ ...options });
+    };
+
+    const terminate = async () => {
+      await aws.terminateInstances(InstanceId);
+    };
 
     return {
-      ...platform,
-      ...options,
-      spawn: command => spawn(command),
-      shell: () => spawn(),
-      close,
-      [Symbol.asyncDispose]: close,
+      exec,
+      attach,
+      close: terminate,
+      [Symbol.asyncDispose]: terminate,
     };
   },
 
@@ -110,6 +204,11 @@ const aws: AwsCloud = {
           name = `al${release}-ami-*-${armOr64}`;
         }
       }
+    } else if (os === "windows") {
+      if (distro === "server") {
+        name = `Windows_Server-${release}-English-Full-Base-*`;
+        username = "Administrator";
+      }
     }
 
     if (name && username) {
@@ -117,7 +216,6 @@ const aws: AwsCloud = {
       if (images.length) {
         const [image] = images;
         const { Name, ImageId } = image;
-        console.log(`Found image: ${Name} (id: ${ImageId})`);
         return {
           id: ImageId,
           name: Name,
@@ -134,7 +232,6 @@ const aws: AwsCloud = {
     const { stdout } = await spawnSafe(["aws", "ec2", "describe-images", "--filters", ...filters, "--output", "json"]);
     const { Images }: { Images: AwsImage[] } = JSON.parse(stdout);
 
-    console.log(`Found ${Images.length} images matching: ${inspect(options)}`);
     return Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
   },
 
@@ -152,7 +249,6 @@ const aws: AwsCloud = {
     const { Reservations }: { Reservations: AwsReservation[] } = JSON.parse(stdout);
     const instances = Reservations.flatMap(({ Instances }) => Instances);
 
-    console.log(`Found ${instances.length} instances matching: ${inspect(options)}`);
     return instances.sort((a, b) => (a.LaunchTime < b.LaunchTime ? 1 : -1));
   },
 
@@ -161,7 +257,6 @@ const aws: AwsCloud = {
     const { stdout } = await spawnSafe(["aws", "ec2", "run-instances", ...flags, "--output", "json"]);
     const { Instances }: { Instances: AwsInstance[] } = JSON.parse(stdout);
 
-    console.log(`Started ${Instances.length} instances matching: ${inspect(options)}`);
     if (runOptions["wait"]) {
       const instanceIds = Instances.map(({ InstanceId }) => InstanceId);
       await spawnSafe(["aws", "ec2", "wait", "instance-running", "--instance-ids", ...instanceIds]);
@@ -176,6 +271,54 @@ const aws: AwsCloud = {
   },
 };
 
+type GoogleCloud = Cloud & {
+  listImages(options?: Record<string, string>): Promise<GoogleImage[]>;
+};
+
+type GoogleImage = {
+  id: string;
+  name: string;
+  description: string;
+  status: string; // "READY"
+  selfLink: string;
+  creationTimestamp: string;
+};
+
+const google: GoogleCloud = {
+  async getImage(platform) {
+    const { os, arch, distro, release } = platform;
+    const armOrAmd = arch === "aarch64" ? "arm64" : "amd64";
+
+    let url: string | undefined;
+    let username: string | undefined;
+    if (os === "linux") {
+      if (distro === "debian") {
+        url = `projects/debian-cloud/global/images/family/debian-${release}-${armOrAmd}`;
+        username = "admin";
+      }
+    } else if (os === "windows" && arch === "x64") {
+      if (distro === "server") {
+        url = `projects/windows-cloud/global/images/family/windows-${release}-windows-${release}-core`;
+        username = "Administrator";
+      }
+    }
+
+    if (url && username) {
+      return {
+        id: url,
+        name: url,
+        username,
+      };
+    }
+
+    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+  },
+
+  async createMachine(platform) {
+    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+  },
+};
+
 type SpawnOptions = {
   stdio?: "inherit" | "pipe";
 };
@@ -185,6 +328,7 @@ type SpawnResult = {
   signalCode?: string;
   stdout: string;
   stderr: string;
+  spawnError?: Error;
 };
 
 async function spawn(command: string[], options: SpawnOptions = {}): Promise<SpawnResult> {
@@ -194,7 +338,9 @@ async function spawn(command: string[], options: SpawnOptions = {}): Promise<Spa
   let signalCode: string | undefined;
   let stdout = "";
   let stderr = "";
-  await new Promise(resolve => {
+  let spawnError: Error | undefined;
+
+  await new Promise((resolve: () => void) => {
     const [cmd, ...args] = command;
     const subprocess = nodeSpawn(cmd, args, { stdio: "pipe", ...options });
 
@@ -219,29 +365,35 @@ async function spawn(command: string[], options: SpawnOptions = {}): Promise<Spa
     });
   });
 
+  if (exitCode !== 0 || signalCode) {
+    const reason = command.join(" ");
+    const cause = stderr.trim() || stdout.trim() || undefined;
+
+    if (signalCode) {
+      spawnError = new Error(`Command killed with ${signalCode}: ${reason}`, { cause });
+    } else {
+      spawnError = new Error(`Command exited with ${exitCode}: ${reason}`, { cause });
+    }
+  }
+
   return {
     exitCode,
     signalCode,
     stdout,
     stderr,
+    spawnError,
   };
 }
 
 async function spawnSafe(command: string[], options?: SpawnOptions): Promise<SpawnResult> {
   const result = await spawn(command, options);
-  const { exitCode, signalCode, stdout, stderr } = result;
 
-  if (exitCode === 0) {
-    return result;
+  const { spawnError } = result;
+  if (spawnError) {
+    throw spawnError;
   }
 
-  const reason = command.join(" ");
-  const cause = stderr?.trim() || stdout?.trim() || undefined;
-  if (signalCode) {
-    throw new Error(`Command killed with ${signalCode}: ${reason}`, { cause });
-  }
-
-  throw new Error(`Command exited with ${exitCode}: ${reason}`, { cause });
+  return result;
 }
 
 async function getUserData(platform: Platform, image: Image): Promise<string> {
@@ -256,6 +408,21 @@ async function getUserData(platform: Platform, image: Image): Promise<string> {
 disable_root: false
 ssh_pwauth: false
 ssh_authorized_keys: [${authorizedKeys ? authorizedKeys.map(key => `"${key}"`).join(", ") : ""}]
+`;
+  } else if (os === "windows") {
+    const authorizedKeys = await getAuthorizedKeys();
+    return `
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType 'Automatic'
+New-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value $(Get-Command powershell).Source -PropertyType String -Force
+Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+$authorizedKeysPath = "C:\\ProgramData\\ssh\\administrators_authorized_keys"
+Set-Content $authorizedKeysPath -Value @"
+${authorizedKeys?.join("\r\n") ?? ""}
+"@
+icacls.exe $authorizedKeysPath /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
 `;
   }
 
@@ -295,36 +462,60 @@ async function spawnSsh(options: SshOptions): Promise<SpawnResult> {
     if (/bad configuration option/i.test(stderr)) {
       break;
     }
-    console.warn(`SSH failed, retry ${i + 1} / ${retries}...`, cause);
-    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    await new Promise((resolve: () => void) => setTimeout(resolve, Math.pow(2, i) * 1000));
   }
 
   throw new Error(`SSH failed: ${username}@${hostname}`, { cause });
 }
 
 async function getAuthorizedKeys(): Promise<string[] | undefined> {
-  const { exitCode, stdout } = await spawn(["gh", "api", "user", "--jq", ".login"]);
-  if (exitCode !== 0) {
-    return;
-  }
+  const homePath = homedir();
+  const sshPath = join(homePath, ".ssh");
 
-  const login = stdout.trim();
-  const response = await fetch(`https://github.com/${login}.keys`);
+  if (await exists(sshPath)) {
+    const sshFiles = await readdir(sshPath, { withFileTypes: true });
+    const sshPaths = sshFiles
+      .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
+      .map(({ name }) => join(sshPath, name));
+
+    return Promise.all(sshPaths.map(path => readFile(path, "utf8")));
+  }
+}
+
+async function getAuthorizedKeysForOrganization(organization: string): Promise<string[] | undefined> {
+  const response = await fetch(`https://api.github.com/orgs/${organization}/members`);
   if (!response.ok) {
     return;
   }
 
-  const body = await response.text();
-  return body
-    .split("\n")
-    .map(line => line.trim())
-    .filter(line => line.length);
+  const members = await response.json();
+  const responses: Response[] = await Promise.all(
+    members.map(({ login }) => fetch(`https://github.com/${login}.keys`)),
+  );
+
+  const authorizedKeys: string[][] = await Promise.all(
+    responses.flatMap(async response => {
+      if (!response.ok) {
+        return [];
+      }
+
+      const body = await response.text();
+      return body
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.length);
+    }),
+  );
+
+  return authorizedKeys.flat();
 }
 
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
+      cloud: { type: "string", default: "docker", choices: ["docker", "aws"] },
+      org: { type: "string", default: "oven-sh" },
       os: { type: "string", default: "linux" },
       arch: { type: "string", default: process.arch === "arm64" ? "aarch64" : "x64" },
       distro: { type: "string", default: "debian" },
@@ -332,7 +523,7 @@ async function main() {
     },
   });
 
-  const { os, arch, distro, release } = values;
+  const { cloud, os, arch, distro, release } = values;
   const platforms: Platform[] = [
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
     { os: "linux", arch: "aarch64", distro: "debian", release: "11" },
@@ -348,6 +539,7 @@ async function main() {
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
     { os: "linux", arch: "x64", distro: "amazonlinux", release: "2" },
+    { os: "windows", arch: "x64", distro: "server", release: "2019" },
   ];
 
   const platform = platforms.find(
@@ -358,11 +550,16 @@ async function main() {
     throw new Error(`Unsupported platform: ${inspect(values)}`);
   }
 
-  await using machine = await aws.createMachine(platform);
+  const provider = cloud === "docker" ? docker : aws;
+  await using machine = await provider.createMachine(platform);
+  process.on("SIGINT", () => {
+    machine.close().finally(() => process.exit(1));
+  });
+
   if (positionals.length) {
-    await machine.spawn(positionals);
+    await machine.exec(positionals);
   } else {
-    await machine.shell();
+    await machine.attach();
   }
 }
 

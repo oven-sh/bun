@@ -60,7 +60,7 @@ function isPullRequest() {
 async function getChangedFiles() {
   const repository = getRepository();
   const head = getCommit();
-  const base = isMainBranch() ? `${head}^1` : getMainBranch();
+  const base = `${head}^1`;
 
   try {
     const response = await fetch(`https://api.github.com/repos/${repository}/compare/${base}...${head}`);

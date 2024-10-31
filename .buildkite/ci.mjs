@@ -73,20 +73,16 @@ async function getChangedFiles() {
   }
 }
 
-function getBuildNumber() {
-  return getEnv("BUILDKITE_BUILD_NUMBER");
-}
-
 function getBuildUrl() {
   return getEnv("BUILDKITE_BUILD_URL");
 }
 
 async function getBuildIdWithArtifacts() {
   let depth = 0;
-  let buildUrl = getBuildUrl();
+  let url = getBuildUrl();
 
-  while (buildUrl) {
-    const response = await fetch(`${buildUrl}.json`, {
+  while (url) {
+    const response = await fetch(`${url}.json`, {
       headers: {
         "Accept": "application/json",
       },
@@ -113,7 +109,7 @@ async function getBuildIdWithArtifacts() {
       return;
     }
 
-    buildUrl = buildUrl.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
+    url = url.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
   }
 }
 
@@ -436,7 +432,6 @@ function getPipeline(buildId) {
 
 async function main() {
   console.log("Checking environment...");
-  console.log(" - Build Id:", getBuildId());
   console.log(" - Repository:", getRepository());
   console.log(" - Branch:", getBranch());
   console.log(" - Commit:", getCommit());

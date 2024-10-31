@@ -317,7 +317,7 @@ double __wrap_fmod(double x, double y) { return fmod(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }
 double __wrap_pow(double x, double y) { return pow(x, y); }
-double __wrap_powf(float x, float y) { return powf(x, y); }
+float __wrap_powf(float x, float y) { return powf(x, y); }
 float __wrap_cosf(float x) { return cosf(x); }
 float __wrap_expf(float x) { return expf(x); }
 float __wrap_fmodf(float x, float y) { return fmodf(x, y); }

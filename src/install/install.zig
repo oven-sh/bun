@@ -11927,10 +11927,13 @@ pub const PackageManager = struct {
 
         const subcommand: Subcommand = if (cli.positionals.len > 1) .add else .install;
 
-        var manager, _ = try init(ctx, cli, subcommand);
+        // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
+        // and cleanup install/add subcommand usage
+        var manager, _ = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
         if (subcommand == .add) {
+            manager.subcommand = .add;
             if (manager.options.shouldPrintCommandName()) {
                 Output.prettyln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
                 Output.flush();

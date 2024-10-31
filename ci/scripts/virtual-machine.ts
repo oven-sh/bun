@@ -313,6 +313,11 @@ const google: GoogleCloud = {
     const authorizedKeys = await getAuthorizedKeys();
     const sshKeys = authorizedKeys?.map(key => `${username}:${key}`).join("\n") ?? "";
 
+    let metadata = `ssh-keys=${sshKeys}`;
+    if (platform["os"] === "windows") {
+      metadata += `,sysprep-specialize-script-cmd=googet -noconfirm=true install google-compute-engine-ssh,enable-windows-ssh=TRUE`;
+    }
+
     const [{ id, networkInterfaces }] = await google.createInstances({
       ["zone"]: "us-central1-a",
       ["image"]: imageId,
@@ -320,7 +325,7 @@ const google: GoogleCloud = {
       ["boot-disk-auto-delete"]: true,
       // ["boot-disk-size"]: "10GB",
       // ["boot-disk-type"]: "pd-standard",
-      ["metadata"]: `ssh-keys=${sshKeys}`,
+      ["metadata"]: metadata,
     });
 
     const publicIp = () => {
@@ -371,7 +376,7 @@ const google: GoogleCloud = {
     } else if (os === "windows" && arch === "x64") {
       if (distro === "server") {
         name = `windows-server-${release}-dc-core-*`;
-        username = "Administrator";
+        username = "administrator";
       }
     }
 

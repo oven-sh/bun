@@ -36,10 +36,7 @@ let promise = createFromReadableStream(
 let setPage;
 const Root = () => {
   setPage = React.useState(promise)[1];
-  // return React.use(promise);
-  const y = React.use(promise);
-  console.log(y);
-  return y;
+  return React.use(promise);
 };
 const root = hydrateRoot(document, <Root />, {
   // handle `onUncaughtError` here

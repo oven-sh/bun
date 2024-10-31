@@ -254,6 +254,9 @@ nativeTests.test_type_tag = () => {
   } catch (e) {
     console.log("tagging already-tagged object threw", e.toString());
   }
+
+  console.log("tagging non-object succeeds: ", !nativeTests.try_add_tag(null, 0, 0));
+
   nativeTests.add_tag(o2, 3, 4);
   console.log("o1 matches o1:", nativeTests.check_tag(o1, 1, 2));
   console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));

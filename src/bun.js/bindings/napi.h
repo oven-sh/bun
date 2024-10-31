@@ -7,7 +7,6 @@
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
-
 #include "js_native_api.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"

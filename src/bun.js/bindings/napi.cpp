@@ -54,6 +54,7 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
+#include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
@@ -2659,7 +2660,6 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     // cannot tag an object that is already tagged
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
-    // TODO(@190n) maybe use a BigInt?
     auto* new_tag = Bun::NapiTypeTag::create(globalObject->vm(), globalObject->NapiTypeTagStructure(), *type_tag);
     globalObject->napiTypeTags()->set(globalObject->vm(), js_object, new_tag);
     NAPI_RETURN_SUCCESS(env);

@@ -445,6 +445,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
+    BUN_JSC_verifyGC: "1",
+    BUN_JSC_verifyHeap: "1",
+    BUN_JSC_useZombieMode: "1",
+    BUN_JSC_forceCodeBlockToJettisonDueToOldAge: "1",
+    BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
     BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,

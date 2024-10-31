@@ -115,7 +115,7 @@ async function getBuildIdWithArtifacts() {
     }
 
     buildId = lastBuild["number"];
-    url = url.replace(/\/builds\/[0-9]+/, `/builds/${buildId}`);
+    buildUrl = buildUrl.replace(/\/builds\/[0-9]+/, `/builds/${buildId}`);
   }
 
   return buildId;

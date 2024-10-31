@@ -73,21 +73,15 @@ function isNodeStream(obj) {
 }
 
 function isReadableStream(obj) {
-  return !!(
-    obj &&
-    !isNodeStream(obj) &&
-    typeof obj.pipeThrough === "function" &&
-    typeof obj.getReader === "function" &&
-    typeof obj.cancel === "function"
-  );
+  return obj instanceof ReadableStream;
 }
 
 function isWritableStream(obj) {
-  return !!(obj && !isNodeStream(obj) && typeof obj.getWriter === "function" && typeof obj.abort === "function");
+  return obj instanceof WritableStream;
 }
 
 function isTransformStream(obj) {
-  return !!(obj && !isNodeStream(obj) && typeof obj.readable === "object" && typeof obj.writable === "object");
+  return $isTransformStream(obj);
 }
 
 function isWebStream(obj) {

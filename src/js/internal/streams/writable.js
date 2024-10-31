@@ -1135,16 +1135,16 @@ let webStreamsAdapters;
 
 // Lazy to avoid circular references
 function lazyWebStreams() {
-  if (webStreamsAdapters === undefined) webStreamsAdapters = {};
+  if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams/adapters");
   return webStreamsAdapters;
 }
 
-Writable.fromWeb = function () {
-  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
+Writable.fromWeb = function (writableStream, options) {
+  return lazyWebStreams().newWritableStreamFromStreamWritable(writableStream, options);
 };
 
-Writable.toWeb = function () {
-  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
+Writable.toWeb = function (streamWritable) {
+  return lazyWebStreams().newWritableStreamFromStreamWritable(streamWritable);
 };
 
 Writable.prototype[SymbolAsyncDispose] = function () {

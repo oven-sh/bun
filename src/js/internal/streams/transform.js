@@ -65,7 +65,6 @@
 const primordials = require("internal/primordials");
 const { ObjectSetPrototypeOf, Symbol } = primordials;
 
-export default Transform;
 //const { ERR_METHOD_NOT_IMPLEMENTED } = require("internal/errors").codes;
 const Duplex = require("internal/streams/duplex");
 const { getHighWaterMark } = require("internal/streams/state");
@@ -195,3 +194,5 @@ Transform.prototype._read = function () {
     callback();
   }
 };
+
+export default Transform;

@@ -47,7 +47,7 @@ function eos(stream, options, callback) {
 
   callback = once(callback);
 
-  if (isReadableStream(stream) || isWritableStream(stream)) {
+  if (stream instanceof ReadableStream || stream instanceof WritableStream) {
     return eosWeb(stream, options, callback);
   }
 
@@ -261,12 +261,19 @@ function eosWeb(stream, options, callback) {
       });
     }
   }
+
   const resolverFn = (...args) => {
     if (!isAborted) {
       process.nextTick(() => callback.$apply(stream, args));
     }
   };
-  PromisePrototypeThen(stream[kIsClosedPromise].promise, resolverFn, resolverFn);
+
+  const closedPromise = $isWritableStream(stream)
+    ? $getByIdDirectPrivate($getByIdDirectPrivate(stream, "writer"), "closedPromise")
+    : $getByIdDirectPrivate(ReadableStream.prototype.getReader.$call(stream), "closedPromiseCapability").promise;
+
+  PromisePrototypeThen(closedPromise, resolverFn, resolverFn);
+
   return nop;
 }
 

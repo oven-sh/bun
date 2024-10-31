@@ -651,7 +651,10 @@ export function isReadableStream(stream) {
   // Spec tells to return true only if stream has a readableStreamController internal slot.
   // However, since it is a private slot, it cannot be checked using hasOwnProperty().
   // Therefore, readableStreamController is initialized with null value.
-  return $isObject(stream) && $getByIdDirectPrivate(stream, "readableStreamController") !== undefined;
+  return (
+    ($isObject(stream) && !!$getByIdDirectPrivate(stream, "readableStreamController")) ||
+    stream instanceof ReadableStream
+  );
 }
 
 $alwaysInline = true;

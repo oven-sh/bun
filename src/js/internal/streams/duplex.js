@@ -157,24 +157,22 @@ let webStreamsAdapters;
 
 // Lazy to avoid circular references
 function lazyWebStreams() {
-  if (webStreamsAdapters === undefined)
-    //webStreamsAdapters = require('internal/webstreams/adapters');
-    webStreamsAdapters = {};
+  if (webStreamsAdapters === undefined) webStreamsAdapters = require("internal/webstreams/adapters");
   return webStreamsAdapters;
 }
 
-Duplex.fromWeb = function () {
-  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
+Duplex.fromWeb = function (pair, options) {
+  return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
 };
 
-Duplex.toWeb = function () {
-  throw $ERR_METHOD_NOT_IMPLEMENTED("webStreams unsupported");
+Duplex.toWeb = function (duplex) {
+  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex);
 };
 
 let duplexify;
 
 Duplex.from = function (body) {
-  const duplexify = require("internal/streams/duplexify");
+  if (duplexify === undefined) duplexify = require("internal/streams/duplexify");
   return duplexify(body, "body");
 };
 

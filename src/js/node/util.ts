@@ -330,6 +330,10 @@ cjs_exports = {
   isPrimitive,
   isBuffer,
   kEmptyObject,
+  kEnumerableProperty: {
+    __proto__: null,
+    enumerable: true,
+  },
   log,
   once,
   inherits,

@@ -27,7 +27,7 @@
 // @internal
 
 export function isWritableStream(stream) {
-  return $isObject(stream) && !!$getByIdDirectPrivate(stream, "underlyingSink");
+  return ($isObject(stream) && !!$getByIdDirectPrivate(stream, "underlyingSink")) || stream instanceof WritableStream;
 }
 
 export function isWritableStreamDefaultWriter(writer) {

@@ -4121,8 +4121,7 @@ pub const Dirname = struct {
                 // Preserve the trailing slash for UNC paths.
                 // Going from `\\server\share\folder` should end up
                 // at `\\server\share\`, not `\\server\share`
-                bun.unsafeAssert(root.ptr == path.ptr);
-                break :brk if (root.len >= 5) path[0 .. root.len + 1] else root;
+                break :brk if (root.len >= 5 and path.len > root.len) path[0 .. root.len + 1] else root;
             }
             break :brk "/";
         };

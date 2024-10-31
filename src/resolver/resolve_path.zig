@@ -613,6 +613,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+            
+            return .{ path.len, 0 };
         } else {
             if (bun.strings.indexAnyComptimeT(T, path[3..], strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
@@ -624,6 +626,7 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+            return .{ path.len, 0 };
         }
     }
     return .{ 0, 0 };
@@ -678,6 +681,7 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
                 return path[0..2];
         }
     }
+
     // UNC
     if (path.len >= 5 and
         Platform.windows.isSeparatorT(T, path[0]) and
@@ -689,9 +693,11 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
             if (bun.strings.indexOfAnyT(T, path[4 + idx ..], "/\\")) |idx_second| {
                 return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator
             }
-            return path[0..];
         }
+        return path[0..];
     }
+
+
     if (isSepAnyT(T, path[0])) return path[0..1];
     return path[0..0];
 }
@@ -793,12 +799,18 @@ pub fn normalizeStringGenericTZ(
                 } else {
                     @memcpy(buf[buf_i .. buf_i + 2], strings.literal(T, sep_str ++ sep_str));
                 }
-                @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
-                buf[buf_i + indexOfThirdUNCSlash] = options.separator;
-                @memcpy(
-                    buf[buf_i + indexOfThirdUNCSlash + 1 .. buf_i + volLen],
-                    path_[indexOfThirdUNCSlash + 1 .. volLen],
-                );
+                if(indexOfThirdUNCSlash > 0) {
+                    // we have the ending slash
+                    @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
+                    buf[buf_i + indexOfThirdUNCSlash] = options.separator;
+                    @memcpy(
+                        buf[buf_i + indexOfThirdUNCSlash + 1 .. buf_i + volLen],
+                        path_[indexOfThirdUNCSlash + 1 .. volLen],
+                    );
+                } else {
+                    // we dont have the ending slash
+                    @memcpy(buf[buf_i + 2 .. buf_i + volLen], path_[2 .. volLen]);
+                }
                 buf[buf_i + volLen] = options.separator;
                 buf_i += volLen + 1;
                 path_begin = volLen + 1;

@@ -303,6 +303,12 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_set_named_property", () => {
+    it("handles edge cases", () => {
+      checkSameOutput("test_set_property", []);
+    });
+  });
+
   describe("napi_value <=> integer conversion", () => {
     it("works", () => {
       checkSameOutput("test_number_integer_conversions_from_js", []);

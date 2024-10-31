@@ -193,7 +193,6 @@ static napi_value perform_get(const Napi::CallbackInfo &info) {
   }
 
   status = napi_get_property(env, obj, key, &value);
-  NODE_API_ASSERT(env, status == napi_pending_exception);
   if (status == napi_ok) {
     NODE_API_ASSERT(env, value != nullptr);
     printf("value type = %d\n", get_typeof(env, value));
@@ -201,6 +200,34 @@ static napi_value perform_get(const Napi::CallbackInfo &info) {
   } else {
     return ok(env);
   }
+}
+
+// perform_set(object, key, value)
+static napi_value perform_set(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value obj = info[0];
+  napi_value key = info[1];
+  napi_value value = info[2];
+  napi_status status;
+
+  // if key is a string, try napi_get_named_property
+  napi_valuetype type = get_typeof(env, key);
+  if (type == napi_string) {
+    char buf[1024];
+    NODE_API_CALL(env,
+                  napi_get_value_string_utf8(env, key, buf, 1024, nullptr));
+    status = napi_set_named_property(env, obj, buf, value);
+    if (status != napi_ok) {
+      NODE_API_ASSERT(env, status == napi_pending_exception);
+      return ok(env);
+    }
+  }
+
+  status = napi_set_property(env, obj, key, value);
+  if (status != napi_ok) {
+    NODE_API_ASSERT(env, status == napi_pending_exception);
+  }
+  return ok(env);
 }
 
 static napi_value make_empty_array(const Napi::CallbackInfo &info) {
@@ -271,6 +298,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, was_finalize_called);
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
   REGISTER_FUNCTION(env, exports, perform_get);
+  REGISTER_FUNCTION(env, exports, perform_set);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
   REGISTER_FUNCTION(env, exports, make_empty_array);

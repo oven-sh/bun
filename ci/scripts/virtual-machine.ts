@@ -273,6 +273,12 @@ const aws: AwsCloud = {
 
 type GoogleCloud = Cloud & {
   listImages(options?: Record<string, string>): Promise<GoogleImage[]>;
+  createInstances(
+    options?: Record<string, string | boolean>,
+    createOptions?: { wait?: boolean },
+  ): Promise<GoogleInstance[]>;
+  listInstances(options?: Record<string, string>): Promise<GoogleInstance[]>;
+  deleteInstance(instanceId: string): Promise<void>;
 };
 
 type GoogleImage = {
@@ -284,38 +290,149 @@ type GoogleImage = {
   creationTimestamp: string;
 };
 
+type GoogleInstance = {
+  id: string;
+  name: string;
+  status: string; // "RUNNING"
+  networkInterfaces: {
+    networkIP: string;
+    stackType: "IPV4_ONLY" | "IPV6_ONLY" | "IPV4_IPV6";
+    accessConfigs: {
+      natIP: string;
+      type: "ONE_TO_ONE_NAT" | "EPHEMERAL";
+    }[];
+  }[];
+  creationTimestamp: string;
+};
+
 const google: GoogleCloud = {
+  async createMachine(platform) {
+    const image = await google.getImage(platform);
+    const { id: imageId, username } = image;
+
+    const authorizedKeys = await getAuthorizedKeys();
+    const sshKeys = authorizedKeys?.map(key => `${username}:${key}`).join("\n") ?? "";
+
+    const [{ id, networkInterfaces }] = await google.createInstances({
+      ["zone"]: "us-central1-a",
+      ["image"]: imageId,
+      ["machine-type"]: "e2-standard-4",
+      ["boot-disk-auto-delete"]: true,
+      // ["boot-disk-size"]: "10GB",
+      // ["boot-disk-type"]: "pd-standard",
+      ["metadata"]: `ssh-keys=${sshKeys}`,
+    });
+
+    const publicIp = () => {
+      for (const { accessConfigs } of networkInterfaces) {
+        for (const { natIP } of accessConfigs) {
+          return natIP;
+        }
+      }
+      throw new Error(`Failed to find public IP for instance: ${id}`);
+    };
+
+    const exec = (command?: string[] | undefined) => {
+      const hostname = publicIp();
+      return spawnSsh({ hostname, username, command });
+    };
+
+    const attach = async () => {
+      const hostname = publicIp();
+      await spawnSsh({ hostname, username });
+    };
+
+    const terminate = async () => {
+      await google.deleteInstance(id);
+    };
+
+    return {
+      exec,
+      attach,
+      close: terminate,
+      [Symbol.asyncDispose]: terminate,
+    };
+  },
+
   async getImage(platform) {
     const { os, arch, distro, release } = platform;
-    const armOrAmd = arch === "aarch64" ? "arm64" : "amd64";
+    const architecture = arch === "aarch64" ? "ARM64" : "X86_64";
 
-    let url: string | undefined;
+    let name: string | undefined;
     let username: string | undefined;
     if (os === "linux") {
       if (distro === "debian") {
-        url = `projects/debian-cloud/global/images/family/debian-${release}-${armOrAmd}`;
+        name = `debian-${release}-*`;
         username = "admin";
+      } else if (distro === "ubuntu") {
+        name = `ubuntu-${release.replace(/\./g, "")}-*`;
+        username = "ubuntu";
       }
     } else if (os === "windows" && arch === "x64") {
       if (distro === "server") {
-        url = `projects/windows-cloud/global/images/family/windows-${release}-windows-${release}-core`;
+        name = `windows-server-${release}-dc-core-*`;
         username = "Administrator";
       }
     }
 
-    if (url && username) {
-      return {
-        id: url,
-        name: url,
-        username,
-      };
+    if (name && username) {
+      const images = await google.listImages({ name, architecture });
+      if (images.length) {
+        const [image] = images;
+        console.log(image);
+        const { name, selfLink } = image;
+        return {
+          id: selfLink,
+          name,
+          username,
+        };
+      }
     }
 
     throw new Error(`Unsupported platform: ${inspect(platform)}`);
   },
 
-  async createMachine(platform) {
-    throw new Error(`Unsupported platform: ${inspect(platform)}`);
+  async listImages(options = {}) {
+    const filter = Object.entries(options)
+      .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
+      .join(" AND ");
+    const filters = filter ? ["--filter", filter] : [];
+    const { stdout } = await spawnSafe(["gcloud", "compute", "images", "list", ...filters, "--format", "json"]);
+    const images: GoogleImage[] = JSON.parse(stdout);
+    return images.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  async listInstances(options = {}) {
+    const filter = Object.entries(options)
+      .map(([key, value]) => [value.includes("*") ? `${key}~${value}` : `${key}=${value}`])
+      .join(" AND ");
+    const filters = filter ? ["--filter", filter] : [];
+    const { stdout } = await spawnSafe(["gcloud", "compute", "instances", "list", ...filters, "--format", "json"]);
+    const instances: GoogleInstance[] = JSON.parse(stdout);
+    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  async createInstances(options = {}) {
+    const flags = Object.entries(options).flatMap(([key, value]) =>
+      typeof value === "boolean" ? `--${key}` : `--${key}=${value}`,
+    );
+    const randomId = "i-" + Math.random().toString(36).substring(2, 15);
+    const { stdout } = await spawnSafe([
+      "gcloud",
+      "compute",
+      "instances",
+      "create",
+      randomId,
+      ...flags,
+      "--format",
+      "json",
+    ]);
+    const instances: GoogleInstance[] = JSON.parse(stdout);
+    return instances.sort((a, b) => (a.creationTimestamp < b.creationTimestamp ? 1 : -1));
+  },
+
+  async deleteInstance(instanceId) {
+    await spawnSafe(["gcloud", "compute", "instances", "delete", instanceId, "--zone", "us-central1-a", "--quiet"]);
   },
 };
 
@@ -478,7 +595,8 @@ async function getAuthorizedKeys(): Promise<string[] | undefined> {
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
       .map(({ name }) => join(sshPath, name));
 
-    return Promise.all(sshPaths.map(path => readFile(path, "utf8")));
+    const sshKeys: string[] = await Promise.all(sshPaths.map(path => readFile(path, "utf8")));
+    return sshKeys.map(key => key.trim()).filter(key => key.length);
   }
 }
 
@@ -550,7 +668,17 @@ async function main() {
     throw new Error(`Unsupported platform: ${inspect(values)}`);
   }
 
-  const provider = cloud === "docker" ? docker : aws;
+  let provider: Cloud;
+  if (cloud === "docker") {
+    provider = docker;
+  } else if (cloud === "aws") {
+    provider = aws;
+  } else if (cloud === "google") {
+    provider = google;
+  } else {
+    throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
+  }
+
   await using machine = await provider.createMachine(platform);
   process.on("SIGINT", () => {
     machine.close().finally(() => process.exit(1));

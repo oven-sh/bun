@@ -73,7 +73,7 @@ async function getChangedFiles() {
   }
 }
 
-function getBuildId() {
+function getBuildNumber() {
   return getEnv("BUILDKITE_BUILD_NUMBER");
 }
 
@@ -83,7 +83,6 @@ function getBuildUrl() {
 
 async function getBuildIdWithArtifacts() {
   let depth = 0;
-  let buildId = getBuildId();
   let buildUrl = getBuildUrl();
 
   while (buildUrl) {
@@ -97,13 +96,13 @@ async function getBuildIdWithArtifacts() {
       return;
     }
 
-    const { state, prev_branch_build: lastBuild, steps } = await response.json();
+    const { id, state, prev_branch_build: lastBuild, steps } = await response.json();
     if (depth++) {
       if (state === "failed" || state === "passed") {
         const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
         if (buildSteps.length) {
           if (buildSteps.every(({ outcome }) => outcome === "passed")) {
-            break;
+            return id;
           }
           return;
         }
@@ -114,11 +113,8 @@ async function getBuildIdWithArtifacts() {
       return;
     }
 
-    buildId = lastBuild["number"];
-    buildUrl = buildUrl.replace(/\/builds\/[0-9]+/, `/builds/${buildId}`);
+    buildUrl = buildUrl.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
   }
-
-  return buildId;
 }
 
 function isDocumentation(filename) {

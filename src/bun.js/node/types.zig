@@ -2093,9 +2093,12 @@ pub const Process = struct {
                 fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
 
                 const len = fs.top_level_dir.len;
-                fs.top_level_dir_buf[len] = std.fs.path.sep;
-                fs.top_level_dir_buf[len + 1] = 0;
-                fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
+                // Ensure the path ends with a slash
+                if (fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
+                    fs.top_level_dir_buf[len] = std.fs.path.sep;
+                    fs.top_level_dir_buf[len + 1] = 0;
+                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
+                }
                 const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
                 var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
                 return str.transferToJS(globalObject);

@@ -2808,8 +2808,9 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
         return napi_invalid_arg;
     }
 
-    auto* new_tag = Bun::NapiTypeTag::create(globalObject->vm(), globalObject->NapiTypeTagStructure(), *type_tag);
-    globalObject->napiTypeTags()->set(globalObject->vm(), js_object, new_tag);
+    auto& vm = globalObject->vm();
+    auto* new_tag = Bun::NapiTypeTag::create(vm, globalObject->NapiTypeTagStructure(), *type_tag);
+    globalObject->napiTypeTags()->set(vm, js_object, new_tag);
     return napi_ok;
 }
 

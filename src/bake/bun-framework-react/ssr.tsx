@@ -18,6 +18,16 @@ const createFromNodeStreamOptions: Manifest = {
   moduleLoading: { prefix: "/" },
 };
 
+// TODO: stop using `react-server-dom-webpack`. This emulates the webpack imports
+// that the client side uses. React refuses to publish `react-server-dom-esm` due
+// to waterfall concerns, but I'm pretty sure that's what the `chunks` array in
+// the server manifest is for: to list all chunks so there is no waterfall.
+const bootstrapScriptContent = "self.__webpack_require__=i=>import(i)";
+// TODO: The above does not work in production. The following also doesn't but I think is closer.
+// const bootstrapScriptContent = "let m=new Map;"
+//   + "self.__webpack_chunk_load__=x=>import(x).then(y=>(m.set(x,y),y));" 
+//   + "self.__webpack_require__=i=>m.get(i)";
+
 // The `renderToHtml` function not only implements converting the RSC payload
 // into HTML via react-dom, but also streaming the RSC payload via injected
 // script tags.  While the page is streaming, the client is loading the RSC
@@ -58,8 +68,7 @@ export function renderToHtml(rscPayload: Readable, bootstrapModules: readonly st
       // Here is where React is told what script tags to inject.
       let pipe: (stream: any) => void;
       ({ pipe, abort } = renderToPipeableStream(<Root />, {
-        // TODO: stop using react-server-dom-webpack
-        bootstrapScriptContent: "self.__webpack_require__=i=>import(i);",
+        bootstrapScriptContent,
         bootstrapModules,
       }));
       pipe(stream);
@@ -81,7 +90,7 @@ export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: reado
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
   const { pipe } = renderToPipeableStream(<Root />, {
-    bootstrapScriptContent: "self.__webpack_require__=i=>import(i);",
+    bootstrapScriptContent,
     bootstrapModules,
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.

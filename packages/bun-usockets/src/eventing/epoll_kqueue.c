@@ -133,7 +133,6 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     int ret;
     sigset_t mask;  
     sigemptyset(&mask);
-    sigaddset(&mask, SIGUSR1);
   
     if (has_epoll_pwait2 != 0) {
         do {

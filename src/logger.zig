@@ -414,7 +414,6 @@ pub const Msg = struct {
         return switch (this.metadata) {
             .build => JSC.BuildMessage.create(globalObject, allocator, this),
             .resolve => JSC.ResolveMessage.create(globalObject, allocator, this, ""),
-            // .redacted => JSC.BuildMessage.create(globalObject, allocator, this),
         };
     }
 
@@ -450,7 +449,6 @@ pub const Msg = struct {
 
     pub const Metadata = union(enum) {
         build,
-        // redacted,
         resolve: Resolve,
 
         pub const Resolve = struct {
@@ -928,16 +926,6 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRedactedRangeError(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
-        @setCold(true);
-        log.errors += 1;
-        try log.addMsg(.{
-            .kind = .err,
-            .data = rangeData(source, r, text),
-            .redact_sensitive_information = true,
-        });
-    }
-
     pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
@@ -957,10 +945,6 @@ pub const Log = struct {
         });
     }
 
-    pub fn addErrorFmtNoLoc(log: *Log, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        try log.addErrorFmt(null, Loc.Empty, allocator, text, args);
-    }
-
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @setCold(true);
         log.errors += 1;
@@ -970,12 +954,18 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRedactedErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
+    // TODO(dylan-conway): rename and replace `addErrorFmt`
+    pub fn addErrorFmtOpts(log: *Log, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, opts: AddErrorOptions) OOM!void {
+        @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = try rangeData(source, .{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-            .redact_sensitive_information = true,
+            .data = try rangeData(
+                opts.source,
+                .{ .loc = opts.loc, .len = opts.len },
+                try allocPrint(allocator, fmt, args),
+            ).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .redact_sensitive_information = opts.redact_sensitive_information,
         });
     }
 
@@ -1179,13 +1169,21 @@ pub const Log = struct {
         try self.addMsg(.{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
 
-    pub fn addRedactedError(self: *Log, _source: ?*const Source, loc: Loc, text: string) OOM!void {
+    const AddErrorOptions = struct {
+        source: ?*const Source = null,
+        loc: Loc = Loc.Empty,
+        len: i32 = 0,
+        redact_sensitive_information: bool = false,
+    };
+
+    // TODO(dylan-conway): rename and replace `addError`
+    pub fn addErrorOpts(self: *Log, text: string, opts: AddErrorOptions) OOM!void {
         @setCold(true);
         self.errors += 1;
         try self.addMsg(.{
             .kind = .err,
-            .data = rangeData(_source, .{ .loc = loc }, text),
-            .redact_sensitive_information = true,
+            .data = rangeData(opts.source, .{ .loc = opts.loc, .len = opts.len }, text),
+            .redact_sensitive_information = opts.redact_sensitive_information,
         });
     }
 

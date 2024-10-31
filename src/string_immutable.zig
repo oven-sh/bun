@@ -298,12 +298,15 @@ pub fn startsWithNpmSecret(str: string) u8 {
 fn startsWithRedactedItem(text: string, comptime item: string) ?struct { usize, usize } {
     if (!strings.hasPrefixComptime(text, item)) return null;
 
+    var whitespace = false;
     var offset: usize = item.len;
     while (offset < text.len and std.ascii.isWhitespace(text[offset])) {
         offset += 1;
+        whitespace = true;
     }
     if (offset == text.len) return null;
-    if (text[offset] != '=' and text[offset] != ':') return null;
+    // if whitespace is seen, make sure what follows is redacted
+    if (!whitespace and text[offset] != '=' and text[offset] != ':') return null;
     offset += 1;
 
     // `null` is not returned after this point. Redact to the next
@@ -350,42 +353,41 @@ fn startsWithRedactedItem(text: string, comptime item: string) ?struct { usize, 
     }
 }
 
-/// Returns offset and length of first secret found. Also returns
-/// a replacement
-pub fn startsWithSecret(str: string) ?struct { usize, usize, string } {
+/// Returns offset and length of first secret found.
+pub fn startsWithSecret(str: string) ?struct { usize, usize } {
     if (startsWithRedactedItem(str, "_auth")) |auth| {
         const offset, const len = auth;
-        return .{ offset, len, "***" };
+        return .{ offset, len };
     }
     if (startsWithRedactedItem(str, "_authToken")) |auth_token| {
         const offset, const len = auth_token;
-        return .{ offset, len, "***" };
+        return .{ offset, len };
     }
     if (startsWithRedactedItem(str, "email")) |email| {
         const offset, const len = email;
-        return .{ offset, len, "***" };
+        return .{ offset, len };
     }
     if (startsWithRedactedItem(str, "_password")) |password| {
         const offset, const len = password;
-        return .{ offset, len, "***" };
+        return .{ offset, len };
     }
     if (startsWithRedactedItem(str, "token")) |token| {
         const offset, const len = token;
-        return .{ offset, len, "***" };
+        return .{ offset, len };
     }
 
     if (startsWithUUID(str)) {
-        return .{ 0, 36, "***" };
+        return .{ 0, 36 };
     }
 
     const npm_secret_len = startsWithNpmSecret(str);
     if (npm_secret_len > 0) {
-        return .{ 0, npm_secret_len, "***" };
+        return .{ 0, npm_secret_len };
     }
 
     if (findUrlPassword(str)) |url_pass| {
         const offset, const len = url_pass;
-        return .{ offset, len, "***" };
+        return .{ offset, len };
     }
 
     return null;

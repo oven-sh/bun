@@ -3909,7 +3909,7 @@ const TOMLObject = struct {
         var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
-        const parse_result = TOMLParser.parse(&source, &log, allocator) catch {
+        const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
             return .zero;
         };

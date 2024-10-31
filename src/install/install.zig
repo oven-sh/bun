@@ -12162,10 +12162,11 @@ pub const PackageManager = struct {
                 bin_linker.link(this.manager.options.global);
                 if (bin_linker.err) |err| {
                     if (log_level != .silent) {
-                        this.manager.log.addErrorFmtNoLoc(
+                        this.manager.log.addErrorFmtOpts(
                             this.manager.allocator,
                             "Failed to link <b>{s}<r>: {s}",
                             .{ alias, @errorName(err) },
+                            .{},
                         ) catch bun.outOfMemory();
                     }
 

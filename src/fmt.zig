@@ -147,9 +147,9 @@ pub const RedactedSourceFormatter = struct {
         var i: usize = 0;
         while (i < this.text.len) {
             if (strings.startsWithSecret(this.text[i..])) |secret| {
-                const offset, const len, const replacement = secret;
+                const offset, const len = secret;
                 try writer.writeAll(this.text[i..][0..offset]);
-                try writer.writeAll(replacement);
+                try writer.writeByteNTimes('*', len);
                 i += offset + len;
                 continue;
             }
@@ -698,13 +698,14 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
     pub const Options = struct {
         enable_colors: bool,
-        redact_sensitive_information: bool = false,
         check_for_unhighlighted_write: bool = true,
+
+        redact_sensitive_information: bool = false,
 
         pub const default: Options = .{
             .enable_colors = Output.enable_ansi_colors,
-            .redact_sensitive_information = false,
             .check_for_no_highlighting = true,
+            .redact_sensitive_information = false,
         };
     };
 
@@ -887,7 +888,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
         }
 
         var prev_keyword: ?Keyword = null;
-        var should_redact_item = false;
+        var should_redact_value = false;
 
         outer: while (text.len > 0) {
             if (js_lexer.isIdentifierStart(text[0])) {
@@ -898,13 +899,13 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                 }
 
                 if (Keywords.get(text[0..i])) |keyword| {
-                    should_redact_item = false;
+                    should_redact_value = false;
                     if (keyword != .as)
                         prev_keyword = keyword;
                     const code = keyword.colorCode();
                     try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), text[0..i] });
                 } else {
-                    should_redact_item = this.opts.redact_sensitive_information and RedactedKeywords.has(text[0..i]);
+                    should_redact_value = this.opts.redact_sensitive_information and RedactedKeywords.has(text[0..i]);
                     write: {
                         if (prev_keyword) |prev| {
                             switch (prev) {
@@ -938,9 +939,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                     }
                 }
                 text = text[i..];
-                // continue;
             } else {
-                if (this.opts.redact_sensitive_information and should_redact_item) {
+                if (this.opts.redact_sensitive_information and should_redact_value) {
                     while (text.len > 0 and std.ascii.isWhitespace(text[0])) {
                         try writer.writeByte(text[0]);
                         text = text[1..];
@@ -955,16 +955,14 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         }
 
                         if (text.len == 0) return;
-                    } else {
-                        should_redact_item = false;
                     }
                 }
 
                 switch (text[0]) {
                     '0'...'9' => |num| {
                         if (this.opts.redact_sensitive_information) {
-                            if (should_redact_item) {
-                                should_redact_item = false;
+                            if (should_redact_value) {
+                                should_redact_value = false;
                                 const end = strings.indexOfChar(text, '\n') orelse text.len;
                                 text = text[end..];
                                 try writer.writeAll(Output.prettyFmt("<r><yellow>***<r>", true));
@@ -1005,7 +1003,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                         var i: usize = 1;
                         while (i < text.len and text[i] != char) {
-                            if (!should_redact_item and char == '`') {
+                            // if we're redacting, no need to syntax highlight contents
+                            if (!should_redact_value and char == '`') {
                                 if (text[i] == '$' and i + 1 < text.len and text[i + 1] == '{') {
                                     const curly_start = i;
                                     i += 2;
@@ -1055,10 +1054,20 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         // Include the trailing quote, if any
                         i += @intFromBool(i < text.len);
 
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            try writer.print(Output.prettyFmt("<r><green>{c}***{c}<r>", true), .{ char, char });
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            if (i > 2 and text[i - 1] == char) {
+                                const len = text[0..i].len - 2;
+                                try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                try writer.writeByteNTimes('*', len);
+                                try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
+                            } else {
+                                const len = text[0..i].len - 1;
+                                try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                try writer.writeByteNTimes('*', len);
+                            }
                             text = text[i..];
+                            continue;
                         } else if (this.opts.redact_sensitive_information) {
                             try_redact: {
                                 var inner = text[1..i];
@@ -1071,23 +1080,30 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 }
 
                                 if (inner.len == 36 and strings.isUUID(inner)) {
-                                    try writer.print(Output.prettyFmt("<r><green>{c}***{c}<r>", true), .{ char, char });
+                                    try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                    try writer.writeByteNTimes('*', 36);
+                                    try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                                     text = text[i..];
                                     continue;
                                 }
 
                                 const npm_secret_len = strings.startsWithNpmSecret(inner);
                                 if (npm_secret_len != 0) {
-                                    try writer.print(Output.prettyFmt("<r><green>{c}***{c}<r>", true), .{ char, char });
+                                    try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
+                                    try writer.writeByteNTimes('*', npm_secret_len);
+                                    try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                                     text = text[i..];
                                     continue;
                                 }
 
                                 if (strings.findUrlPassword(inner)) |url_pass| {
                                     const offset, const len = url_pass;
-                                    try writer.print(Output.prettyFmt("<r><green>{c}{s}***{s}{c}<r>", true), .{
+                                    try writer.print(Output.prettyFmt("<r><green>{c}{s}", true), .{
                                         char,
                                         inner[0..offset],
+                                    });
+                                    try writer.writeByteNTimes('*', len);
+                                    try writer.print(Output.prettyFmt("{s}{c}<r>", true), .{
                                         inner[offset + len ..],
                                         char,
                                     });
@@ -1098,19 +1114,20 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                             try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..i]});
                             text = text[i..];
-                        } else {
-                            try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..i]});
-                            text = text[i..];
+                            continue;
                         }
+
+                        try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..i]});
+                        text = text[i..];
                     },
                     '/' => {
                         prev_keyword = null;
 
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
 
@@ -1174,11 +1191,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             prev_keyword = null;
                         }
 
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
 
@@ -1187,11 +1204,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                     },
                     '[', ']' => |bracket| {
                         prev_keyword = null;
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
                         try writer.writeByte(bracket);
@@ -1199,11 +1216,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                     },
                     ';' => {
                         prev_keyword = null;
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
                         try writer.print(Output.prettyFmt("<r><d>;<r>", true), .{});
@@ -1212,11 +1229,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                     '.' => {
                         prev_keyword = null;
 
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
 
@@ -1241,11 +1258,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                     },
 
                     '<' => {
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
                         var i: usize = 1;
@@ -1288,11 +1305,11 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                     },
 
                     else => |c| {
-                        if (should_redact_item) {
-                            should_redact_item = false;
-                            const end = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeAll("***");
-                            text = text[end..];
+                        if (should_redact_value) {
+                            should_redact_value = false;
+                            const len = strings.indexOfChar(text, '\n') orelse text.len;
+                            try writer.writeByteNTimes('*', len);
+                            text = text[len..];
                             continue;
                         }
                         try writer.writeByte(c);

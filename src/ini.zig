@@ -1167,10 +1167,13 @@ fn @"handle _auth"(
     source: *const bun.logger.Source,
 ) OOM!void {
     if (conf_item.value.len == 0) {
-        try log.addRedactedError(
-            source,
-            conf_item.loc,
+        try log.addErrorOpts(
             "invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
+            .{
+                .source = source,
+                .loc = conf_item.loc,
+                .redact_sensitive_information = true,
+            },
         );
         return;
     }
@@ -1179,30 +1182,39 @@ fn @"handle _auth"(
     const result = bun.base64.decode(decoded[0..], conf_item.value);
     if (!result.isSuccessful()) {
         defer allocator.free(decoded);
-        try log.addRedactedError(
-            source,
-            conf_item.loc,
+        try log.addErrorOpts(
             "invalid _auth value, expected valid base64",
+            .{
+                .source = source,
+                .loc = conf_item.loc,
+                .redact_sensitive_information = true,
+            },
         );
         return;
     }
     const @"username:password" = decoded[0..result.count];
     const colon_idx = std.mem.indexOfScalar(u8, @"username:password", ':') orelse {
         defer allocator.free(@"username:password");
-        try log.addRedactedError(
-            source,
-            conf_item.loc,
+        try log.addErrorOpts(
             "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
+            .{
+                .source = source,
+                .loc = conf_item.loc,
+                .redact_sensitive_information = true,
+            },
         );
         return;
     };
     const username = @"username:password"[0..colon_idx];
     if (colon_idx + 1 >= @"username:password".len) {
         defer allocator.free(@"username:password");
-        try log.addRedactedError(
-            source,
-            conf_item.loc,
+        try log.addErrorOpts(
             "invalid _auth value, expected base64 encoded \"<username>:<password>\"",
+            .{
+                .source = source,
+                .loc = conf_item.loc,
+                .redact_sensitive_information = true,
+            },
         );
         return;
     }

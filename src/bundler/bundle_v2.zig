@@ -3439,7 +3439,7 @@ pub const ParseTask = struct {
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
-                const root = try TOML.parse(&source, log, allocator);
+                const root = try TOML.parse(&source, log, allocator, false);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {

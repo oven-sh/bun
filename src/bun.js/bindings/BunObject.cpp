@@ -51,7 +51,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
-
+BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 namespace Bun {
 
 using namespace JSC;
@@ -617,6 +617,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1

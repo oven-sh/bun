@@ -1,4 +1,5 @@
 export {};
+import { InspectOptions } from "node:util";
 
 type _ReadableStream<T> = typeof globalThis extends {
   onerror: any;
@@ -1655,7 +1656,35 @@ declare global {
     count(label?: string): void;
     countReset(label?: string): void;
     debug(...data: any[]): void;
-    dir(item?: any, options?: any): void;
+    /**
+		 * Uses `node:util` -> `inspect()` on `obj` and prints the resulting string to `stdout`.
+		 * This function bypasses any custom `inspect()` function defined on `obj`.
+		 * 
+		 * Below function logs an object and shows all data of object.
+		 * 
+		 * With the option `depth` you can specify how deep the inspection will go.
+		 * ```ts
+		 * console.dir(
+		 * 	{ 
+		 * 		a: { 
+		 * 			b: { 
+		 * 				c: { 
+		 * 					d: { 
+		 * 						e: { 
+		 * 							f: { 
+		 * 								g: 'deep dive' 
+		 * 							} 
+		 * 						} 
+		 * 					} 
+		 * 				} 
+		 * 			} 
+		 * 		} 
+		 * 	}, 
+		 * 	{ depth: Infinity }
+		 * );
+		 * ```
+		 */
+    dir(obj: any, options?: InspectOptions): void;
     dirxml(...data: any[]): void;
     /**
      * Log to stderr in your terminal

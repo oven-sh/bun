@@ -1542,7 +1542,7 @@ pub const Blob = struct {
             }
         }
 
-        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated)) + this.name.byteSlice().len;
     }
 
     pub fn estimatedSize(this: *Blob) usize {
@@ -3784,7 +3784,7 @@ pub const Blob = struct {
             return true;
         }
         if (value.isString()) {
-            this.name.deref();
+            const old_name = this.name;
 
             this.name = bun.String.tryFromJS(value, globalThis) orelse {
                 // Handle allocation failure.
@@ -3793,6 +3793,7 @@ pub const Blob = struct {
             };
             // We don't need to increment the reference count since tryFromJS already did it.
             Blob.nameSetCached(jsThis, globalThis, value);
+            old_name.deref();
             return true;
         }
         return false;
@@ -4181,6 +4182,7 @@ pub const Blob = struct {
         } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
             duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
         }
+        duped.name = duped.name.dupeRef();
 
         duped.allocator = null;
         return duped;

@@ -8219,21 +8219,26 @@ pub const PackageManager = struct {
             const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
             for (updates) |*request| {
                 if (request.e_string) |e_string| {
-                    e_string.data = if (request.package_id == invalid_package_id) brk: {
-                        if (manager.subcommand == .update and manager.options.do.update_to_latest) {
-                            break :brk try allocator.dupe(u8, "latest");
-                        }
+                    if (request.package_id >= resolutions.len or resolutions[request.package_id] == .uninitialized) {
+                        e_string.data = uninitialized: {
+                            if (manager.subcommand == .update and manager.options.do.update_to_latest) {
+                                break :uninitialized try allocator.dupe(u8, "latest");
+                            }
 
-                        if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
-                            break :brk switch (request.version.tag) {
-                                .uninitialized => try allocator.dupe(u8, "latest"),
-                                else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
-                            };
-                        } else {
-                            break :brk e_string.data;
-                        }
-                    } else switch (resolutions[request.package_id].tag) {
-                        .npm => brk: {
+                            if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
+                                break :uninitialized switch (request.version.tag) {
+                                    .uninitialized => try allocator.dupe(u8, "latest"),
+                                    else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                                };
+                            } else {
+                                break :uninitialized e_string.data;
+                            }
+                        };
+
+                        continue;
+                    }
+                    e_string.data = switch (resolutions[request.package_id]) {
+                        .npm => npm: {
                             if (manager.subcommand == .update and (request.version.tag == .dist_tag or request.version.tag == .npm)) {
                                 if (manager.updating_packages.fetchSwapRemove(request.name)) |entry| {
                                     var alias_at_index: ?usize = null;
@@ -8266,14 +8271,14 @@ pub const PackageManager = struct {
                                         const dep_literal = entry.value.original_version_literal;
 
                                         if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                                            break :brk try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                            break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
                                                 dep_literal[0..at_index],
                                                 new_version,
                                             });
                                         }
                                     }
 
-                                    break :brk new_version;
+                                    break :npm new_version;
                                 }
                             }
                             if (request.version.tag == .dist_tag or
@@ -8292,31 +8297,17 @@ pub const PackageManager = struct {
                                 if (request.version.tag == .npm and request.version.value.npm.is_alias) {
                                     const dep_literal = request.version.literal.slice(request.version_buf);
                                     if (strings.indexOfChar(dep_literal, '@')) |at_index| {
-                                        break :brk try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                        break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
                                             dep_literal[0..at_index],
                                             new_version,
                                         });
                                     }
                                 }
 
-                                break :brk new_version;
+                                break :npm new_version;
                             }
 
-                            break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
-                        },
-                        .uninitialized => brk: {
-                            if (manager.subcommand == .update and manager.options.do.update_to_latest) {
-                                break :brk try allocator.dupe(u8, "latest");
-                            }
-
-                            if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
-                                break :brk switch (request.version.tag) {
-                                    .uninitialized => try allocator.dupe(u8, "latest"),
-                                    else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
-                                };
-                            } else {
-                                break :brk e_string.data;
-                            }
+                            break :npm try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
 
                         .workspace => try allocator.dupe(u8, "workspace:*"),

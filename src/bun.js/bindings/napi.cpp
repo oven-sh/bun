@@ -405,6 +405,13 @@ void NapiWeakValue::setString(JSString* string, WeakHandleOwner& owner, void* co
 
 class NAPICallFrame {
 public:
+    NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr, JSValue storedNewTarget)
+        : NAPICallFrame(globalObject, callFrame, dataPtr)
+    {
+        m_storedNewTarget = storedNewTarget;
+        m_isConstructorCall = !m_storedNewTarget.isEmpty();
+    }
+
     NAPICallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, void* dataPtr)
         : m_callFrame(callFrame)
         , m_dataPtr(dataPtr)
@@ -470,21 +477,26 @@ public:
 
     JSValue newTarget()
     {
-        JSValue target = m_callFrame->newTarget();
-        if (target.isUndefined()) {
+        if (!m_isConstructorCall) {
+            return JSValue();
+        }
+
+        if (m_storedNewTarget.isUndefined()) {
             // napi_get_new_target:
             // "This API returns the new.target of the constructor call. If the current callback
             // is not a constructor call, the result is NULL."
             // they mean a null pointer, not JavaScript null
             return JSValue();
         } else {
-            return target;
+            return m_storedNewTarget;
         }
     }
 
 private:
     JSC::CallFrame* m_callFrame;
     void* m_dataPtr;
+    JSValue m_storedNewTarget;
+    bool m_isConstructorCall = false;
 };
 
 static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* to, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
@@ -1710,6 +1722,8 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    JSValue newTarget;
+
     if constexpr (ConstructCall) {
         NapiPrototype* prototype = JSC::jsDynamicCast<NapiPrototype*>(napi->getIfPropertyExists(globalObject, vm.propertyNames->prototype));
         RETURN_IF_EXCEPTION(scope, {});
@@ -1719,12 +1733,13 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
             return JSValue::encode(JSC::jsUndefined());
         }
 
-        auto* subclass = prototype->subclass(globalObject, asObject(callFrame->newTarget()));
+        newTarget = callFrame->newTarget();
+        auto* subclass = prototype->subclass(globalObject, asObject(newTarget));
         RETURN_IF_EXCEPTION(scope, {});
         callFrame->setThisValue(subclass);
     }
 
-    NAPICallFrame frame(globalObject, callFrame, napi->dataPtr);
+    NAPICallFrame frame(globalObject, callFrame, napi->dataPtr, newTarget);
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
     JSValue ret = toJS(napi->constructor()(toNapi(globalObject), frame.toNapi()));

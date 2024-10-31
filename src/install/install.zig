@@ -8219,7 +8219,7 @@ pub const PackageManager = struct {
             const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
             for (updates) |*request| {
                 if (request.e_string) |e_string| {
-                    if (request.package_id >= resolutions.len or resolutions[request.package_id] == .uninitialized) {
+                    if (request.package_id >= resolutions.len or resolutions[request.package_id].tag == .uninitialized) {
                         e_string.data = uninitialized: {
                             if (manager.subcommand == .update and manager.options.do.update_to_latest) {
                                 break :uninitialized try allocator.dupe(u8, "latest");
@@ -8237,7 +8237,7 @@ pub const PackageManager = struct {
 
                         continue;
                     }
-                    e_string.data = switch (resolutions[request.package_id]) {
+                    e_string.data = switch (resolutions[request.package_id].tag) {
                         .npm => npm: {
                             if (manager.subcommand == .update and (request.version.tag == .dist_tag or request.version.tag == .npm)) {
                                 if (manager.updating_packages.fetchSwapRemove(request.name)) |entry| {

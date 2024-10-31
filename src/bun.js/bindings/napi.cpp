@@ -1862,23 +1862,42 @@ extern "C" napi_status napi_get_all_property_names(
     } else if (key_filter & napi_key_skip_strings) {
         jsc_property_mode = PropertyNameMode::Symbols;
     } else {
+        // JSC requires key mode to be Include if property mode is StringsAndSymbols
         jsc_key_mode = DontEnumPropertiesMode::Include;
     }
 
     auto globalObject = toJS(env);
 
-    JSArray* exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
+    JSArray* exportKeys = nullptr;
+    if (key_mode == napi_key_include_prototypes) {
+        exportKeys = allPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
+    } else {
+        exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
+    }
 
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    auto filter_by_any_descriptor = static_cast<napi_key_filter>(napi_key_enumerable | napi_key_writable | napi_key_configurable);
+    constexpr auto filter_by_any_descriptor = static_cast<napi_key_filter>(napi_key_enumerable | napi_key_writable | napi_key_configurable);
     // avoid expensive iteration if they don't care whether keys are enumerable, writable, or configurable
     if (key_filter & filter_by_any_descriptor) {
         JSArray* filteredKeys = JSArray::create(globalObject->vm(), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
             PropertyDescriptor desc;
-            object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc);
+
+            if (key_mode == napi_key_include_prototypes) {
+                // Climb up the prototype chain to find inherited properties
+                JSObject* current_object = object;
+                while (!current_object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc)) {
+                    JSObject* proto = current_object->getPrototype(globalObject->vm(), globalObject).getObject();
+                    if (!proto) {
+                        break;
+                    }
+                    current_object = proto;
+                }
+            } else {
+                object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc);
+            }
 
             bool include = true;
             if (key_filter & napi_key_enumerable) {

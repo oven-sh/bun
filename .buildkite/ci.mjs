@@ -134,6 +134,10 @@ function toYaml(obj, indent = 0) {
   let result = "";
 
   for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+
     if (value === null) {
       result += `${spaces}${key}: null\n`;
       continue;

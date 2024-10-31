@@ -1978,7 +1978,6 @@ fn isUNCPath(comptime T: type, path: []const T) bool {
 }
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        
         if (bun.path.Platform.windows.isAbsoluteT(T, path) and
             isWindowsAbsolutePathMissingDriveLetter(T, path) and
             // is it a null device path? that's not an error. it's just a weird file path.

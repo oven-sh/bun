@@ -613,7 +613,7 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
-            
+
             return .{ path.len, 0 };
         } else {
             if (bun.strings.indexAnyComptimeT(T, path[3..], strings.literal(T, "/\\"))) |idx| {
@@ -696,7 +696,6 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         }
         return path[0..];
     }
-
 
     if (isSepAnyT(T, path[0])) return path[0..1];
     return path[0..0];
@@ -799,7 +798,7 @@ pub fn normalizeStringGenericTZ(
                 } else {
                     @memcpy(buf[buf_i .. buf_i + 2], strings.literal(T, sep_str ++ sep_str));
                 }
-                if(indexOfThirdUNCSlash > 0) {
+                if (indexOfThirdUNCSlash > 0) {
                     // we have the ending slash
                     @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                     buf[buf_i + indexOfThirdUNCSlash] = options.separator;
@@ -809,7 +808,7 @@ pub fn normalizeStringGenericTZ(
                     );
                 } else {
                     // we dont have the ending slash
-                    @memcpy(buf[buf_i + 2 .. buf_i + volLen], path_[2 .. volLen]);
+                    @memcpy(buf[buf_i + 2 .. buf_i + volLen], path_[2..volLen]);
                 }
                 buf[buf_i + volLen] = options.separator;
                 buf_i += volLen + 1;

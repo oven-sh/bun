@@ -227,8 +227,9 @@ public:
     napi_callback m_constructor = nullptr;
 
 private:
-    NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure)
+    NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure, void* data)
         : Base(vm, executable, global, structure)
+        , dataPtr(data)
     {
     }
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name, napi_callback constructor,
@@ -299,7 +300,5 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
-
-Structure* createNAPIFunctionStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
 }

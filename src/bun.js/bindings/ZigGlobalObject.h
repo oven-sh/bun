@@ -288,6 +288,7 @@ public:
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
+    Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
@@ -478,6 +479,12 @@ public:
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
 
+    // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
+    // Should only use JSCell* keys and NapiTypeTag values.
+    LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
+
+    JSC::JSWeakMap* napiTypeTags() const { return m_napiTypeTags.getInitializedOnMainThread(this); }
+
     Bun::JSMockModule mockModule;
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
@@ -578,6 +585,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
+    LazyProperty<JSGlobalObject, Structure> m_NapiTypeTagStructure;
 
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
     LazyProperty<JSGlobalObject, v8::shim::GlobalInternals> m_V8GlobalInternals;

@@ -128,6 +128,7 @@
 #include "ModuleLoader.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
+#include "napi_type_tag.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -3027,6 +3028,14 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
     });
 
+    m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+    });
+
+    m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
+        init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+    });
+
     m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
@@ -3738,6 +3747,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_NAPIFunctionStructure.visit(visitor);
     thisObject->m_NapiPrototypeStructure.visit(visitor);
     thisObject->m_NapiHandleScopeImplStructure.visit(visitor);
+    thisObject->m_NapiTypeTagStructure.visit(visitor);
+    thisObject->m_napiTypeTags.visit(visitor);
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_NodeVMScriptClassStructure.visit(visitor);

@@ -3398,14 +3398,15 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSC.
                         config.deinit();
                         return e;
                     };
-                    errdefer server.deinit();
 
                     if (globalObject.hasException()) {
+                        server.deinit();
                         return globalObject.jsErrorFromCPP();
                     }
 
                     server.listen();
                     if (globalObject.hasException()) {
+                        // server is already de-initialized
                         return globalObject.jsErrorFromCPP();
                     }
 

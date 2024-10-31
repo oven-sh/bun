@@ -1,4 +1,4 @@
-const nativeTests = require("./build/Release/napitests.node");
+const nativeTests = require("./build/Debug/napitests.node");
 
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();

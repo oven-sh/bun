@@ -7,7 +7,7 @@ describe("napi", () => {
   beforeAll(() => {
     // build gyp
     const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
+      cmd: [bunExe(), "install", "--ignore-scripts"],
       cwd: join(__dirname, "napi-app"),
       stderr: "inherit",
       env: bunEnv,
@@ -15,6 +15,18 @@ describe("napi", () => {
       stdin: "inherit",
     });
     if (!install.success) {
+      throw new Error("install dependencies failed");
+    }
+
+    const build = spawnSync({
+      cmd: [bunExe(), "x", "node-gyp", "rebuild", "--debug", "-j", "max"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (!build.success) {
       throw new Error("build failed");
     }
   });

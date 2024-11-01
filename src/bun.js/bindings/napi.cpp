@@ -603,7 +603,10 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
     NAPI_RETURN_EARLY_IF_FALSE(env, targetValue.isObject(), napi_object_expected);
 
     auto globalObject = toJS(env);
-    auto* object = targetValue.getObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto* object = targetValue.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
 
@@ -666,12 +669,17 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, key);
 
     auto globalObject = toJS(env);
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
     *result = target->hasProperty(globalObject, keyProp.toPropertyKey(globalObject));
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    scope.clearException();
+    return napi_ok;
 }
 
 extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, double* result)
@@ -698,9 +706,11 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
     JSC::EnsureStillAliveScope ensureAlive(target);
 
     auto keyProp = toJS(key);
@@ -717,13 +727,11 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, key);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
 
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -743,13 +751,18 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     auto keyProp = toJS(key);
-    NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
     *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+
+    scope.clearException();
+    return napi_ok;
 }
 
 extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
@@ -763,11 +776,11 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     NAPI_RETURN_EARLY_IF_FALSE(env, *utf8name, napi_invalid_arg);
     NAPI_CHECK_ARG(env, value);
 
-    auto target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
-
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     JSValue jsValue = toJS(value);
     JSC::EnsureStillAliveScope ensureAlive(jsValue);
@@ -833,13 +846,13 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    JSObject* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    JSObject* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     PROPERTY_NAME_FROM_UTF8(name);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
     *result = target->getPropertySlot(globalObject, name, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
@@ -856,8 +869,9 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    JSObject* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSObject* target = toJS(object).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     PROPERTY_NAME_FROM_UTF8(name);
 

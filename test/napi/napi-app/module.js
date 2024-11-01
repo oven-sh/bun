@@ -79,6 +79,9 @@ nativeTests.test_get_property = () => {
         },
       },
     ),
+    5,
+    "hello",
+    // TODO(@190n) test null and undefined here on the napi fix branch
   ];
   const keys = [
     "foo",
@@ -92,6 +95,8 @@ nativeTests.test_get_property = () => {
         throw new Error("Symbol.toPrimitive");
       },
     },
+    "toString",
+    "slice",
   ];
 
   for (const object of objects) {

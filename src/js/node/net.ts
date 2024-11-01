@@ -281,7 +281,7 @@ const Socket = (function (InternalSocket) {
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
           const data = {
             localAddress: _socket.localAddress,
-            localPort: _socket.localPort,
+            localPort: _socket.localPort || this.localPort,
             localFamily: _socket.localFamily,
             remoteAddress: _socket.remoteAddress,
             remotePort: _socket.remotePort,
@@ -427,7 +427,6 @@ const Socket = (function (InternalSocket) {
       if (signal) {
         signal.addEventListener("abort", () => this.destroy());
       }
-      this.once("connect", () => this.emit("ready"));
     }
 
     address() {

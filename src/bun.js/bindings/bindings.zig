@@ -208,9 +208,13 @@ pub const ZigString = extern struct {
     }
 
     pub fn encode(this: ZigString, encoding: JSC.Node.Encoding) []u8 {
+        return this.encodeWithAllocator(bun.default_allocator, encoding);
+    }
+
+    pub fn encodeWithAllocator(this: ZigString, allocator: std.mem.Allocator, encoding: JSC.Node.Encoding) []u8 {
         return switch (this.as()) {
             inline else => |repr| switch (encoding) {
-                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, enc),
+                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
             },
         };
     }

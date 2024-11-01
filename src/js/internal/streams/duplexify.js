@@ -173,8 +173,7 @@ export default function duplexify(body, name) {
   if (typeof then === "function") {
     let d;
 
-    FunctionPrototypeCall(
-      then,
+    then.$call(
       body,
       val => {
         if (val != null) {
@@ -186,7 +185,6 @@ export default function duplexify(body, name) {
         destroyer(d, err);
       },
     );
-
     return (d = new Duplexify({
       objectMode: true,
       writable: false,

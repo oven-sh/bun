@@ -52,6 +52,9 @@ export default [
   ["ERR_STREAM_WRAP", Error, "Error"],
   ["ERR_BORINGSSL", Error, "Error"],
 
+  //NET
+  ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error, "Error"],
+
   //HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError, "TypeError"],
   ["ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED", TypeError, "TypeError"],

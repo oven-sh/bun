@@ -375,12 +375,51 @@ pub const BlobOrStringOrBuffer = union(enum) {
     }
 
     pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
-        if (value.as(JSC.WebCore.Blob)) |blob| {
-            if (blob.store) |store| {
-                store.ref();
-            }
-            return .{ .blob = blob.* };
+        return fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global, allocator, value, encoding_value, is_async, false);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool, allow_request_response: bool) ?BlobOrStringOrBuffer {
+        switch (value.jsType()) {
+            .Blob => {
+                if (value.as(JSC.WebCore.Blob)) |blob| {
+                    if (blob.store) |store| {
+                        store.ref();
+                    }
+                    return .{ .blob = blob.* };
+                }
+            },
+            .DOMWrapper => {
+                if (allow_request_response) {
+                    if (value.as(JSC.WebCore.Request)) |request| {
+                        request.body.value.toBlobIfPossible();
+
+                        if (request.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                            var any_blob = any_blob_;
+                            defer any_blob.detach();
+                            return .{ .blob = any_blob.toBlob(global) };
+                        }
+
+                        global.throwInvalidArguments("Only buffered Request/Response bodies are supported for now.", .{});
+                        return null;
+                    }
+
+                    if (value.as(JSC.WebCore.Response)) |response| {
+                        response.body.value.toBlobIfPossible();
+
+                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                            var any_blob = any_blob_;
+                            defer any_blob.detach();
+                            return .{ .blob = any_blob.toBlob(global) };
+                        }
+
+                        global.throwInvalidArguments("Only buffered Request/Response bodies are supported for now.", .{});
+                        return null;
+                    }
+                }
+            },
+            else => {},
         }
+
         return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };

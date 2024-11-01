@@ -346,12 +346,19 @@ function getPipeline(buildId) {
       depends = [`${getKey(platform)}-build-bun`];
     }
 
+    let retry;
+    if (os !== "windows") {
+      // When the runner fails on Windows, Buildkite only detects an exit code of 1.
+      // Because of this, we don't know if the run was fatal, or soft-failed.
+      retry = getRetry();
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
       depends_on: depends,
       agents,
-      retry: getRetry(),
+      retry,
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
       parallelism,

@@ -177,15 +177,16 @@ async function runTests() {
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
+  let vendorTotal = 0;
   if (/true|1|yes|on/i.test(options["vendor"]) || (isCI && typeof options["vendor"] === "undefined")) {
     vendorTests = await getVendorTests(cwd);
     if (vendorTests.length) {
-      console.log("Running vendor tests:", vendorTests.length);
+      vendorTotal = vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0);
+      console.log("Running vendor tests:", vendorTotal);
     }
   }
 
   let i = 0;
-  let vendorTotal = vendorTests ? vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0) : 0;
   let total = vendorTotal + tests.length + 2;
   const results = [];
 
@@ -251,7 +252,7 @@ async function runTests() {
         continue;
       }
 
-      const packageJson = join(vendorPath, "package.json").replace(/\\/g, "/");
+      const packageJson = join(relative(cwd, vendorPath), "package.json").replace(/\\/g, "/");
       if (packageManager === "bun") {
         const { ok } = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
         if (!ok) {

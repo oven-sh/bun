@@ -179,13 +179,12 @@ function getPipeline(buildId) {
   };
 
   const getLabel = platform => {
-    const { os, arch, baseline } = platform;
-
+    const { os, arch, baseline, release } = platform;
+    let label = release ? `:${os}: ${release} ${arch}` : `:${os}: ${arch}`;
     if (baseline) {
-      return `:${os}: ${arch}-baseline`;
+      label += `-baseline`;
     }
-
-    return `:${os}: ${arch}`;
+    return label;
   };
 
   // https://buildkite.com/docs/pipelines/command-step#retry-attributes
@@ -309,9 +308,9 @@ function getPipeline(buildId) {
 
     let name;
     if (os === "darwin" || os === "windows") {
-      name = getLabel(platform);
+      name = getLabel({ ...platform, release });
     } else {
-      name = getLabel({ ...platform, os: distro });
+      name = getLabel({ ...platform, os: distro, release });
     }
 
     let agents;

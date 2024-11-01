@@ -5103,7 +5103,7 @@ extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSG
 bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0)
 {
     // We count masquerades as undefined as true.
-    return JSValue::decode(JSValue0).pureToBoolean() != TriState::Indeterminate;
+    return JSValue::decode(JSValue0).pureToBoolean() != TriState::False;
 }
 
 template<bool nonIndexedOnly>

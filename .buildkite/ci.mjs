@@ -87,9 +87,7 @@ async function getBuildIdWithArtifacts() {
 
   while (url) {
     const response = await fetch(`${url}.json`, {
-      headers: {
-        "Accept": "application/json",
-      },
+      headers: { "Accept": "application/json" },
     });
 
     if (!response.ok) {

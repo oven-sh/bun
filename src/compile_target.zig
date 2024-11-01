@@ -429,6 +429,8 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
                         .arm64 => "\"arm64\"",
                         else => @compileError("TODO"),
                     },
+
+                    "\"" ++ Global.package_json_version ++ "\"",
                 };
             }.values,
             else => @panic("TODO"),

@@ -36,6 +36,7 @@ pub const BuildCommand = struct {
     const compile_define_keys = &.{
         "process.platform",
         "process.arch",
+        "process.versions.bun",
     };
 
     pub fn exec(ctx: Command.Context) !void {

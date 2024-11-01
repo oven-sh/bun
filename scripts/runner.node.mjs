@@ -25,7 +25,6 @@ import { join, basename, dirname, relative, sep } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
-import { get } from "node:http";
 
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;

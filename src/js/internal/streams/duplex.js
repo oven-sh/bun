@@ -26,7 +26,7 @@
 
 "use strict";
 const primordials = require("internal/primordials");
-const { ObjectDefineProperties, ObjectGetOwnPropertyDescriptor, ObjectKeys, ObjectSetPrototypeOf } = primordials;
+const { ObjectGetOwnPropertyDescriptor, ObjectKeys, ObjectSetPrototypeOf } = primordials;
 
 const Stream = require("internal/streams/legacy").Stream;
 const Readable = require("internal/streams/readable");
@@ -36,22 +36,6 @@ const { addAbortSignal } = require("internal/streams/add-abort-signal");
 
 const destroyImpl = require("internal/streams/destroy");
 const { kOnConstructed } = require("internal/streams/utils");
-
-Duplex.prototype = {};
-ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
-ObjectSetPrototypeOf(Duplex, Readable);
-
-{
-  const keys = ObjectKeys(Writable.prototype);
-  // Allow the keys array to be GC'ed.
-  for (let i = 0; i < keys.length; i++) {
-    const method = keys[i];
-    Duplex.prototype[method] ||= Writable.prototype[method];
-  }
-}
-
-// Use the `destroy` method of `Writable`.
-Duplex.prototype.destroy = Writable.prototype.destroy;
 
 function Duplex(options) {
   if (!(this instanceof Duplex)) return new Duplex(options);
@@ -120,19 +104,39 @@ function Duplex(options) {
   }
 }
 
-ObjectDefineProperties(Duplex.prototype, {
-  writable: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable") },
+Duplex.prototype = Object.create(Readable.prototype);
+Object.defineProperty(Duplex, Symbol.toStringTag, {
+  value: "Duplex",
+  configurable: true,
+});
+const WritableProtoype = Writable.prototype;
+ObjectSetPrototypeOf(Duplex, Readable);
+
+{
+  const keys = ObjectKeys(WritableProtoype);
+  // Allow the keys array to be GC'ed.
+  for (let i = 0; i < keys.length; i++) {
+    const method = keys[i];
+    Duplex.prototype[method] ||= WritableProtoype[method];
+  }
+}
+
+// Use the `destroy` method of `Writable`.
+Duplex.prototype.destroy = WritableProtoype.destroy;
+
+Object.defineProperties(Duplex.prototype, {
+  writable: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writable") },
   writableHighWaterMark: {
     __proto__: null,
-    ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableHighWaterMark"),
+    ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableHighWaterMark"),
   },
-  writableObjectMode: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableObjectMode") },
-  writableBuffer: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableBuffer") },
-  writableLength: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableLength") },
-  writableFinished: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableFinished") },
-  writableCorked: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableCorked") },
-  writableEnded: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableEnded") },
-  writableNeedDrain: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableNeedDrain") },
+  writableObjectMode: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableObjectMode") },
+  writableBuffer: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableBuffer") },
+  writableLength: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableLength") },
+  writableFinished: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableFinished") },
+  writableCorked: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableCorked") },
+  writableEnded: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableEnded") },
+  writableNeedDrain: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(WritableProtoype, "writableNeedDrain") },
 
   destroyed: {
     __proto__: null,

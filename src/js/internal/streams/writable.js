@@ -23,12 +23,33 @@
 // Implement an async ._write(chunk, encoding, cb), and it'll handle all
 // the drain event emission and buffering.
 
-"use strict";
+const kSync = 1 << 9;
+const kFinalCalled = 1 << 10;
+const kNeedDrain = 1 << 11;
+const kEnding = 1 << 12;
+const kFinished = 1 << 13;
+const kDecodeStrings = 1 << 14;
+const kWriting = 1 << 15;
+const kBufferProcessing = 1 << 16;
+const kPrefinished = 1 << 17;
+const kAllBuffers = 1 << 18;
+const kAllNoop = 1 << 19;
+const kOnFinished = 1 << 20;
+const kHasWritable = 1 << 21;
+const kWritable = 1 << 22;
+const kCorked = 1 << 23;
+const kDefaultUTF8Encoding = 1 << 24;
+const kWriteCb = 1 << 25;
+const kExpectWriteCb = 1 << 26;
+const kAfterWriteTickInfo = 1 << 27;
+const kAfterWritePending = 1 << 28;
+const kBuffered = 1 << 29;
+const kEnded = 1 << 30;
+
 const primordials = require("internal/primordials");
 const {
   ArrayPrototypeSlice,
   //Error,
-  FunctionPrototypeSymbolHasInstance,
   ObjectDefineProperties,
   ObjectDefineProperty,
   ObjectSetPrototypeOf,
@@ -36,10 +57,8 @@ const {
   StringPrototypeToLowerCase,
   Symbol,
   SymbolAsyncDispose,
-  SymbolHasInstance,
 } = primordials;
 
-export default Writable;
 Writable.WritableState = WritableState;
 
 const EE = require("node:events");
@@ -86,29 +105,6 @@ const kDefaultEncodingValue = Symbol("kDefaultEncodingValue");
 const kWriteCbValue = Symbol("kWriteCbValue");
 const kAfterWriteTickInfoValue = Symbol("kAfterWriteTickInfoValue");
 const kBufferedValue = Symbol("kBufferedValue");
-
-const kSync = 1 << 9;
-const kFinalCalled = 1 << 10;
-const kNeedDrain = 1 << 11;
-const kEnding = 1 << 12;
-const kFinished = 1 << 13;
-const kDecodeStrings = 1 << 14;
-const kWriting = 1 << 15;
-const kBufferProcessing = 1 << 16;
-const kPrefinished = 1 << 17;
-const kAllBuffers = 1 << 18;
-const kAllNoop = 1 << 19;
-const kOnFinished = 1 << 20;
-const kHasWritable = 1 << 21;
-const kWritable = 1 << 22;
-const kCorked = 1 << 23;
-const kDefaultUTF8Encoding = 1 << 24;
-const kWriteCb = 1 << 25;
-const kExpectWriteCb = 1 << 26;
-const kAfterWriteTickInfo = 1 << 27;
-const kAfterWritePending = 1 << 28;
-const kBuffered = 1 << 29;
-const kEnded = 1 << 30;
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
@@ -428,15 +424,15 @@ function Writable(options) {
   }
 }
 
-Writable.prototype = {};
-
-ObjectSetPrototypeOf(Writable.prototype, Stream.prototype);
+Writable.prototype = Object.create(Stream.prototype);
 ObjectSetPrototypeOf(Writable, Stream);
 
-ObjectDefineProperty(Writable, SymbolHasInstance, {
+const OriginalInstanceOf = Function.prototype[Symbol.hasInstance];
+Object.defineProperty(Writable, Symbol.hasInstance, {
   __proto__: null,
   value: function (object) {
-    if (FunctionPrototypeSymbolHasInstance(this, object)) return true;
+    if (OriginalInstanceOf.$apply(this, arguments)) return true;
+
     if (this !== Writable) return false;
 
     return object && object._writableState instanceof WritableState;
@@ -1157,3 +1153,5 @@ Writable.prototype[SymbolAsyncDispose] = function () {
     eos(this, err => (err && err.name !== "AbortError" ? reject(err) : resolve(null))),
   );
 };
+
+export default Writable;

@@ -47,10 +47,6 @@ const { Buffer } = require("node:buffer");
 const { addAbortSignal } = require("./add-abort-signal");
 const eos = require("./end-of-stream");
 
-let debug = require("../../node/util").debuglog("stream", fn => {
-  debug = fn;
-});
-
 const destroyImpl = require("./destroy");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("./state");
 const {
@@ -376,7 +372,7 @@ Readable.prototype[SymbolAsyncDispose] = function () {
 // similar to how Writable.write() returns true if you should
 // write() some more.
 Readable.prototype.push = function (chunk, encoding) {
-  debug("push", chunk);
+  $debug("push", chunk);
 
   const state = this._readableState;
   return (state[kState] & kObjectMode) === 0
@@ -386,7 +382,7 @@ Readable.prototype.push = function (chunk, encoding) {
 
 // Unshift should *always* be something directly out of read().
 Readable.prototype.unshift = function (chunk, encoding) {
-  debug("unshift", chunk);
+  $debug("unshift", chunk);
   const state = this._readableState;
   return (state[kState] & kObjectMode) === 0
     ? readableAddChunkUnshiftByteMode(this, state, chunk, encoding)
@@ -623,7 +619,7 @@ function howMuchToRead(n, state) {
 
 // You can override either this method, or the async _read(n) below.
 Readable.prototype.read = function (n) {
-  debug("read", n);
+  $debug("read", n);
   // Same as parseInt(undefined, 10), however V8 7.3 performance regressed
   if (n === undefined) {
     n = NaN;
@@ -647,7 +643,7 @@ Readable.prototype.read = function (n) {
     ((state.highWaterMark !== 0 ? state.length >= state.highWaterMark : state.length > 0) ||
       (state[kState] & kEnded) !== 0)
   ) {
-    debug("read: emitReadable");
+    $debug("read: emitReadable");
     if (state.length === 0 && (state[kState] & kEnded) !== 0) endReadable(this);
     else emitReadable(this);
     return null;
@@ -685,12 +681,12 @@ Readable.prototype.read = function (n) {
 
   // if we need a readable event, then we need to do some reading.
   let doRead = (state[kState] & kNeedReadable) !== 0;
-  debug("need readable", doRead);
+  $debug("need readable", doRead);
 
   // If we currently have less than the highWaterMark, then also read some.
   if (state.length === 0 || state.length - n < state.highWaterMark) {
     doRead = true;
-    debug("length less than watermark", doRead);
+    $debug("length less than watermark", doRead);
   }
 
   // However, if we've ended, then there's no point, if we're already
@@ -698,9 +694,9 @@ Readable.prototype.read = function (n) {
   // and if we're destroyed or errored, then it's not allowed,
   if ((state[kState] & (kReading | kEnded | kDestroyed | kErrored | kConstructed)) !== kConstructed) {
     doRead = false;
-    debug("reading, ended or constructing", doRead);
+    $debug("reading, ended or constructing", doRead);
   } else if (doRead) {
-    debug("do read");
+    $debug("do read");
     state[kState] |= kReading | kSync;
     // If the length is currently zero, then we *need* a readable event.
     if (state.length === 0) state[kState] |= kNeedReadable;
@@ -752,7 +748,7 @@ Readable.prototype.read = function (n) {
 };
 
 function onEofChunk(stream, state) {
-  debug("onEofChunk");
+  $debug("onEofChunk");
   if ((state[kState] & kEnded) !== 0) return;
   const decoder = (state[kState] & kDecoder) !== 0 ? state[kDecoderValue] : null;
   if (decoder) {
@@ -784,10 +780,10 @@ function onEofChunk(stream, state) {
 // a nextTick recursion warning, but that's not so bad.
 function emitReadable(stream) {
   const state = stream._readableState;
-  debug("emitReadable");
+  $debug("emitReadable");
   state[kState] &= ~kNeedReadable;
   if ((state[kState] & kEmittedReadable) === 0) {
-    debug("emitReadable", (state[kState] & kFlowing) !== 0);
+    $debug("emitReadable", (state[kState] & kFlowing) !== 0);
     state[kState] |= kEmittedReadable;
     process.nextTick(emitReadable_, stream);
   }
@@ -795,7 +791,7 @@ function emitReadable(stream) {
 
 function emitReadable_(stream) {
   const state = stream._readableState;
-  debug("emitReadable_");
+  $debug("emitReadable_");
   if ((state[kState] & (kDestroyed | kErrored)) === 0 && (state.length || (state[kState] & kEnded) !== 0)) {
     stream.emit("readable");
     state[kState] &= ~kEmittedReadable;
@@ -854,7 +850,7 @@ function maybeReadMore_(stream, state) {
     (state.length < state.highWaterMark || ((state[kState] & kFlowing) !== 0 && state.length === 0))
   ) {
     const len = state.length;
-    debug("maybeReadMore read 0");
+    $debug("maybeReadMore read 0");
     stream.read(0);
     if (len === state.length)
       // Didn't get any data, stop spinning.
@@ -883,7 +879,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   }
 
   state.pipes.push(dest);
-  debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
+  $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
 
   const doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
 
@@ -893,7 +889,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
 
   dest.on("unpipe", onunpipe);
   function onunpipe(readable, unpipeInfo) {
-    debug("onunpipe");
+    $debug("onunpipe");
     if (readable === src) {
       if (unpipeInfo && unpipeInfo.hasUnpiped === false) {
         unpipeInfo.hasUnpiped = true;
@@ -903,7 +899,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   }
 
   function onend() {
-    debug("onend");
+    $debug("onend");
     dest.end();
   }
 
@@ -911,7 +907,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
 
   let cleanedUp = false;
   function cleanup() {
-    debug("cleanup");
+    $debug("cleanup");
     // Cleanup event handlers once the pipe is broken.
     dest.removeListener("close", onclose);
     dest.removeListener("finish", onfinish);
@@ -941,11 +937,11 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     // => Check whether `dest` is still a piping destination.
     if (!cleanedUp) {
       if (state.pipes.length === 1 && state.pipes[0] === dest) {
-        debug("false write response, pause", 0);
+        $debug("false write response, pause", 0);
         state.awaitDrainWriters = dest;
         state[kState] &= ~kMultiAwaitDrain;
       } else if (state.pipes.length > 1 && state.pipes.includes(dest)) {
-        debug("false write response, pause", state.awaitDrainWriters.size);
+        $debug("false write response, pause", state.awaitDrainWriters.size);
         state.awaitDrainWriters.add(dest);
       }
       src.pause();
@@ -962,9 +958,9 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
 
   src.on("data", ondata);
   function ondata(chunk) {
-    debug("ondata");
+    $debug("ondata");
     const ret = dest.write(chunk);
-    debug("dest.write", ret);
+    $debug("dest.write", ret);
     if (ret === false) {
       pause();
     }
@@ -973,7 +969,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   // If the dest has an error, then stop piping into it.
   // However, don't suppress the throwing behavior for this.
   function onerror(er) {
-    debug("onerror", er);
+    $debug("onerror", er);
     unpipe();
     dest.removeListener("error", onerror);
     if (dest.listenerCount("error") === 0) {
@@ -997,14 +993,14 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   }
   dest.once("close", onclose);
   function onfinish() {
-    debug("onfinish");
+    $debug("onfinish");
     dest.removeListener("close", onclose);
     unpipe();
   }
   dest.once("finish", onfinish);
 
   function unpipe() {
-    debug("unpipe");
+    $debug("unpipe");
     src.unpipe(dest);
   }
 
@@ -1016,7 +1012,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   if (dest.writableNeedDrain === true) {
     pause();
   } else if ((state[kState] & kFlowing) === 0) {
-    debug("pipe resume");
+    $debug("pipe resume");
     src.resume();
   }
 
@@ -1031,10 +1027,10 @@ function pipeOnDrain(src, dest) {
     // `this` maybe not a reference to dest,
     // so we use the real dest here.
     if (state.awaitDrainWriters === dest) {
-      debug("pipeOnDrain", 1);
+      $debug("pipeOnDrain", 1);
       state.awaitDrainWriters = null;
     } else if ((state[kState] & kMultiAwaitDrain) !== 0) {
-      debug("pipeOnDrain", state.awaitDrainWriters.size);
+      $debug("pipeOnDrain", state.awaitDrainWriters.size);
       state.awaitDrainWriters.delete(dest);
     }
 
@@ -1094,7 +1090,7 @@ Readable.prototype.on = function (ev, fn) {
     if ((state[kState] & (kEndEmitted | kReadableListening)) === 0) {
       state[kState] |= kReadableListening | kNeedReadable | kHasFlowing;
       state[kState] &= ~(kFlowing | kEmittedReadable);
-      debug("on readable");
+      $debug("on readable");
       if (state.length) {
         emitReadable(this);
       } else if ((state[kState] & kReading) === 0) {
@@ -1167,7 +1163,7 @@ function updateReadableListening(self) {
 }
 
 function nReadingNextTick(self) {
-  debug("readable nexttick read 0");
+  $debug("readable nexttick read 0");
   self.read(0);
 }
 
@@ -1176,7 +1172,7 @@ function nReadingNextTick(self) {
 Readable.prototype.resume = function () {
   const state = this._readableState;
   if ((state[kState] & kFlowing) === 0) {
-    debug("resume");
+    $debug("resume");
     // We flow only if there is no one listening
     // for readable, but we still have to call
     // resume().
@@ -1201,7 +1197,7 @@ function resume(stream, state) {
 }
 
 function resume_(stream, state) {
-  debug("resume", (state[kState] & kReading) !== 0);
+  $debug("resume", (state[kState] & kReading) !== 0);
   if ((state[kState] & kReading) === 0) {
     stream.read(0);
   }
@@ -1214,9 +1210,9 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
-  debug("call pause");
+  $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
-    debug("pause");
+    $debug("pause");
     state[kState] |= kHasFlowing;
     state[kState] &= ~kFlowing;
     this.emit("pause");
@@ -1227,7 +1223,7 @@ Readable.prototype.pause = function () {
 
 function flow(stream) {
   const state = stream._readableState;
-  debug("flow");
+  $debug("flow");
   while ((state[kState] & kFlowing) !== 0 && stream.read() !== null);
 }
 
@@ -1628,7 +1624,7 @@ function fromList(n, state) {
 function endReadable(stream) {
   const state = stream._readableState;
 
-  debug("endReadable");
+  $debug("endReadable");
   if ((state[kState] & kEndEmitted) === 0) {
     state[kState] |= kEnded;
     process.nextTick(endReadableNT, state, stream);
@@ -1636,7 +1632,7 @@ function endReadable(stream) {
 }
 
 function endReadableNT(state, stream) {
-  debug("endReadableNT");
+  $debug("endReadableNT");
 
   // Check that we didn't get one last unshift.
   if ((state[kState] & (kErrored | kCloseEmitted | kEndEmitted)) === 0 && state.length === 0) {

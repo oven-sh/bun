@@ -9,8 +9,9 @@ const EE = require("node:events");
 function Stream(opts) {
   EE.$call(this, opts);
 }
-Stream.prototype = {};
-ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
+Stream.prototype = {
+  __proto__: EE.prototype,
+};
 ObjectSetPrototypeOf(Stream, EE);
 
 Stream.prototype.pipe = function (dest, options) {

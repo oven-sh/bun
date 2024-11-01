@@ -157,6 +157,7 @@ export default {
   ObjectSetPrototypeOf: Object.setPrototypeOf,
   Promise,
   PromiseResolve: Promise.resolve,
+  PromiseReject: Promise.reject,
   PromisePrototypeThen: uncurryThis(Promise.prototype.then),
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
@@ -273,4 +274,5 @@ export default {
   BigUint64Array,
   BigInt64Array,
   uncurryThis,
+  FunctionPrototypeSymbolHasInstance: Function.prototype[Symbol.hasInstance].bind(Function.prototype),
 };

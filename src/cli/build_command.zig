@@ -36,6 +36,7 @@ pub const BuildCommand = struct {
     const compile_define_keys = &.{
         "process.platform",
         "process.arch",
+        "process.versions.bun",
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -250,6 +251,7 @@ pub const BuildCommand = struct {
                     null,
                 null,
                 this_bundler.options.define.drop_debugger,
+                false,
             );
 
             try bun.bake.addImportMetaDefines(allocator, this_bundler.options.define, .development, .server);

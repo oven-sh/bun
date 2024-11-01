@@ -64,6 +64,8 @@ nativeTests.test_get_property = () => {
         },
       },
     ),
+    5,
+    "hello",
   ];
   const keys = [
     "foo",
@@ -77,6 +79,8 @@ nativeTests.test_get_property = () => {
         throw new Error("Symbol.toPrimitive");
       },
     },
+    "toString",
+    "slice",
   ];
 
   for (const object of objects) {

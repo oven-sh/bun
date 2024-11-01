@@ -25,6 +25,7 @@ import { join, basename, dirname, relative, sep } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
+import { get } from "node:http";
 
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
@@ -90,6 +91,10 @@ const { values: options, positionals: filters } = parseArgs({
       default: undefined,
     },
     ["smoke"]: {
+      type: "string",
+      default: undefined,
+    },
+    ["vendor"]: {
       type: "string",
       default: undefined,
     },
@@ -171,13 +176,24 @@ async function runTests() {
   const tests = getRelevantTests(testsPath);
   console.log("Running tests:", tests.length);
 
+  /** @type {VendorTest[] | undefined} */
+  let vendorTests;
+  if (/true|1|yes|on/i.test(options["vendor"]) || (isCI && typeof options["vendor"] === "undefined")) {
+    vendorTests = await getVendorTests(cwd);
+    if (vendorTests.length) {
+      console.log("Running vendor tests:", vendorTests.length);
+    }
+  }
+
   let i = 0;
-  let total = tests.length + 2;
+  let vendorTotal = vendorTests ? vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0) : 0;
+  let total = vendorTotal + tests.length + 2;
   const results = [];
 
   /**
    * @param {string} title
    * @param {function} fn
+   * @returns {Promise<TestResult>}
    */
   const runTest = async (title, fn) => {
     const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
@@ -212,6 +228,8 @@ async function runTests() {
     if (options["bail"] && !result.ok) {
       process.exit(getExitCode("fail"));
     }
+
+    return result;
   };
 
   for (const path of [cwd, testsPath]) {
@@ -223,6 +241,45 @@ async function runTests() {
     for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
+    }
+  }
+
+  if (vendorTests?.length) {
+    for (const { cwd, packageManager, testRunner, testPaths } of vendorTests) {
+      if (!testPaths.length) {
+        continue;
+      }
+
+      const packageJson = join(cwd, "package.json").replace(/\\/g, "/");
+
+      if (packageManager === "bun") {
+        const { ok } = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd }));
+        if (!ok) {
+          continue;
+        }
+      } else {
+        throw new Error(`Unsupported package manager: ${packageManager}`);
+      }
+
+      for (const testPath of testPaths) {
+        const title = testPath.replace(/\\/g, "/");
+        const filePath = relative(cwd, testPath);
+        const absPath = join(cwd, filePath);
+
+        if (testRunner === "bun") {
+          await runTest(title, () => spawnBunTest(execPath, absPath));
+        } else if (testRunner === "node") {
+          const preload = join(import.meta.dirname, "..", "test", "runners", "node.ts");
+          await runTest(title, () =>
+            spawnBun(execPath, {
+              cwd,
+              args: ["--preload", preload, filePath],
+            }),
+          );
+        } else {
+          throw new Error(`Unsupported test runner: ${testRunner}`);
+        }
+      }
     }
   }
 
@@ -740,6 +797,8 @@ async function spawnBunInstall(execPath, options) {
   };
 }
 
+async function spawnGitClone() {}
+
 /**
  * @returns {string | undefined}
  */
@@ -821,6 +880,14 @@ function isJavaScript(path) {
  * @param {string} path
  * @returns {boolean}
  */
+function isJavaScriptTest(path) {
+  return isJavaScript(path) && /\.test|spec\./.test(basename(path));
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
 function isTest(path) {
   if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
@@ -860,6 +927,131 @@ function getTests(cwd) {
     }
   }
   return [...getFiles(cwd, "")].sort();
+}
+
+/**
+ * @typedef {object} Vendor
+ * @property {string} package
+ * @property {string} repository
+ * @property {string} tag
+ * @property {string} [packageManager]
+ * @property {string} [testPath]
+ * @property {string} [testRunner]
+ * @property {boolean | Record<string, boolean | string>} [skipTests]
+ */
+
+/**
+ * @typedef {object} VendorTest
+ * @property {string} cwd
+ * @property {string} packageManager
+ * @property {string} testRunner
+ * @property {string[]} testPaths
+ */
+
+/**
+ * @param {string} cwd
+ * @returns {Promise<VendorTest[]>}
+ */
+async function getVendorTests(cwd) {
+  const vendorPath = join(cwd, "test", "vendor.json");
+  if (!existsSync(vendorPath)) {
+    throw new Error(`Did not find vendor.json: ${vendorPath}`);
+  }
+
+  /** @type {Vendor[]} */
+  const vendors = JSON.parse(readFileSync(vendorPath, "utf-8")).sort(
+    (a, b) => a.package.localeCompare(b.package) || a.tag.localeCompare(b.tag),
+  );
+
+  /** @type {VendorTest[]} */
+  const vendorTests = await Promise.all(
+    vendors.map(async ({ package: name, repository, tag, testPath, testRunner, packageManager, skipTests }) => {
+      const vendorPath = join(cwd, "vendor", name);
+
+      if (!existsSync(vendorPath)) {
+        await spawnSafe({
+          command: "git",
+          args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
+          timeout: testTimeout,
+          cwd,
+        });
+      }
+
+      await spawnSafe({
+        command: "git",
+        args: ["fetch", "--depth", "1", "origin", "tag", tag],
+        timeout: testTimeout,
+        cwd: vendorPath,
+      });
+
+      // await spawnSafe({
+      //   command: "git",
+      //   args: ["checkout", "-b", tag],
+      //   timeout: testTimeout,
+      //   cwd: vendorPath,
+      // });
+
+      const packageJsonPath = join(vendorPath, "package.json");
+      if (!existsSync(packageJsonPath)) {
+        throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
+      }
+
+      const testParentPath = join(vendorPath, testPath || "test");
+      if (!existsSync(testParentPath)) {
+        throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
+      }
+
+      const isTest = path => {
+        if (!isJavaScriptTest(path)) {
+          return false;
+        }
+
+        if (typeof skipTests === "boolean") {
+          return !skipTests;
+        }
+
+        if (typeof skipTests === "object") {
+          for (const [glob, reason] of Object.entries(skipTests)) {
+            const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
+            if (pattern.test(path) && reason) {
+              return false;
+            }
+          }
+        }
+
+        return true;
+      };
+
+      const relativePath = relative(cwd, testParentPath);
+      const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
+        .filter(filename => isTest(filename))
+        .map(filename => join(relativePath, filename));
+
+      return {
+        cwd: vendorPath,
+        packageManager: packageManager || "bun",
+        testRunner: testRunner || "bun",
+        testPaths,
+      };
+    }),
+  );
+
+  const shardId = parseInt(options["shard"]);
+  const maxShards = parseInt(options["max-shards"]);
+
+  /** @type {VendorTest[]} */
+  let tests = [];
+  if (maxShards > 1) {
+    for (let i = 0; i < vendorTests.length; i++) {
+      if (i % maxShards === shardId) {
+        tests.push(vendorTests[i]);
+      }
+    }
+  } else {
+    tests = vendorTests.flat();
+  }
+
+  return tests;
 }
 
 /**

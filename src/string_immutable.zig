@@ -215,7 +215,7 @@ pub fn isNPMPackageName(target: string) bool {
 }
 
 pub fn isUUID(str: string) bool {
-    bun.assertWithLocation(str.len == 36, @src());
+    if (str.len != uuid_len) return false;
     for (0..8) |i| {
         switch (str[i]) {
             '0'...'9', 'a'...'f', 'A'...'F' => {},
@@ -253,10 +253,10 @@ pub fn isUUID(str: string) bool {
     return true;
 }
 
+pub const uuid_len = 36;
+
 pub fn startsWithUUID(str: string) bool {
-    const uuid_len = 36;
-    if (str.len < uuid_len) return false;
-    return isUUID(str[0..uuid_len]);
+    return isUUID(str[0..@min(str.len, uuid_len)]);
 }
 
 /// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7

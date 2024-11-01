@@ -2320,7 +2320,11 @@ pub const Expect = struct {
         const result_: ?JSValue = brk: {
             if (!value.jsType().isFunction()) {
                 if (this.flags.promise != .none) {
-                    break :brk value;
+                    if (value.isAnyError()) {
+                        break :brk value;
+                    } else {
+                        break :brk null;
+                    }
                 }
 
                 globalThis.throw("Expected value must be a function", .{});

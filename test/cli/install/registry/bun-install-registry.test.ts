@@ -3005,7 +3005,16 @@ describe("binaries", () => {
     expect(await exited).toBe(0);
 
     // now `what-bin` should be installed in the global bin directory
-    expect(await exists(join(packageDir, "global-bin-dir", "what-bin"))).toBeTrue();
+    if (isWindows) {
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "global-bin-dir", "what-bin.exe")),
+          exists(join(packageDir, "global-bin-dir", "what-bin.bunx")),
+        ]),
+      ).toEqual([true, true]);
+    } else {
+      expect(await exists(join(packageDir, "global-bin-dir", "what-bin"))).toBeTrue();
+    }
   });
 
   for (const global of [false, true]) {

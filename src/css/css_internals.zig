@@ -36,7 +36,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     defer arena.reset();
     const alloc = arena.allocator();
 
-    const arguments_ = callframe.arguments(2);
+    const arguments_ = callframe.arguments(3);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const source_arg: JSC.JSValue = arguments.nextEat() orelse {
         globalThis.throw("minifyTestWithOptions: expected 2 arguments, got 0", .{});
@@ -71,37 +71,31 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
 
     const parser_options = parser_options: {
         const opts = bun.css.ParserOptions.default(alloc, &log);
-        if (test_kind == .prefix) break :parser_options opts;
+        // if (test_kind == .prefix) break :parser_options opts;
 
         if (options_arg) |optargs| {
-            _ = optargs; // autofix
-            // if (optargs.isObject()) {
-            //     if (optargs.getStr
-            // }
-            std.debug.panic("ZACK: suppor this lol", .{});
+            if (optargs.isObject()) {
+                // minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+            }
         }
 
         break :parser_options opts;
     };
 
+    var import_records = bun.BabyList(bun.ImportRecord){};
     switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
         alloc,
         source.slice(),
         parser_options,
+        &import_records,
     )) {
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
-            switch (test_kind) {
-                .minify => {},
-                .normal => {},
-                .prefix => {
-                    if (options_arg) |optarg| {
-                        if (optarg.isObject()) {
-                            minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
-                        }
-                    }
-                },
+            if (options_arg) |optarg| {
+                if (optarg.isObject()) {
+                    minify_options.targets.browsers = targetsFromJS(globalThis, optarg);
+                }
             }
             _ = stylesheet.minify(alloc, minify_options).assert();
 
@@ -111,7 +105,10 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                     .normal => false,
                     .prefix => false,
                 },
-            }) catch |e| {
+                .targets = .{
+                    .browsers = minify_options.targets.browsers,
+                },
+            }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                 return .undefined;
             };
@@ -251,7 +248,8 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
 
     const parser_options = bun.css.ParserOptions.default(alloc, &log);
 
-    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options)) {
+    var import_records = bun.BabyList(bun.ImportRecord){};
+    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options, &import_records)) {
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
@@ -261,7 +259,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
             const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
                 .minify = minify,
                 .targets = targets,
-            }) catch |e| {
+            }, &import_records) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                 return .undefined;
             };

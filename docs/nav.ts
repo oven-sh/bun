@@ -164,6 +164,9 @@ export default {
     page("cli/update", "`bun update`", {
       description: "Update your project's dependencies.",
     }),
+    page("cli/publish", "`bun publish`", {
+      description: "Publish your package to an npm registry.",
+    }),
     page("cli/outdated", "`bun outdated`", {
       description: "Check for outdated dependencies.",
     }),

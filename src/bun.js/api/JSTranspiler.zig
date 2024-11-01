@@ -55,7 +55,6 @@ const default_transform_options: Api.TransformOptions = brk: {
     var opts = std.mem.zeroes(Api.TransformOptions);
     opts.disable_hmr = true;
     opts.target = Api.Target.browser;
-    opts.serve = false;
     break :brk opts;
 };
 
@@ -330,7 +329,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         return transpiler;
     }
 
-    if (object.getOwnTruthy(globalObject, "define")) |define| {
+    if (object.getTruthy(globalObject, "define")) |define| {
         define: {
             if (define.isUndefinedOrNull()) {
                 break :define;
@@ -379,7 +378,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOwn(globalThis, "external")) |external| {
+    if (object.get(globalThis, "external")) |external| {
         external: {
             if (external.isUndefinedOrNull()) break :external;
 
@@ -419,7 +418,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOwn(globalThis, "loader")) |loader| {
+    if (object.get(globalThis, "loader")) |loader| {
         if (Loader.fromJS(globalThis, loader, exception)) |resolved| {
             if (!resolved.isJavaScriptLike()) {
                 JSC.throwInvalidArguments("only JavaScript-like loaders supported for now", .{}, globalObject, exception);
@@ -434,7 +433,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOwn(globalThis, "target")) |target| {
+    if (object.get(globalThis, "target")) |target| {
         if (Target.fromJS(globalThis, target, exception)) |resolved| {
             transpiler.transform.target = resolved.toAPI();
         }
@@ -444,7 +443,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOwn(globalThis, "tsconfig")) |tsconfig| {
+    if (object.get(globalThis, "tsconfig")) |tsconfig| {
         tsconfig: {
             if (tsconfig.isUndefinedOrNull()) break :tsconfig;
             const kind = tsconfig.jsType();
@@ -483,7 +482,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         else => false,
     };
 
-    if (object.getOwnTruthy(globalThis, "macro")) |macros| {
+    if (object.getTruthy(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
             if (macros.isBoolean()) {
@@ -518,39 +517,39 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOwnOptional(globalThis, "autoImportJSX", bool) catch return transpiler) |flag| {
+    if (object.getOptional(globalThis, "autoImportJSX", bool) catch return transpiler) |flag| {
         transpiler.runtime.auto_import_jsx = flag;
     }
 
-    if (object.getOwnOptional(globalThis, "allowBunRuntime", bool) catch return transpiler) |flag| {
+    if (object.getOptional(globalThis, "allowBunRuntime", bool) catch return transpiler) |flag| {
         transpiler.runtime.allow_runtime = flag;
     }
 
-    if (object.getOwnOptional(globalThis, "inline", bool) catch return transpiler) |flag| {
+    if (object.getOptional(globalThis, "inline", bool) catch return transpiler) |flag| {
         transpiler.runtime.inlining = flag;
     }
 
-    if (object.getOwnOptional(globalThis, "minifyWhitespace", bool) catch return transpiler) |flag| {
+    if (object.getOptional(globalThis, "minifyWhitespace", bool) catch return transpiler) |flag| {
         transpiler.minify_whitespace = flag;
     }
 
-    if (object.getOwnOptional(globalThis, "deadCodeElimination", bool) catch return transpiler) |flag| {
+    if (object.getOptional(globalThis, "deadCodeElimination", bool) catch return transpiler) |flag| {
         transpiler.dead_code_elimination = flag;
     }
 
-    if (object.getOwnTruthy(globalThis, "minify")) |hot| {
+    if (object.getTruthy(globalThis, "minify")) |hot| {
         if (hot.isBoolean()) {
             transpiler.minify_whitespace = hot.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
         } else if (hot.isObject()) {
-            if (try hot.getOwnOptional(globalThis, "whitespace", bool)) |whitespace| {
+            if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
                 transpiler.minify_whitespace = whitespace;
             }
-            if (try hot.getOwnOptional(globalThis, "syntax", bool)) |syntax| {
+            if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
                 transpiler.minify_syntax = syntax;
             }
-            if (try hot.getOwnOptional(globalThis, "identifiers", bool)) |syntax| {
+            if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
                 transpiler.minify_identifiers = syntax;
             }
         } else {
@@ -559,7 +558,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOwn(globalThis, "sourcemap")) |flag| {
+    if (object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
                 transpiler.transform.source_map = .@"inline";
@@ -576,21 +575,21 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (try object.getOwnOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+    if (try object.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
         transpiler.transform.packages = packages.toAPI();
     }
 
     var tree_shaking: ?bool = null;
-    if (object.getOwnOptional(globalThis, "treeShaking", bool) catch return transpiler) |treeShaking| {
+    if (object.getOptional(globalThis, "treeShaking", bool) catch return transpiler) |treeShaking| {
         tree_shaking = treeShaking;
     }
 
     var trim_unused_imports: ?bool = null;
-    if (object.getOwnOptional(globalThis, "trimUnusedImports", bool) catch return transpiler) |trimUnusedImports| {
+    if (object.getOptional(globalThis, "trimUnusedImports", bool) catch return transpiler) |trimUnusedImports| {
         trim_unused_imports = trimUnusedImports;
     }
 
-    if (object.getOwnTruthy(globalThis, "exports")) |exports| {
+    if (object.getTruthy(globalThis, "exports")) |exports| {
         if (!exports.isObject()) {
             JSC.throwInvalidArguments("exports must be an object", .{}, globalObject, exception);
             return transpiler;
@@ -599,7 +598,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         var replacements = Runtime.Features.ReplaceableExport.Map{};
         errdefer replacements.clearAndFree(bun.default_allocator);
 
-        if (exports.getOwnTruthy(globalThis, "eliminate")) |eliminate| {
+        if (exports.getTruthy(globalThis, "eliminate")) |eliminate| {
             if (!eliminate.jsType().isArray()) {
                 JSC.throwInvalidArguments("exports.eliminate must be an array", .{}, globalObject, exception);
                 return transpiler;
@@ -641,7 +640,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
         }
 
-        if (exports.getOwnTruthy(globalThis, "replace")) |replace| {
+        if (exports.getTruthy(globalThis, "replace")) |replace| {
             if (!replace.isObject()) {
                 JSC.throwInvalidArguments("replace must be an object", .{}, globalObject, exception);
                 return transpiler;
@@ -718,7 +717,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         transpiler.runtime.replace_exports = replacements;
     }
 
-    if (object.getOwnTruthy(globalThis, "logLevel")) |logLevel| {
+    if (object.getTruthy(globalThis, "logLevel")) |logLevel| {
         if (logger.Log.Level.Map.fromJS(globalObject, logLevel)) |level| {
             transpiler.log.level = level;
         } else {
@@ -827,9 +826,7 @@ pub fn constructor(
     bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
     bundler.options.inlining = transpiler_options.runtime.inlining;
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
-    bundler.options.react_fast_refresh = bundler.options.hot_module_reloading and
-        bundler.options.allow_runtime and
-        transpiler_options.runtime.react_fast_refresh;
+    bundler.options.react_fast_refresh = false;
 
     const transpiler = allocator.create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{

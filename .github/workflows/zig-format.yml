@@ -7,6 +7,7 @@ on:
   workflow_call:
   workflow_dispatch:
   pull_request:
+  merge_group:
 
 env:
   BUN_VERSION: "1.1.27"
@@ -25,9 +26,6 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Zig Format
-        env:
-          ENABLE_CCACHE: OFF
-          LLVM_VERSION: "ignore"
         run: |
           bun run zig-format:diff
       - name: Commit

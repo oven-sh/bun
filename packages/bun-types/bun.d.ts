@@ -1595,6 +1595,28 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+    /**
+     * Add a banner to the bundled code such as "use client";
+     */
+    banner?: string;
+    /**
+     * Add a footer to the bundled code such as a comment block like
+     *
+     * `// made with bun!`
+     */
+    footer?: string;
+
+    /**
+     * **Experimental**
+     *
+     * Enable CSS support.
+     */
+    experimentalCss?: boolean;
+
+    /**
+     * Drop function calls to matching property accesses.
+     */
+    drop?: string[];
   }
 
   namespace Password {
@@ -1628,7 +1650,7 @@ declare module "bun" {
    * automatically run in a worker thread.
    *
    * The underlying implementation of these functions are provided by the Zig
-   * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+   * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
    * work on this.
    *
    * ### Example with argon2
@@ -1731,7 +1753,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -1770,7 +1792,7 @@ declare module "bun" {
      * instead which runs in a worker thread.
      *
      * The underlying implementation of these functions are provided by the Zig
-     * Standard Library. Thanks to @jedisct1 and other Zig constributors for their
+     * Standard Library. Thanks to @jedisct1 and other Zig contributors for their
      * work on this.
      *
      * ### Example with argon2
@@ -3001,6 +3023,7 @@ declare module "bun" {
     colors?: boolean;
     depth?: number;
     sorted?: boolean;
+    compact?: boolean;
   }
 
   /**
@@ -3016,6 +3039,14 @@ declare module "bun" {
      * That can be used to declare custom inspect functions.
      */
     const custom: typeof import("util").inspect.custom;
+
+    /**
+     * Pretty-print an object or array as a table
+     *
+     * Like {@link console.table}, except it returns a string
+     */
+    function table(tabularData: object | unknown[], properties?: string[], options?: { colors?: boolean }): string;
+    function table(tabularData: object | unknown[], options?: { colors?: boolean }): string;
   }
 
   interface MMapOptions {
@@ -3082,32 +3113,50 @@ declare module "bun" {
      * @example \x1b[38;2;100;200;200m
      */
     | "ansi"
+      | "ansi-16"
+      | "ansi-16m"
       /**
        * 256 color ANSI color string, for use in terminals which don't support true color
        *
        * Tries to match closest 24-bit color to 256 color palette
        */
-      | "ansi256"
+      | "ansi-256"
+      /**
+       * Picks the format that produces the shortest output
+       */
+      | "css"
       /**
        * Lowercase hex color string without alpha
-       * @example #aabb11
+       * @example #ff9800
        */
       | "hex"
       /**
+       * Uppercase hex color string without alpha
+       * @example #FF9800
+       */
+      | "HEX"
+      /**
+       * @example hsl(35.764706, 1, 0.5)
+       */
+      | "hsl"
+      /**
+       * @example lab(0.72732764, 33.938198, -25.311619)
+       */
+      | "lab"
+      /**
+       * @example 16750592
+       */
+      | "number"
+      /**
        * RGB color string without alpha
-       * rgb(100, 200, 200)
+       * @example rgb(255, 152, 0)
        */
       | "rgb"
       /**
        * RGB color string with alpha
-       * rgba(100, 200, 200, 0.5)
+       * @example rgba(255, 152, 0, 1)
        */
-      | "rgba"
-      | "hsl"
-      | "lab"
-      | "css"
-      | "lab"
-      | "HEX",
+      | "rgba",
   ): string | null;
 
   function color(
@@ -3200,7 +3249,7 @@ declare module "bun" {
   }
   const unsafe: Unsafe;
 
-  type DigestEncoding = "hex" | "base64";
+  type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
 
   /**
    * Are ANSI colors enabled for stdin and stdout?
@@ -3944,7 +3993,7 @@ declare module "bun" {
      *
      * In a future version of Bun, this will be used in error messages.
      */
-    name?: string;
+    name: string;
 
     /**
      * The target JavaScript environment the plugin should be applied to.
@@ -4313,6 +4362,11 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * The number of bytes written to the socket.
+     */
+    readonly bytesWritten: number;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {
@@ -4417,15 +4471,18 @@ declare module "bun" {
     hostname: string;
     port: number;
     tls?: TLSOptions;
+    exclusive?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
     tls?: boolean;
+    exclusive?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
     unix: string;
   }
 
@@ -5412,6 +5469,57 @@ declare module "bun" {
      */
     match(str: string): boolean;
   }
+
+  /**
+   * Generate a UUIDv7, which is a sequential ID based on the current timestamp with a random component.
+   *
+   * When the same timestamp is used multiple times, a monotonically increasing
+   * counter is appended to allow sorting. The final 8 bytes are
+   * cryptographically random. When the timestamp changes, the counter resets to
+   * a psuedo-random integer.
+   *
+   * @param encoding "hex" | "base64" | "base64url"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   *
+   * @example
+   * ```js
+   * import { randomUUIDv7 } from "bun";
+   * const array = [
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   *   randomUUIDv7(),
+   * ]
+   * [
+   *   "0192ce07-8c4f-7d66-afec-2482b5c9b03c",
+   *   "0192ce07-8c4f-7d67-805f-0f71581b5622",
+   *   "0192ce07-8c4f-7d68-8170-6816e4451a58"
+   * ]
+   * ```
+   */
+  function randomUUIDv7(
+    /**
+     * @default "hex"
+     */
+    encoding?: "hex" | "base64" | "base64url",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): string;
+
+  /**
+   * Generate a UUIDv7 as a Buffer
+   *
+   * @param encoding "buffer"
+   * @param timestamp Unix timestamp in milliseconds, defaults to `Date.now()`
+   */
+  function randomUUIDv7(
+    encoding: "buffer",
+    /**
+     * @default Date.now()
+     */
+    timestamp?: number | Date,
+  ): Buffer;
 }
 
 // extends lib.dom.d.ts

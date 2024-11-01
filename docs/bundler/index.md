@@ -751,7 +751,7 @@ $ bun build ./index.tsx --outdir ./out --external '*'
 
 ### `packages`
 
-Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun threats any import which path do not start with `.`, `..` or `/` as package.
+Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun treats any import which path do not start with `.`, `..` or `/` as package.
 
 {% codetabs group="a" %}
 
@@ -1086,6 +1086,84 @@ await Bun.build({
 
 ```bash#CLI
 $ bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
+```
+
+{% /codetabs %}
+
+### `banner`
+
+A banner to be added to the final bundle, this can be a directive like "use client" for react or a comment block such as a license for the code.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  banner: '"use client";'
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --banner "\"use client\";"
+```
+
+{% /codetabs %}
+
+### `footer`
+
+A footer to be added to the final bundle, this can be something like a comment block for a license or just a fun easter egg.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  footer: '// built with love in SF'
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --footer="// built with love in SF"
+```
+
+{% /codetabs %}
+
+### `drop`
+
+Remove function calls from a bundle. For example, `--drop=console` will remove all calls to `console.log`. Arguments to calls will also be removed, regardless of if those arguments may have side effects. Dropping `debugger` will remove all `debugger` statements.
+
+{% codetabs %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  drop: ["console", "debugger", "anyIdentifier.or.propertyAccess"],
+})
+```
+
+```bash#CLI
+$ bun build ./index.tsx --outdir ./out --drop=console --drop=debugger --drop=anyIdentifier.or.propertyAccess
+```
+
+{% /codetabs %}
+
+### `experimentalCss`
+
+Whether to enable _experimental_ support for bundling CSS files. Defaults to `false`.
+
+This supports bundling CSS files imported from JS, as well as CSS entrypoints.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+const result = await Bun.build({
+  entrypoints: ["./index.ts"],
+  experimentalCss: true,
+});
+// => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
 ```
 
 {% /codetabs %}

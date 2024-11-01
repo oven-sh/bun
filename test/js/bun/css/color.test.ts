@@ -180,6 +180,7 @@ const bad = [
 ];
 test.each(bad)("color(%s, 'css') === null", input => {
   expect(color(input, "css")).toBeNull();
+  expect(color(input)).toBeNull();
 });
 
 const weird = [
@@ -189,7 +190,16 @@ const weird = [
 describe("weird", () => {
   test.each(weird)("color(%s, 'css') === %s", (input, expected) => {
     expect(color(input, "css")).toEqual(expected);
+    expect(color(input)).toEqual(expected);
   });
+});
+
+test("0 args", () => {
+  expect(() => color()).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+    }),
+  );
 });
 
 test("fuzz ansi256", () => {

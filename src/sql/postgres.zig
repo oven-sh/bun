@@ -1917,7 +1917,7 @@ pub const types = struct {
             defer value.deinit();
             var str = bun.String.fromUTF8(value.slice());
             defer str.deref();
-            const parse_result = JSValue.parseJSON(str.toJS(globalObject), globalObject);
+            const parse_result = JSValue.parse(str.toJS(globalObject), globalObject);
             if (parse_result.isAnyError()) {
                 globalObject.throwValue(parse_result);
                 return error.JSError;
@@ -3095,7 +3095,8 @@ pub const PostgresSQLConnection = struct {
             defer hostname.deinit();
             if (tls_object.isEmptyOrUndefinedOrNull()) {
                 const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-                    const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}).?;
+                    var err: uws.create_bun_socket_error_t = .none;
+                    const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}, &err).?;
                     uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
                     vm.rareData().postgresql_context.tcp = ctx_;
                     break :brk ctx_;

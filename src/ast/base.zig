@@ -31,7 +31,6 @@ pub const RefCtx = struct {
 
 /// In some parts of Bun, we have many different IDs pointing to different things.
 /// It's easy for them to get mixed up, so we use this type to make sure we don't.
-///
 pub const Index = packed struct(u32) {
     value: Int,
 
@@ -48,8 +47,8 @@ pub const Index = packed struct(u32) {
     pub const invalid = Index{ .value = std.math.maxInt(Int) };
     pub const runtime = Index{ .value = 0 };
 
-    pub const kit_server_data = Index{ .value = 1 };
-    pub const kit_client_data = Index{ .value = 2 };
+    pub const bake_server_data = Index{ .value = 1 };
+    pub const bake_client_data = Index{ .value = 2 };
 
     pub const Int = u32;
 
@@ -114,7 +113,7 @@ pub const Ref = packed struct(u64) {
         allocated_name,
         source_contents_slice,
         symbol,
-    } = .invalid,
+    },
 
     source_index: Int = 0,
 

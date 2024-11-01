@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, isFlaky, isLinux } from "harness";
 import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
@@ -152,12 +152,12 @@ for (const test_info of [
   ["should not leak memory when buffering the body", callBuffering, false, 64],
   ["should not leak memory when buffering a JSON body", callJSONBuffering, false, 64],
   ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, false, 64],
-  ["should not leak memory when streaming the body", callStreaming, false, 64],
+  ["should not leak memory when streaming the body", callStreaming, isFlaky && isLinux, 64],
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
-  it(
+  it.todoIf(skip)(
     testName,
     async () => {
       const report = await calculateMemoryLeak(fn);

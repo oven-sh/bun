@@ -303,26 +303,28 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     if (!isESM) {
         if (LIKELY(globalObject)) {
-            auto overrideHandler = globalObject->m_nodeModuleOverriddenResolveFilename.get();
-            if (UNLIKELY(overrideHandler)) {
-                ASSERT(overrideHandler->isCallable());
-                JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
+            if (UNLIKELY(globalObject->hasOverridenModuleResolveFilenameFunction)) {
+                auto overrideHandler = jsCast<JSObject*>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
+                if (UNLIKELY(overrideHandler)) {
+                    ASSERT(overrideHandler->isCallable());
+                    JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
 
-                JSValue parentID = jsUndefined();
-                if (auto* parent = jsDynamicCast<Bun::JSCommonJSModule*>(parentModuleObject)) {
-                    parentID = parent->id();
-                } else {
-                    parentID = from;
+                    JSValue parentID = jsUndefined();
+                    if (auto* parent = jsDynamicCast<Bun::JSCommonJSModule*>(parentModuleObject)) {
+                        parentID = parent->id();
+                    } else {
+                        parentID = from;
+                    }
+
+                    MarkedArgumentBuffer args;
+                    args.append(moduleName);
+                    args.append(parentModuleObject);
+                    auto parentIdStr = parentID.toWTFString(globalObject);
+                    auto bunStr = Bun::toString(parentIdStr);
+                    args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
+
+                    return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
                 }
-
-                MarkedArgumentBuffer args;
-                args.append(moduleName);
-                args.append(parentModuleObject);
-                auto parentIdStr = parentID.toWTFString(globalObject);
-                auto bunStr = Bun::toString(parentIdStr);
-                args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
-
-                return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
             }
         }
     }

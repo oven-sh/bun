@@ -184,9 +184,9 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 \\  "mappings": "{}"
                 \\}}
             , .{
-                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
-                js_printer.formatJSONStringUTF8(specifier),
-                js_printer.formatJSONStringUTF8(source_file),
+                bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                bun.fmt.formatJSONStringUTF8(specifier),
+                bun.fmt.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
             try bufw.flush();
@@ -436,7 +436,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -492,7 +492,7 @@ pub const RuntimeTranspilerStore = struct {
             if (is_node_override) {
                 if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                    fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                    fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                     parse_options.virtual_source = &fallback_source;
                 }
             }
@@ -1587,7 +1587,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, NodeFallbackModules.import_path);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -1638,7 +1638,7 @@ pub const ModuleLoader = struct {
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
+                        fallback_source = logger.Source{ .path = fallback_path, .contents = code };
                         parse_options.virtual_source = &fallback_source;
                     }
                 }
@@ -1646,6 +1646,12 @@ pub const ModuleLoader = struct {
                 var parse_result: ParseResult = switch (disable_transpilying or
                     (loader == .json and !path.isJSONCFile())) {
                     inline else => |return_file_only| brk: {
+                        const heap_access = if (!disable_transpilying)
+                            jsc_vm.jsc.releaseHeapAccess()
+                        else
+                            JSC.VM.ReleaseHeapAccess{ .vm = jsc_vm.jsc, .needs_to_release = false };
+                        defer heap_access.acquire();
+
                         break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
                             parse_options,
                             null,
@@ -2143,7 +2149,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch bun.outOfMemory();
                 }
 
-                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.slice());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
@@ -2158,23 +2164,9 @@ pub const ModuleLoader = struct {
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
-        var was_http = false;
-        if (jsc_vm.bundler.options.serve) {
-            if (strings.hasPrefixComptime(slice, "https://")) {
-                slice = slice["https://".len..];
-                was_http = true;
-            } else if (strings.hasPrefixComptime(slice, "http://")) {
-                slice = slice["http://".len..];
-                was_http = true;
-            }
-        }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
             slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
         }
 
         if (jsc_vm.origin.path.len > 1) {
@@ -2293,7 +2285,6 @@ pub const ModuleLoader = struct {
                     virtual_source_to_use = logger.Source{
                         .path = path,
                         .contents = blob.sharedView(),
-                        .key_path = path,
                     };
                     virtual_source = &virtual_source_to_use.?;
                 }
@@ -2827,7 +2818,7 @@ pub const HardcodedModule = enum {
     );
 
     pub const Alias = struct {
-        path: string,
+        path: [:0]const u8,
         tag: ImportRecord.Tag = .builtin,
     };
 

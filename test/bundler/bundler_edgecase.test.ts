@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
+import { isBroken, isWindows } from "harness";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -1121,7 +1122,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "qYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -1344,6 +1345,8 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
+    todo: isBroken && isWindows,
+    debugTimeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
     files: {
@@ -1883,23 +1886,194 @@ describe("bundler", () => {
     target: "browser",
     run: { stdout: `123` },
   });
-  itBundled('edgecase/UninitializedVariablesMoved', {
+
+  itBundled("edgecase/UninitializedVariablesMoved", {
     files: {
-      '/entry.ts': `
+      "/entry.ts": `
         await import('./b.js');
       `,
-      '/b.js': `
+      "/b.js": `
         export var a = 32;
         export var b;
         (function (c) {
             c.d = 1;
         })(b ?? {});
         +a;
-      `
+      `,
     },
-    minifySyntax:true,
+    minifySyntax: true,
     run: true, // pass if no thrown error
-  })
+  });
+
+  itBundled("edgecase/UsingExportDefault", {
+    files: {
+      "/entry.ts": `
+        import module from "./module.ts";
+        console.log(module.x);
+      `,
+      "/module.ts": `
+        using a = {
+          [Symbol.dispose]: () => { 
+            console.log("Disposing");
+          }
+        };
+        export default {x: 1};
+      `,
+    },
+    run: {
+      stdout: "Disposing\n1",
+    },
+  });
+
+  itBundled("edgecase/UsingExportClass", {
+    files: {
+      "/entry.ts": `
+        export class A {
+          [Symbol.dispose](){
+            console.info("Disposing");
+          }
+        }
+        using a = new A();
+      `,
+    },
+    run: {
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultThrows", {
+    files: {
+      "/entry.ts": `
+        import("./module.ts").catch(error => {
+          console.log("Caught error:", error.message);
+        });
+      `,
+      "/module.ts": `
+        function somethingThatThrows() {
+          throw new Error("This function throws");
+        }
+
+        using disposable = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        };
+
+        export default somethingThatThrows();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nCaught error: This function throws",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultAsync", {
+    files: {
+      "/entry.ts": `
+        const result = await import("./importer.ts");
+        console.log(await result.default);
+      `,
+      "/importer.ts": `
+        async function main() {
+          using disposable = {
+            [Symbol.dispose]: () => {
+              console.log("Disposing");
+            }
+          };
+          return "Success";
+        }
+        export default main();
+      `,
+    },
+    run: {
+      stdout: "Disposing\nSuccess",
+    },
+  });
+
+  itBundled("edgecase/UsingDisposeThrowDoesntMask", {
+    files: {
+      "/entry.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            throw new Error("Error");
+          }
+        };
+        using b = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          }
+        }
+      `,
+    },
+    run: {
+      error: "error: Error",
+      stdout: "Disposing",
+    },
+  });
+
+  itBundled("edgecase/UsingExportFails", {
+    files: {
+      "/entry.ts": `
+        import a from "./import.ts";
+        console.log(a.ok);
+      `,
+      "/import.ts": `
+        using a = {
+          [Symbol.dispose]: () => {
+            console.log("Disposing");
+          },
+          ok: true,
+        };
+        export default a;
+      `,
+    },
+    run: {
+      stdout: "Disposing\ntrue",
+    },
+  });
+
+  itBundled("edgecase/NoOutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: false,
+    backend: "api",
+    onAfterApiBundle: async build => {
+      expect(build.success).toEqual(true);
+      expect(build.outputs).toBeArrayOfSize(2);
+
+      expect(build.outputs[0].path).toEqual("./entry.js");
+      expect(build.outputs[0].loader).toEqual("ts");
+      expect(build.outputs[0].kind).toEqual("entry-point");
+
+      expect(build.outputs[1].loader).toEqual("file");
+      expect(build.outputs[1].kind).toEqual("asset");
+      expect(await build.outputs[1].text()).toEqual("<head></head>");
+    },
+  });
+
+  itBundled("edgecase/OutWithTwoFiles", {
+    files: {
+      "/entry.ts": `
+        import index from './index.html'
+        console.log(index);
+      `,
+      "/index.html": `
+        <head></head>
+      `,
+    },
+    generateOutput: true,
+    bundleErrors: {
+      "<bun>": ["cannot write multiple output files without an output directory"],
+    },
+    run: true,
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

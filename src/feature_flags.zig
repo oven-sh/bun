@@ -159,10 +159,10 @@ pub fn isLibdeflateEnabled() bool {
 }
 
 /// Enable Bun Kit's experimental bundler tools
-pub const kit = env.is_canary or env.isDebug;
+pub const bake = env.is_canary or env.isDebug;
 
 /// Enable --server-components
-pub const cli_server_components = kit;
+pub const cli_server_components = bake;
 
 /// Enable CSS handling in `bun build`
 pub const css = env.is_canary or env.isDebug;

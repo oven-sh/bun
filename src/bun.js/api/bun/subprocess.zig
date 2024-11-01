@@ -1437,16 +1437,19 @@ pub const Subprocess = struct {
         }
     };
 
-    pub fn onProcessExit(this: *Subprocess, _: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
+    pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
         log("onProcessExit()", .{});
         const this_jsvalue = this.this_jsvalue;
         const globalThis = this.globalThis;
+        const jsc_vm = globalThis.bunVM();
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
         this.clearAbortSignal();
         defer this.deref();
         defer this.disconnectIPC(true);
+
+        jsc_vm.onSubprocessExit(process);
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
         var existing_stdin_value = JSC.JSValue.zero;
@@ -1480,7 +1483,7 @@ pub const Subprocess = struct {
         var did_update_has_pending_activity = false;
         defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
 
-        const loop = globalThis.bunVM().eventLoop();
+        const loop = jsc_vm.eventLoop();
 
         if (!is_sync) {
             if (this.exit_promise.trySwap()) |promise| {
@@ -1742,7 +1745,7 @@ pub const Subprocess = struct {
             } else if (!args.isObject()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
-            } else if (args.getOwnTruthy(globalThis, "cmd")) |cmd_value_| {
+            } else if (args.getTruthy(globalThis, "cmd")) |cmd_value_| {
                 cmd_value = cmd_value_;
             } else {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
@@ -1750,7 +1753,7 @@ pub const Subprocess = struct {
             }
 
             if (args.isObject()) {
-                if (args.getOwnTruthy(globalThis, "argv0")) |argv0_| {
+                if (args.getTruthy(globalThis, "argv0")) |argv0_| {
                     const argv0_str = argv0_.getZigString(globalThis);
                     if (argv0_str.len > 0) {
                         argv0 = argv0_str.toOwnedSliceZ(allocator) catch {
@@ -1761,7 +1764,7 @@ pub const Subprocess = struct {
                 }
 
                 // need to update `cwd` before searching for executable with `Which.which`
-                if (args.getOwnTruthy(globalThis, "cwd")) |cwd_| {
+                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
                     const cwd_str = cwd_.getZigString(globalThis);
                     if (cwd_str.len > 0) {
                         cwd = cwd_str.toOwnedSliceZ(allocator) catch {
@@ -1846,10 +1849,10 @@ pub const Subprocess = struct {
             if (args != .zero and args.isObject()) {
                 // This must run before the stdio parsing happens
                 if (!is_sync) {
-                    if (args.getOwnTruthy(globalThis, "ipc")) |val| {
+                    if (args.getTruthy(globalThis, "ipc")) |val| {
                         if (val.isCell() and val.isCallable(globalThis.vm())) {
                             maybe_ipc_mode = ipc_mode: {
-                                if (args.getOwnTruthy(globalThis, "serialization")) |mode_val| {
+                                if (args.getTruthy(globalThis, "serialization")) |mode_val| {
                                     if (mode_val.isString()) {
                                         break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
                                             if (!globalThis.hasException()) {
@@ -1872,7 +1875,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getOwnTruthy(globalThis, "signal")) |signal_val| {
+                if (args.getTruthy(globalThis, "signal")) |signal_val| {
                     if (signal_val.as(JSC.WebCore.AbortSignal)) |signal| {
                         abort_signal = signal.ref();
                     } else {
@@ -1880,7 +1883,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getOwnTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
+                if (args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
                     if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
                         return .zero;
@@ -1892,7 +1895,7 @@ pub const Subprocess = struct {
                         onDisconnect_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.getOwnTruthy(globalThis, "onExit")) |onExit_| {
+                if (args.getTruthy(globalThis, "onExit")) |onExit_| {
                     if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                         return .zero;
@@ -1904,7 +1907,7 @@ pub const Subprocess = struct {
                         onExit_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.getOwnTruthy(globalThis, "env")) |object| {
+                if (args.getTruthy(globalThis, "env")) |object| {
                     if (!object.isObject()) {
                         globalThis.throwInvalidArguments("env must be an object", .{});
                         return .zero;
@@ -1920,7 +1923,7 @@ pub const Subprocess = struct {
                     };
                     env_array = envp_managed.moveToUnmanaged();
                 }
-                if (args.getOwn(globalThis, "stdio")) |stdio_val| {
+                if (args.get(globalThis, "stdio")) |stdio_val| {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
@@ -1959,44 +1962,44 @@ pub const Subprocess = struct {
                         }
                     }
                 } else {
-                    if (args.getOwn(globalThis, "stdin")) |value| {
+                    if (args.get(globalThis, "stdin")) |value| {
                         if (!stdio[0].extract(globalThis, 0, value))
                             return .zero;
                     }
 
-                    if (args.getOwn(globalThis, "stderr")) |value| {
+                    if (args.get(globalThis, "stderr")) |value| {
                         if (!stdio[2].extract(globalThis, 2, value))
                             return .zero;
                     }
 
-                    if (args.getOwn(globalThis, "stdout")) |value| {
+                    if (args.get(globalThis, "stdout")) |value| {
                         if (!stdio[1].extract(globalThis, 1, value))
                             return .zero;
                     }
                 }
 
                 if (comptime !is_sync) {
-                    if (args.getOwn(globalThis, "lazy")) |lazy_val| {
+                    if (args.get(globalThis, "lazy")) |lazy_val| {
                         if (lazy_val.isBoolean()) {
                             lazy = lazy_val.toBoolean();
                         }
                     }
                 }
 
-                if (args.getOwn(globalThis, "detached")) |detached_val| {
+                if (args.get(globalThis, "detached")) |detached_val| {
                     if (detached_val.isBoolean()) {
                         detached = detached_val.toBoolean();
                     }
                 }
 
                 if (Environment.isWindows) {
-                    if (args.getOwn(globalThis, "windowsHide")) |val| {
+                    if (args.get(globalThis, "windowsHide")) |val| {
                         if (val.isBoolean()) {
                             windows_hide = val.asBoolean();
                         }
                     }
 
-                    if (args.getOwn(globalThis, "windowsVerbatimArguments")) |val| {
+                    if (args.get(globalThis, "windowsVerbatimArguments")) |val| {
                         if (val.isBoolean()) {
                             windows_verbatim_arguments = val.asBoolean();
                         }
@@ -2322,6 +2325,9 @@ pub const Subprocess = struct {
                 subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
                 abort_signal = null;
             }
+            if (!subprocess.process.hasExited()) {
+                jsc_vm.onSubprocessSpawn(subprocess.process);
+            }
             return out;
         }
 
@@ -2341,6 +2347,10 @@ pub const Subprocess = struct {
                     subprocess.process.wait(true);
                 },
             }
+        }
+
+        if (!subprocess.process.hasExited()) {
+            jsc_vm.onSubprocessSpawn(subprocess.process);
         }
 
         while (subprocess.hasPendingActivityNonThreadsafe()) {
@@ -2366,8 +2376,13 @@ pub const Subprocess = struct {
         const exitCode = subprocess.getExitCode(globalThis);
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
-        const resource_usage = subprocess.createResourceUsageObject(globalThis);
+        const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
         subprocess.finalize();
+
+        if (globalThis.hasException()) {
+            // e.g. a termination exception.
+            return .zero;
+        }
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
         sync_value.put(globalThis, JSC.ZigString.static("exitCode"), exitCode);

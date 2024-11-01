@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const css = @import("../css_parser.zig");
+const bun = @import("root").bun;
 const ArrayList = std.ArrayListUnmanaged;
 const MediaList = css.MediaList;
 const CustomMedia = css.CustomMedia;
@@ -31,13 +32,50 @@ pub fn StyleRule(comptime R: type) type {
 
         const This = @This();
 
+        /// Returns whether the rule is empty.
+        pub fn isEmpty(this: *const This) bool {
+            return this.selectors.v.isEmpty() or (this.declarations.isEmpty() and this.rules.v.items.len == 0);
+        }
+
+        /// Returns a hash of this rule for use when deduplicating.
+        /// Includes the selectors and properties.
+        pub fn hashKey(this: *const This) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            this.selectors.hash(&hasher);
+            this.declarations.hashPropertyIds(&hasher);
+            return hasher.final();
+        }
+
+        pub fn deepClone(this: *const This, allocator: std.mem.Allocator) This {
+            return This{
+                .selectors = this.selectors.deepClone(allocator),
+                .vendor_prefix = this.vendor_prefix,
+                .declarations = this.declarations.deepClone(allocator),
+                .rules = this.rules.deepClone(allocator),
+                .loc = this.loc,
+            };
+        }
+
+        pub fn updatePrefix(this: *This, context: *css.MinifyContext) void {
+            this.vendor_prefix = css.selector.getPrefix(&this.selectors);
+            if (this.vendor_prefix.contains(css.VendorPrefix{ .none = true }) and
+                context.targets.shouldCompileSelectors())
+            {
+                this.vendor_prefix = css.selector.downlevelSelectors(context.allocator, this.selectors.v.slice_mut(), context.targets.*);
+            }
+        }
+
+        pub fn isCompatible(this: *const This, targets: css.targets.Targets) bool {
+            return css.selector.isCompatible(this.selectors.v.slice(), targets);
+        }
+
         pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             if (this.vendor_prefix.isEmpty()) {
                 try this.toCssBase(W, dest);
             } else {
                 var first_rule = true;
-                inline for (std.meta.fields(css.VendorPrefix)) |field| {
-                    if (field.type == bool and @field(this.vendor_prefix, field.name)) {
+                inline for (css.VendorPrefix.FIELDS) |field| {
+                    if (@field(this.vendor_prefix, field)) {
                         if (first_rule) {
                             first_rule = false;
                         } else {
@@ -47,7 +85,7 @@ pub fn StyleRule(comptime R: type) type {
                             try dest.newline();
                         }
 
-                        const prefix = css.VendorPrefix.fromName(field.name);
+                        const prefix = css.VendorPrefix.fromName(field);
                         dest.vendor_prefix = prefix;
                         try this.toCssBase(W, dest);
                     }
@@ -60,7 +98,7 @@ pub fn StyleRule(comptime R: type) type {
         fn toCssBase(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
             // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
             const supports_nesting = this.rules.v.items.len == 0 or
-                css.Targets.shouldCompileSame(
+                !css.Targets.shouldCompileSame(
                 &dest.targets,
                 .nesting,
             );
@@ -72,7 +110,7 @@ pub fn StyleRule(comptime R: type) type {
                 //   #[cfg(feature = "sourcemap")]
                 //   dest.add_mapping(self.loc);
 
-                try css.selector.serialize.serializeSelectorList(this.selectors.v.items, W, dest, dest.context(), false);
+                try css.selector.serialize.serializeSelectorList(this.selectors.v.slice(), W, dest, dest.context(), false);
                 try dest.whitespace();
                 try dest.writeChar('{');
                 dest.indent();
@@ -149,8 +187,56 @@ pub fn StyleRule(comptime R: type) type {
             } else {
                 try Helpers.end(W, dest, has_declarations);
                 try Helpers.newline(this, W, dest, supports_nesting, len);
-                try dest.withContext(&this.selectors, this, This.toCss);
+                try dest.withContext(&this.selectors, this, struct {
+                    pub fn toCss(self: *const This, WW: type, d: *Printer(WW)) PrintErr!void {
+                        return self.rules.toCss(WW, d);
+                    }
+                }.toCss);
             }
+        }
+
+        pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
+            var unused = false;
+            if (context.unused_symbols.count() > 0) {
+                if (css.selector.isUnused(this.selectors.v.slice(), context.unused_symbols, parent_is_unused)) {
+                    if (this.rules.v.items.len == 0) {
+                        return true;
+                    }
+
+                    this.declarations.declarations.clearRetainingCapacity();
+                    this.declarations.important_declarations.clearRetainingCapacity();
+                    unused = true;
+                }
+            }
+
+            // TODO: this
+            // let pure_css_modules = context.pure_css_modules;
+            // if context.pure_css_modules {
+            //   if !self.selectors.0.iter().all(is_pure_css_modules_selector) {
+            //     return Err(MinifyError {
+            //       kind: crate::error::MinifyErrorKind::ImpureCSSModuleSelector,
+            //       loc: self.loc,
+            //     });
+            //   }
+
+            //   // Parent rule contained id or class, so child rules don't need to.
+            //   context.pure_css_modules = false;
+            // }
+
+            context.handler_context.context = .style_rule;
+            this.declarations.minify(context.handler, context.important_handler, &context.handler_context);
+            context.handler_context.context = .none;
+
+            if (this.rules.v.items.len > 0) {
+                var handler_context = context.handler_context.child(.style_rule);
+                std.mem.swap(css.PropertyHandlerContext, &context.handler_context, &handler_context);
+                try this.rules.minify(context, unused);
+                if (unused and this.rules.v.items.len == 0) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// Returns whether this rule is a duplicate of another rule.
@@ -159,9 +245,13 @@ pub fn StyleRule(comptime R: type) type {
             return this.declarations.len() == other.declarations.len() and
                 this.selectors.eql(&other.selectors) and
                 brk: {
-                const len = @min(this.declarations.len(), other.declarations.len());
-                for (this.declarations[0..len], other.declarations[0..len]) |*a, *b| {
-                    if (!a.eql(b)) break :brk false;
+                var len = @min(this.declarations.declarations.items.len, other.declarations.declarations.items.len);
+                for (this.declarations.declarations.items[0..len], other.declarations.declarations.items[0..len]) |*a, *b| {
+                    if (!a.propertyId().eql(&b.propertyId())) break :brk false;
+                }
+                len = @min(this.declarations.important_declarations.items.len, other.declarations.important_declarations.items.len);
+                for (this.declarations.important_declarations.items[0..len], other.declarations.important_declarations.items[0..len]) |*a, *b| {
+                    if (!a.propertyId().eql(&b.propertyId())) break :brk false;
                 }
                 break :brk true;
             };

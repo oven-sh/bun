@@ -308,17 +308,17 @@ pub const Json = struct {
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
         if (source.path.isJSONCFile()) {
-            return try parse(cache, log, source, allocator, json_parser.ParseTSConfig, true);
+            return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
         }
 
-        return try parse(cache, log, source, allocator, json_parser.ParseJSON, false);
+        return try parse(cache, log, source, allocator, json_parser.parse, false);
     }
 
     pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime force_utf8: bool) anyerror!?js_ast.Expr {
-        return try parse(cache, log, source, allocator, json_parser.ParseTSConfig, force_utf8);
+        return try parse(cache, log, source, allocator, json_parser.parseTSConfig, force_utf8);
     }
 
     pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
-        return try parse(cache, log, source, allocator, json_parser.ParseTSConfig, true);
+        return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
     }
 };

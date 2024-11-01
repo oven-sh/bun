@@ -38,6 +38,7 @@ pub const PrinterOptions = struct {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pseudo_classes: ?PseudoClasses = null,
+    public_path: []const u8 = "",
 };
 
 /// A mapping of user action pseudo classes to replace with class names.
@@ -96,11 +97,21 @@ pub fn Printer(comptime Writer: type) type {
         ctx: ?*const css.StyleContext = null,
         scratchbuf: std.ArrayList(u8),
         error_kind: ?css.PrinterError = null,
+        import_records: ?*const bun.BabyList(bun.ImportRecord),
+        public_path: []const u8,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
         // TODO: finish the fields
 
         const This = @This();
+
+        inline fn getWrittenAmt(writer: Writer) usize {
+            return switch (Writer) {
+                ArrayList(u8).Writer => writer.context.self.items.len,
+                *bun.js_printer.BufferWriter => writer.written.len,
+                else => @compileError("Dunno what to do with this type yo: " ++ @typeName(Writer)),
+            };
+        }
 
         /// Returns the current source filename that is being printed.
         pub fn filename(this: *const This) []const u8 {
@@ -121,6 +132,15 @@ pub fn Printer(comptime Writer: type) type {
                 .kind = .fmt_error,
                 .loc = null,
             };
+            return PrintErr.lol;
+        }
+
+        pub fn addNoImportRecordError(this: *This) PrintErr!void {
+            this.error_kind = css.PrinterError{
+                .kind = .no_import_records,
+                .loc = null,
+            };
+            return PrintErr.lol;
         }
 
         /// Returns an error of the given kind at the provided location in the current source file.
@@ -149,7 +169,14 @@ pub fn Printer(comptime Writer: type) type {
             }
         }
 
-        pub fn new(allocator: Allocator, scratchbuf: std.ArrayList(u8), dest: Writer, options: PrinterOptions) This {
+        /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
+        pub fn new(
+            allocator: Allocator,
+            scratchbuf: std.ArrayList(u8),
+            dest: Writer,
+            options: PrinterOptions,
+            import_records: ?*const bun.BabyList(bun.ImportRecord),
+        ) This {
             return .{
                 .sources = null,
                 .dest = dest,
@@ -159,14 +186,43 @@ pub fn Printer(comptime Writer: type) type {
                 .remove_imports = options.analyze_dependencies != null and options.analyze_dependencies.?.remove_imports,
                 .pseudo_classes = options.pseudo_classes,
                 .indentation_buf = std.ArrayList(u8).init(allocator),
+                .import_records = import_records,
                 .scratchbuf = scratchbuf,
                 .allocator = allocator,
+                .public_path = options.public_path,
                 .loc = Location{
                     .source_index = 0,
                     .line = 0,
                     .column = 1,
                 },
             };
+        }
+
+        pub inline fn getImportRecords(this: *This) PrintErr!*const bun.BabyList(bun.ImportRecord) {
+            if (this.import_records) |import_records| return import_records;
+            try this.addNoImportRecordError();
+            unreachable;
+        }
+
+        pub fn printImportRecord(this: *This, import_record_idx: u32) PrintErr!void {
+            if (this.import_records) |import_records| {
+                const import_record = import_records.at(import_record_idx);
+                const a, const b = bun.bundle_v2.cheapPrefixNormalizer(this.public_path, import_record.path.text);
+                try this.writeStr(a);
+                try this.writeStr(b);
+                return;
+            }
+            return this.addNoImportRecordError();
+        }
+
+        pub inline fn importRecord(this: *Printer(Writer), import_record_idx: u32) PrintErr!*const bun.ImportRecord {
+            if (this.import_records) |import_records| return import_records.at(import_record_idx);
+            try this.addNoImportRecordError();
+            unreachable;
+        }
+
+        pub inline fn getImportRecordUrl(this: *This, import_record_idx: u32) PrintErr![]const u8 {
+            return (try this.importRecord(import_record_idx)).path.text;
         }
 
         pub fn context(this: *const Printer(Writer)) ?*const css.StyleContext {
@@ -181,6 +237,18 @@ pub fn Printer(comptime Writer: type) type {
             return this.writeStr(str) catch std.mem.Allocator.Error.OutOfMemory;
         }
 
+        pub fn writeComment(this: *This, comment: []const u8) PrintErr!void {
+            _ = this.dest.writeAll(comment) catch {
+                return this.addFmtError();
+            };
+            const new_lines = std.mem.count(u8, comment, "\n");
+            this.line += @intCast(new_lines);
+            this.col = 0;
+            const last_line_start = comment.len - (std.mem.lastIndexOfScalar(u8, comment, '\n') orelse comment.len);
+            this.col += @intCast(last_line_start);
+            return;
+        }
+
         /// Writes a raw string to the underlying destination.
         ///
         /// NOTE: Is is assumed that the string does not contain any newline characters.
@@ -190,7 +258,7 @@ pub fn Printer(comptime Writer: type) type {
                 bun.assert(std.mem.indexOfScalar(u8, s, '\n') == null);
             }
             this.col += @intCast(s.len);
-            this.dest.writeAll(s) catch {
+            _ = this.dest.writeAll(s) catch {
                 return this.addFmtError();
             };
             return;
@@ -202,9 +270,9 @@ pub fn Printer(comptime Writer: type) type {
         /// If such a string is written, it will break source maps.
         pub fn writeFmt(this: *This, comptime fmt: []const u8, args: anytype) PrintErr!void {
             // assuming the writer comes from an ArrayList
-            const start: usize = this.dest.context.self.items.len;
+            const start: usize = getWrittenAmt(this.dest);
             this.dest.print(fmt, args) catch bun.outOfMemory();
-            const written = this.dest.context.self.items.len - start;
+            const written = getWrittenAmt(this.dest) - start;
             this.col += @intCast(written);
         }
 
@@ -293,7 +361,7 @@ pub fn Printer(comptime Writer: type) type {
             } else {
                 this.col += 1;
             }
-            return this.dest.writeByte(char) catch {
+            _ = this.dest.writeByte(char) catch {
                 return this.addFmtError();
             };
         }

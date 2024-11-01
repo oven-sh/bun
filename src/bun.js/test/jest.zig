@@ -149,8 +149,12 @@ pub const TestRunner = struct {
         this.has_pending_tests = false;
         this.pending_test = null;
 
+        const vm = JSC.VirtualMachine.get();
+        vm.auto_killer.clear();
+        vm.auto_killer.disable();
+
         // disable idling
-        JSC.VirtualMachine.get().wakeup();
+        vm.wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {
@@ -1410,7 +1414,7 @@ pub const TestRunnerTask = struct {
         }
 
         this.sync_state = .pending;
-
+        jsc_vm.auto_killer.enable();
         var result = TestScope.run(&test_, this);
 
         if (this.describe.tests.items.len > test_id) {
@@ -1429,7 +1433,6 @@ pub const TestRunnerTask = struct {
                 // Let's allow any pending work to run, and then move on to the next test.
                 this.continueRunningTestsAfterMicrotasksRun();
             }
-
             return true;
         }
 
@@ -1551,8 +1554,22 @@ pub const TestRunnerTask = struct {
         describe.tests.items[test_id] = test_;
 
         if (from == .timeout) {
-            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
+            const vm = this.globalThis.bunVM();
+            const cancel_result = vm.auto_killer.kill();
+
+            const err = brk: {
+                if (cancel_result.processes > 0) {
+                    switch (Output.enable_ansi_colors_stdout) {
+                        inline else => |enable_ansi_colors| {
+                            break :brk this.globalThis.createErrorInstance(comptime Output.prettyFmt("Test {} timed out after {d}ms <r><d>({})<r>", enable_ansi_colors), .{ bun.fmt.quote(test_.label), test_.timeout_millis, cancel_result });
+                        },
+                    }
+                } else {
+                    break :brk this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+                }
+            };
+
+            _ = vm.uncaughtException(this.globalThis, err, true);
         }
 
         checkAssertionsCounter(result);
@@ -1620,6 +1637,7 @@ pub const TestRunnerTask = struct {
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
+
         Jest.runner.?.runNextTest();
     }
 
@@ -1770,7 +1788,7 @@ inline fn createScope(
                 buffer.reset();
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
                 buffer.append(label) catch unreachable;
-                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                const str = bun.String.fromBytes(buffer.slice());
                 is_skip = !regex.matches(str);
                 if (is_skip) {
                     tag_to_use = .skip;
@@ -2069,7 +2087,7 @@ fn eachBind(
                 buffer.reset();
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
                 buffer.append(formattedLabel) catch unreachable;
-                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                const str = bun.String.fromBytes(buffer.slice());
                 is_skip = !regex.matches(str);
             }
 

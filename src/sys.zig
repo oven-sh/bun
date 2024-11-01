@@ -729,7 +729,6 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            assertIsValidWindowsPath(bun.OSPathChar, file_path);
             const rc = kernel32.CreateDirectoryW(file_path, null);
 
             if (Maybe(void).errnoSys(
@@ -959,6 +958,11 @@ fn openDirAtWindowsT(
         .result => |norm| norm,
     };
 
+    if (comptime T == u8) {
+        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+    } else {
+        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+    }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
 
@@ -1642,11 +1646,11 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         .mac => {
             const rc = system.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
-            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
-
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
+            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
@@ -2480,6 +2484,16 @@ pub fn exists(path: []const u8) bool {
     @compileError("TODO: existsOSPath");
 }
 
+pub fn existsZ(path: [:0]const u8) bool {
+    if (comptime Environment.isPosix) {
+        return system.access(path, 0) == 0;
+    }
+
+    if (comptime Environment.isWindows) {
+        return getFileAttributes(path) != null;
+    }
+}
+
 pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
     const dir_fd = bun.toFD(dir_);
@@ -3004,14 +3018,14 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
-    pub fn openat(other: anytype, path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn openat(other: anytype, path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
     }
 
-    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn open(path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 

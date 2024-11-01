@@ -14,7 +14,7 @@
       "name": "bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -22,6 +22,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -29,7 +31,7 @@
       "name": "bun test [file] --only",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--only", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -37,6 +39,8 @@
         "BUN_DEBUG_jest": "1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -50,7 +54,7 @@
       "name": "bun test [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -58,6 +62,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -65,7 +71,7 @@
       "name": "bun test [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
@@ -73,6 +79,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -80,7 +88,7 @@
       "name": "bun test [file] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--watch", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -88,6 +96,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -95,7 +105,7 @@
       "name": "bun test [file] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--hot", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -103,6 +113,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -110,7 +122,7 @@
       "name": "bun test [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -119,6 +131,8 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -131,7 +145,7 @@
       "name": "bun test [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -140,6 +154,8 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -160,6 +176,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -172,8 +190,14 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
+        "BUN_DEBUG_IncrementalGraph": "1",
+        "BUN_DEBUG_Bake": "1",
+        "BUN_DEBUG_reload_file_list": "1",
+        "GOMAXPROCS": "1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -188,6 +212,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -202,6 +228,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -216,6 +244,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -231,6 +261,8 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -251,6 +283,8 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -264,7 +298,7 @@
       "name": "bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -272,6 +306,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -279,7 +315,7 @@
       "name": "bun test [...] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -287,6 +323,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -294,7 +332,7 @@
       "name": "bun test [...] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -302,6 +340,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -309,7 +349,7 @@
       "name": "bun test [...] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--watch", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -317,6 +357,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -324,7 +366,7 @@
       "name": "bun test [...] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "--hot", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -332,6 +374,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -339,7 +383,7 @@
       "name": "bun test [...] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -348,6 +392,8 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -360,7 +406,7 @@
       "name": "bun test [...] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -369,6 +415,8 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -389,6 +437,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     // bun test [*]
     {
@@ -397,13 +447,15 @@
       "name": "bun test [*]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -411,13 +463,15 @@
       "name": "bun test [*] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -425,7 +479,7 @@
       "name": "bun test [*] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -433,6 +487,8 @@
         "BUN_INSPECT": "ws://localhost:0/",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -452,6 +508,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     {
       "type": "lldb",
@@ -466,6 +524,8 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
     // Windows: bun test [file]
     {
@@ -477,7 +537,7 @@
       "name": "Windows: bun test [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -506,7 +566,7 @@
       "name": "Windows: bun test --only [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "--only", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -535,7 +595,7 @@
       "name": "Windows: bun test [file] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -564,7 +624,7 @@
       "name": "Windows: bun test [file] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -593,7 +653,7 @@
       "name": "Windows: bun test [file] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -631,7 +691,7 @@
       "name": "Windows: bun test [file] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -818,7 +878,7 @@
       "name": "Windows: bun test [...]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -847,7 +907,7 @@
       "name": "Windows: bun test [...] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -876,7 +936,7 @@
       "name": "Windows: bun test [...] (verbose)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -905,7 +965,7 @@
       "name": "Windows: bun test [...] --watch",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "--watch", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -934,7 +994,7 @@
       "name": "Windows: bun test [...] --hot",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "--hot", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -963,7 +1023,7 @@
       "name": "Windows: bun test [...] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1001,7 +1061,7 @@
       "name": "Windows: bun test [...] --inspect-brk",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test", "${input:testName}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1066,7 +1126,7 @@
       "name": "Windows: bun test [*]",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1091,7 +1151,7 @@
       "name": "Windows: bun test [*] (fast)",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1120,7 +1180,7 @@
       "name": "Windows: bun test [*] --inspect",
       "program": "${workspaceFolder}/build/debug/bun-debug.exe",
       "args": ["test"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
       "environment": [
         {
           "name": "FORCE_COLOR",
@@ -1178,6 +1238,8 @@
         },
       ],
       "console": "internalConsole",
+      // Don't pause when the GC runs while the debugger is open.
+      "postRunCommands": ["process handle -p true -s false -n false SIGUSR1"],
     },
   ],
   "inputs": [

@@ -9,6 +9,7 @@ const PrintErr = css.PrintErr;
 const CSSNumber = css.css_values.number.CSSNumber;
 const CSSNumberFns = css.css_values.number.CSSNumberFns;
 const Calc = css.css_values.calc.Calc;
+const MathFunction = css.css_values.calc.MathFunction;
 const DimensionPercentage = css.css_values.percentage.DimensionPercentage;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
@@ -17,6 +18,24 @@ pub const LengthOrNumber = union(enum) {
     number: CSSNumber,
     /// A length.
     length: Length,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn default() LengthOrNumber {
+        return .{ .number = 0.0 };
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return switch (this.*) {
+            .number => |*n| n.* == other.number,
+            .length => |*l| l.eql(&other.length),
+        };
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 pub const LengthPercentage = DimensionPercentage(LengthValue);
@@ -26,6 +45,24 @@ pub const LengthPercentageOrAuto = union(enum) {
     auto,
     /// A [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage).
     length: LengthPercentage,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .length => this.length.isCompatible(browsers),
+            else => true,
+        };
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub inline fn deepClone(this: *const @This(), allocator: Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
 };
 
 const PX_PER_IN: f32 = 96.0;
@@ -155,6 +192,69 @@ pub const LengthValue = union(enum) {
     /// A length in the `cqmax` unit. An `cqmin` is equal to the larger of `cqi` and `cqb`.
     cqmax: CSSNumber,
 
+    const FeatureMap = .{
+        .px = null,
+        .in = null,
+        .cm = null,
+        .mm = null,
+        .q = css.Feature.q_unit,
+        .pt = null,
+        .pc = null,
+        .em = null,
+        .rem = css.Feature.rem_unit,
+        .ex = css.Feature.ex_unit,
+        .rex = null,
+        .ch = css.Feature.ch_unit,
+        .rch = null,
+        .cap = css.Feature.cap_unit,
+        .rcap = null,
+        .ic = css.Feature.ic_unit,
+        .ric = null,
+        .lh = css.Feature.lh_unit,
+        .rlh = css.Feature.rlh_unit,
+        .vw = css.Feature.vw_unit,
+        .lvw = css.Feature.viewport_percentage_units_large,
+        .svw = css.Feature.viewport_percentage_units_small,
+        .dvw = css.Feature.viewport_percentage_units_dynamic,
+        .cqw = css.Feature.container_query_length_units,
+        .vh = css.Feature.vh_unit,
+        .lvh = css.Feature.viewport_percentage_units_large,
+        .svh = css.Feature.viewport_percentage_units_small,
+        .dvh = css.Feature.viewport_percentage_units_dynamic,
+        .cqh = css.Feature.container_query_length_units,
+        .vi = css.Feature.vi_unit,
+        .svi = css.Feature.viewport_percentage_units_small,
+        .lvi = css.Feature.viewport_percentage_units_large,
+        .dvi = css.Feature.viewport_percentage_units_dynamic,
+        .cqi = css.Feature.container_query_length_units,
+        .vb = css.Feature.vb_unit,
+        .svb = css.Feature.viewport_percentage_units_small,
+        .lvb = css.Feature.viewport_percentage_units_large,
+        .dvb = css.Feature.viewport_percentage_units_dynamic,
+        .cqb = css.Feature.container_query_length_units,
+        .vmin = css.Feature.vmin_unit,
+        .svmin = css.Feature.viewport_percentage_units_small,
+        .lvmin = css.Feature.viewport_percentage_units_large,
+        .dvmin = css.Feature.viewport_percentage_units_dynamic,
+        .cqmin = css.Feature.container_query_length_units,
+        .vmax = css.Feature.vmax_unit,
+        .svmax = css.Feature.viewport_percentage_units_small,
+        .lvmax = css.Feature.viewport_percentage_units_large,
+        .dvmax = css.Feature.viewport_percentage_units_dynamic,
+        .cqmax = css.Feature.container_query_length_units,
+    };
+
+    comptime {
+        const struct_fields = std.meta.fields(LengthValue);
+        const feature_fields = std.meta.fields(@TypeOf(FeatureMap));
+        if (struct_fields.len != feature_fields.len) {
+            @compileError("LengthValue and FeatureMap must have the same number of fields");
+        }
+        for (struct_fields) |field| {
+            _ = @field(FeatureMap, field.name);
+        }
+    }
+
     pub fn parse(input: *css.Parser) Result(@This()) {
         const location = input.currentSourceLocation();
         const token = switch (input.next()) {
@@ -188,6 +288,19 @@ pub const LengthValue = union(enum) {
         return css.serializer.serializeDimension(value, unit, W, dest);
     }
 
+    pub fn isZero(this: *const LengthValue) bool {
+        inline for (bun.meta.EnumFields(@This())) |field| {
+            if (@intFromEnum(this.*) == field.value) {
+                return @field(this, field.name) == 0.0;
+            }
+        }
+        unreachable;
+    }
+
+    pub fn zero() LengthValue {
+        return .{ .px = 0.0 };
+    }
+
     /// Attempts to convert the value to pixels.
     /// Returns `None` if the conversion is not possible.
     pub fn toPx(this: *const @This()) ?CSSNumber {
@@ -210,6 +323,16 @@ pub const LengthValue = union(enum) {
             }
         }
         return false;
+    }
+
+    pub fn isSignNegative(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignNegative(s);
+    }
+
+    pub fn isSignPositive(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignPositive(s);
     }
 
     pub fn trySign(this: *const @This()) ?f32 {
@@ -286,7 +409,7 @@ pub const LengthValue = union(enum) {
         }
 
         const a = this.toPx();
-        const b = this.toPx();
+        const b = other.toPx();
         if (a != null and b != null) {
             return css.generic.partialCmpF32(&a.?, &b.?);
         }
@@ -343,6 +466,40 @@ pub const LengthValue = union(enum) {
         }
         return null;
     }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn tryAdd(this: *const LengthValue, _: std.mem.Allocator, rhs: *const LengthValue) ?LengthValue {
+        if (@intFromEnum(this.*) == @intFromEnum(rhs.*)) {
+            inline for (bun.meta.EnumFields(LengthValue)) |field| {
+                if (field.value == @intFromEnum(this.*)) {
+                    return @unionInit(LengthValue, field.name, @field(this, field.name) + @field(rhs, field.name));
+                }
+            }
+            unreachable;
+        }
+        if (this.toPx()) |a| {
+            if (rhs.toPx()) |b| {
+                return .{ .px = a + b };
+            }
+        }
+        return null;
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        inline for (bun.meta.EnumFields(LengthValue)) |field| {
+            if (field.value == @intFromEnum(this.*)) {
+                if (comptime @TypeOf(@field(FeatureMap, field.name)) == css.compat.Feature) {
+                    const feature = @field(FeatureMap, field.name);
+                    return css.compat.Feature.isCompatible(feature, browsers);
+                }
+                return true;
+            }
+        }
+        unreachable;
+    }
 };
 
 /// A CSS [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) value, with support for `calc()`.
@@ -370,9 +527,8 @@ pub const Length = union(enum) {
         if (input.tryParse(Calc(Length).parse, .{}).asValue()) |calc_value| {
             // PERF: I don't like this redundant allocation
             if (calc_value == .value) {
-                var mutable: *Calc(Length) = @constCast(&calc_value);
                 const ret = calc_value.value.*;
-                mutable.deinit(input.allocator());
+                input.allocator().destroy(calc_value.value);
                 return .{ .result = ret };
             }
             return .{ .result = .{
@@ -409,6 +565,13 @@ pub const Length = union(enum) {
         return .{ .value = .{ .px = p } };
     }
 
+    pub fn toPx(this: *const Length) ?CSSNumber {
+        return switch (this.*) {
+            .value => |a| a.toPx(),
+            else => null,
+        };
+    }
+
     pub fn mulF32(this: Length, allocator: Allocator, other: f32) Length {
         return switch (this) {
             .value => Length{ .value = this.value.mulF32(allocator, other) },
@@ -426,10 +589,123 @@ pub const Length = union(enum) {
         // Unwrap calc(...) functions so we can add inside.
         // Then wrap the result in a calc(...) again if necessary.
         const a = unwrapCalc(allocator, this);
-        _ = a; // autofix
         const b = unwrapCalc(allocator, other);
-        _ = b; // autofix
-        @panic(css.todo_stuff.depth);
+        const res: Length = Length.addInternal(a, allocator, b);
+        if (res == .calc) {
+            if (res.calc.* == .value) return res.calc.value.*;
+            if (res.calc.* == .function and res.calc.function.* != .calc) return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){ .function = res.calc.function }) };
+            return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                .function = bun.create(allocator, MathFunction(Length), MathFunction(Length){ .calc = res.calc.* }),
+            }) };
+        }
+        return res;
+    }
+
+    fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
+        if (this.tryAdd(allocator, &other)) |r| return r;
+        return this.add__(allocator, other);
+    }
+
+    fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
+        return switch (this) {
+            .calc => |c| c.*,
+            else => |v| Calc(Length){ .value = bun.create(allocator, Length, v) },
+        };
+    }
+
+    fn add__(this: Length, allocator: Allocator, other: Length) Length {
+        var a = this;
+        var b = other;
+
+        if (a.isZero()) return b;
+
+        if (b.isZero()) return a;
+
+        if (a.isSignNegative() and b.isSignPositive()) {
+            std.mem.swap(Length, &a, &b);
+        }
+
+        if (a == .calc and b == .calc) {
+            return Length{ .calc = bun.create(allocator, Calc(Length), a.calc.add(allocator, b.calc.*)) };
+        } else if (a == .calc) {
+            switch (a.calc.*) {
+                .value => |v| return v.add__(allocator, b),
+                else => return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                    .sum = .{
+                        .left = bun.create(allocator, Calc(Length), a.calc.*),
+                        .right = bun.create(allocator, Calc(Length), b.intoCalc(allocator)),
+                    },
+                }) },
+            }
+        } else if (b == .calc) {
+            switch (b.calc.*) {
+                .value => |v| return a.add__(allocator, v.*),
+                else => return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                    .sum = .{
+                        .left = bun.create(allocator, Calc(Length), a.intoCalc(allocator)),
+                        .right = bun.create(allocator, Calc(Length), b.calc.*),
+                    },
+                }) },
+            }
+        } else {
+            return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
+                .sum = .{
+                    .left = bun.create(allocator, Calc(Length), a.intoCalc(allocator)),
+                    .right = bun.create(allocator, Calc(Length), b.intoCalc(allocator)),
+                },
+            }) };
+        }
+    }
+
+    fn tryAdd(this: *const Length, allocator: Allocator, other: *const Length) ?Length {
+        if (this.* == .value and other.* == .value) {
+            if (this.value.tryAdd(allocator, &other.value)) |res| {
+                return Length{ .value = res };
+            }
+            return null;
+        }
+
+        if (this.* == .calc) {
+            switch (this.calc.*) {
+                .value => |v| return v.tryAdd(allocator, other),
+                .sum => |s| {
+                    const a = Length{ .calc = s.left };
+                    if (a.tryAdd(allocator, other)) |res| {
+                        return res.add__(allocator, Length{ .calc = s.right });
+                    }
+
+                    const b = Length{ .calc = s.right };
+                    if (b.tryAdd(allocator, other)) |res| {
+                        return (Length{ .calc = s.left }).add__(allocator, res);
+                    }
+
+                    return null;
+                },
+                else => return null,
+            }
+        }
+
+        if (other.* == .calc) {
+            switch (other.calc.*) {
+                .value => |v| return v.tryAdd(allocator, this),
+                .sum => |s| {
+                    const a = Length{ .calc = s.left };
+                    if (this.tryAdd(allocator, &a)) |res| {
+                        return res.add__(allocator, Length{ .calc = s.right });
+                    }
+
+                    const b = Length{ .calc = s.right };
+                    if (this.tryAdd(allocator, &b)) |res| {
+                        return (Length{ .calc = s.left }).add__(allocator, res);
+                    }
+
+                    return null;
+                },
+                else => return null,
+            }
+        }
+
+        return null;
     }
 
     fn unwrapCalc(allocator: Allocator, length: Length) Length {
@@ -454,6 +730,16 @@ pub const Length = union(enum) {
             .value => |v| v.sign(),
             .calc => |v| v.trySign(),
         };
+    }
+
+    pub fn isSignNegative(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignNegative(s);
+    }
+
+    pub fn isSignPositive(this: *const @This()) bool {
+        const s = this.trySign() orelse return false;
+        return css.signfns.isSignPositive(s);
     }
 
     pub fn partialCmp(this: *const Length, other: *const Length) ?std.math.Order {
@@ -496,5 +782,19 @@ pub const Length = union(enum) {
             return this.value.tryOpTo(&other.value, R, ctx, op_fn);
         }
         return null;
+    }
+
+    pub fn isZero(this: *const Length) bool {
+        return switch (this.*) {
+            .value => |v| v.isZero(),
+            else => false,
+        };
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .value => |*v| v.isCompatible(browsers),
+            .calc => |c| c.isCompatible(browsers),
+        };
     }
 };

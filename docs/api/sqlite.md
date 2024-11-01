@@ -325,6 +325,28 @@ As a performance optimization, the class constructor is not called, default init
 
 The database columns are set as properties on the class instance.
 
+### `.iterate()` (`@@iterator`)
+
+Use `.iterate()` to run a query and incrementally return results. This is useful for large result sets that you want to process one row at a time without loading all the results into memory.
+
+```ts
+const query = db.query("SELECT * FROM foo");
+for (const row of query.iterate()) {
+  console.log(row);
+}
+```
+
+You can also use the `@@iterator` protocol:
+
+```ts
+const query = db.query("SELECT * FROM foo");
+for (const row of query) {
+  console.log(row);
+}
+```
+
+This feature was added in Bun v1.1.31.
+
 ### `.values()`
 
 Use `values()` to run a query and get back all results as an array of arrays.

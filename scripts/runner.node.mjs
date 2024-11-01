@@ -233,8 +233,13 @@ async function runTests() {
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
-  if (!isCI) console.log("-------");
-  if (!isCI) console.log("passing", results.length - failedTests.length, "/", results.length);
+  if (!isCI) {
+    console.log("-------");
+    console.log("passing", results.length - failedTests.length, "/", results.length);
+    for (const { testPath } of failedTests) {
+      console.log("-", testPath);
+    }
+  }
   return results;
 }
 
@@ -1005,9 +1010,16 @@ async function getExecPathFromBuildKite(target) {
 
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
+
+  const args = ["artifact", "download", "**", releasePath, "--step", target];
+  const buildId = process.env["BUILDKITE_ARTIFACT_BUILD_ID"];
+  if (buildId) {
+    args.push("--build", buildId);
+  }
+
   await spawnSafe({
     command: "buildkite-agent",
-    args: ["artifact", "download", "**", releasePath, "--step", target],
+    args,
   });
 
   let zipPath;

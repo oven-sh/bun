@@ -12,6 +12,7 @@ const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
 const Environment = bun.Environment;
+const UUID7 = @import("./uuid.zig").UUID7;
 
 pub const Lifetime = enum {
     clone,
@@ -403,7 +404,7 @@ pub const Crypto = struct {
                 return .zero;
             }
 
-            if (options_value.getOwnTruthy(globalThis, "cost") orelse options_value.getOwnTruthy(globalThis, "N")) |N_value| {
+            if (options_value.getTruthy(globalThis, "cost") orelse options_value.getTruthy(globalThis, "N")) |N_value| {
                 if (cost != null) return throwInvalidParameter(globalThis);
                 const N_int = N_value.to(i64);
                 if (N_int < 0 or !N_value.isNumber()) {
@@ -418,7 +419,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getOwnTruthy(globalThis, "blockSize") orelse options_value.getOwn(globalThis, "r")) |r_value| {
+            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.getTruthy(globalThis, "r")) |r_value| {
                 if (blockSize != null) return throwInvalidParameter(globalThis);
                 const r_int = r_value.to(i64);
                 if (r_int < 0 or !r_value.isNumber()) {
@@ -433,7 +434,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getOwnTruthy(globalThis, "parallelization") orelse options_value.getOwn(globalThis, "p")) |p_value| {
+            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.getTruthy(globalThis, "p")) |p_value| {
                 if (parallelization != null) return throwInvalidParameter(globalThis);
                 const p_int = p_value.to(i64);
                 if (p_int < 0 or !p_value.isNumber()) {
@@ -448,7 +449,7 @@ pub const Crypto = struct {
                 }
             }
 
-            if (options_value.getOwnTruthy(globalThis, "maxmem")) |value| {
+            if (options_value.getTruthy(globalThis, "maxmem")) |value| {
                 const p_int = value.to(i64);
                 if (p_int < 0 or !value.isNumber()) {
                     return throwInvalidParams(
@@ -662,6 +663,69 @@ pub const Crypto = struct {
 
         uuid.print(bytes[0..36]);
         return str.toJS(globalThis);
+    }
+
+    pub export fn Bun__randomUUIDv7(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.argumentsUndef(2).slice();
+
+        var encoding_value: JSC.JSValue = .undefined;
+
+        const encoding: JSC.Node.Encoding = brk: {
+            if (arguments.len > 0) {
+                if (arguments[0] != .undefined) {
+                    if (arguments[0].isString()) {
+                        encoding_value = arguments[0];
+                        break :brk JSC.Node.Encoding.fromJS(encoding_value, globalThis) orelse {
+                            globalThis.ERR_UNKNOWN_ENCODING("Encoding must be one of base64, base64url, hex, or buffer", .{}).throw();
+                            return .undefined;
+                        };
+                    }
+                }
+            }
+
+            break :brk JSC.Node.Encoding.hex;
+        };
+
+        const timestamp: u64 = brk: {
+            const timestamp_value: JSC.JSValue = if (encoding_value != .undefined and arguments.len > 1)
+                arguments[1]
+            else if (arguments.len == 1 and encoding_value == .undefined)
+                arguments[0]
+            else
+                .undefined;
+
+            if (timestamp_value != .undefined) {
+                if (timestamp_value.isDate()) {
+                    const date = timestamp_value.getUnixTimestamp();
+                    break :brk @intFromFloat(@max(0, date));
+                }
+
+                if (globalThis.validateIntegerRange(timestamp_value, i64, 0, .{
+                    .min = 0,
+                    .field_name = "timestamp",
+                })) |timestamp_int| {
+                    break :brk @intCast(timestamp_int);
+                }
+                return .zero;
+            }
+
+            break :brk @intCast(@max(0, std.time.milliTimestamp()));
+        };
+
+        const entropy = globalThis.bunVM().rareData().entropySlice(8);
+
+        const uuid = UUID7.init(timestamp, &entropy[0..8].*);
+
+        if (encoding == .hex) {
+            var str, var bytes = bun.String.createUninitialized(.latin1, 36);
+            uuid.print(bytes[0..36]);
+            return str.transferToJS(globalThis);
+        }
+
+        return encoding.encodeWithMaxSize(globalThis, 32, &uuid.bytes);
     }
 
     pub fn randomUUIDWithoutTypeChecks(

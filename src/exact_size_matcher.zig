@@ -5,7 +5,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     switch (max_bytes) {
         1, 2, 4, 8, 12, 16 => {},
         else => {
-            @compileError("max_bytes must be 1, 2, 4, 8, or 12.");
+            @compileError("max_bytes must be 1, 2, 4, 8, 12, or 16.");
         },
     }
 

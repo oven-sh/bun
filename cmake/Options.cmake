@@ -79,7 +79,7 @@ endif()
 
 optionx(CANARY_REVISION STRING "The canary revision of the build" DEFAULT ${DEFAULT_CANARY_REVISION})
 
-if(RELEASE AND LINUX)
+if(RELEASE AND LINUX AND CI)
   set(DEFAULT_LTO ON)
 else()
   set(DEFAULT_LTO OFF)

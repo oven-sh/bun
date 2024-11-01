@@ -19,7 +19,7 @@ const DashedIdent = css.css_values.ident.DashedIdent;
 const Image = css.css_values.image.Image;
 const CssColor = css.css_values.color.CssColor;
 const Ratio = css.css_values.ratio.Ratio;
-const Length = css.css_values.length.LengthValue;
+const Length = css.css_values.length.Length;
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
 pub const BorderTop = GenericBorder(LineStyle, 0);
@@ -54,6 +54,98 @@ pub fn GenericBorder(comptime S: type, comptime P: u8) type {
         style: S,
         /// The border color.
         color: CssColor,
+
+        const This = @This();
+
+        pub fn parse(input: *css.Parser) css.Result(@This()) {
+            // Order doesn't matter
+            var color: ?CssColor = null;
+            var style: ?S = null;
+            var width: ?BorderSideWidth = null;
+            var any = false;
+
+            while (true) {
+                if (width == null) {
+                    if (input.tryParse(BorderSideWidth.parse, .{}).asValue()) |value| {
+                        width = value;
+                        any = true;
+                    }
+                }
+
+                if (style == null) {
+                    if (input.tryParse(S.parse, .{}).asValue()) |value| {
+                        style = value;
+                        any = true;
+                        continue;
+                    }
+                }
+
+                if (color == null) {
+                    if (input.tryParse(CssColor.parse, .{}).asValue()) |value| {
+                        color = value;
+                        any = true;
+                        continue;
+                    }
+                }
+                break;
+            }
+
+            if (any) {
+                return .{
+                    .result = This{
+                        .width = width orelse BorderSideWidth.medium,
+                        .style = style orelse S.default(),
+                        .color = color orelse CssColor.current_color,
+                    },
+                };
+            }
+
+            return .{ .err = input.newCustomError(css.ParserError.invalid_declaration) };
+        }
+
+        pub fn toCss(this: *const This, W: anytype, dest: *Printer(W)) PrintErr!void {
+            if (this.eql(&This.default())) {
+                try this.style.toCss(W, dest);
+                return;
+            }
+
+            var needs_space = false;
+            if (!this.width.eql(&BorderSideWidth.default())) {
+                try this.width.toCss(W, dest);
+                needs_space = true;
+            }
+            if (!this.style.eql(&S.default())) {
+                if (needs_space) {
+                    try dest.writeStr(" ");
+                }
+                try this.style.toCss(W, dest);
+                needs_space = true;
+            }
+            if (!this.color.eql(&CssColor{ .current_color = {} })) {
+                if (needs_space) {
+                    try dest.writeStr(" ");
+                }
+                try this.color.toCss(W, dest);
+                needs_space = true;
+            }
+            return;
+        }
+
+        pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+            return css.implementDeepClone(@This(), this, allocator);
+        }
+
+        pub fn eql(this: *const This, other: *const This) bool {
+            return this.width.eql(&other.width) and this.style.eql(&other.style) and this.color.eql(&other.color);
+        }
+
+        pub inline fn default() This {
+            return This{
+                .width = .medium,
+                .style = S.default(),
+                .color = CssColor.current_color,
+            };
+        }
     };
 }
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
@@ -81,6 +173,10 @@ pub const LineStyle = enum {
     double,
 
     pub usingnamespace css.DefineEnumProperty(@This());
+
+    pub fn default() LineStyle {
+        return .none;
+    }
 };
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
@@ -93,8 +189,41 @@ pub const BorderSideWidth = union(enum) {
     thick,
     /// An explicit width.
     length: Length,
+
+    pub usingnamespace css.DeriveParse(@This());
+    pub usingnamespace css.DeriveToCss(@This());
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn default() BorderSideWidth {
+        return .medium;
+    }
+
+    pub fn eql(this: *const @This(), other: *const @This()) bool {
+        return switch (this.*) {
+            .thin => switch (other.*) {
+                .thin => true,
+                else => false,
+            },
+            .medium => switch (other.*) {
+                .medium => true,
+                else => false,
+            },
+            .thick => switch (other.*) {
+                .thick => true,
+                else => false,
+            },
+            .length => switch (other.*) {
+                .length => this.length.eql(&other.length),
+                else => false,
+            },
+        };
+    }
 };
 
+// TODO: fallbacks
 /// A value for the [border-color](https://drafts.csswg.org/css-backgrounds/#propdef-border-color) shorthand property.
 pub const BorderColor = struct {
     top: CssColor,
@@ -102,7 +231,8 @@ pub const BorderColor = struct {
     bottom: CssColor,
     left: CssColor,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-color");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-color");
     pub usingnamespace css.DefineRectShorthand(@This(), CssColor);
 
     pub const PropertyFieldMap = .{
@@ -111,6 +241,14 @@ pub const BorderColor = struct {
         .bottom = css.PropertyIdTag.@"border-bottom-color",
         .left = css.PropertyIdTag.@"border-left-color",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [border-style](https://drafts.csswg.org/css-backgrounds/#propdef-border-style) shorthand property.
@@ -120,7 +258,8 @@ pub const BorderStyle = struct {
     bottom: LineStyle,
     left: LineStyle,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-style");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-style");
     pub usingnamespace css.DefineRectShorthand(@This(), LineStyle);
 
     pub const PropertyFieldMap = .{
@@ -129,6 +268,14 @@ pub const BorderStyle = struct {
         .bottom = css.PropertyIdTag.@"border-bottom-style",
         .left = css.PropertyIdTag.@"border-left-style",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [border-width](https://drafts.csswg.org/css-backgrounds/#propdef-border-width) shorthand property.
@@ -138,7 +285,8 @@ pub const BorderWidth = struct {
     bottom: BorderSideWidth,
     left: BorderSideWidth,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-width");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-width");
     pub usingnamespace css.DefineRectShorthand(@This(), BorderSideWidth);
 
     pub const PropertyFieldMap = .{
@@ -147,8 +295,17 @@ pub const BorderWidth = struct {
         .bottom = css.PropertyIdTag.@"border-bottom-width",
         .left = css.PropertyIdTag.@"border-left-width",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
+// TODO: fallbacks
 /// A value for the [border-block-color](https://drafts.csswg.org/css-logical/#propdef-border-block-color) shorthand property.
 pub const BorderBlockColor = struct {
     /// The block start value.
@@ -156,13 +313,22 @@ pub const BorderBlockColor = struct {
     /// The block end value.
     end: CssColor,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-color");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-color");
     pub usingnamespace css.DefineSizeShorthand(@This(), CssColor);
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-color",
         .end = css.PropertyIdTag.@"border-block-end-color",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [border-block-style](https://drafts.csswg.org/css-logical/#propdef-border-block-style) shorthand property.
@@ -172,13 +338,22 @@ pub const BorderBlockStyle = struct {
     /// The block end value.
     end: LineStyle,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-style");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-style");
     pub usingnamespace css.DefineSizeShorthand(@This(), LineStyle);
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-style",
         .end = css.PropertyIdTag.@"border-block-end-style",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [border-block-width](https://drafts.csswg.org/css-logical/#propdef-border-block-width) shorthand property.
@@ -188,15 +363,25 @@ pub const BorderBlockWidth = struct {
     /// The block end value.
     end: BorderSideWidth,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-width");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-block-width");
     pub usingnamespace css.DefineSizeShorthand(@This(), BorderSideWidth);
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-block-start-width",
         .end = css.PropertyIdTag.@"border-block-end-width",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
+// TODO: fallbacks
 /// A value for the [border-inline-color](https://drafts.csswg.org/css-logical/#propdef-border-inline-color) shorthand property.
 pub const BorderInlineColor = struct {
     /// The inline start value.
@@ -204,13 +389,22 @@ pub const BorderInlineColor = struct {
     /// The inline end value.
     end: CssColor,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-color");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-color");
     pub usingnamespace css.DefineSizeShorthand(@This(), CssColor);
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-color",
         .end = css.PropertyIdTag.@"border-inline-end-color",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [border-inline-style](https://drafts.csswg.org/css-logical/#propdef-border-inline-style) shorthand property.
@@ -220,13 +414,22 @@ pub const BorderInlineStyle = struct {
     /// The inline end value.
     end: LineStyle,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-style");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-style");
     pub usingnamespace css.DefineSizeShorthand(@This(), LineStyle);
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-style",
         .end = css.PropertyIdTag.@"border-inline-end-style",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };
 
 /// A value for the [border-inline-width](https://drafts.csswg.org/css-logical/#propdef-border-inline-width) shorthand property.
@@ -236,11 +439,20 @@ pub const BorderInlineWidth = struct {
     /// The inline end value.
     end: BorderSideWidth,
 
-    pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-width");
+    // TODO: bring this back
+    // pub usingnamespace css.DefineShorthand(@This(), css.PropertyIdTag.@"border-inline-width");
     pub usingnamespace css.DefineSizeShorthand(@This(), BorderSideWidth);
 
     pub const PropertyFieldMap = .{
         .start = css.PropertyIdTag.@"border-inline-start-width",
         .end = css.PropertyIdTag.@"border-inline-end-width",
     };
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
 };

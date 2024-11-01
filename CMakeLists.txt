@@ -43,8 +43,6 @@ include(BuildBun)
 
 # --- Analysis ---
 
-optionx(ENABLE_ANALYSIS BOOL "If analysis targets should be enabled" DEFAULT OFF)
-
 if(ENABLE_ANALYSIS)
   include(RunClangFormat)
   include(RunClangTidy)

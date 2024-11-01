@@ -38,6 +38,14 @@ pub const AnimationName = union(enum) {
     // ~toCssImpl
     const This = @This();
 
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix

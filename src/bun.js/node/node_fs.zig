@@ -54,7 +54,7 @@ pub const default_permission = if (Environment.isPosix)
         Syscall.S.IROTH |
         Syscall.S.IWOTH
 else
-    // TODO:
+    // Windows does not have permissions
     0;
 
 const ArrayBuffer = JSC.MarkedArrayBuffer;
@@ -1638,11 +1638,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!uid_value.isNumber()) {
-                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE_static(
-                        JSC.ZigString.static("uid"),
-                        JSC.ZigString.static("number"),
-                        uid_value,
-                    ));
+                    _ = ctx.throwInvalidArgumentTypeValue("uid", "number", uid_value);
                     return null;
                 }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
@@ -1663,11 +1659,7 @@ pub const Arguments = struct {
 
                 arguments.eat();
                 if (!gid_value.isNumber()) {
-                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE_static(
-                        JSC.ZigString.static("gid"),
-                        JSC.ZigString.static("number"),
-                        gid_value,
-                    ));
+                    _ = ctx.throwInvalidArgumentTypeValue("gid", "number", gid_value);
                     return null;
                 }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
@@ -2941,7 +2933,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer = StringOrBuffer.fromJS(ctx.ptr(), bun.default_allocator, buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "data is required",
@@ -2953,16 +2946,15 @@ pub const Arguments = struct {
                 return null;
             }) orelse {
                 if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "data must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
+                    _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
                 }
                 return null;
             };
             if (exception.* != null) return null;
+            if (buffer_value.?.isString() and !buffer_value.?.isStringLiteral()) {
+                _ = ctx.throwInvalidArgumentTypeValue("buffer", "string or TypedArray", buffer_value.?);
+                return null;
+            }
 
             var args = Write{
                 .fd = fd,
@@ -3065,7 +3057,8 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const buffer = Buffer.fromJS(ctx.ptr(), arguments.next() orelse {
+            const buffer_value = arguments.next();
+            const buffer: Buffer = Buffer.fromJS(ctx.ptr(), buffer_value orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "buffer is required",
@@ -3096,6 +3089,7 @@ pub const Arguments = struct {
                 .buffer = buffer,
             };
 
+            var defined_length = false;
             if (arguments.next()) |current| {
                 arguments.eat();
                 if (current.isNumber() or current.isBigInt()) {
@@ -3108,13 +3102,10 @@ pub const Arguments = struct {
 
                     const arg_length = arguments.next().?;
                     arguments.eat();
+                    defined_length = true;
 
                     if (arg_length.isNumber() or arg_length.isBigInt()) {
                         args.length = arg_length.to(u52);
-                    }
-                    if (args.length == 0) {
-                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
-                        return null;
                     }
 
                     if (arguments.next()) |arg_position| {
@@ -3134,6 +3125,7 @@ pub const Arguments = struct {
                         if (num.isNumber() or num.isBigInt()) {
                             args.length = num.to(u52);
                         }
+                        defined_length = true;
                     }
 
                     if (current.getTruthy(ctx.ptr(), "position")) |num| {
@@ -3142,6 +3134,12 @@ pub const Arguments = struct {
                         }
                     }
                 }
+            }
+
+            if (defined_length and args.length > 0 and buffer.slice().len == 0) {
+                var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+                ctx.ERR_INVALID_ARG_VALUE("The argument 'buffer' is empty and cannot be written. Received {}", .{buffer_value.?.toFmt(&formatter)}).throw();
+                return null;
             }
 
             return args;
@@ -4859,21 +4857,11 @@ pub const NodeFS = struct {
     pub fn mkdirRecursiveImpl(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor, comptime Ctx: type, ctx: Ctx) Maybe(Return.Mkdir) {
         _ = flavor;
         var buf: bun.OSPathBuffer = undefined;
-        const path: bun.OSPathSliceZ = if (!Environment.isWindows)
-            args.path.osPath(&buf)
-        else brk: {
-            // TODO(@paperdave): clean this up a lot.
-            var joined_buf: bun.PathBuffer = undefined;
-            if (std.fs.path.isAbsolute(args.path.slice())) {
-                const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
-                    return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, utf8);
-            } else {
-                var cwd_buf: bun.PathBuffer = undefined;
-                const cwd = std.posix.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
-                break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
-            }
-        };
+        const path: bun.OSPathSliceZ = if (Environment.isWindows)
+            strings.toNTPath(&buf, args.path.slice())
+        else
+            args.path.osPath(&buf);
+
         // TODO: remove and make it always a comptime argument
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),
@@ -4923,7 +4911,12 @@ pub const NodeFS = struct {
                         return .{ .result = .{ .none = {} } };
                     },
                     // continue
-                    .NOENT => {},
+                    .NOENT => {
+                        if (len == 0) {
+                            // no path to copy
+                            return .{ .err = err };
+                        }
+                    },
                 }
             },
             .result => {
@@ -5147,6 +5140,11 @@ pub const NodeFS = struct {
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        const len1 = args.buffer.slice().len;
+        const len2 = args.length;
+        if (len1 == 0 or len2 == 0) {
+            return Maybe(Return.Read).initResult(.{ .bytes_read = 0 });
+        }
         return if (args.position != null)
             this._pread(
                 args,

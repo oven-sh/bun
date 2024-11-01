@@ -281,6 +281,10 @@ pub const Linker = struct {
                             continue;
                         }
 
+                        if (strings.hasSuffixComptime(import_record.path.text, ".css")) {
+                            import_record.tag = .css;
+                        }
+
                         // Resolve dynamic imports lazily for perf
                         if (import_record.kind == .dynamic) {
                             continue;
@@ -743,19 +747,6 @@ pub const Linker = struct {
 
                     if (use_hashed_name) {
                         const basepath = Fs.Path.init(source_path);
-
-                        if (linker.options.serve) {
-                            var hash_buf: [64]u8 = undefined;
-                            const modkey = try linker.getModKey(basepath, null);
-                            return Fs.Path.init(try origin.joinAlloc(
-                                linker.allocator,
-                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{bun.fmt.hexIntLower(modkey.hash())}) catch unreachable,
-                                dirname,
-                                basename,
-                                absolute_pathname.ext,
-                                source_path,
-                            ));
-                        }
 
                         basename = try linker.getHashedFilename(basepath, null);
                     }

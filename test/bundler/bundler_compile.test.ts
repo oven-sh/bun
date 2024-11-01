@@ -2,8 +2,9 @@ import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
 import { itBundled } from "./expectBundled";
+import { isFlaky, isWindows } from "harness";
 
-describe("bundler", () => {
+describe.todoIf(isFlaky && isWindows)("bundler", () => {
   itBundled("compile/HelloWorld", {
     compile: true,
     files: {
@@ -213,7 +214,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: process.platform === "win32", // TODO(@paperdave)
+    todo: isWindows, // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `

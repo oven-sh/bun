@@ -6,6 +6,9 @@ const Log = logger.Log;
 
 const ArrayList = std.ArrayListUnmanaged;
 
+const ImportRecord = bun.ImportRecord;
+const ImportKind = bun.ImportKind;
+
 pub const prefixes = @import("./prefixes.zig");
 
 pub const dependencies = @import("./dependencies.zig");
@@ -28,6 +31,7 @@ pub const UnknownAtRule = css_rules.unknown.UnknownAtRule;
 pub const ImportRule = css_rules.import.ImportRule;
 pub const StyleRule = css_rules.style.StyleRule;
 pub const StyleContext = css_rules.StyleContext;
+pub const SupportsRule = css_rules.supports.SupportsRule;
 
 pub const MinifyContext = css_rules.MinifyContext;
 
@@ -39,6 +43,7 @@ pub const css_values = @import("./values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
 pub const DashedIdentFns = css_values.ident.DashedIdentFns;
 pub const CssColor = css_values.color.CssColor;
+pub const ColorFallbackKind = css_values.color.ColorFallbackKind;
 pub const CSSString = css_values.string.CSSString;
 pub const CSSStringFns = css_values.string.CSSStringFns;
 pub const CSSInteger = css_values.number.CSSInteger;
@@ -66,6 +71,10 @@ pub const DeclarationBlock = css_decls.DeclarationBlock;
 
 pub const selector = @import("./selectors/selector.zig");
 pub const SelectorList = selector.parser.SelectorList;
+pub const Selector = selector.parser.Selector;
+pub const Component = selector.parser.Component;
+pub const PseudoClass = selector.parser.PseudoClass;
+pub const PseudoElement = selector.parser.PseudoElement;
 
 pub const logical = @import("./logical.zig");
 pub const PropertyCategory = logical.PropertyCategory;
@@ -96,8 +105,17 @@ pub const BasicParseErrorKind = errors_.BasicParseErrorKind;
 pub const SelectorError = errors_.SelectorError;
 pub const MinifyErrorKind = errors_.MinifyErrorKind;
 pub const MinifyError = errors_.MinifyError;
+pub const MinifyErr = errors_.MinifyErr;
+
+pub const generic = @import("./generics.zig");
+pub const HASH_SEED = generic.HASH_SEED;
+
+pub const ImportConditions = css_rules.import.ImportConditions;
 
 pub const compat = @import("./compat.zig");
+
+pub const Features = targets.Features;
+pub const Feature = compat.Feature;
 
 pub const fmtPrinterError = errors_.fmtPrinterError;
 
@@ -112,12 +130,7 @@ pub fn OOM(e: anyerror) noreturn {
     bun.outOfMemory();
 }
 
-// TODO: smallvec
-pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
-    _ = N; // autofix
-    return ArrayList(T);
-}
-
+pub const SmallList = @import("./small_list.zig").SmallList;
 pub const Bitflags = bun.Bitflags;
 
 pub const todo_stuff = struct {
@@ -152,15 +165,18 @@ pub const VendorPrefix = packed struct(u8) {
     o: bool = false,
     __unused: u3 = 0,
 
-    pub usingnamespace Bitflags(@This());
+    pub const NONE = VendorPrefix{ .none = true };
+    pub const WEBKIT = VendorPrefix{ .webkit = true };
+    pub const MOZ = VendorPrefix{ .moz = true };
 
-    pub fn all() VendorPrefix {
-        return VendorPrefix{ .webkit = true, .moz = true, .ms = true, .o = true, .none = true };
-    }
+    /// Fields listed here so we can iterate them in the order we want
+    pub const FIELDS: []const []const u8 = &.{ "webkit", "moz", "ms", "o", "none" };
+
+    pub usingnamespace Bitflags(@This());
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
-            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit"),
+            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit-"),
             VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
             VendorPrefix.asBits(.{ .ms = true }) => dest.writeStr("-ms-"),
             VendorPrefix.asBits(.{ .o = true }) => dest.writeStr("-o-"),
@@ -225,11 +241,8 @@ pub fn PrintResult(comptime T: type) type {
 }
 
 pub fn todo(comptime fmt: []const u8, args: anytype) noreturn {
+    bun.Analytics.Features.todo_panic = 1;
     std.debug.panic("TODO: " ++ fmt, args);
-}
-
-pub fn todo2(comptime fmt: []const u8) void {
-    std.debug.panic("TODO: " ++ fmt);
 }
 
 pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T)) *const fn (void, *Parser) Result(T) {
@@ -249,6 +262,7 @@ pub fn DefineListShorthand(comptime T: type) type {
 }
 
 pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) type {
+    _ = property_name; // autofix
     // TODO: validate map, make sure each field is set
     // make sure each field is same index as in T
     _ = T.PropertyFieldMap;
@@ -256,172 +270,187 @@ pub fn DefineShorthand(comptime T: type, comptime property_name: PropertyIdTag) 
     return struct {
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
         pub fn fromLonghands(allocator: Allocator, decls: *const DeclarationBlock, vendor_prefix: VendorPrefix) ?struct { T, bool } {
-            var count: usize = 0;
-            var important_count: usize = 0;
-            var this: T = undefined;
-            var set_fields = std.StaticBitSet(std.meta.fields(T).len).initEmpty();
-            const all_fields_set = std.StaticBitSet(std.meta.fields(T).len).initFull();
+            _ = allocator; // autofix
+            _ = decls; // autofix
+            _ = vendor_prefix; // autofix
+            // var count: usize = 0;
+            // var important_count: usize = 0;
+            // var this: T = undefined;
+            // var set_fields = std.StaticBitSet(std.meta.fields(T).len).initEmpty();
+            // const all_fields_set = std.StaticBitSet(std.meta.fields(T).len).initFull();
 
-            // Loop through each property in `decls.declarations` and then `decls.important_declarations`
-            // The inline for loop is so we can share the code for both
-            const DECL_FIELDS = &.{ "declarations", "important_declarations" };
-            inline for (DECL_FIELDS) |decl_field_name| {
-                const decl_list: *const ArrayList(css_properties.Property) = &@field(decls, decl_field_name);
-                const important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
+            // // Loop through each property in `decls.declarations` and then `decls.important_declarations`
+            // // The inline for loop is so we can share the code for both
+            // const DECL_FIELDS = &.{ "declarations", "important_declarations" };
+            // inline for (DECL_FIELDS) |decl_field_name| {
+            //     const decl_list: *const ArrayList(css_properties.Property) = &@field(decls, decl_field_name);
+            //     const important = comptime std.mem.eql(u8, decl_field_name, "important_declarations");
 
-                // Now loop through each property in the list
-                main_loop: for (decl_list.items) |*property| {
-                    // The property field map maps each field in `T` to a tag of `Property`
-                    // Here we do `inline for` to basically switch on the tag of `property` to see
-                    // if it matches a field in `T` which maps to the same tag
-                    //
-                    // Basically, check that `@as(PropertyIdTag, property.*)` equals `T.PropertyFieldMap[field.name]`
-                    inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
-                        const tag: PropertyIdTag = @as(?*const PropertyIdTag, field.default_value).?.*;
+            //     // Now loop through each property in the list
+            //     main_loop: for (decl_list.items) |*property| {
+            //         // The property field map maps each field in `T` to a tag of `Property`
+            //         // Here we do `inline for` to basically switch on the tag of `property` to see
+            //         // if it matches a field in `T` which maps to the same tag
+            //         //
+            //         // Basically, check that `@as(PropertyIdTag, property.*)` equals `T.PropertyFieldMap[field.name]`
+            //         inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+            //             const tag: PropertyIdTag = @as(?*const PropertyIdTag, field.default_value).?.*;
 
-                        if (@intFromEnum(@as(PropertyIdTag, property.*)) == tag) {
-                            if (@hasField(T.VendorPrefixMap, field.name)) {
-                                if (@hasField(T.VendorPrefixMap, field.name) and
-                                    !VendorPrefix.eq(@field(property, field.name)[1], vendor_prefix))
-                                {
-                                    return null;
-                                }
+            //             if (@intFromEnum(@as(PropertyIdTag, property.*)) == tag) {
+            //                 if (@hasField(T.VendorPrefixMap, field.name)) {
+            //                     if (@hasField(T.VendorPrefixMap, field.name) and
+            //                         !VendorPrefix.eq(@field(property, field.name)[1], vendor_prefix))
+            //                     {
+            //                         return null;
+            //                     }
 
-                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
-                                    @field(property, field.name)[0].deepClone(allocator)
-                                else
-                                    @field(property, field.name)[0];
-                            } else {
-                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
-                                    @field(property, field.name).deepClone(allocator)
-                                else
-                                    @field(property, field.name);
-                            }
+            //                     @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
+            //                         @field(property, field.name)[0].deepClone(allocator)
+            //                     else
+            //                         @field(property, field.name)[0];
+            //                 } else {
+            //                     @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
+            //                         @field(property, field.name).deepClone(allocator)
+            //                     else
+            //                         @field(property, field.name);
+            //                 }
 
-                            set_fields.set(std.meta.fieldIndex(T, field.name));
-                            count += 1;
-                            if (important) {
-                                important_count += 1;
-                            }
+            //                 set_fields.set(std.meta.fieldIndex(T, field.name));
+            //                 count += 1;
+            //                 if (important) {
+            //                     important_count += 1;
+            //                 }
 
-                            continue :main_loop;
-                        }
-                    }
+            //                 continue :main_loop;
+            //             }
+            //         }
 
-                    // If `property` matches none of the tags in `T.PropertyFieldMap` then let's try
-                    // if it matches the tag specified by `property_name`
-                    if (@as(PropertyIdTag, property.*) == property_name) {
-                        inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
-                            if (@hasField(T.VendorPrefixMap, field.name)) {
-                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
-                                    @field(property, field.name)[0].deepClone(allocator)
-                                else
-                                    @field(property, field.name)[0];
-                            } else {
-                                @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
-                                    @field(property, field.name).deepClone(allocator)
-                                else
-                                    @field(property, field.name);
-                            }
+            //         // If `property` matches none of the tags in `T.PropertyFieldMap` then let's try
+            //         // if it matches the tag specified by `property_name`
+            //         if (@as(PropertyIdTag, property.*) == property_name) {
+            //             inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+            //                 if (@hasField(T.VendorPrefixMap, field.name)) {
+            //                     @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)[0]), "clone"))
+            //                         @field(property, field.name)[0].deepClone(allocator)
+            //                     else
+            //                         @field(property, field.name)[0];
+            //                 } else {
+            //                     @field(this, field.name) = if (@hasDecl(@TypeOf(@field(property, field.name)), "clone"))
+            //                         @field(property, field.name).deepClone(allocator)
+            //                     else
+            //                         @field(property, field.name);
+            //                 }
 
-                            set_fields.set(std.meta.fieldIndex(T, field.name));
-                            count += 1;
-                            if (important) {
-                                important_count += 1;
-                            }
-                        }
-                        continue :main_loop;
-                    }
+            //                 set_fields.set(std.meta.fieldIndex(T, field.name));
+            //                 count += 1;
+            //                 if (important) {
+            //                     important_count += 1;
+            //                 }
+            //             }
+            //             continue :main_loop;
+            //         }
 
-                    // Otherwise, try to convert to te fields using `.longhand()`
-                    inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
-                        const property_id = @unionInit(
-                            PropertyId,
-                            field.name,
-                            if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix else {},
-                        );
-                        const value = property.longhand(&property_id);
-                        if (@as(PropertyIdTag, value) == @as(PropertyIdTag, property_id)) {
-                            @field(this, field.name) = if (@hasDecl(T.VendorPrefixMap, field.name))
-                                @field(value, field.name)[0]
-                            else
-                                @field(value, field.name);
-                            set_fields.set(std.meta.fieldIndex(T, field.name));
-                            count += 1;
-                            if (important) {
-                                important_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
+            //         // Otherwise, try to convert to te fields using `.longhand()`
+            //         inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+            //             const property_id = @unionInit(
+            //                 PropertyId,
+            //                 field.name,
+            //                 if (@hasDecl(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+            //             );
+            //             const value = property.longhand(&property_id);
+            //             if (@as(PropertyIdTag, value) == @as(PropertyIdTag, property_id)) {
+            //                 @field(this, field.name) = if (@hasDecl(T.VendorPrefixMap, field.name))
+            //                     @field(value, field.name)[0]
+            //                 else
+            //                     @field(value, field.name);
+            //                 set_fields.set(std.meta.fieldIndex(T, field.name));
+            //                 count += 1;
+            //                 if (important) {
+            //                     important_count += 1;
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
 
-            if (important_count > 0 and important_count != count) {
-                return null;
-            }
+            // if (important_count > 0 and important_count != count) {
+            //     return null;
+            // }
 
-            // All properties in the group must have a matching value to produce a shorthand.
-            if (set_fields.eql(all_fields_set)) {
-                return .{ this, important_count > 0 };
-            }
+            // // All properties in the group must have a matching value to produce a shorthand.
+            // if (set_fields.eql(all_fields_set)) {
+            //     return .{ this, important_count > 0 };
+            // }
 
-            return null;
+            // return null;
+            @panic(todo_stuff.depth);
         }
 
         /// Returns a shorthand from the longhand properties defined in the given declaration block.
         pub fn longhands(vendor_prefix: VendorPrefix) []const PropertyId {
-            const out: []const PropertyId = comptime out: {
-                var out: [std.meta.fields(@TypeOf(T.PropertyFieldMap)).len]PropertyId = undefined;
+            _ = vendor_prefix; // autofix
+            // const out: []const PropertyId = comptime out: {
+            //     var out: [std.meta.fields(@TypeOf(T.PropertyFieldMap)).len]PropertyId = undefined;
 
-                for (std.meta.fields(@TypeOf(T.PropertyFieldMap)), 0..) |field, i| {
-                    out[i] = @unionInit(
-                        PropertyId,
-                        field.name,
-                        if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix else {},
-                    );
-                }
+            //     for (std.meta.fields(@TypeOf(T.PropertyFieldMap)), 0..) |field, i| {
+            //         out[i] = @unionInit(
+            //             PropertyId,
+            //             field.name,
+            //             if (@hasField(T.VendorPrefixMap, field.name)) vendor_prefix else {},
+            //         );
+            //     }
 
-                break :out out;
-            };
-            return out;
+            //     break :out out;
+            // };
+            // return out;
+
+            @panic(todo_stuff.depth);
         }
 
         /// Returns a longhand property for this shorthand.
         pub fn longhand(this: *const T, allocator: Allocator, property_id: *const PropertyId) ?Property {
-            inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
-                if (@as(PropertyIdTag, property_id.*) == @field(T.PropertyFieldMap, field.name)) {
-                    const val = if (@hasDecl(@TypeOf(@field(T, field.namee)), "clone"))
-                        @field(this, field.name).deepClone(allocator)
-                    else
-                        @field(this, field.name);
-                    return @unionInit(
-                        Property,
-                        field.name,
-                        if (@field(T.VendorPrefixMap, field.name))
-                            .{ val, @field(property_id, field.name)[1] }
-                        else
-                            val,
-                    );
-                }
-            }
-            return null;
+            _ = this; // autofix
+            _ = allocator; // autofix
+            _ = property_id; // autofix
+            // inline for (std.meta.fields(@TypeOf(T.PropertyFieldMap))) |field| {
+            //     if (@as(PropertyIdTag, property_id.*) == @field(T.PropertyFieldMap, field.name)) {
+            //         const val = if (@hasDecl(@TypeOf(@field(T, field.namee)), "clone"))
+            //             @field(this, field.name).deepClone(allocator)
+            //         else
+            //             @field(this, field.name);
+            //         return @unionInit(
+            //             Property,
+            //             field.name,
+            //             if (@field(T.VendorPrefixMap, field.name))
+            //                 .{ val, @field(property_id, field.name)[1] }
+            //             else
+            //                 val,
+            //         );
+            //     }
+            // }
+            // return null;
+            @panic(todo_stuff.depth);
         }
 
         /// Updates this shorthand from a longhand property.
         pub fn setLonghand(this: *T, allocator: Allocator, property: *const Property) bool {
-            inline for (std.meta.fields(T.PropertyFieldMap)) |field| {
-                if (@as(PropertyIdTag, property.*) == @field(T.PropertyFieldMap, field.name)) {
-                    const val = if (@hasDecl(@TypeOf(@field(T, field.name)), "clone"))
-                        @field(this, field.name).deepClone(allocator)
-                    else
-                        @field(this, field.name);
+            _ = this; // autofix
+            _ = allocator; // autofix
+            _ = property; // autofix
+            // inline for (std.meta.fields(T.PropertyFieldMap)) |field| {
+            //     if (@as(PropertyIdTag, property.*) == @field(T.PropertyFieldMap, field.name)) {
+            //         const val = if (@hasDecl(@TypeOf(@field(T, field.name)), "clone"))
+            //             @field(this, field.name).deepClone(allocator)
+            //         else
+            //             @field(this, field.name);
 
-                    @field(this, field.name) = val;
+            //         @field(this, field.name) = val;
 
-                    return true;
-                }
-            }
-            return false;
+            //         return true;
+            //     }
+            // }
+            // return false;
+            @panic(todo_stuff.depth);
         }
     };
 }
@@ -457,9 +486,18 @@ pub fn DefineRectShorthand(comptime T: type, comptime V: type) type {
 }
 
 pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
-    const fields = std.meta.fields(T);
-    if (fields.len != 2) @compileError("DefineSizeShorthand must be used on a struct with 2 fields");
+    if (std.meta.fields(T).len != 2) @compileError("DefineSizeShorthand must be used on a struct with 2 fields");
     return struct {
+        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+            const size: css_values.size.Size2D(V) = .{
+                .a = @field(this, std.meta.fields(T)[0].name),
+                .b = @field(this, std.meta.fields(T)[1].name),
+            };
+            return size.toCss(W, dest);
+            // TODO: unfuck this
+            // @panic(todo_stuff.depth);
+        }
+
         pub fn parse(input: *Parser) Result(T) {
             const size = switch (css_values.size.Size2D(V).parse(input)) {
                 .result => |v| v,
@@ -467,18 +505,12 @@ pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
             };
 
             var this: T = undefined;
-            @field(this, fields[0].name) = size.a;
-            @field(this, fields[1].name) = size.b;
+            @field(this, std.meta.fields(T)[0].name) = size.a;
+            @field(this, std.meta.fields(T)[1].name) = size.b;
 
             return .{ .result = this };
-        }
-
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            const size: css_values.size.Size2D(V) = .{
-                .a = @field(this, fields[0].name),
-                .b = @field(this, fields[1].name),
-            };
-            return size.toCss(W, dest);
+            // TODO: unfuck this
+            // @panic(todo_stuff.depth);
         }
     };
 }
@@ -491,137 +523,7 @@ pub fn DeriveParse(comptime T: type) type {
 
     const Map = bun.ComptimeEnumMap(enum_actual_type);
 
-    // TODO: this has to work for enums and union(enums)
     return struct {
-        inline fn gnerateCode(
-            input: *Parser,
-            comptime first_payload_index: usize,
-            comptime maybe_first_void_index: ?usize,
-            comptime void_count: usize,
-            comptime payload_count: usize,
-        ) Result(T) {
-            const last_payload_index = first_payload_index + payload_count - 1;
-            if (comptime maybe_first_void_index == null) {
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
-                    if (comptime (i == last_payload_index)) {
-                        return generic.parseFor(field.type)(input);
-                    }
-                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
-                        return .{ .result = @unionInit(T, field.name, v) };
-                    }
-                }
-            }
-
-            const first_void_index = maybe_first_void_index.?;
-
-            const void_fields = bun.meta.EnumFields(T)[first_void_index .. first_void_index + void_count];
-
-            if (comptime void_count == 1) {
-                const void_field = enum_type.Enum.fields[first_void_index];
-                // The field is declared before the payload fields.
-                // So try to parse an ident matching the name of the field, then fallthrough
-                // to parsing the payload fields.
-                if (comptime first_void_index < first_payload_index) {
-                    if (input.tryParse(Parser.expectIdentMatching, .{void_field.name}).isOk()) {
-                        if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
-                        return .{ .result = @enumFromInt(void_field.value) };
-                    }
-
-                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
-                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                            return generic.parseFor(field.type)(input);
-                        }
-                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
-                            return .{ .result = @unionInit(T, field.name, v) };
-                        }
-                    }
-                } else {
-                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
-                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                            return generic.parseFor(field.type)(input);
-                        }
-                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
-                            return .{ .result = @unionInit(T, field.name, v) };
-                        }
-                    }
-
-                    // We can generate this as the last statements of the function, avoiding the `input.tryParse` routine above
-                    if (input.expectIdentMatching(void_field.name).asErr()) |e| return .{ .err = e };
-                    if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
-                    return .{ .result = @enumFromInt(void_field.value) };
-                }
-            } else if (comptime first_void_index < first_payload_index) {
-                // Multiple fields declared before the payload fields, use tryParse
-                const state = input.state();
-                if (input.tryParse(Parser.expectIdent, .{}).asValue()) |ident| {
-                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
-                        inline for (void_fields) |field| {
-                            if (field.value == @intFromEnum(matched)) {
-                                if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
-                                return .{ .result = @enumFromInt(field.value) };
-                            }
-                        }
-                        unreachable;
-                    }
-                    input.reset(&state);
-                }
-
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
-                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                        return generic.parseFor(field.type)(input);
-                    }
-                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
-                        return .{ .result = @unionInit(T, field.name, v) };
-                    }
-                }
-            } else if (comptime first_void_index > first_payload_index) {
-                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
-                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-                        return generic.parseFor(field.type)(input);
-                    }
-                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
-                        return .{ .result = @unionInit(T, field.name, v) };
-                    }
-                }
-
-                const location = input.currentSourceLocation();
-                const ident = switch (input.expectIdent()) {
-                    .result => |v| v,
-                    .err => |e| return .{ .err = e },
-                };
-                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
-                    inline for (void_fields) |field| {
-                        if (field.value == @intFromEnum(matched)) {
-                            if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
-                            return .{ .result = @enumFromInt(field.value) };
-                        }
-                    }
-                    unreachable;
-                }
-                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
-            }
-            @compileError("SHOULD BE UNREACHABLE!");
-        }
-
-        // inline fn generatePayloadBranches(
-        //     input: *Parser,
-        //     comptime first_payload_index: usize,
-        //     comptime first_void_index: usize,
-        //     comptime payload_count: usize,
-        // ) Result(T) {
-        //     const last_payload_index = first_payload_index + payload_count - 1;
-        //     inline for (tyinfo.Union.fields[first_payload_index..], first_payload_index..) |field, i| {
-        //         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
-        //             return generic.parseFor(field.type)(input);
-        //         }
-        //         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
-        //             return .{ .result = @unionInit(T, field.name, v) };
-        //         }
-        //     }
-        //     // The last field will return so this is never reachable
-        //     unreachable;
-        // }
-
         pub fn parse(input: *Parser) Result(T) {
             if (comptime is_union_enum) {
                 const payload_count, const first_payload_index, const void_count, const first_void_index = comptime counts: {
@@ -669,6 +571,179 @@ pub fn DeriveParse(comptime T: type) type {
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         }
 
+        /// Comptime code which constructs the parsing code for a union(enum) which could contain
+        /// void fields (fields with no associated data) and payload fields (fields which carry data),
+        /// for example:
+        ///
+        /// ```zig
+        /// /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
+        /// pub const BorderSideWidth = union(enum) {
+        ///     /// A UA defined `thin` value.
+        ///     thin,
+        ///     /// A UA defined `medium` value.
+        ///     medium,
+        ///     /// A UA defined `thick` value.
+        ///     thick,
+        ///     /// An explicit width.
+        ///     length: Length,
+        /// }
+        /// ```
+        ///
+        /// During parsing, we can check if it is one of the void fields (in this case `thin`, `medium`, or `thick`) by reading a single
+        /// identifier from the Parser, and checking if it matches any of the void field names. We already constructed a ComptimeEnumMap (see above)
+        /// to make this super cheap.
+        ///
+        /// If we don't get an identifier that matches any of the void fields, we can then try to parse the payload fields.
+        ///
+        /// This function is made more complicated by the fact that it tries to parse in order of the fields that were declared in the union(enum).
+        /// If, for example, all the void fields were declared after the `length: Length` field, this function will try to parse the `length` field first,
+        /// and then try to parse the void fields.
+        ///
+        /// This parsing order is a detail copied from LightningCSS. I'm not sure if it is necessary. But it could be.
+        inline fn gnerateCode(
+            input: *Parser,
+            comptime first_payload_index: usize,
+            comptime maybe_first_void_index: ?usize,
+            comptime void_count: usize,
+            comptime payload_count: usize,
+        ) Result(T) {
+            const last_payload_index = first_payload_index + payload_count - 1;
+            if (comptime maybe_first_void_index == null) {
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index)) {
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+            }
+
+            const first_void_index = maybe_first_void_index.?;
+
+            const void_fields = bun.meta.EnumFields(T)[first_void_index .. first_void_index + void_count];
+
+            if (comptime void_count == 1) {
+                const void_field = enum_type.Enum.fields[first_void_index];
+                // The field is declared before the payload fields.
+                // So try to parse an ident matching the name of the field, then fallthrough
+                // to parsing the payload fields.
+                if (comptime first_void_index < first_payload_index) {
+                    if (input.tryParse(Parser.expectIdentMatching, .{void_field.name}).isOk()) {
+                        if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
+                        return .{ .result = @enumFromInt(void_field.value) };
+                    }
+
+                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                            return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                                .result => |v| @unionInit(T, field.name, v),
+                                .err => |e| return .{ .err = e },
+                            } };
+                        }
+                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                            return .{ .result = @unionInit(T, field.name, v) };
+                        }
+                    }
+                } else {
+                    inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                        if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                            return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                                .result => |v| @unionInit(T, field.name, v),
+                                .err => |e| return .{ .err = e },
+                            } };
+                        }
+                        if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                            return .{ .result = @unionInit(T, field.name, v) };
+                        }
+                    }
+
+                    // We can generate this as the last statements of the function, avoiding the `input.tryParse` routine above
+                    if (input.expectIdentMatching(void_field.name).asErr()) |e| return .{ .err = e };
+                    if (comptime is_union_enum) return .{ .result = @unionInit(T, void_field.name, {}) };
+                    return .{ .result = @enumFromInt(void_field.value) };
+                }
+            } else if (comptime first_void_index < first_payload_index) {
+                // Multiple fields declared before the payload fields, use tryParse
+                const state = input.state();
+                if (input.tryParse(Parser.expectIdent, .{}).asValue()) |ident| {
+                    if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
+                        inline for (void_fields) |field| {
+                            if (field.value == @intFromEnum(matched)) {
+                                if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
+                                return .{ .result = @enumFromInt(field.value) };
+                            }
+                        }
+                        unreachable;
+                    }
+                    input.reset(&state);
+                }
+
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+            } else if (comptime first_void_index > first_payload_index) {
+                inline for (tyinfo.Union.fields[first_payload_index .. first_payload_index + payload_count], first_payload_index..) |field, i| {
+                    if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+                        return .{ .result = switch (generic.parseFor(field.type)(input)) {
+                            .result => |v| @unionInit(T, field.name, v),
+                            .err => |e| return .{ .err = e },
+                        } };
+                    }
+                    if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+                        return .{ .result = @unionInit(T, field.name, v) };
+                    }
+                }
+
+                const location = input.currentSourceLocation();
+                const ident = switch (input.expectIdent()) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
+                    inline for (void_fields) |field| {
+                        if (field.value == @intFromEnum(matched)) {
+                            if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, {}) };
+                            return .{ .result = @enumFromInt(field.value) };
+                        }
+                    }
+                    unreachable;
+                }
+                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            }
+            @compileError("SHOULD BE UNREACHABLE!");
+        }
+
+        // inline fn generatePayloadBranches(
+        //     input: *Parser,
+        //     comptime first_payload_index: usize,
+        //     comptime first_void_index: usize,
+        //     comptime payload_count: usize,
+        // ) Result(T) {
+        //     const last_payload_index = first_payload_index + payload_count - 1;
+        //     inline for (tyinfo.Union.fields[first_payload_index..], first_payload_index..) |field, i| {
+        //         if (comptime (i == last_payload_index and last_payload_index > first_void_index)) {
+        //             return generic.parseFor(field.type)(input);
+        //         }
+        //         if (input.tryParse(generic.parseFor(field.type), .{}).asValue()) |v| {
+        //             return .{ .result = @unionInit(T, field.name, v) };
+        //         }
+        //     }
+        //     // The last field will return so this is never reachable
+        //     unreachable;
+        // }
+
         // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
         //     // to implement this, we need to cargo expand the derive macro
         //     _ = this; // autofix
@@ -678,14 +753,59 @@ pub fn DeriveParse(comptime T: type) type {
     };
 }
 
+/// This uses comptime reflection to generate a `toCss` function enums and union(enum)s.
+///
+/// Supported payload types for union(enum)s are:
+/// - any type that has a `toCss` function
+/// - void types (stringifies the identifier)
+/// - optional types (unwraps the optional)
+/// - anonymous structs, will automatically serialize it if it has a `__generateToCss` function
 pub fn DeriveToCss(comptime T: type) type {
-    // TODO: this has to work for enums and union(enums)
+    const tyinfo = @typeInfo(T);
+    const enum_fields = bun.meta.EnumFields(T);
+    const is_enum_or_union_enum = tyinfo == .Union or tyinfo == .Enum;
+
     return struct {
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            // to implement this, we need to cargo expand the derive macro
-            _ = this; // autofix
-            _ = dest; // autofix
-            @compileError(todo_stuff.depth);
+            if (comptime is_enum_or_union_enum) {
+                inline for (std.meta.fields(T), 0..) |field, i| {
+                    if (@intFromEnum(this.*) == enum_fields[i].value) {
+                        if (comptime field.type == void) {
+                            return dest.writeStr(enum_fields[i].name);
+                        } else if (comptime generic.hasToCss(field.type)) {
+                            return generic.toCss(field.type, &@field(this, field.name), W, dest);
+                        } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .Struct) {
+                            const variant_fields = std.meta.fields(field.type);
+                            if (variant_fields.len > 1) {
+                                const last = variant_fields.len - 1;
+                                inline for (variant_fields, 0..) |variant_field, j| {
+                                    // Unwrap it from the optional
+                                    if (@typeInfo(variant_field.type) == .Optional) {
+                                        if (@field(@field(this, field.name), variant_field.name)) |*value| {
+                                            try value.toCss(W, dest);
+                                        }
+                                    } else {
+                                        try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
+                                    }
+
+                                    // Emit a space if there are more fields after
+                                    if (comptime j != last) {
+                                        try dest.writeChar(' ');
+                                    }
+                                }
+                            } else {
+                                const variant_field = variant_fields[0];
+                                try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), W, dest);
+                            }
+                        } else {
+                            @compileError("Don't know how to serialize this variant: " ++ @typeName(field.type) ++ ", on " ++ @typeName(T) ++ ".\n\nYou probably want to implement a `toCss` function for this type, or add a dummy `fn __generateToCss() void {}` to the type signal that it is okay for it to be auto-generated by this function..");
+                        }
+                    }
+                }
+            } else {
+                @compileError("Unsupported type: " ++ @typeName(T));
+            }
+            return;
         }
     };
 }
@@ -723,6 +843,10 @@ pub fn DefineEnumProperty(comptime T: type) type {
     const fields: []const std.builtin.Type.EnumField = std.meta.fields(T);
 
     return struct {
+        pub fn eql(lhs: *const T, rhs: *const T) bool {
+            return @intFromEnum(lhs.*) == @intFromEnum(rhs.*);
+        }
+
         pub fn asStr(this: *const T) []const u8 {
             const tag = @intFromEnum(this.*);
             inline for (fields) |field| {
@@ -748,9 +872,16 @@ pub fn DefineEnumProperty(comptime T: type) type {
         }
 
         pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            _ = this; // autofix
-            _ = dest; // autofix
-            // return dest.writeStr(asStr(this));
+            return dest.writeStr(asStr(this));
+        }
+
+        pub inline fn deepClone(this: *const T, _: std.mem.Allocator) T {
+            return this.*;
+        }
+
+        pub fn hash(this: *const T, hasher: *std.hash.Wyhash) void {
+            const tag = @intFromEnum(this.*);
+            hasher.update(std.mem.asBytes(&tag));
         }
     };
 }
@@ -836,25 +967,35 @@ fn parse_at_rule(
                     .result => |v| v,
                     .err => break :out,
                 };
-                if (tok.* != .open_curly and tok.* != .semicolon) unreachable;
+                if (tok.* != .open_curly and tok.* != .semicolon) bun.unreachablePanic("Should have consumed these delimiters", .{});
                 break :out;
             }
             return .{ .err = e };
         },
     };
     const next = switch (input.next()) {
-        .result => |v| v,
+        .result => |v| v.*,
         .err => {
             return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-                .result => |v| .{ .result = v },
-                .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
             };
         },
     };
-    switch (next.*) {
-        .semicolon => return switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
-            .result => |v| .{ .result = v },
-            .err => return .{ .err = input.newUnexpectedTokenError(.semicolon) },
+    switch (next) {
+        .semicolon => {
+            switch (P.AtRuleParser.ruleWithoutBlock(parser, prelude, start)) {
+                .result => |v| {
+                    return .{ .result = v };
+                },
+                .err => {
+                    return .{ .err = input.newUnexpectedTokenError(.semicolon) };
+                },
+            }
         },
         .open_curly => {
             const AnotherClosure = struct {
@@ -998,6 +1139,7 @@ fn parse_until_before(
                 break :brk block_type;
             } else null,
             .stop_before = delimiters,
+            .import_records = parser.import_records,
         };
         const result = delimited_parser.parseEntirely(T, closure, parse_fn);
         if (error_behavior == .stop and result.isErr()) {
@@ -1072,6 +1214,7 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
     var nested_parser = Parser{
         .input = parser.input,
         .stop_before = closing_delimiter,
+        .import_records = parser.import_records,
     };
     const result = nested_parser.parseEntirely(T, closure, parsefn);
     if (nested_parser.at_start_of) |block_type2| {
@@ -1114,9 +1257,12 @@ pub fn ValidQualifiedRuleParser(comptime T: type) void {
 }
 
 pub const DefaultAtRule = struct {
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        _ = this; // autofix
+    pub fn toCss(_: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return dest.newError(.fmt_error, null);
+    }
+
+    pub fn deepClone(_: *const @This(), _: std.mem.Allocator) @This() {
+        return .{};
     }
 };
 
@@ -1127,26 +1273,62 @@ pub const DefaultAtRuleParser = struct {
         pub const Prelude = void;
         pub const AtRule = DefaultAtRule;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, options: *const ParserOptions) Result(Prelude) {
-            _ = options; // autofix
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
             return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
-        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, options: *const ParserOptions, is_nested: bool) Result(CustomAtRuleParser.AtRule) {
-            _ = options; // autofix
-            _ = is_nested; // autofix
+        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, _: *const ParserOptions, _: bool) Result(CustomAtRuleParser.AtRule) {
             return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, options: *const ParserOptions, is_nested: bool) Maybe(CustomAtRuleParser.AtRule, void) {
-            _ = options; // autofix
-            _ = is_nested; // autofix
+        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
             return .{ .err = {} };
+        }
+
+        pub fn onImportRule(_: *This, _: *ImportRule, _: u32, _: u32) void {}
+    };
+};
+
+pub const BundlerAtRuleParser = struct {
+    const This = @This();
+    allocator: Allocator,
+    import_records: *bun.BabyList(ImportRecord),
+
+    pub const CustomAtRuleParser = struct {
+        pub const Prelude = void;
+        pub const AtRule = DefaultAtRule;
+
+        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
+            return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
+        }
+
+        pub fn parseBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, input: *Parser, _: *const ParserOptions, _: bool) Result(CustomAtRuleParser.AtRule) {
+            return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
+        }
+
+        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
+            return .{ .err = {} };
+        }
+
+        pub fn onImportRule(this: *This, import_rule: *ImportRule, start_position: u32, end_position: u32) void {
+            const import_record_index = this.import_records.len;
+            import_rule.import_record_idx = import_record_index;
+            this.import_records.push(this.allocator, ImportRecord{
+                .path = bun.fs.Path.init(import_rule.url),
+                .kind = if (import_rule.supports != null) .at_conditional else .at,
+                .range = bun.logger.Range{
+                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .len = @intCast(end_position - start_position),
+                },
+            }) catch bun.outOfMemory();
         }
     };
 };
 
 /// Same as `ValidAtRuleParser` but modified to provide parser options
+///
+/// Also added:
+/// - onImportRule to handle @import rules
 pub fn ValidCustomAtRuleParser(comptime T: type) void {
     // The intermediate representation of prelude of an at-rule.
     _ = T.CustomAtRuleParser.Prelude;
@@ -1194,6 +1376,8 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     //
     // This is only called when a block was found following the prelude.
     _ = T.CustomAtRuleParser.parseBlock;
+
+    _ = T.CustomAtRuleParser.onImportRule;
 }
 
 pub fn ValidAtRuleParser(comptime T: type) void {
@@ -1333,28 +1517,6 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             pub const AtRule = void;
 
             pub fn parsePrelude(this: *This, name: []const u8, input: *Parser) Result(Prelude) {
-                // TODO: optimize string switch
-                // So rust does the strategy of:
-                // 1. switch (or if branches) on the length of the input string
-                // 2. then do string comparison by word size (or smaller sometimes)
-                // rust sometimes makes jump table https://godbolt.org/z/63d5vYnsP
-                // sometimes it doesn't make a jump table and just does branching on lengths: https://godbolt.org/z/d8jGPEd56
-                // it looks like it will only make a jump table when it knows it won't be too sparse? If I add a "h" case (to make it go 1, 2, 4, 5) or a  "hzz" case (so it goes 2, 3, 4, 5) it works:
-                // - https://godbolt.org/z/WGTMPxafs (change "hzz" to "h" and it works too, remove it and jump table is gone)
-                //
-                // I tried recreating the jump table (first link) by hand: https://godbolt.org/z/WPM5c5K4b
-                // it worked fairly well. Well I actually just made it match on the length, compiler made the jump table,
-                // so we should let the compiler make the jump table.
-                // Another recreation with some more nuances: https://godbolt.org/z/9Y1eKdY3r
-                // Another recreation where hand written is faster than the Rust compiler: https://godbolt.org/z/sTarKe4Yx
-                // specifically we can make the compiler generate a jump table instead of brancing
-                //
-                // Our ExactSizeMatcher is decent
-                // or comptime string map that calls eqlcomptime function thingy, or std.StaticStringMap
-                // rust-cssparser does a thing where it allocates stack buffer with maximum possible size and
-                // then uses that to do ASCII to lowercase conversion:
-                // https://github.com/servo/rust-cssparser/blob/b75ce6a8df2dbd712fac9d49ba38ee09b96d0d52/src/macros.rs#L168
-                // we could probably do something similar, looks like the max length never goes above 20 bytes
                 if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "import")) {
                     if (@intFromEnum(this.state) > @intFromEnum(State.imports)) {
                         return .{ .err = input.newCustomError(@as(ParserError, ParserError.unexpected_import_rule)) };
@@ -1472,14 +1634,16 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 switch (prelude) {
                     .import => {
                         this.state = State.imports;
+                        var import_rule = ImportRule{
+                            .url = prelude.import[0],
+                            .media = prelude.import[1],
+                            .supports = prelude.import[2],
+                            .layer = if (prelude.import[3]) |v| .{ .v = v.value } else null,
+                            .loc = loc,
+                        };
+                        AtRuleParserT.CustomAtRuleParser.onImportRule(this.at_rule_parser, &import_rule, @intCast(start.position), @intCast(start.position + 1));
                         this.rules.v.append(this.allocator, .{
-                            .import = ImportRule{
-                                .url = prelude.import[0],
-                                .media = prelude.import[1],
-                                .supports = prelude.import[2],
-                                .layer = if (prelude.import[3]) |v| .{ .v = v.value } else null,
-                                .loc = loc,
-                            },
+                            .import = import_rule,
                         }) catch bun.outOfMemory();
                         return .{ .result = {} };
                     },
@@ -2398,6 +2562,18 @@ pub const ToCssResult = struct {
     dependencies: ?ArrayList(Dependency),
 };
 
+pub const ToCssResultInternal = struct {
+    /// A map of CSS module exports, if the `css_modules` option was
+    /// enabled during parsing.
+    exports: ?CssModuleExports,
+    /// A map of CSS module references, if the `css_modules` config
+    /// had `dashed_idents` enabled.
+    references: ?CssModuleReferences,
+    /// A list of dependencies (e.g. `@import` or `url()`) found in
+    /// the style sheet, if the `analyze_dependencies` option is enabled.
+    dependencies: ?ArrayList(Dependency),
+};
+
 pub const MinifyOptions = struct {
     /// Targets to compile the CSS for.
     targets: targets.Targets,
@@ -2413,6 +2589,11 @@ pub const MinifyOptions = struct {
     }
 };
 
+pub const BundlerStyleSheet = StyleSheet(DefaultAtRule);
+pub const BundlerCssRuleList = CssRuleList(DefaultAtRule);
+pub const BundlerCssRule = CssRule(DefaultAtRule);
+pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(DefaultAtRule);
+
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
         /// A list of top-level rules within the style sheet.
@@ -2424,61 +2605,59 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
         const This = @This();
 
-        /// Minify and transform the style sheet for the provided browser targets.
-        pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) Maybe(void, Err(MinifyErrorKind)) {
-            _ = this; // autofix
-            _ = allocator; // autofix
-            _ = options; // autofix
-            // TODO
-            return .{ .result = {} };
-
-            // const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
-            // var handler = declaration.DeclarationHandler.default();
-            // var important_handler = declaration.DeclarationHandler.default();
-
-            // // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
-            // // of a stylesheet. Do a pre-scan here and create a lookup table by name.
-            // const custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.contains(ParserFlags{ .custom_media = true }) and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
-            //     var custom_media = std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule){};
-
-            //     for (this.rules.v.items) |*rule| {
-            //         if (rule.* == .custom_media) {
-            //             custom_media.put(allocator, rule.custom_media.name, rule.deepClone(allocator)) catch bun.outOfMemory();
-            //         }
-            //     }
-
-            //     break :brk custom_media;
-            // } else null;
-            // defer if (custom_media) |media| media.deinit(allocator);
-
-            // var minify_ctx = MinifyContext{
-            //     .targets = &options.targets,
-            //     .handler = &handler,
-            //     .important_handler = &important_handler,
-            //     .handler_context = ctx,
-            //     .unused_symbols = &options.unused_symbols,
-            //     .custom_media = custom_media,
-            //     .css_modules = this.options.css_modules != null,
-            // };
-
-            // switch (this.rules.minify(&minify_ctx, false)) {
-            //     .result => return .{ .result = {} },
-            //     .err => |e| {
-            //         _ = e; // autofix
-            //         @panic("TODO: here");
-            //         // return .{ .err = .{ .kind = e, .loc = } };
-            //     },
-            // }
+        pub fn empty(allocator: Allocator) This {
+            return This{
+                .rules = .{},
+                .sources = .{},
+                .source_map_urls = .{},
+                .license_comments = .{},
+                .options = ParserOptions.default(allocator, null),
+            };
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions) PrintErr!ToCssResult {
-            // TODO: this is not necessary
-            // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
-            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
-            const writer = dest.writer(allocator);
+        /// Minify and transform the style sheet for the provided browser targets.
+        pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) Maybe(void, Err(MinifyErrorKind)) {
+            const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
+            var handler = declaration.DeclarationHandler.default();
+            var important_handler = declaration.DeclarationHandler.default();
+
+            // @custom-media rules may be defined after they are referenced, but may only be defined at the top level
+            // of a stylesheet. Do a pre-scan here and create a lookup table by name.
+            var custom_media: ?std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule) = if (this.options.flags.contains(ParserFlags{ .custom_media = true }) and options.targets.shouldCompileSame(.custom_media_queries)) brk: {
+                var custom_media = std.StringArrayHashMapUnmanaged(css_rules.custom_media.CustomMediaRule){};
+
+                for (this.rules.v.items) |*rule| {
+                    if (rule.* == .custom_media) {
+                        custom_media.put(allocator, rule.custom_media.name.v, rule.custom_media.deepClone(allocator)) catch bun.outOfMemory();
+                    }
+                }
+
+                break :brk custom_media;
+            } else null;
+            defer if (custom_media) |*media| media.deinit(allocator);
+
+            var minify_ctx = MinifyContext{
+                .allocator = allocator,
+                .targets = &options.targets,
+                .handler = &handler,
+                .important_handler = &important_handler,
+                .handler_context = ctx,
+                .unused_symbols = &options.unused_symbols,
+                .custom_media = custom_media,
+                .css_modules = this.options.css_modules != null,
+            };
+
+            this.rules.minify(&minify_ctx, false) catch {
+                @panic("TODO: Handle");
+            };
+
+            return .{ .result = {} };
+        }
+
+        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
             const W = @TypeOf(writer);
             const project_root = options.project_root;
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
 
             // #[cfg(feature = "sourcemap")]
             // {
@@ -2492,8 +2671,9 @@ pub fn StyleSheet(comptime AtRule: type) type {
 
             for (this.license_comments.items) |comment| {
                 try printer.writeStr("/*");
-                try printer.writeStr(comment);
-                try printer.writeStr("*/\n");
+                try printer.writeComment(comment);
+                try printer.writeStr("*/");
+                try printer.newline();
             }
 
             if (this.options.css_modules) |*config| {
@@ -2503,31 +2683,53 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 try this.rules.toCss(W, &printer);
                 try printer.newline();
 
-                return ToCssResult{
+                return ToCssResultInternal{
                     .dependencies = printer.dependencies,
                     .exports = exports: {
                         const val = printer.css_module.?.exports_by_source_index.items[0];
                         printer.css_module.?.exports_by_source_index.items[0] = .{};
                         break :exports val;
                     },
-                    .code = dest.items,
+                    // .code = dest.items,
                     .references = references,
                 };
             } else {
                 try this.rules.toCss(W, &printer);
                 try printer.newline();
-                return ToCssResult{
+                return ToCssResultInternal{
                     .dependencies = printer.dependencies,
-                    .code = dest.items,
+                    // .code = dest.items,
                     .exports = null,
                     .references = null,
                 };
             }
         }
 
-        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(This, Err(ParserError)) {
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
+            // TODO: this is not necessary
+            // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
+            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
+            const writer = dest.writer(allocator);
+            const result = try toCssWithWriter(this, allocator, writer, options, import_records);
+            return ToCssResult{
+                .code = dest.items,
+                .dependencies = result.dependencies,
+                .exports = result.exports,
+                .references = result.references,
+            };
+        }
+
+        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: ?*bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
             var default_at_rule_parser = DefaultAtRuleParser{};
-            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser);
+            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser, import_records);
+        }
+
+        pub fn parseBundler(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
+            var at_rule_parser = BundlerAtRuleParser{
+                .import_records = import_records,
+                .allocator = allocator,
+            };
+            return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records);
         }
 
         /// Parse a style sheet from a string.
@@ -2537,9 +2739,10 @@ pub fn StyleSheet(comptime AtRule: type) type {
             options: ParserOptions,
             comptime P: type,
             at_rule_parser: *P,
+            import_records: ?*bun.BabyList(ImportRecord),
         ) Maybe(This, Err(ParserError)) {
             var input = ParserInput.new(allocator, code);
-            var parser = Parser.new(&input);
+            var parser = Parser.new(&input, import_records);
 
             var license_comments = ArrayList([]const u8){};
             var state = parser.state();
@@ -2598,9 +2801,9 @@ pub const StyleAttribute = struct {
     declarations: DeclarationBlock,
     sources: ArrayList([]const u8),
 
-    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions) Maybe(StyleAttribute, Err(ParserError)) {
+    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(StyleAttribute, Err(ParserError)) {
         var input = ParserInput.new(allocator, code);
-        var parser = Parser.new(&input);
+        var parser = Parser.new(&input, import_records);
         const sources = sources: {
             var s = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
             s.appendAssumeCapacity(options.filename);
@@ -2615,7 +2818,7 @@ pub const StyleAttribute = struct {
         } };
     }
 
-    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions) PrintErr!ToCssResult {
+    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions, import_records: *bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
         // #[cfg(feature = "sourcemap")]
         // assert!(
         //   options.source_map.is_none(),
@@ -2624,7 +2827,7 @@ pub const StyleAttribute = struct {
 
         var dest = ArrayList(u8){};
         const writer = dest.writer(allocator);
-        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
         printer.sources = &this.sources;
 
         try this.declarations.toCss(@TypeOf(writer), &printer);
@@ -2866,18 +3069,62 @@ const ParseUntilErrorBehavior = enum {
     stop,
 };
 
+// const ImportRecordHandler = union(enum) {
+//     list: *bun.BabyList(ImportRecord),
+//     // dummy: u32,
+
+//     pub fn add(this: *ImportRecordHandler, allocator: Allocator, record: ImportRecord) u32 {
+//         return switch (this.*) {
+//             .list => |list| {
+//                 const len = list.len;
+//                 list.push(allocator, record) catch bun.outOfMemory();
+//                 return len;
+//             },
+//             // .dummy => |*d| {
+//             //     const val = d.*;
+//             //     d.* += 1;
+//             //     return val;
+//             // },
+//         };
+//     }
+// };
+
 pub const Parser = struct {
     input: *ParserInput,
     at_start_of: ?BlockType = null,
     stop_before: Delimiters = Delimiters.NONE,
+    import_records: ?*bun.BabyList(ImportRecord),
+
+    // TODO: dedupe import records??
+    pub fn addImportRecordForUrl(this: *Parser, url: []const u8, start_position: usize) Result(u32) {
+        if (this.import_records) |import_records| {
+            const idx = import_records.len;
+            import_records.push(this.allocator(), ImportRecord{
+                .path = bun.fs.Path.init(url),
+                .kind = .url,
+                .range = bun.logger.Range{
+                    .loc = bun.logger.Loc{ .start = @intCast(start_position) },
+                    .len = @intCast(url.len), // TODO: technically this is not correct because the url could be escaped
+                },
+            }) catch bun.outOfMemory();
+            return .{ .result = idx };
+        } else {
+            return .{ .err = this.newBasicUnexpectedTokenError(.{ .unquoted_url = url }) };
+        }
+    }
 
     pub inline fn allocator(self: *Parser) Allocator {
         return self.input.tokenizer.allocator;
     }
 
-    pub fn new(input: *ParserInput) Parser {
+    /// Create a new Parser
+    ///
+    /// Pass in `import_records` to track imports (`@import` rules, `url()` tokens). If this
+    /// is `null`, calling `Parser.addImportRecordForUrl` will error.
+    pub fn new(input: *ParserInput, import_records: ?*bun.BabyList(ImportRecord)) Parser {
         return Parser{
             .input = input,
+            .import_records = import_records,
         };
     }
 
@@ -3403,6 +3650,7 @@ pub const Parser = struct {
     pub fn reset(this: *Parser, state_: *const ParserState) void {
         this.input.tokenizer.reset(state_);
         this.at_start_of = state_.at_start_of;
+        if (this.import_records) |import_records| import_records.len = state_.import_record_count;
     }
 
     pub fn state(this: *Parser) ParserState {
@@ -3411,6 +3659,7 @@ pub const Parser = struct {
             .current_line_start_position = this.input.tokenizer.current_line_start_position,
             .current_line_number = @intCast(this.input.tokenizer.current_line_number),
             .at_start_of = this.at_start_of,
+            .import_record_count = if (this.import_records) |import_records| import_records.len else 0,
         };
     }
 
@@ -3548,6 +3797,7 @@ pub const ParserState = struct {
     position: usize,
     current_line_start_position: usize,
     current_line_number: u32,
+    import_record_count: u32,
     at_start_of: ?BlockType,
 
     pub fn sourceLocation(this: *const ParserState) SourceLocation {
@@ -3674,7 +3924,7 @@ pub const nth = struct {
 
         if (tok.* == .delim and tok.delim == '+') return parse_signless_b(input, a, 1);
         if (tok.* == .delim and tok.delim == '-') return parse_signless_b(input, a, -1);
-        if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return parse_signless_b(input, a, tok.number.int_value.?);
+        if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return .{ .result = NthResult{ a, tok.number.int_value.? } };
         input.reset(&start);
         return .{ .result = .{ a, 0 } };
     }
@@ -3709,7 +3959,7 @@ pub const nth = struct {
 
     fn parse_number_saturate(allocator: Allocator, string: []const u8) Maybe(i32, void) {
         var input = ParserInput.new(allocator, string);
-        var parser = Parser.new(&input);
+        var parser = Parser.new(&input, null);
         const tok = switch (parser.nextIncludingWhitespaceAndComments()) {
             .result => |v| v,
             .err => {
@@ -3785,6 +4035,7 @@ const Tokenizer = struct {
             .current_line_start_position = this.current_line_start_position,
             .current_line_number = this.current_line_number,
             .at_start_of = null,
+            .import_record_count = 0,
         };
     }
 
@@ -3807,7 +4058,7 @@ const Tokenizer = struct {
     pub fn currentSourceLocation(this: *const Tokenizer) SourceLocation {
         return SourceLocation{
             .line = this.current_line_number,
-            .column = @intCast(this.position - this.current_line_start_position + 1),
+            .column = @intCast((this.position - this.current_line_start_position) + 1),
         };
     }
 
@@ -4108,7 +4359,7 @@ const Tokenizer = struct {
                     this.advance(1);
                     if (this.isEof()) break;
                 }
-                value *= std.math.pow(f64, 10, sign2 * exponent);
+                value *= bun.pow(10, sign2 * exponent);
             }
         }
 
@@ -5042,6 +5293,12 @@ pub const Token = union(TokenKind) {
         has_sign: bool,
         unit_value: f32,
         int_value: ?i32,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn __generateHash() void {}
     },
 
     dimension: Dimension,
@@ -5089,6 +5346,14 @@ pub const Token = union(TokenKind) {
     /// Not an actual token in the spec, but we keep it anyway
     comment: []const u8,
 
+    pub fn eql(lhs: *const Token, rhs: *const Token) bool {
+        return implementEql(Token, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return implementHash(@This(), this, hasher);
+    }
+
     /// Return whether this token represents a parse error.
     ///
     /// `BadUrl` and `BadString` are tokenizer-level parse errors.
@@ -5099,6 +5364,38 @@ pub const Token = union(TokenKind) {
         return switch (this.*) {
             .bad_url, .bad_string, .close_paren, .close_square, .close_curly => true,
             else => false,
+        };
+    }
+
+    pub fn format(
+        this: *const Token,
+        comptime fmt: []const u8,
+        opts: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt; // autofix
+        _ = opts; // autofix
+        return switch (this.*) {
+            inline .ident,
+            .function,
+            .at_keyword,
+            .hash,
+            .idhash,
+            .quoted_string,
+            .bad_string,
+            .unquoted_url,
+            .bad_url,
+            .whitespace,
+            .comment,
+            => |str| {
+                try writer.print("{s} = {s}", .{ @tagName(this.*), str });
+            },
+            .delim => |d| {
+                try writer.print("'{c}'", .{@as(u8, @truncate(d))});
+            },
+            else => {
+                try writer.print("{s}", .{@tagName(this.*)});
+            },
         };
     }
 
@@ -5311,12 +5608,28 @@ const Num = struct {
     has_sign: bool,
     value: f32,
     int_value: ?i32,
+
+    pub fn eql(lhs: *const Num, rhs: *const Num) bool {
+        return implementEql(Num, lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return implementHash(@This(), this, hasher);
+    }
 };
 
 const Dimension = struct {
     num: Num,
     /// e.g. "px"
     unit: []const u8,
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return implementHash(@This(), this, hasher);
+    }
 };
 
 const CopyOnWriteStr = union(enum) {
@@ -5826,155 +6139,189 @@ pub const serializer = struct {
     }
 };
 
-pub const generic = struct {
-    pub inline fn parseWithOptions(comptime T: type, input: *Parser, options: *const ParserOptions) Result(T) {
-        if (@hasDecl(T, "parseWithOptions")) return T.parseWithOptions(input, options);
-        return switch (T) {
-            f32 => CSSNumberFns.parse(input),
-            CSSInteger => CSSIntegerFns.parse(input),
-            CustomIdent => CustomIdentFns.parse(input),
-            DashedIdent => DashedIdentFns.parse(input),
-            Ident => IdentFns.parse(input),
-            else => T.parse(input),
+pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Allocator) T {
+    const tyinfo = @typeInfo(T);
+
+    if (comptime bun.meta.isSimpleCopyType(T)) {
+        return this.*;
+    }
+
+    if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
+        return switch (result) {
+            .array_list => deepClone(result.child, allocator, this),
+            .baby_list => @panic("Not implemented."),
+            .small_list => this.deepClone(allocator),
         };
     }
 
-    pub inline fn parse(comptime T: type, input: *Parser) Result(T) {
-        return switch (T) {
-            f32 => CSSNumberFns.parse(input),
-            CSSInteger => CSSIntegerFns.parse(input),
-            CustomIdent => CustomIdentFns.parse(input),
-            DashedIdent => DashedIdentFns.parse(input),
-            Ident => IdentFns.parse(input),
-            else => T.parse(input),
-        };
+    if (comptime T == []const u8) {
+        return this.*;
     }
 
-    pub inline fn parseFor(comptime T: type) @TypeOf(struct {
-        fn parsefn(input: *Parser) Result(T) {
-            return generic.parse(T, input);
-        }
-    }.parsefn) {
-        return struct {
-            fn parsefn(input: *Parser) Result(T) {
-                return generic.parse(T, input);
+    if (comptime @typeInfo(T) == .Pointer) {
+        const TT = std.meta.Child(T);
+        return implementEql(TT, this.*);
+    }
+
+    return switch (tyinfo) {
+        .Struct => {
+            var strct: T = undefined;
+            inline for (tyinfo.Struct.fields) |field| {
+                if (comptime generic.canTransitivelyImplementDeepClone(field.type) and @hasDecl(field.type, "__generateDeepClone")) {
+                    @field(strct, field.name) = implementDeepClone(field.type, &field(this, field.name, allocator));
+                } else {
+                    @field(strct, field.name) = generic.deepClone(field.type, &@field(this, field.name), allocator);
+                }
             }
-        }.parsefn;
-    }
+            return strct;
+        },
+        .Union => {
+            inline for (bun.meta.EnumFields(T), tyinfo.Union.fields) |enum_field, union_field| {
+                if (@intFromEnum(this.*) == enum_field.value) {
+                    if (comptime generic.canTransitivelyImplementDeepClone(union_field.type) and @hasDecl(union_field.type, "__generateDeepClone")) {
+                        return @unionInit(T, enum_field.name, implementDeepClone(union_field.type, &@field(this, enum_field.name), allocator));
+                    }
+                    return @unionInit(T, enum_field.name, generic.deepClone(union_field.type, &@field(this, enum_field.name), allocator));
+                }
+            }
+            unreachable;
+        },
+        else => @compileError("Unhandled type " ++ @typeName(T)),
+    };
+}
 
-    pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return switch (T) {
-            f32 => CSSNumberFns.toCss(this, W, dest),
-            CSSInteger => CSSIntegerFns.toCss(this, W, dest),
-            CustomIdent => CustomIdentFns.toCss(this, W, dest),
-            DashedIdent => DashedIdentFns.toCss(this, W, dest),
-            Ident => IdentFns.toCss(this, W, dest),
-            else => T.toCss(this, W, dest),
-        };
+/// A function to implement `lhs.eql(&rhs)` for the many types in the CSS parser that needs this.
+///
+/// This is the equivalent of doing `#[derive(PartialEq])` in Rust.
+///
+/// This function only works on simple types like:
+/// - Simple equality types (e.g. integers, floats, strings, enums, etc.)
+/// - Types which implement a `.eql(lhs: *const @This(), rhs: *const @This()) bool` function
+///
+/// Or compound types composed of simple types such as:
+/// - Pointers to simple types
+/// - Optional simple types
+/// - Structs, Arrays, and Unions
+pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
+    const tyinfo = @typeInfo(T);
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        return this.* == other.*;
     }
+    if (comptime T == []const u8) {
+        return bun.strings.eql(this.*, other.*);
+    }
+    if (comptime @typeInfo(T) == .Pointer) {
+        const TT = std.meta.Child(T);
+        return implementEql(TT, this.*, other.*);
+    }
+    if (comptime @typeInfo(T) == .Optional) {
+        const TT = std.meta.Child(T);
+        if (this.* != null and other.* != null) return implementEql(TT, &this.*.?, &other.*.?);
+        return false;
+    }
+    return switch (tyinfo) {
+        .Optional => @compileError("Handled above, this means Zack wrote a bug."),
+        .Pointer => @compileError("Handled above, this means Zack wrote a bug."),
+        .Array => {
+            const Child = std.meta.Child(T);
+            if (comptime bun.meta.isSimpleEqlType(Child)) {
+                return std.mem.eql(Child, &this.*, &other.*);
+            }
+            if (this.len != other.len) return false;
+            if (comptime generic.canTransitivelyImplementEql(Child) and @hasDecl(Child, "__generateEql")) {
+                for (this.*, other.*) |*a, *b| {
+                    if (!implementEql(Child, &a, &b)) return false;
+                }
+            } else {
+                for (this.*, other.*) |*a, *b| {
+                    if (!generic.eql(Child, a, b)) return false;
+                }
+            }
+            return true;
+        },
+        .Struct => {
+            inline for (tyinfo.Struct.fields) |field| {
+                if (!generic.eql(field.type, &@field(this, field.name), &@field(other, field.name))) return false;
+            }
+            return true;
+        },
+        .Union => {
+            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+            if (@intFromEnum(this.*) != @intFromEnum(other.*)) return false;
+            const enum_fields = bun.meta.EnumFields(T);
+            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
+                if (enum_field.value == @intFromEnum(this.*)) {
+                    if (union_field.type != void) {
+                        if (comptime generic.canTransitivelyImplementEql(union_field.type) and @hasDecl(union_field.type, "__generateEql")) {
+                            return implementEql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
+                        }
+                        return generic.eql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
+                    } else {
+                        return true;
+                    }
+                }
+            }
+            unreachable;
+        },
+        else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
+}
 
-    pub fn eqlList(comptime T: type, lhs: *const ArrayList(T), rhs: *const ArrayList(T)) bool {
-        if (lhs.items.len != rhs.items.len) return false;
-        for (lhs.items, 0..) |*item, i| {
-            if (!eql(T, item, &rhs.items[i])) return false;
-        }
-        return true;
+pub fn implementHash(comptime T: type, this: *const T, hasher: *std.hash.Wyhash) void {
+    const tyinfo = @typeInfo(T);
+    if (comptime T == void) return;
+    if (comptime bun.meta.isSimpleEqlType(T)) {
+        return hasher.update(std.mem.asBytes(&this));
     }
-
-    pub inline fn eql(comptime T: type, lhs: *const T, rhs: *const T) bool {
-        return switch (T) {
-            f32 => lhs.* == rhs.*,
-            CSSInteger => lhs.* == rhs.*,
-            CustomIdent, DashedIdent, Ident => bun.strings.eql(lhs.*, rhs.*),
-            else => T.eql(lhs, rhs),
-        };
+    if (comptime T == []const u8) {
+        return hasher.update(this.*);
     }
-
-    const Angle = css_values.angle.Angle;
-    pub inline fn tryFromAngle(comptime T: type, angle: Angle) ?T {
-        return switch (T) {
-            CSSNumber => CSSNumberFns.tryFromAngle(angle),
-            Angle => return Angle.tryFromAngle(angle),
-            else => T.tryFromAngle(angle),
-        };
+    if (comptime @typeInfo(T) == .Pointer) {
+        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
-
-    pub inline fn trySign(comptime T: type, val: *const T) ?f32 {
-        return switch (T) {
-            CSSNumber => CSSNumberFns.sign(val),
-            else => {
-                if (@hasDecl(T, "sign")) return T.sign(val);
-                return T.trySign(val);
-            },
-        };
+    if (comptime @typeInfo(T) == .Optional) {
+        @compileError("Invalid type for implementHash(): " ++ @typeName(T));
     }
-
-    pub inline fn tryMap(
-        comptime T: type,
-        val: *const T,
-        comptime map_fn: *const fn (a: f32) f32,
-    ) ?T {
-        return switch (T) {
-            CSSNumber => map_fn(val.*),
-            else => {
-                if (@hasDecl(T, "map")) return T.map(val, map_fn);
-                return T.tryMap(val, map_fn);
-            },
-        };
-    }
-
-    pub inline fn tryOpTo(
-        comptime T: type,
-        comptime R: type,
-        lhs: *const T,
-        rhs: *const T,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) R,
-    ) ?R {
-        return switch (T) {
-            CSSNumber => op_fn(ctx, lhs.*, rhs.*),
-            else => {
-                if (@hasDecl(T, "opTo")) return T.opTo(lhs, rhs, R, ctx, op_fn);
-                return T.tryOpTo(lhs, rhs, R, ctx, op_fn);
-            },
-        };
-    }
-
-    pub inline fn tryOp(
-        comptime T: type,
-        lhs: *const T,
-        rhs: *const T,
-        ctx: anytype,
-        comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
-    ) ?T {
-        return switch (T) {
-            Angle => Angle.tryOp(lhs, rhs, ctx, op_fn),
-            CSSNumber => op_fn(ctx, lhs.*, rhs.*),
-            else => {
-                if (@hasDecl(T, "op")) return T.op(lhs, rhs, ctx, op_fn);
-                return T.tryOp(lhs, rhs, ctx, op_fn);
-            },
-        };
-    }
-
-    pub inline fn partialCmp(comptime T: type, lhs: *const T, rhs: *const T) ?std.math.Order {
-        return switch (T) {
-            f32 => partialCmpF32(lhs, rhs),
-            CSSInteger => std.math.order(lhs.*, rhs.*),
-            css_values.angle.Angle => css_values.angle.Angle.partialCmp(lhs, rhs),
-            else => T.partialCmp(lhs, rhs),
-        };
-    }
-
-    pub inline fn partialCmpF32(lhs: *const f32, rhs: *const f32) ?std.math.Order {
-        const lte = lhs.* <= rhs.*;
-        const rte = lhs.* >= rhs.*;
-        if (!lte and !rte) return null;
-        if (!lte and rte) return .gt;
-        if (lte and !rte) return .lt;
-        return .eq;
-    }
-};
+    return switch (tyinfo) {
+        .Optional => unreachable,
+        .Pointer => unreachable,
+        .Array => {
+            if (comptime @typeInfo(T) == .Optional) {
+                @compileError("Invalid type for implementHash(): " ++ @typeName(T));
+            }
+        },
+        .Struct => {
+            inline for (tyinfo.Struct.fields) |field| {
+                if (comptime generic.hasHash(field.type)) {
+                    generic.hash(field.type, &@field(this, field.name), hasher);
+                } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                    implementHash(field.type, &@field(this, field.name), hasher);
+                } else {
+                    @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
+                }
+            }
+            return;
+        },
+        .Union => {
+            if (tyinfo.Union.tag_type == null) @compileError("Unions must have a tag type");
+            const enum_fields = bun.meta.EnumFields(T);
+            inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
+                if (enum_field.value == @intFromEnum(this.*)) {
+                    const field = union_field;
+                    if (comptime generic.hasHash(field.type)) {
+                        generic.hash(field.type, &@field(this, field.name), hasher);
+                    } else if (@hasDecl(field.type, "__generateHash") and @typeInfo(field.type) == .Struct) {
+                        implementHash(field.type, &@field(this, field.name), hasher);
+                    } else {
+                        @compileError("Can't hash these fields: " ++ @typeName(field.type) ++ ". On " ++ @typeName(T));
+                    }
+                }
+            }
+            return;
+        },
+        else => @compileError("Unsupported type: " ++ @typeName(T)),
+    };
+}
 
 pub const parse_utility = struct {
     /// Parse a value from a string.
@@ -5989,8 +6336,11 @@ pub const parse_utility = struct {
         input: []const u8,
         comptime parse_one: *const fn (*Parser) Result(T),
     ) Result(T) {
+        // I hope this is okay
+        var import_records = bun.BabyList(bun.ImportRecord){};
+        defer import_records.deinitWithAllocator(allocator);
         var i = ParserInput.new(allocator, input);
-        var parser = Parser.new(&i);
+        var parser = Parser.new(&i, &import_records);
         const result = switch (parse_one(&parser)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
@@ -6004,13 +6354,19 @@ pub const to_css = struct {
     /// Serialize `self` in CSS syntax and return a string.
     ///
     /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
-    pub fn string(allocator: Allocator, comptime T: type, this: *const T, options: PrinterOptions) PrintErr![]const u8 {
+    pub fn string(
+        allocator: Allocator,
+        comptime T: type,
+        this: *const T,
+        options: PrinterOptions,
+        import_records: ?*const bun.BabyList(ImportRecord),
+    ) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         errdefer s.deinit(allocator);
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options);
+        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
         defer printer.deinit();
         switch (T) {
             CSSString => try CSSStringFns.toCss(this, W, &printer),
@@ -6022,6 +6378,17 @@ pub const to_css = struct {
     pub fn fromList(comptime T: type, this: *const ArrayList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
         const len = this.items.len;
         for (this.items, 0..) |*val, idx| {
+            try val.toCss(W, dest);
+            if (idx < len - 1) {
+                try dest.delim(',', false);
+            }
+        }
+        return;
+    }
+
+    pub fn fromBabyList(comptime T: type, this: *const bun.BabyList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        const len = this.len;
+        for (this.sliceConst(), 0..) |*val, idx| {
             try val.toCss(W, dest);
             if (idx < len - 1) {
                 try dest.delim(',', false);
@@ -6107,11 +6474,8 @@ pub inline fn copysign(self: f32, sign: f32) f32 {
 pub fn deepClone(comptime V: type, allocator: Allocator, list: *const ArrayList(V)) ArrayList(V) {
     var newlist = ArrayList(V).initCapacity(allocator, list.items.len) catch bun.outOfMemory();
 
-    for (list.items) |item| {
-        newlist.appendAssumeCapacity(switch (V) {
-            i32, i64, u32, u64, f32, f64 => item,
-            else => item.deepClone(allocator),
-        });
+    for (list.items) |*item| {
+        newlist.appendAssumeCapacity(generic.deepClone(V, item, allocator));
     }
 
     return newlist;

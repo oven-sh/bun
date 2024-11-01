@@ -13,174 +13,12 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const struct_archive = lib.struct_archive;
+const Archive = lib.Archive;
 const JSC = bun.JSC;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,
     current = std.posix.SEEK_CUR,
     end = std.posix.SEEK_END,
-};
-
-pub const Flags = struct {
-    pub const Extract = enum(c_int) {
-        owner = lib.ARCHIVE_EXTRACT_OWNER,
-        perm = lib.ARCHIVE_EXTRACT_PERM,
-        time = lib.ARCHIVE_EXTRACT_TIME,
-        no_overwrite = lib.ARCHIVE_EXTRACT_NO_OVERWRITE,
-        unlink = lib.ARCHIVE_EXTRACT_UNLINK,
-        acl = lib.ARCHIVE_EXTRACT_ACL,
-        fflags = lib.ARCHIVE_EXTRACT_FFLAGS,
-        xattr = lib.ARCHIVE_EXTRACT_XATTR,
-        secure_symlinks = lib.ARCHIVE_EXTRACT_SECURE_SYMLINKS,
-        secure_nodotdot = lib.ARCHIVE_EXTRACT_SECURE_NODOTDOT,
-        no_autodir = lib.ARCHIVE_EXTRACT_NO_AUTODIR,
-        no_overwrite_newer = lib.ARCHIVE_EXTRACT_NO_OVERWRITE_NEWER,
-        sparse = lib.ARCHIVE_EXTRACT_SPARSE,
-        mac_metadata = lib.ARCHIVE_EXTRACT_MAC_METADATA,
-        no_hfs_compression = lib.ARCHIVE_EXTRACT_NO_HFS_COMPRESSION,
-        hfs_compression_forced = lib.ARCHIVE_EXTRACT_HFS_COMPRESSION_FORCED,
-        secure_noabsolutepaths = lib.ARCHIVE_EXTRACT_SECURE_NOABSOLUTEPATHS,
-        clear_nochange_fflags = lib.ARCHIVE_EXTRACT_CLEAR_NOCHANGE_FFLAGS,
-        safe_writes = lib.ARCHIVE_EXTRACT_SAFE_WRITES,
-    };
-
-    pub const Compression = enum(c_int) {
-        none = lib.ARCHIVE_COMPRESSION_NONE,
-        gzip = lib.ARCHIVE_COMPRESSION_GZIP,
-        bzip2 = lib.ARCHIVE_COMPRESSION_BZIP2,
-        compress = lib.ARCHIVE_COMPRESSION_COMPRESS,
-        program = lib.ARCHIVE_COMPRESSION_PROGRAM,
-        lzma = lib.ARCHIVE_COMPRESSION_LZMA,
-        xz = lib.ARCHIVE_COMPRESSION_XZ,
-        uu = lib.ARCHIVE_COMPRESSION_UU,
-        rpm = lib.ARCHIVE_COMPRESSION_RPM,
-        lzip = lib.ARCHIVE_COMPRESSION_LZIP,
-        lrzip = lib.ARCHIVE_COMPRESSION_LRZIP,
-    };
-
-    pub const Format = enum(c_int) {
-        base_mask = lib.ARCHIVE_FORMAT_BASE_MASK,
-        cpio = lib.ARCHIVE_FORMAT_CPIO,
-        cpio_posix = lib.ARCHIVE_FORMAT_CPIO_POSIX,
-        cpio_bin_le = lib.ARCHIVE_FORMAT_CPIO_BIN_LE,
-        cpio_bin_be = lib.ARCHIVE_FORMAT_CPIO_BIN_BE,
-        cpio_svr4_nocrc = lib.ARCHIVE_FORMAT_CPIO_SVR4_NOCRC,
-        cpio_svr4_crc = lib.ARCHIVE_FORMAT_CPIO_SVR4_CRC,
-        cpio_afio_large = lib.ARCHIVE_FORMAT_CPIO_AFIO_LARGE,
-        cpio_pwb = lib.ARCHIVE_FORMAT_CPIO_PWB,
-        shar = lib.ARCHIVE_FORMAT_SHAR,
-        shar_base = lib.ARCHIVE_FORMAT_SHAR_BASE,
-        shar_dump = lib.ARCHIVE_FORMAT_SHAR_DUMP,
-        tar = lib.ARCHIVE_FORMAT_TAR,
-        tar_ustar = lib.ARCHIVE_FORMAT_TAR_USTAR,
-        tar_pax_interchange = lib.ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE,
-        tar_pax_restricted = lib.ARCHIVE_FORMAT_TAR_PAX_RESTRICTED,
-        tar_gnutar = lib.ARCHIVE_FORMAT_TAR_GNUTAR,
-        iso9660 = lib.ARCHIVE_FORMAT_ISO9660,
-        iso9660_rockridge = lib.ARCHIVE_FORMAT_ISO9660_ROCKRIDGE,
-        zip = lib.ARCHIVE_FORMAT_ZIP,
-        empty = lib.ARCHIVE_FORMAT_EMPTY,
-        ar = lib.ARCHIVE_FORMAT_AR,
-        ar_gnu = lib.ARCHIVE_FORMAT_AR_GNU,
-        ar_bsd = lib.ARCHIVE_FORMAT_AR_BSD,
-        mtree = lib.ARCHIVE_FORMAT_MTREE,
-        raw = lib.ARCHIVE_FORMAT_RAW,
-        xar = lib.ARCHIVE_FORMAT_XAR,
-        lha = lib.ARCHIVE_FORMAT_LHA,
-        cab = lib.ARCHIVE_FORMAT_CAB,
-        rar = lib.ARCHIVE_FORMAT_RAR,
-        @"7zip" = lib.ARCHIVE_FORMAT_7ZIP,
-        warc = lib.ARCHIVE_FORMAT_WARC,
-        rar_v5 = lib.ARCHIVE_FORMAT_RAR_V5,
-    };
-
-    pub const Filter = enum(c_int) {
-        none = lib.ARCHIVE_FILTER_NONE,
-        gzip = lib.ARCHIVE_FILTER_GZIP,
-        bzip2 = lib.ARCHIVE_FILTER_BZIP2,
-        compress = lib.ARCHIVE_FILTER_COMPRESS,
-        program = lib.ARCHIVE_FILTER_PROGRAM,
-        lzma = lib.ARCHIVE_FILTER_LZMA,
-        xz = lib.ARCHIVE_FILTER_XZ,
-        uu = lib.ARCHIVE_FILTER_UU,
-        rpm = lib.ARCHIVE_FILTER_RPM,
-        lzip = lib.ARCHIVE_FILTER_LZIP,
-        lrzip = lib.ARCHIVE_FILTER_LRZIP,
-        lzop = lib.ARCHIVE_FILTER_LZOP,
-        grzip = lib.ARCHIVE_FILTER_GRZIP,
-        lz4 = lib.ARCHIVE_FILTER_LZ4,
-        zstd = lib.ARCHIVE_FILTER_ZSTD,
-    };
-
-    pub const EntryDigest = enum(c_int) {
-        md5 = lib.ARCHIVE_ENTRY_DIGEST_MD5,
-        rmd160 = lib.ARCHIVE_ENTRY_DIGEST_RMD160,
-        sha1 = lib.ARCHIVE_ENTRY_DIGEST_SHA1,
-        sha256 = lib.ARCHIVE_ENTRY_DIGEST_SHA256,
-        sha384 = lib.ARCHIVE_ENTRY_DIGEST_SHA384,
-        sha512 = lib.ARCHIVE_ENTRY_DIGEST_SHA512,
-    };
-
-    pub const EntryACL = enum(c_int) {
-        entry_acl_execute = lib.ARCHIVE_ENTRY_ACL_EXECUTE,
-        write = lib.ARCHIVE_ENTRY_ACL_WRITE,
-        read = lib.ARCHIVE_ENTRY_ACL_READ,
-        read_data = lib.ARCHIVE_ENTRY_ACL_READ_DATA,
-        list_directory = lib.ARCHIVE_ENTRY_ACL_LIST_DIRECTORY,
-        write_data = lib.ARCHIVE_ENTRY_ACL_WRITE_DATA,
-        add_file = lib.ARCHIVE_ENTRY_ACL_ADD_FILE,
-        append_data = lib.ARCHIVE_ENTRY_ACL_APPEND_DATA,
-        add_subdirectory = lib.ARCHIVE_ENTRY_ACL_ADD_SUBDIRECTORY,
-        read_named_attrs = lib.ARCHIVE_ENTRY_ACL_READ_NAMED_ATTRS,
-        write_named_attrs = lib.ARCHIVE_ENTRY_ACL_WRITE_NAMED_ATTRS,
-        delete_child = lib.ARCHIVE_ENTRY_ACL_DELETE_CHILD,
-        read_attributes = lib.ARCHIVE_ENTRY_ACL_READ_ATTRIBUTES,
-        write_attributes = lib.ARCHIVE_ENTRY_ACL_WRITE_ATTRIBUTES,
-        delete = lib.ARCHIVE_ENTRY_ACL_DELETE,
-        read_acl = lib.ARCHIVE_ENTRY_ACL_READ_ACL,
-        write_acl = lib.ARCHIVE_ENTRY_ACL_WRITE_ACL,
-        write_owner = lib.ARCHIVE_ENTRY_ACL_WRITE_OWNER,
-        synchronize = lib.ARCHIVE_ENTRY_ACL_SYNCHRONIZE,
-        perms_posix1_e = lib.ARCHIVE_ENTRY_ACL_PERMS_POSIX1E,
-        perms_nfs4 = lib.ARCHIVE_ENTRY_ACL_PERMS_NFS4,
-        entry_inherited = lib.ARCHIVE_ENTRY_ACL_ENTRY_INHERITED,
-        entry_file_inherit = lib.ARCHIVE_ENTRY_ACL_ENTRY_FILE_INHERIT,
-        entry_directory_inherit = lib.ARCHIVE_ENTRY_ACL_ENTRY_DIRECTORY_INHERIT,
-        entry_no_propagate_inherit = lib.ARCHIVE_ENTRY_ACL_ENTRY_NO_PROPAGATE_INHERIT,
-        entry_inherit_only = lib.ARCHIVE_ENTRY_ACL_ENTRY_INHERIT_ONLY,
-        entry_successful_access = lib.ARCHIVE_ENTRY_ACL_ENTRY_SUCCESSFUL_ACCESS,
-        entry_failed_access = lib.ARCHIVE_ENTRY_ACL_ENTRY_FAILED_ACCESS,
-        inheritance_nfs4 = lib.ARCHIVE_ENTRY_ACL_INHERITANCE_NFS4,
-        type_access = lib.ARCHIVE_ENTRY_ACL_TYPE_ACCESS,
-        type_default = lib.ARCHIVE_ENTRY_ACL_TYPE_DEFAULT,
-        type_allow = lib.ARCHIVE_ENTRY_ACL_TYPE_ALLOW,
-        type_deny = lib.ARCHIVE_ENTRY_ACL_TYPE_DENY,
-        type_audit = lib.ARCHIVE_ENTRY_ACL_TYPE_AUDIT,
-        type_alarm = lib.ARCHIVE_ENTRY_ACL_TYPE_ALARM,
-        type_posix1_e = lib.ARCHIVE_ENTRY_ACL_TYPE_POSIX1E,
-        type_nfs4 = lib.ARCHIVE_ENTRY_ACL_TYPE_NFS4,
-        user = lib.ARCHIVE_ENTRY_ACL_USER,
-        user_obj = lib.ARCHIVE_ENTRY_ACL_USER_OBJ,
-        group = lib.ARCHIVE_ENTRY_ACL_GROUP,
-        group_obj = lib.ARCHIVE_ENTRY_ACL_GROUP_OBJ,
-        mask = lib.ARCHIVE_ENTRY_ACL_MASK,
-        other = lib.ARCHIVE_ENTRY_ACL_OTHER,
-        everyone = lib.ARCHIVE_ENTRY_ACL_EVERYONE,
-        style_extra_id = lib.ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID,
-        style_mark_default = lib.ARCHIVE_ENTRY_ACL_STYLE_MARK_DEFAULT,
-        style_solaris = lib.ARCHIVE_ENTRY_ACL_STYLE_SOLARIS,
-        style_separator_comma = lib.ARCHIVE_ENTRY_ACL_STYLE_SEPARATOR_COMMA,
-        style_compact = lib.ARCHIVE_ENTRY_ACL_STYLE_COMPACT,
-    };
-};
-
-pub const Status = enum(c_int) {
-    eof = lib.ARCHIVE_EOF,
-    ok = lib.ARCHIVE_OK,
-    retry = lib.ARCHIVE_RETRY,
-    warn = lib.ARCHIVE_WARN,
-    failed = lib.ARCHIVE_FAILED,
-    fatal = lib.ARCHIVE_FATAL,
 };
 
 pub const BufferReadStream = struct {
@@ -190,27 +28,27 @@ pub const BufferReadStream = struct {
 
     block_size: usize = 16384,
 
-    archive: *struct_archive,
+    archive: *Archive,
     reading: bool = false,
 
     pub fn init(this: *BufferReadStream, buf: []const u8) void {
         this.* = BufferReadStream{
             .buf = buf,
             .pos = 0,
-            .archive = lib.archive_read_new(),
+            .archive = Archive.readNew(),
             .reading = false,
         };
     }
 
     pub fn deinit(this: *BufferReadStream) void {
-        _ = lib.archive_read_close(this.archive);
+        _ = this.archive.readClose();
         // don't free it if we never actually read it
         // if (this.reading) {
         //     _ = lib.archive_read_free(this.archive);
         // }
     }
 
-    pub fn openRead(this: *BufferReadStream) c_int {
+    pub fn openRead(this: *BufferReadStream) Archive.Result {
         // lib.archive_read_set_open_callback(this.archive, this.);
         // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
         // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
@@ -219,21 +57,21 @@ pub const BufferReadStream = struct {
         // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
         // _ = lib.archive_read_set_callback_data(this.archive, this);
 
-        _ = lib.archive_read_support_format_tar(this.archive);
-        _ = lib.archive_read_support_format_gnutar(this.archive);
-        _ = lib.archive_read_support_compression_gzip(this.archive);
+        _ = this.archive.readSupportFormatTar();
+        _ = this.archive.readSupportFormatGnutar();
+        _ = this.archive.readSupportFilterGzip();
 
         // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
         // have been concatenated together.
         // Without this option, only the contents of
         // the first concatenated archive would be read.
-        _ = lib.archive_read_set_options(this.archive, "read_concatenated_archives");
+        _ = this.archive.readSetOptions("read_concatenated_archives");
 
         // _ = lib.archive_read_support_filter_none(this.archive);
 
-        const rc = lib.archive_read_open_memory(this.archive, this.buf.ptr, this.buf.len);
+        const rc = this.archive.readOpenMemory(this.buf);
 
-        this.reading = rc > -1;
+        this.reading = @intFromEnum(rc) > -1;
 
         // _ = lib.archive_read_support_compression_all(this.archive);
 
@@ -249,14 +87,14 @@ pub const BufferReadStream = struct {
     }
 
     pub fn archive_close_callback(
-        _: *struct_archive,
+        _: *Archive,
         _: *anyopaque,
     ) callconv(.C) c_int {
         return 0;
     }
 
     pub fn archive_read_callback(
-        _: *struct_archive,
+        _: *Archive,
         ctx_: *anyopaque,
         buffer: [*c]*const anyopaque,
     ) callconv(.C) lib.la_ssize_t {
@@ -271,7 +109,7 @@ pub const BufferReadStream = struct {
     }
 
     pub fn archive_skip_callback(
-        _: *struct_archive,
+        _: *Archive,
         ctx_: *anyopaque,
         offset: lib.la_int64_t,
     ) callconv(.C) lib.la_int64_t {
@@ -287,7 +125,7 @@ pub const BufferReadStream = struct {
     }
 
     pub fn archive_seek_callback(
-        _: *struct_archive,
+        _: *Archive,
         ctx_: *anyopaque,
         offset: lib.la_int64_t,
         whence: c_int,
@@ -317,7 +155,7 @@ pub const BufferReadStream = struct {
     }
 
     // pub fn archive_write_callback(
-    //     archive: *struct_archive,
+    //     archive: *Archive,
     //     ctx_: *anyopaque,
     //     buffer: *const anyopaque,
     //     len: usize,
@@ -326,20 +164,20 @@ pub const BufferReadStream = struct {
     // }
 
     // pub fn archive_close_callback(
-    //     archive: *struct_archive,
+    //     archive: *Archive,
     //     ctx_: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx_);
     // }
     // pub fn archive_free_callback(
-    //     archive: *struct_archive,
+    //     archive: *Archive,
     //     ctx_: *anyopaque,
     // ) callconv(.C) c_int {
     //     var this = fromCtx(ctx_);
     // }
 
     // pub fn archive_switch_callback(
-    //     archive: *struct_archive,
+    //     archive: *Archive,
     //     ctx1: *anyopaque,
     //     ctx2: *anyopaque,
     // ) callconv(.C) c_int {
@@ -350,7 +188,7 @@ pub const BufferReadStream = struct {
 
 const Kind = std.fs.File.Kind;
 
-pub const Archive = struct {
+pub const Archiver = struct {
     // impl: *lib.archive = undefined,
     // buf: []const u8 = undefined,
     // dir: FileDescriptorType = 0,
@@ -389,12 +227,12 @@ pub const Archive = struct {
     pub fn getOverwritingFileList(
         file_buffer: []const u8,
         root: []const u8,
-        ctx: *Archive.Context,
+        ctx: *Archiver.Context,
         comptime FilePathAppender: type,
         appender: FilePathAppender,
         comptime depth_to_skip: usize,
     ) !void {
-        var entry: *lib.archive_entry = undefined;
+        var entry: *Archive.Entry = undefined;
 
         var stream: BufferReadStream = undefined;
         stream.init(file_buffer);
@@ -413,17 +251,17 @@ pub const Archive = struct {
         };
 
         loop: while (true) {
-            const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
+            const r = archive.readNextHeader(&entry);
 
             switch (r) {
-                Status.eof => break :loop,
-                Status.retry => continue :loop,
-                Status.failed, Status.fatal => return error.Fail,
+                .eof => break :loop,
+                .retry => continue :loop,
+                .failed, .fatal => return error.Fail,
                 else => {
                     // do not use the utf8 name there
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
-                    var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+                    var pathname = entry.pathname();
                     var tokenizer = std.mem.tokenize(u8, bun.asByteSlice(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
@@ -434,7 +272,7 @@ pub const Archive = struct {
                     pathname = std.mem.sliceTo(pathname_.ptr[0..pathname_.len :0], 0);
                     const dirname = std.mem.trim(u8, std.fs.path.dirname(bun.asByteSlice(pathname)) orelse "", std.fs.path.sep_str);
 
-                    const size = @as(usize, @intCast(@max(lib.archive_entry_size(entry), 0)));
+                    const size: usize = @intCast(@max(entry.size(), 0));
                     if (size > 0) {
                         var opened = dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         defer opened.close();
@@ -479,12 +317,12 @@ pub const Archive = struct {
     pub fn extractToDir(
         file_buffer: []const u8,
         dir: std.fs.Dir,
-        ctx: ?*Archive.Context,
+        ctx: ?*Archiver.Context,
         comptime ContextType: type,
         appender: ContextType,
         options: ExtractOptions,
     ) !u32 {
-        var entry: *lib.archive_entry = undefined;
+        var entry: *Archive.Entry = undefined;
 
         var stream: BufferReadStream = undefined;
         stream.init(file_buffer);
@@ -497,12 +335,12 @@ pub const Archive = struct {
         var normalized_buf: bun.OSPathBuffer = undefined;
 
         loop: while (true) {
-            const r: Status = @enumFromInt(lib.archive_read_next_header(archive, &entry));
+            const r = archive.readNextHeader(&entry);
 
             switch (r) {
-                Status.eof => break :loop,
-                Status.retry => continue :loop,
-                Status.failed, Status.fatal => return error.Fail,
+                .eof => break :loop,
+                .retry => continue :loop,
+                .failed, .fatal => return error.Fail,
                 else => {
                     // TODO:
                     // Due to path separator replacement and other copies that happen internally, libarchive changes the
@@ -513,9 +351,9 @@ pub const Archive = struct {
                     // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
                     var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows)
-                        std.mem.sliceTo(lib.archive_entry_pathname_w(entry), 0)
+                        entry.pathnameW()
                     else
-                        std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
+                        entry.pathname();
 
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
@@ -531,7 +369,7 @@ pub const Archive = struct {
                         }
                     }
 
-                    const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
+                    const kind = C.kindFromMode(entry.filetype());
 
                     if (options.npm) {
                         // - ignore entries other than files (`true` can only be returned if type is file)
@@ -584,8 +422,8 @@ pub const Archive = struct {
                     count += 1;
 
                     switch (kind) {
-                        Kind.directory => {
-                            var mode = @as(i32, @intCast(lib.archive_entry_perm(entry)));
+                        .directory => {
+                            var mode = @as(i32, @intCast(entry.perm()));
 
                             // if dirs are readable, then they should be listable
                             // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -609,24 +447,28 @@ pub const Archive = struct {
                                 };
                             }
                         },
-                        Kind.sym_link => {
-                            const link_target = lib.archive_entry_symlink(entry).?;
+                        .sym_link => {
+                            const link_target = entry.symlink();
                             if (Environment.isPosix) {
-                                std.posix.symlinkatZ(link_target, dir_fd, path) catch |err| brk: {
+                                bun.sys.symlinkat(link_target, bun.toFD(dir_fd), path).unwrap() catch |err| brk: {
                                     switch (err) {
-                                        error.AccessDenied, error.FileNotFound => {
+                                        error.EPERM, error.ENOENT => {
                                             dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                            break :brk try std.posix.symlinkatZ(link_target, dir_fd, path);
+                                            break :brk try bun.sys.symlinkat(link_target, bun.toFD(dir_fd), path).unwrap();
                                         },
-                                        else => {
-                                            return err;
-                                        },
+                                        else => return err,
                                     }
                                 };
                             }
                         },
-                        Kind.file => {
-                            const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));
+                        .file => {
+                            // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
+                            // this.fmode = opts.fmode || 0o666
+                            //
+                            // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
+                            //
+                            // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
+                            const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(entry.perm() | 0o666);
 
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
@@ -683,8 +525,7 @@ pub const Archive = struct {
                                 _ = bun.sys.close(file_handle);
                             };
 
-                            const entry_size = @max(lib.archive_entry_size(entry), 0);
-                            const size = @as(usize, @intCast(entry_size));
+                            const size: usize = @intCast(@max(entry.size(), 0));
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
@@ -703,7 +544,7 @@ pub const Archive = struct {
                                         if (plucker_.filename_hash == hash) {
                                             try plucker_.contents.inflate(size);
                                             plucker_.contents.list.expandToCapacity();
-                                            const read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
+                                            const read = archive.readData(plucker_.contents.list.items);
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
                                             plucker_.fd = file_handle;
@@ -719,17 +560,17 @@ pub const Archive = struct {
                                         C.preallocate_file(
                                             file_handle.cast(),
                                             0,
-                                            entry_size,
+                                            @intCast(size),
                                         ) catch {};
                                     }
                                 }
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (lib.archive_read_data_into_fd(archive, bun.uvfdcast(file_handle))) {
-                                        lib.ARCHIVE_EOF => break :loop,
-                                        lib.ARCHIVE_OK => break :possibly_retry,
-                                        lib.ARCHIVE_RETRY => {
+                                    switch (archive.readDataIntoFd(bun.uvfdcast(file_handle))) {
+                                        .eof => break :loop,
+                                        .ok => break :possibly_retry,
+                                        .retry => {
                                             if (options.log) {
                                                 Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
@@ -764,7 +605,7 @@ pub const Archive = struct {
     pub fn extractToDisk(
         file_buffer: []const u8,
         root: []const u8,
-        ctx: ?*Archive.Context,
+        ctx: ?*Archiver.Context,
         comptime FilePathAppender: type,
         appender: FilePathAppender,
         comptime options: ExtractOptions,

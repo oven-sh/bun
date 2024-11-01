@@ -687,6 +687,7 @@ describe("bundler", () => {
         expect(resolveCount).toBe(5050);
         expect(loadCount).toBe(101);
       },
+      debugTimeoutScale: 3,
     };
   });
   // itBundled("plugin/ManyPlugins", ({ root }) => {

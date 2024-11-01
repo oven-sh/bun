@@ -141,6 +141,7 @@ test/node.js/upstream
 .zig-cache
 scripts/env.local
 *.generated.ts
+src/bake/generated.ts
 
 # Dependencies
 /vendor
@@ -163,3 +164,7 @@ scripts/env.local
 /src/deps/zstd
 /src/deps/zlib
 /src/deps/zig
+
+# Generated files
+
+.buildkite/ci.yml

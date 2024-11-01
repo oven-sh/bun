@@ -120,23 +120,23 @@ const ScanOpts = struct {
             return null;
         }
 
-        if (optsObj.getOwnTruthy(globalThis, "onlyFiles")) |only_files| {
+        if (optsObj.getTruthy(globalThis, "onlyFiles")) |only_files| {
             out.only_files = if (only_files.isBoolean()) only_files.asBoolean() else false;
         }
 
-        if (optsObj.getOwnTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
+        if (optsObj.getTruthy(globalThis, "throwErrorOnBrokenSymlink")) |error_on_broken| {
             out.error_on_broken_symlinks = if (error_on_broken.isBoolean()) error_on_broken.asBoolean() else false;
         }
 
-        if (optsObj.getOwnTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
+        if (optsObj.getTruthy(globalThis, "followSymlinks")) |followSymlinksVal| {
             out.follow_symlinks = if (followSymlinksVal.isBoolean()) followSymlinksVal.asBoolean() else false;
         }
 
-        if (optsObj.getOwnTruthy(globalThis, "absolute")) |absoluteVal| {
+        if (optsObj.getTruthy(globalThis, "absolute")) |absoluteVal| {
             out.absolute = if (absoluteVal.isBoolean()) absoluteVal.asBoolean() else false;
         }
 
-        if (optsObj.getOwnTruthy(globalThis, "cwd")) |cwdVal| {
+        if (optsObj.getTruthy(globalThis, "cwd")) |cwdVal| {
             if (!cwdVal.isString()) {
                 globalThis.throw("{s}: invalid `cwd`, not a string", .{fnName});
                 return null;
@@ -152,7 +152,7 @@ const ScanOpts = struct {
             }
         }
 
-        if (optsObj.getOwnTruthy(globalThis, "dot")) |dot| {
+        if (optsObj.getTruthy(globalThis, "dot")) |dot| {
             out.dot = if (dot.isBoolean()) dot.asBoolean() else false;
         }
 

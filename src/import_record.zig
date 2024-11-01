@@ -117,8 +117,6 @@ pub const ImportRecord = struct {
 
     is_internal: bool = false,
 
-    calls_runtime_require: bool = false,
-
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn
     /// out to be type-only imports after analyzing the whole file.
@@ -183,17 +181,9 @@ pub const ImportRecord = struct {
         /// A 'macro:' import namespace or 'with { type: "macro" }'
         macro,
 
-        // TODO: evaluate if the following two can be deleted
-        /// The imported file has "use client" at the start. This is
-        /// a boundary from server -> client side.
-        react_client_component,
-        /// The imported file has "use server" at the start. This is
-        /// a boundary from client -> server side.
-        react_server_component,
-
         /// For Bun Kit, if a module in the server graph should actually
-        /// crossover to the SSR graph. See kit.Framework.ServerComponents.separate_ssr_graph
-        kit_resolve_to_ssr_graph,
+        /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
+        bake_resolve_to_ssr_graph,
 
         with_type_sqlite,
         with_type_sqlite_embedded,
@@ -201,6 +191,8 @@ pub const ImportRecord = struct {
         with_type_json,
         with_type_toml,
         with_type_file,
+
+        css,
 
         pub fn loader(this: Tag) ?bun.options.Loader {
             return switch (this) {
@@ -230,29 +222,12 @@ pub const ImportRecord = struct {
             };
         }
 
-        pub fn isReactReference(this: Tag) bool {
-            return switch (this) {
-                .react_client_component,
-                .react_server_component,
-                => true,
-                else => false,
-            };
-        }
-
         pub inline fn isRuntime(this: Tag) bool {
             return this == .runtime;
         }
 
         pub inline fn isInternal(this: Tag) bool {
             return @intFromEnum(this) >= @intFromEnum(Tag.runtime);
-        }
-
-        pub fn useDirective(this: Tag) bun.JSAst.UseDirective {
-            return switch (this) {
-                .react_client_component => .client,
-                .react_server_component => .server,
-                else => .none,
-            };
         }
     };
 

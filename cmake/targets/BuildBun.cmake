@@ -21,9 +21,15 @@ else()
   set(buns ${bun})
 endif()
 
-# Some commands use this path, and some do not.
-# In the future, change those commands so that generated files are written to this path.
 optionx(CODEGEN_PATH FILEPATH "Path to the codegen directory" DEFAULT ${BUILD_PATH}/codegen)
+
+if(RELEASE OR CI)
+  set(DEFAULT_CODEGEN_EMBED ON)
+else()
+  set(DEFAULT_CODEGEN_EMBED OFF)
+endif()
+
+optionx(CODEGEN_EMBED BOOL "If codegen files should be embedded in the binary" DEFAULT ${DEFAULT_CODEGEN_EMBED})
 
 if((NOT DEFINED CONFIGURE_DEPENDS AND NOT CI) OR CONFIGURE_DEPENDS)
   set(CONFIGURE_DEPENDS "CONFIGURE_DEPENDS")
@@ -32,39 +38,6 @@ else()
 endif()
 
 # --- Codegen ---
-
-set(BUN_ZIG_IDENTIFIER_SOURCE ${CWD}/src/js_lexer)
-set(BUN_ZIG_IDENTIFIER_SCRIPT ${BUN_ZIG_IDENTIFIER_SOURCE}/identifier_data.zig)
-
-file(GLOB BUN_ZIG_IDENTIFIER_SOURCES ${CONFIGURE_DEPENDS}
-  ${BUN_ZIG_IDENTIFIER_SCRIPT}
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/*.zig
-)
-
-set(BUN_ZIG_IDENTIFIER_OUTPUTS
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_continue_bitset.blob
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_continue_bitset.meta.blob
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_start_bitset.blob
-  ${BUN_ZIG_IDENTIFIER_SOURCE}/id_start_bitset.meta.blob
-)
-
-register_command(
-  TARGET
-    bun-identifier-data
-  COMMENT
-    "Generating src/js_lexer/*.blob"
-  COMMAND
-    ${ZIG_EXECUTABLE}
-      run
-      ${CMAKE_ZIG_FLAGS}
-      ${BUN_ZIG_IDENTIFIER_SCRIPT}
-  SOURCES
-    ${BUN_ZIG_IDENTIFIER_SOURCES}
-  TARGETS
-    clone-zig
-  OUTPUTS
-    ${BUN_ZIG_IDENTIFIER_OUTPUTS}
-)
 
 set(BUN_ERROR_SOURCE ${CWD}/packages/bun-error)
 
@@ -76,7 +49,7 @@ file(GLOB BUN_ERROR_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_ERROR_SOURCE}/img/*
 )
 
-set(BUN_ERROR_OUTPUT ${BUN_ERROR_SOURCE}/dist)
+set(BUN_ERROR_OUTPUT ${CODEGEN_PATH}/bun-error)
 set(BUN_ERROR_OUTPUTS
   ${BUN_ERROR_OUTPUT}/index.js
   ${BUN_ERROR_OUTPUT}/bun-error.css
@@ -114,13 +87,13 @@ register_command(
 )
 
 set(BUN_FALLBACK_DECODER_SOURCE ${CWD}/src/fallback.ts)
-set(BUN_FALLBACK_DECODER_OUTPUT ${CWD}/src/fallback.out.js)
+set(BUN_FALLBACK_DECODER_OUTPUT ${CODEGEN_PATH}/fallback-decoder.js)
 
 register_command(
   TARGET
     bun-fallback-decoder
   COMMENT
-    "Building src/fallback.out.js"
+    "Building fallback-decoder.js"
   COMMAND
     ${ESBUILD_EXECUTABLE} ${ESBUILD_ARGS}
       ${BUN_FALLBACK_DECODER_SOURCE}
@@ -137,7 +110,7 @@ register_command(
 )
 
 set(BUN_RUNTIME_JS_SOURCE ${CWD}/src/runtime.bun.js)
-set(BUN_RUNTIME_JS_OUTPUT ${CWD}/src/runtime.out.js)
+set(BUN_RUNTIME_JS_OUTPUT ${CODEGEN_PATH}/runtime.out.js)
 
 register_command(
   TARGET
@@ -167,7 +140,7 @@ file(GLOB BUN_NODE_FALLBACKS_SOURCES ${CONFIGURE_DEPENDS}
   ${BUN_NODE_FALLBACKS_SOURCE}/*.js
 )
 
-set(BUN_NODE_FALLBACKS_OUTPUT ${BUN_NODE_FALLBACKS_SOURCE}/out)
+set(BUN_NODE_FALLBACKS_OUTPUT ${CODEGEN_PATH}/node-fallbacks)
 set(BUN_NODE_FALLBACKS_OUTPUTS)
 foreach(source ${BUN_NODE_FALLBACKS_SOURCES})
   get_filename_component(filename ${source} NAME)
@@ -187,7 +160,7 @@ register_command(
   TARGET
     bun-node-fallbacks
   COMMENT
-    "Building src/node-fallbacks/*.js"
+    "Building node-fallbacks/*.js"
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
@@ -324,40 +297,41 @@ register_command(
     ${BUN_JAVASCRIPT_OUTPUTS}
 )
 
-set(BUN_KIT_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/kit-codegen.ts)
+set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
-file(GLOB_RECURSE BUN_KIT_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
-  ${CWD}/src/kit/*.ts
-  ${CWD}/src/kit/*/*.ts
+file(GLOB_RECURSE BUN_BAKE_RUNTIME_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/bake/*.ts
+  ${CWD}/src/bake/*/*.ts
+  ${CWD}/src/bake/*/*.css
 )
 
-list(APPEND BUN_KIT_RUNTIME_CODEGEN_SOURCES
+list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
 )
 
-set(BUN_KIT_RUNTIME_OUTPUTS
-  ${CODEGEN_PATH}/kit_empty_file
-  ${CODEGEN_PATH}/kit.client.js
-  ${CODEGEN_PATH}/kit.server.js
+set(BUN_BAKE_RUNTIME_OUTPUTS
+  ${CODEGEN_PATH}/bake.client.js
+  ${CODEGEN_PATH}/bake.server.js
 )
 
 register_command(
   TARGET
-    bun-kit-codegen
+    bun-bake-codegen
   COMMENT
     "Bundling Kit Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
       run
-      ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+      ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
         --codegen_root=${CODEGEN_PATH}
   SOURCES
-    ${BUN_KIT_RUNTIME_SOURCES}
-    ${BUN_KIT_RUNTIME_CODEGEN_SOURCES}
-    ${BUN_KIT_RUNTIME_CODEGEN_SCRIPT}
+    ${BUN_BAKE_RUNTIME_SOURCES}
+    ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
+    ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
   OUTPUTS
-    ${BUN_KIT_RUNTIME_OUTPUTS}
+    ${CODEGEN_PATH}/bake_empty_file
+    ${BUN_BAKE_RUNTIME_OUTPUTS}
 )
 
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
@@ -398,6 +372,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
+  ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -407,7 +382,9 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/BunProcess.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
+  ${CODEGEN_PATH}/NodeModuleModule.lut.h
 )
+
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)
@@ -487,7 +464,6 @@ list(APPEND BUN_ZIG_SOURCES
 )
 
 set(BUN_ZIG_GENERATED_SOURCES
-  ${BUN_ZIG_IDENTIFIER_OUTPUTS}
   ${BUN_ERROR_OUTPUTS}
   ${BUN_FALLBACK_DECODER_OUTPUT}
   ${BUN_RUNTIME_JS_OUTPUT}
@@ -499,20 +475,23 @@ set(BUN_ZIG_GENERATED_SOURCES
 
 # In debug builds, these are not embedded, but rather referenced at runtime.
 if (DEBUG)
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/kit_empty_file)
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${CODEGEN_PATH}/bake_empty_file)
 else()
-  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_KIT_RUNTIME_OUTPUTS})
+  list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
+  set(IS_ARM64 ON)
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   else()
     set(ZIG_CPU "native")
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
+  set(IS_X86_64 ON)
   if(ENABLE_BASELINE)
     set(ZIG_CPU "nehalem")
   else()
@@ -543,7 +522,8 @@ register_command(
       -Dsha=${REVISION}
       -Dreported_nodejs_version=${NODEJS_VERSION}
       -Dcanary=${CANARY_REVISION}
-      -Dgenerated-code=${CODEGEN_PATH}
+      -Dcodegen_path=${CODEGEN_PATH}
+      -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}
   TARGETS
@@ -570,7 +550,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
-  ${CWD}/src/kit/*.cpp
+  ${CWD}/src/bake/*.cpp
   ${CWD}/src/deps/*.cpp
   ${BUN_USOCKETS_SOURCE}/src/crypto/*.cpp
 )
@@ -869,6 +849,29 @@ else()
     set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
   endif()
 
+  if (IS_ARM64)
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=statx
+    )
+  elseif(IS_X86_64)
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=fstat
+      -Wl,--wrap=fstat64
+      -Wl,--wrap=fstatat
+      -Wl,--wrap=fstatat64
+      -Wl,--wrap=lstat
+      -Wl,--wrap=lstat64
+      -Wl,--wrap=mknod
+      -Wl,--wrap=mknodat
+      -Wl,--wrap=stat
+      -Wl,--wrap=stat64
+      -Wl,--wrap=statx
+    )
+  endif()
+
   target_link_options(${bun} PUBLIC
     -fuse-ld=${LLD_NAME}
     -fno-pic
@@ -879,26 +882,22 @@ else()
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
-    -Wl,--wrap=stat64
-    -Wl,--wrap=pow
+    ${ARCH_WRAP_FLAGS}
+    -Wl,--wrap=cosf
     -Wl,--wrap=exp
     -Wl,--wrap=expf
-    -Wl,--wrap=log
-    -Wl,--wrap=log2
-    -Wl,--wrap=lstat
-    -Wl,--wrap=stat64
-    -Wl,--wrap=stat
-    -Wl,--wrap=fstat
-    -Wl,--wrap=fstatat
-    -Wl,--wrap=lstat64
-    -Wl,--wrap=fstat64
-    -Wl,--wrap=fstatat64
-    -Wl,--wrap=mknod
-    -Wl,--wrap=mknodat
-    -Wl,--wrap=statx
     -Wl,--wrap=fmod
+    -Wl,--wrap=fmodf
+    -Wl,--wrap=log
+    -Wl,--wrap=log10f
+    -Wl,--wrap=log2
+    -Wl,--wrap=log2f
+    -Wl,--wrap=logf
+    -Wl,--wrap=pow
+    -Wl,--wrap=powf
+    -Wl,--wrap=sincosf
+    -Wl,--wrap=sinf
+    -Wl,--wrap=tanf
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro

@@ -152,9 +152,11 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
         return { BunStringTag::Empty };
     }
 
-    str.impl()->ref();
+    StringImpl* impl = str.impl();
 
-    return { BunStringTag::WTFStringImpl, { .wtf = str.impl() } };
+    impl->ref();
+
+    return { BunStringTag::WTFStringImpl, { .wtf = impl } };
 }
 
 BunString toString(WTF::String& wtfString)

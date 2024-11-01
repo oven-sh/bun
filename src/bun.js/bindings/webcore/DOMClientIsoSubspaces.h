@@ -50,6 +50,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8GlobalInternals;
@@ -906,7 +907,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXPathResult;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForXSLTProcessor;
 
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKitGlobalScope;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeGlobalScope;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortSignal;

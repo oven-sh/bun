@@ -1121,8 +1121,6 @@ class ChildProcess extends EventEmitter {
             if (autoResume) pipe.resume();
             return pipe;
           }
-          case "inherit":
-            return process[fdToStdioName(i)] || null;
           case "destroyed":
             return new ShimmedStdioOutStream();
           default:

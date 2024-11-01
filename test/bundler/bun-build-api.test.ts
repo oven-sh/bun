@@ -4,6 +4,60 @@ import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
 
 describe("Bun.build", () => {
+  test("experimentalCss = true works", async () => {
+    const dir = tempDirWithFiles("bun-build-api-experimental-css", {
+      "a.css": `
+        @import "./b.css";
+
+        .hi {
+          color: red;
+        }
+      `,
+      "b.css": `
+        .hello {
+          color: blue;
+        }
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "a.css")],
+      experimentalCss: true,
+      minify: true,
+    });
+
+    expect(build.outputs).toHaveLength(1);
+    expect(build.outputs[0].kind).toBe("asset");
+    expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+  });
+
+  test("experimentalCss = false works", async () => {
+    const dir = tempDirWithFiles("bun-build-api-experimental-css", {
+      "a.css": `
+        @import "./b.css";
+
+        .hi {
+          color: red;
+        }
+      `,
+      "b.css": `
+        .hello {
+          color: blue;
+        }
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "a.css")],
+      outdir: join(dir, "out"),
+      minify: true,
+    });
+
+    expect(build.outputs).toHaveLength(2);
+    expect(build.outputs[0].kind).toBe("entry-point");
+    expect(await build.outputs[0].text()).not.toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+  });
+
   test("bytecode works", async () => {
     const dir = tempDirWithFiles("bun-build-api-bytecode", {
       "package.json": `{}`,

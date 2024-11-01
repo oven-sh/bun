@@ -27,24 +27,29 @@ const UrlDependency = css.dependencies.UrlDependency;
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 pub const Url = struct {
     /// The url string.
-    url: []const u8,
+    import_record_idx: u32,
     /// The location where the `url()` was seen in the CSS source file.
     loc: css.dependencies.Location,
 
     const This = @This();
 
     pub fn parse(input: *css.Parser) Result(Url) {
+        const start_pos = input.position();
         const loc = input.currentSourceLocation();
         const url = switch (input.expectUrl()) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        return .{ .result = Url{ .url = url, .loc = css.dependencies.Location.fromSourceLocation(loc) } };
+        const import_record_idx = switch (input.addImportRecordForUrl(url, start_pos)) {
+            .result => |idx| idx,
+            .err => |e| return .{ .err = e },
+        };
+        return .{ .result = Url{ .import_record_idx = import_record_idx, .loc = css.dependencies.Location.fromSourceLocation(loc) } };
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn isAbsolute(this: *const This) bool {
-        const url = this.url;
+    pub fn isAbsolute(this: *const This, import_records: *const bun.BabyList(bun.ImportRecord)) bool {
+        const url = import_records.at(this.import_record_idx).path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
         if (bun.strings.startsWithChar(url, '.')) {
@@ -87,7 +92,7 @@ pub const Url = struct {
         dest: *Printer(W),
     ) PrintErr!void {
         const dep: ?UrlDependency = if (dest.dependencies != null)
-            UrlDependency.new(dest.allocator, this, dest.filename())
+            UrlDependency.new(dest.allocator, this, dest.filename(), try dest.getImportRecords())
         else
             null;
 
@@ -105,23 +110,26 @@ pub const Url = struct {
             return;
         }
 
-        if (dest.minify) {
+        const import_record = try dest.importRecord(this.import_record_idx);
+        const url = import_record.path.text;
+
+        if (dest.minify and !import_record.is_internal) {
             var buf = ArrayList(u8){};
             // PERF(alloc) we could use stack fallback here?
             var bufw = buf.writer(dest.allocator);
             const BufW = @TypeOf(bufw);
             _ = BufW; // autofix
             defer buf.deinit(dest.allocator);
-            css.Token.toCssGeneric(&css.Token{ .unquoted_url = this.url }, &bufw) catch return dest.addFmtError();
+            css.Token.toCssGeneric(&css.Token{ .unquoted_url = url }, &bufw) catch return dest.addFmtError();
 
             // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
             // then serialize as a string and choose the shorter version.
-            if (buf.items.len > this.url.len + 7) {
+            if (buf.items.len > url.len + 7) {
                 var buf2 = ArrayList(u8){};
                 defer buf2.deinit(dest.allocator);
                 // PERF(alloc) we could use stack fallback here?
                 bufw = buf2.writer(dest.allocator);
-                css.serializer.serializeString(this.url, &bufw) catch return dest.addFmtError();
+                css.serializer.serializeString(url, &bufw) catch return dest.addFmtError();
                 if (buf2.items.len + 5 < buf.items.len) {
                     try dest.writeStr("url(");
                     try dest.writeStr(buf2.items);
@@ -132,8 +140,24 @@ pub const Url = struct {
             try dest.writeStr(buf.items);
         } else {
             try dest.writeStr("url(");
-            css.serializer.serializeString(this.url, dest) catch return dest.addFmtError();
+            css.serializer.serializeString(import_record.path.text, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
         }
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    // TODO: dedupe import records??
+    // This might not fucking work
+    pub fn eql(this: *const Url, other: *const Url) bool {
+        return this.import_record_idx == other.import_record_idx;
+    }
+
+    // TODO: dedupe import records??
+    // This might not fucking work
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
     }
 };

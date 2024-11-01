@@ -480,10 +480,10 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
-    // bun.kit.DevServer.HotReloadTask,
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
     ServerAllConnectionsClosedTask,
+    bun.bake.DevServer.HotReloadTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -545,6 +545,7 @@ pub const GarbageCollectionController = struct {
         const actual = uws.Loop.get();
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+        actual.internal_loop_data.jsc_vm = vm.jsc;
 
         if (comptime Environment.isDebug) {
             if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
@@ -878,6 +879,17 @@ pub const EventLoop = struct {
             globalObject.reportActiveExceptionAsUnhandled(err);
     }
 
+    pub fn runCallbackWithResult(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) JSC.JSValue {
+        this.enter();
+        defer this.exit();
+
+        const result = callback.call(globalObject, thisValue, arguments) catch |err| {
+            globalObject.reportActiveExceptionAsUnhandled(err);
+            return .zero;
+        };
+        return result;
+    }
+
     fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, comptime queue_name: []const u8) u32 {
         var global = this.global;
         const global_vm = global.vm();
@@ -1023,13 +1035,10 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                // @field(Task.Tag, @typeName(bun.kit.DevServer.HotReloadTask)) => {
-                //     const transform_task = task.get(bun.kit.DevServer.HotReloadTask).?;
-                //     transform_task.*.run();
-                //     transform_task.deinit();
-                //     // special case: we return
-                //     return 0;
-                // },
+                @field(Task.Tag, typeBaseName(@typeName(bun.bake.DevServer.HotReloadTask))) => {
+                    const hmr_task: *bun.bake.DevServer.HotReloadTask = task.get(bun.bake.DevServer.HotReloadTask).?;
+                    hmr_task.run();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();

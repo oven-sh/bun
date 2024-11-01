@@ -384,8 +384,8 @@ pub const Target = enum {
     bun_macro,
     node,
 
-    /// This is used by kit.Framework.ServerComponents.separate_ssr_graph
-    kit_server_components_ssr,
+    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
+    bake_server_components_ssr,
 
     pub const Map = bun.ComptimeStringMap(Target, .{
         .{ "browser", .browser },
@@ -408,21 +408,21 @@ pub const Target = enum {
         return switch (this) {
             .node => .node,
             .browser => .browser,
-            .bun, .kit_server_components_ssr => .bun,
+            .bun, .bake_server_components_ssr => .bun,
             .bun_macro => .bun_macro,
         };
     }
 
     pub inline fn isServerSide(this: Target) bool {
         return switch (this) {
-            .bun_macro, .node, .bun, .kit_server_components_ssr => true,
+            .bun_macro, .node, .bun, .bake_server_components_ssr => true,
             else => false,
         };
     }
 
     pub inline fn isBun(this: Target) bool {
         return switch (this) {
-            .bun_macro, .bun, .kit_server_components_ssr => true,
+            .bun_macro, .bun, .bake_server_components_ssr => true,
             else => false,
         };
     }
@@ -441,10 +441,10 @@ pub const Target = enum {
         };
     }
 
-    pub fn kitRenderer(target: Target) bun.kit.Renderer {
+    pub fn bakeGraph(target: Target) bun.bake.Graph {
         return switch (target) {
             .browser => .client,
-            .kit_server_components_ssr => .ssr,
+            .bake_server_components_ssr => .ssr,
             .bun_macro, .bun, .node => .server,
         };
     }
@@ -523,7 +523,7 @@ pub const Target = enum {
         array.set(Target.browser, &listc);
         array.set(Target.bun, &listd);
         array.set(Target.bun_macro, &listd);
-        array.set(Target.kit_server_components_ssr, &listd);
+        array.set(Target.bake_server_components_ssr, &listd);
 
         // Original comment:
         // The neutral target is for people that don't want esbuild to try to
@@ -548,7 +548,7 @@ pub const Target = enum {
             "bun",
             "node",
         });
-        array.set(Target.kit_server_components_ssr, &.{
+        array.set(Target.bake_server_components_ssr, &.{
             "bun",
             "node",
         });
@@ -580,8 +580,8 @@ pub const Format = enum {
     /// CommonJS
     cjs,
 
-    /// Kit's uses a special module format for Hot-module-reloading. It includes a
-    /// runtime payload, sourced from src/kit/hmr-runtime.ts.
+    /// Bake uses a special module format for Hot-module-reloading. It includes a
+    /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
     ///
     /// ((input_graph, config) => {
     ///   ... runtime code ...
@@ -589,7 +589,7 @@ pub const Format = enum {
     ///   "module1.ts"(module) { ... },
     ///   "module2.ts"(module) { ... },
     /// }, { metadata });
-    internal_kit_dev,
+    internal_bake_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {
         return this == .esm;
@@ -609,7 +609,7 @@ pub const Format = enum {
         .{ "iife", .iife },
 
         // TODO: Disable this outside of debug builds
-        .{ "internal_kit_dev", .internal_kit_dev },
+        .{ "internal_bake_dev", .internal_bake_dev },
     });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
@@ -656,10 +656,22 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader) bool {
+    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
+        if (experimental_css) {
+            return switch (this) {
+                .file,
+                .css,
+                .napi,
+                .sqlite,
+                .sqlite_embedded,
+                // TODO: loader for reading bytes and creating module or instance
+                .wasm,
+                => true,
+                else => false,
+            };
+        }
         return switch (this) {
             .file,
-            // TODO: CSS
             .css,
             .napi,
             .sqlite,
@@ -965,7 +977,7 @@ pub const JSX = struct {
         // these need to be arrays
         factory: []const string = Defaults.Factory,
         fragment: []const string = Defaults.Fragment,
-        runtime: JSX.Runtime = JSX.Runtime.automatic,
+        runtime: JSX.Runtime = .automatic,
         import_source: ImportSource = .{},
 
         /// Facilitates automatic JSX importing
@@ -1150,6 +1162,7 @@ pub fn definesFromTransformOptions(
     env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
+    drop: []const []const u8,
 ) !*defines.Define {
     const input_user_define = maybe_input_define orelse std.mem.zeroes(Api.StringMap);
 
@@ -1240,12 +1253,17 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    const resolved_defines = try defines.DefineData.fromInput(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.fromInput(user_defines, drop, log, allocator);
+
+    const drop_debugger = for (drop) |item| {
+        if (strings.eqlComptime(item, "debugger")) break true;
+    } else false;
 
     return try defines.Define.init(
         allocator,
         resolved_defines,
         environment_defines,
+        drop_debugger,
     );
 }
 
@@ -1408,6 +1426,7 @@ pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
+    drop: []const []const u8 = &.{},
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -1433,7 +1452,6 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     production: bool = false,
-    serve: bool = false,
 
     // only used by bundle_v2
     output_format: Format = .esm,
@@ -1486,6 +1504,9 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
+    experimental_css: bool,
+    css_chunking: bool,
+
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
     bytecode: bool = false,
@@ -1495,9 +1516,10 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
 
-    /// Set when Kit is bundling. This changes the interface of the bundler
-    /// from emitting OutputFile to emitting the lower level []CompileResult
-    kit: ?*bun.kit.DevServer = null,
+    /// Set when bake.DevServer is bundling.
+    dev_server: ?*bun.bake.DevServer = null,
+    /// Set when Bake is bundling. Affects module resolution.
+    framework: ?*bun.bake.Framework = null,
 
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
@@ -1506,6 +1528,8 @@ pub const BundleOptions = struct {
     ///
     /// So we have a list of packages which we know are safe to do this with.
     unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
+
+    supports_multiple_outputs: bool = true,
 
     pub fn isTest(this: *const BundleOptions) bool {
         return this.rewrite_jest_for_tests;
@@ -1564,6 +1588,7 @@ pub const BundleOptions = struct {
 
                 break :node_env "\"development\"";
             },
+            this.drop,
         );
         this.defines_loaded = true;
     }
@@ -1664,6 +1689,9 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
+            .experimental_css = false,
+            .css_chunking = false,
+            .drop = transform.drop,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
@@ -1826,13 +1854,20 @@ pub const OutputFile = struct {
     value: Value,
     size: usize = 0,
     size_without_sourcemap: usize = 0,
-    mtime: ?i128 = null,
     hash: u64 = 0,
     is_executable: bool = false,
     source_map_index: u32 = std.math.maxInt(u32),
     bytecode_index: u32 = std.math.maxInt(u32),
-    output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
+    output_kind: JSC.API.BuildArtifact.OutputKind,
+    /// Relative
     dest_path: []const u8 = "",
+    side: ?bun.bake.Side,
+    /// This is only set for the JS bundle, and not files associated with an
+    /// entrypoint like sourcemaps and bytecode
+    entry_point_index: ?u32,
+    referenced_css_files: []const Index = &.{},
+
+    pub const Index = bun.GenericIndex(u32, OutputFile);
 
     // Depending on:
     // - The target
@@ -1874,6 +1909,33 @@ pub const OutputFile = struct {
         },
         pending: resolver.Result,
         saved: SavedFile,
+
+        pub fn toBunString(v: Value) bun.String {
+            return switch (v) {
+                .noop => bun.String.empty,
+                .buffer => |buf| {
+                    // Use ExternalStringImpl to avoid cloning the string, at
+                    // the cost of allocating space to remember the allocator.
+                    const FreeContext = struct {
+                        allocator: std.mem.Allocator,
+
+                        fn onFree(uncast_ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void {
+                            const ctx: *@This() = @alignCast(@ptrCast(uncast_ctx));
+                            ctx.allocator.free(@as([*]u8, @ptrCast(buffer))[0..len]);
+                            bun.destroy(ctx);
+                        }
+                    };
+                    return bun.String.createExternal(
+                        buf.bytes,
+                        true,
+                        bun.new(FreeContext, .{ .allocator = buf.allocator }),
+                        FreeContext.onFree,
+                    );
+                },
+                .pending => unreachable,
+                else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)}),
+            };
+        }
     };
 
     pub const SavedFile = struct {
@@ -1940,8 +2002,8 @@ pub const OutputFile = struct {
         size: ?usize = null,
         input_path: []const u8 = "",
         display_size: u32 = 0,
-        output_kind: JSC.API.BuildArtifact.OutputKind = .chunk,
-        is_executable: bool = false,
+        output_kind: JSC.API.BuildArtifact.OutputKind,
+        is_executable: bool,
         data: union(enum) {
             buffer: struct {
                 allocator: std.mem.Allocator,
@@ -1954,10 +2016,13 @@ pub const OutputFile = struct {
             },
             saved: usize,
         },
+        side: ?bun.bake.Side,
+        entry_point_index: ?u32,
+        referenced_css_files: []const Index = &.{},
     };
 
     pub fn init(options: Options) OutputFile {
-        return OutputFile{
+        return .{
             .loader = options.loader,
             .input_loader = options.input_loader,
             .src_path = Fs.Path.init(options.input_path),
@@ -1984,6 +2049,9 @@ pub const OutputFile = struct {
                 },
                 .saved => Value{ .saved = .{} },
             },
+            .side = options.side,
+            .entry_point_index = options.entry_point_index,
+            .referenced_css_files = options.referenced_css_files,
         };
     }
 
@@ -2001,6 +2069,79 @@ pub const OutputFile = struct {
                 },
             },
         };
+    }
+
+    /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
+    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
+        switch (f.value) {
+            .saved => {
+                var rel_path = f.dest_path;
+                if (f.dest_path.len > root_dir_path.len) {
+                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                }
+                return rel_path;
+            },
+            .buffer => |value| {
+                var rel_path = f.dest_path;
+                if (f.dest_path.len > root_dir_path.len) {
+                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
+                    if (std.fs.path.dirname(rel_path)) |parent| {
+                        if (parent.len > root_dir_path.len) {
+                            try root_dir.makePath(parent);
+                        }
+                    }
+                }
+
+                var path_buf: bun.PathBuffer = undefined;
+                _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                    .data = .{ .buffer = .{
+                        .buffer = .{
+                            .ptr = @constCast(value.bytes.ptr),
+                            .len = value.bytes.len,
+                            .byte_len = value.bytes.len,
+                        },
+                    } },
+                    .encoding = .buffer,
+                    .mode = if (f.is_executable) 0o755 else 0o644,
+                    .dirfd = bun.toFD(root_dir.fd),
+                    .file = .{ .path = .{
+                        .string = JSC.PathString.init(rel_path),
+                    } },
+                }).unwrap();
+
+                return rel_path;
+            },
+            .move => |value| {
+                _ = value;
+                // var filepath_buf: bun.PathBuffer = undefined;
+                // filepath_buf[0] = '.';
+                // filepath_buf[1] = '/';
+                // const primary = f.dest_path[root_dir_path.len..];
+                // bun.copy(u8, filepath_buf[2..], primary);
+                // var rel_path: []const u8 = filepath_buf[0 .. primary.len + 2];
+                // rel_path = value.pathname;
+
+                // try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
+                {
+                    @panic("TODO: Regressed behavior");
+                }
+
+                // return primary;
+            },
+            .copy => |value| {
+                _ = value;
+                // rel_path = value.pathname;
+
+                // try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
+                {
+                    @panic("TODO: Regressed behavior");
+                }
+            },
+            .noop => {
+                return f.dest_path;
+            },
+            .pending => unreachable,
+        }
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
@@ -2523,7 +2664,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{(hashFormatter(hash))});
+                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
             }
@@ -2531,34 +2672,6 @@ pub const PathTemplate = struct {
         }
 
         try writeReplacingSlashesOnWindows(writer, remain);
-    }
-
-    pub fn hashFormatter(int: u64) std.fmt.Formatter(hashFormatterImpl) {
-        return .{ .data = int };
-    }
-
-    fn hashFormatterImpl(int: u64, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        // esbuild has an 8 character truncation of a base32 encoded bytes. this
-        // is not exactly that, but it will appear as such. the character list
-        // chosen omits similar characters in the unlikely case someone is
-        // trying to memorize a hash.
-        //
-        // reminder: this cannot be base64 or any encoding which is case
-        // sensitive as these hashes are often used in file paths, in which
-        // Windows and some macOS systems treat as case-insensitive.
-        comptime assert(fmt.len == 0);
-        const in_bytes = std.mem.asBytes(&int);
-        const chars = "0123456789abcdefghjkmnpqrstvwxyz";
-        try writer.writeAll(&.{
-            chars[in_bytes[0] & 31],
-            chars[in_bytes[1] & 31],
-            chars[in_bytes[2] & 31],
-            chars[in_bytes[3] & 31],
-            chars[in_bytes[4] & 31],
-            chars[in_bytes[5] & 31],
-            chars[in_bytes[6] & 31],
-            chars[in_bytes[7] & 31],
-        });
     }
 
     pub const Placeholder = struct {

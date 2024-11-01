@@ -1033,7 +1033,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !*EntriesOption {
-            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+            var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
@@ -1625,11 +1625,15 @@ threadlocal var normalize_buf: [1024]u8 = undefined;
 threadlocal var join_buf: [1024]u8 = undefined;
 
 pub const Path = struct {
+    /// The display path. In the bundler, this is relative to the current
+    /// working directory. Since it can be emitted in bundles (and used
+    /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
+    /// The location of this resource. For the `file` namespace, this is
+    /// an absolute path with native slashes.
     text: string,
-    // TODO(@paperdave): remove the default of this field.
-    namespace: string = "unspecified",
-    // TODO(@paperdave): investigate removing or simplifying this property
+    namespace: string,
+    // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
@@ -1867,11 +1871,11 @@ pub const Path = struct {
         };
     }
 
-    pub inline fn initWithNamespaceComptime(comptime namespace: string, comptime package: string) Path {
+    pub inline fn initForKitBuiltIn(comptime namespace: string, comptime package: string) Path {
         return comptime Path{
             .pretty = namespace ++ ":" ++ package,
             .is_symlink = true,
-            .text = package,
+            .text = "_bun/" ++ package,
             .namespace = namespace,
             .name = PathName.init(package),
         };

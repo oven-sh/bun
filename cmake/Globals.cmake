@@ -128,6 +128,7 @@ optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PA
 optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
+optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)
 
 if(CI)
   set(WARNING FATAL_ERROR)
@@ -144,9 +145,6 @@ endif()
 
 optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
-
-optionx(FRESH BOOL "Set when --fresh is used" DEFAULT OFF)
-optionx(CLEAN BOOL "Set when --clean is used" DEFAULT OFF)
 
 # --- Helper functions ---
 

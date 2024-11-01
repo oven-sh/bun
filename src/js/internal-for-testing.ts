@@ -135,3 +135,9 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
 );
 
 export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+
+export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
+  "NodeModuleModule.cpp",
+  "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  0,
+);

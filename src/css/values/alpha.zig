@@ -34,7 +34,10 @@ pub const AlphaValue = struct {
 
     pub fn parse(input: *css.Parser) Result(AlphaValue) {
         // For some reason NumberOrPercentage.parse makes zls crash, using this instead.
-        const val: NumberOrPercentage = @call(.auto, @field(NumberOrPercentage, "parse"), .{input});
+        const val: NumberOrPercentage = switch (@call(.auto, @field(NumberOrPercentage, "parse"), .{input})) {
+            .result => |v| v,
+            .err => |e| return .{ .err = e },
+        };
         const final = switch (val) {
             .percentage => |percent| AlphaValue{ .v = percent.v },
             .number => |num| AlphaValue{ .v = num },
@@ -44,5 +47,17 @@ pub const AlphaValue = struct {
 
     pub fn toCss(this: *const AlphaValue, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         return CSSNumberFns.toCss(&this.v, W, dest);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn hash(this: *const @This(), hasher: *std.hash.Wyhash) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
     }
 };

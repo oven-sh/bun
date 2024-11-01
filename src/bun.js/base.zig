@@ -877,7 +877,7 @@ pub const DOMEffect = struct {
         JSMapFields,
         JSSetFields,
         JSWeakMapFields,
-        JSWeakSetFields,
+        WeakSetFields,
         JSInternalFields,
         InternalState,
         CatchLocals,
@@ -1103,7 +1103,7 @@ pub fn wrapInstanceMethod(
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.getOwn(globalThis.ptr(), "html")) |html_val| {
+                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {
@@ -1204,7 +1204,11 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse brk: {
+                                if (arg == .undefined) {
+                                    break :brk null;
+                                }
+
                                 globalThis.throwInvalidArguments("expected string or buffer", .{});
                                 iter.deinit();
                                 return JSC.JSValue.zero;
@@ -1267,7 +1271,7 @@ pub fn wrapStaticMethod(
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
-                            if (content_arg.getOwn(globalThis.ptr(), "html")) |html_val| {
+                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
                             }
                         } else {

@@ -3073,6 +3073,8 @@ pub const JSGlobalObject = opaque {
         if (bun.Environment.isDebug) {
             if (unwrapped == .zero) {
                 std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
+            } else if (unwrapped == .undefined) {
+                // TODO: a lot of our code returns undefined when it throws an error.
             } else {
                 if (global.tryTakeException()) |exception| {
                     bun.Output.err("assertion failure", "Pending exception while returning non-empty JSValue", .{});
@@ -3080,6 +3082,7 @@ pub const JSGlobalObject = opaque {
                     bun.Output.flush();
                     global.bunVM().printErrorLikeObjectToConsole(exception);
                     bun.Output.printErrorln("Value returned:", .{});
+                    bun.Output.flush();
                     unwrapped.print(global, .Log, .Error);
                     bun.Output.flush();
                     @panic("Pending exception while returning non-empty JSValue");
@@ -5471,7 +5474,7 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    /// safe to use on any JSValue
+    /// Safe to use on any JSValue
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
         if (!this.isObject())
             return false;
@@ -5480,6 +5483,7 @@ pub const JSValue = enum(i64) {
         return function.isCell() and function.isCallable(global.vm());
     }
 
+    // TODO: replace calls to this function with `getOptional`
     pub fn getOwnTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
         if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
             return fastGetOwn(this, global, @field(BuiltinName, property));
@@ -5488,6 +5492,7 @@ pub const JSValue = enum(i64) {
         return getOwnTruthy(this, global, property);
     }
 
+    // TODO: replace calls to this function with `getOptional`
     pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
         if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
             if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
@@ -5501,7 +5506,7 @@ pub const JSValue = enum(i64) {
         return getTruthy(this, global, property);
     }
 
-    // TODO: replace this function with `getOptional`
+    // TODO: replace calls to this function with `getOptional`
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (get(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
@@ -5674,16 +5679,10 @@ pub const JSValue = enum(i64) {
         return null;
     }
 
-    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {
+    fn coerceOptional(prop: JSValue, global: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
         switch (comptime T) {
             JSValue => return prop,
-            bool => {
-                if (prop.isBoolean()) {
-                    return prop.toBoolean();
-                }
-
-                return prop.toBooleanSlow(global);
-            },
+            bool => @compileError("ambiguous coercion: use getBooleanStrict (throw error if not boolean) or getBooleanLoose (truthy check, never throws)"),
             ZigString.Slice => {
                 if (prop.isString()) {
                     if (return prop.toSliceOrNull(global)) |str| {
@@ -5691,10 +5690,33 @@ pub const JSValue = enum(i64) {
                     }
                 }
 
-                return global.throwInvalidArguments2(property_name ++ " must be a string", .{});
+                return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "string", prop);
             },
             else => @compileError("TODO:" ++ @typeName(T)),
         }
+    }
+
+    /// Many Bun API are loose and simply want to check if a value is truthy
+    /// Missing value, null, and undefined return `null`
+    pub inline fn getBooleanLoose(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
+        const prop = try this.get2(global, property_name) orelse
+            return null;
+        return prop.toBooleanSlow(global);
+    }
+
+    /// Many Node.js APIs use `validateBoolean`
+    /// Missing value, null, and undefined return `null`
+    pub inline fn getBooleanStrict(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
+        const prop = try this.get2(global, property_name) orelse
+            return null;
+
+        return switch (prop) {
+            .null, .undefined => null,
+            .false, .true => prop == .true,
+            else => {
+                return JSC.Node.validators.throwErrInvalidArgType(global, property_name, .{}, "boolean", prop);
+            },
+        };
     }
 
     pub inline fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) JSError!?T {

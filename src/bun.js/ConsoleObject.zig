@@ -690,14 +690,14 @@ pub const FormatOptions = struct {
                     }
                 }
             }
-            if (try arg1.getOptional(globalThis, "colors", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "colors")) |opt| {
                 formatOptions.enable_colors = opt;
             }
-            if (try arg1.getOptional(globalThis, "sorted", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
 
-            if (try arg1.getOptional(globalThis, "compact", bool)) |opt| {
+            if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
         } else {

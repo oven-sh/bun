@@ -1988,14 +1988,14 @@ pub const Arguments = struct {
                         if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getOptional(ctx.ptr(), "throwIfNoEntry", bool) catch {
+                        if (next_val.getBooleanStrict(ctx.ptr(), "throwIfNoEntry") catch {
                             path.deinit();
                             return null;
                         }) |throw_if_no_entry_val| {
                             throw_if_no_entry = throw_if_no_entry_val;
                         }
 
-                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch {
+                        if (next_val.getBooleanStrict(ctx.ptr(), "bigint") catch {
                             path.deinit();
                             return null;
                         }) |big_int| {
@@ -2051,7 +2051,7 @@ pub const Arguments = struct {
                         if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch false) |big_int| {
+                        if (next_val.getBooleanStrict(ctx.ptr(), "bigint") catch false) |big_int| {
                             break :brk big_int;
                         }
                     }
@@ -2411,14 +2411,14 @@ pub const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getOptional(ctx.ptr(), "recursive", bool) catch {
+                    if (val.getBooleanStrict(ctx.ptr(), "recursive") catch {
                         path.deinit();
                         return null;
                     }) |boolean| {
                         recursive = boolean;
                     }
 
-                    if (val.getOptional(ctx.ptr(), "force", bool) catch {
+                    if (val.getBooleanStrict(ctx.ptr(), "force") catch {
                         path.deinit();
                         return null;
                     }) |boolean| {
@@ -2483,7 +2483,7 @@ pub const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getOptional(ctx.ptr(), "recursive", bool) catch {
+                    if (val.getBooleanStrict(ctx.ptr(), "recursive") catch {
                         path.deinit();
                         return null;
                     }) |boolean| {
@@ -2626,14 +2626,14 @@ pub const Arguments = struct {
                                 encoding = Encoding.fromJS(encoding_, ctx.ptr()) orelse Encoding.utf8;
                             }
 
-                            if (val.getOptional(ctx.ptr(), "recursive", bool) catch {
+                            if (val.getBooleanStrict(ctx.ptr(), "recursive") catch {
                                 path.deinit();
                                 return null;
                             }) |recursive_| {
                                 recursive = recursive_;
                             }
 
-                            if (val.getOptional(ctx.ptr(), "withFileTypes", bool) catch {
+                            if (val.getBooleanStrict(ctx.ptr(), "withFileTypes") catch {
                                 path.deinit();
                                 return null;
                             }) |with_file_types_| {

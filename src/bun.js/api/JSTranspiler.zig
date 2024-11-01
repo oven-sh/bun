@@ -517,39 +517,39 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    if (object.getOptional(globalThis, "autoImportJSX", bool) catch return transpiler) |flag| {
+    if (object.getBooleanLoose(globalThis, "autoImportJSX") catch return transpiler) |flag| {
         transpiler.runtime.auto_import_jsx = flag;
     }
 
-    if (object.getOptional(globalThis, "allowBunRuntime", bool) catch return transpiler) |flag| {
+    if (object.getBooleanLoose(globalThis, "allowBunRuntime") catch return transpiler) |flag| {
         transpiler.runtime.allow_runtime = flag;
     }
 
-    if (object.getOptional(globalThis, "inline", bool) catch return transpiler) |flag| {
+    if (object.getBooleanLoose(globalThis, "inline") catch return transpiler) |flag| {
         transpiler.runtime.inlining = flag;
     }
 
-    if (object.getOptional(globalThis, "minifyWhitespace", bool) catch return transpiler) |flag| {
+    if (object.getBooleanLoose(globalThis, "minifyWhitespace") catch return transpiler) |flag| {
         transpiler.minify_whitespace = flag;
     }
 
-    if (object.getOptional(globalThis, "deadCodeElimination", bool) catch return transpiler) |flag| {
+    if (object.getBooleanLoose(globalThis, "deadCodeElimination") catch return transpiler) |flag| {
         transpiler.dead_code_elimination = flag;
     }
 
-    if (object.getTruthy(globalThis, "minify")) |hot| {
-        if (hot.isBoolean()) {
-            transpiler.minify_whitespace = hot.coerce(bool, globalThis);
+    if (object.getTruthy(globalThis, "minify")) |minify| {
+        if (minify.isBoolean()) {
+            transpiler.minify_whitespace = minify.coerce(bool, globalThis);
             transpiler.minify_syntax = transpiler.minify_whitespace;
             transpiler.minify_identifiers = transpiler.minify_syntax;
-        } else if (hot.isObject()) {
-            if (try hot.getOptional(globalThis, "whitespace", bool)) |whitespace| {
+        } else if (minify.isObject()) {
+            if (try minify.getBooleanLoose(globalThis, "whitespace")) |whitespace| {
                 transpiler.minify_whitespace = whitespace;
             }
-            if (try hot.getOptional(globalThis, "syntax", bool)) |syntax| {
+            if (try minify.getBooleanLoose(globalThis, "syntax")) |syntax| {
                 transpiler.minify_syntax = syntax;
             }
-            if (try hot.getOptional(globalThis, "identifiers", bool)) |syntax| {
+            if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                 transpiler.minify_identifiers = syntax;
             }
         } else {
@@ -580,12 +580,12 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     var tree_shaking: ?bool = null;
-    if (object.getOptional(globalThis, "treeShaking", bool) catch return transpiler) |treeShaking| {
+    if (object.getBooleanLoose(globalThis, "treeShaking") catch return transpiler) |treeShaking| {
         tree_shaking = treeShaking;
     }
 
     var trim_unused_imports: ?bool = null;
-    if (object.getOptional(globalThis, "trimUnusedImports", bool) catch return transpiler) |trimUnusedImports| {
+    if (object.getBooleanLoose(globalThis, "trimUnusedImports") catch return transpiler) |trimUnusedImports| {
         trim_unused_imports = trimUnusedImports;
     }
 

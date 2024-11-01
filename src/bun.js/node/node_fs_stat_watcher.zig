@@ -259,10 +259,10 @@ pub const StatWatcher = struct {
                 // options
                 if (options_or_callable.isObject()) {
                     // default true
-                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
+                    persistent = (options_or_callable.getBooleanStrict(ctx, "persistent") catch return null) orelse true;
 
                     // default false
-                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
+                    bigint = (options_or_callable.getBooleanStrict(ctx, "bigint") catch return null) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {

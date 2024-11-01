@@ -4012,6 +4012,32 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }
 
+    pub fn isFalsey(this: JSValue) bool {
+        switch (this) {
+            .false, .undefined, .null, .zero => return true,
+            .true => return false,
+            else => {
+                if (this.isNumber()) {
+                    const num = this.asNumber();
+                    return num == 0.0 or std.math.isNan(num);
+                }
+
+                // empty string
+                if (this.isString()) {
+                    return this.asString().length() == 0;
+                }
+
+                return false;
+            },
+        }
+
+        unreachable;
+    }
+
+    pub fn isTruthy(this: JSValue) bool {
+        return !this.isFalsey();
+    }
+
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,

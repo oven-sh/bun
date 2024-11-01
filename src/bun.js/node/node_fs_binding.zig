@@ -60,6 +60,8 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             if (exception1 != .zero) {
                 globalObject.throwValue(exception1);
                 return .zero;
+            } else if (globalObject.hasException()) {
+                return .zero;
             }
             var result = Function(
                 &this.node_fs,
@@ -110,12 +112,12 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             if (exception1 != .zero) {
                 globalObject.throwValue(exception1);
-
+                slice.deinit();
+                return .zero;
+            } else if (globalObject.hasException()) {
                 slice.deinit();
                 return .zero;
             }
-
-            // TODO: handle globalObject.throwValue
 
             const Task = @field(JSC.Node.Async, @tagName(FunctionEnum));
             if (comptime FunctionEnum == .cp) {

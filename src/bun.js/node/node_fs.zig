@@ -2263,11 +2263,13 @@ pub const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromJS(val, ctx) orelse Encoding.utf8;
+                        // Exception handled below.
+                        encoding = Encoding.assert(val, ctx, encoding) catch encoding;
                     },
                     else => {
                         if (val.isObject()) {
-                            encoding = getEncoding(val, ctx) orelse Encoding.utf8;
+                            // Exception handled below.
+                            encoding = getEncoding(val, ctx, encoding) catch encoding;
                         }
                     },
                 }
@@ -2318,11 +2320,13 @@ pub const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromJS(val, ctx) orelse Encoding.utf8;
+                        // Exception handled below.
+                        encoding = Encoding.assert(val, ctx, encoding) catch encoding;
                     },
                     else => {
                         if (val.isObject()) {
-                            encoding = getEncoding(val, ctx) orelse Encoding.utf8;
+                            // Exception handled below.
+                            encoding = getEncoding(val, ctx, encoding) catch encoding;
                         }
                     },
                 }
@@ -2337,19 +2341,12 @@ pub const Arguments = struct {
         }
     };
 
-    // Node does not throw an exception if encoding is not a string. Nor does it
-    // throw an exception if encoding is not one of the expected values. It
-    // simply returns undefined.
-    fn getEncoding(object: JSC.JSValue, globalObject: *JSC.JSGlobalObject) ?Encoding {
+    fn getEncoding(object: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) !Encoding {
         if (object.fastGet(globalObject, .encoding)) |value| {
-            if (!value.isString()) {
-                return null;
-            }
-
-            return Encoding.fromJS(value, globalObject);
+            return Encoding.assert(value, globalObject, default);
         }
 
-        return null;
+        return default;
     }
 
     pub const Unlink = struct {
@@ -2568,11 +2565,12 @@ pub const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromJS(val, ctx) orelse .utf8;
+                        // exception handled below.
+                        encoding = Encoding.assert(val, ctx, encoding) catch encoding;
                     },
                     else => {
                         if (val.isObject()) {
-                            encoding = getEncoding(val, ctx) orelse .utf8;
+                            encoding = getEncoding(val, ctx, encoding) catch encoding;
                         }
                     },
                 }
@@ -2642,11 +2640,14 @@ pub const Arguments = struct {
 
                 switch (val.jsType()) {
                     JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject => {
-                        encoding = Encoding.fromJS(val, ctx) orelse .utf8;
+                        encoding = Encoding.assert(val, ctx, encoding) catch {
+                            path.deinit();
+                            return null;
+                        };
                     },
                     else => {
                         if (val.isObject()) {
-                            encoding = getEncoding(val, ctx) orelse .utf8;
+                            encoding = getEncoding(val, ctx, encoding) catch encoding;
 
                             if (ctx.hasException()) {
                                 path.deinit();
@@ -3008,7 +3009,10 @@ pub const Arguments = struct {
                             }
 
                             if (current.isString()) {
-                                args.encoding = Encoding.fromJS(current, ctx) orelse Encoding.utf8;
+                                args.encoding = Encoding.assert(current, ctx, args.encoding) catch {
+                                    args.deinit();
+                                    return null;
+                                };
                                 arguments.eat();
                             }
                         },
@@ -3221,11 +3225,12 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    encoding = Encoding.fromJS(arg, ctx) orelse encoding;
+                    encoding = Encoding.assert(arg, ctx, encoding) catch {
+                        path.deinit();
+                        return null;
+                    };
                 } else if (arg.isObject()) {
-                    if (getEncoding(arg, ctx)) |encoding_| {
-                        encoding = encoding_;
-                    }
+                    encoding = getEncoding(arg, ctx, encoding) catch encoding;
 
                     if (ctx.hasException()) {
                         path.deinit();
@@ -3244,6 +3249,11 @@ pub const Arguments = struct {
                             }
                             return null;
                         };
+                    }
+
+                    if (ctx.hasException()) {
+                        path.deinit();
+                        return null;
                     }
                 }
             }
@@ -3324,11 +3334,9 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    encoding = Encoding.fromJS(arg, ctx) orelse encoding;
+                    encoding = Encoding.assert(arg, ctx, encoding) catch encoding;
                 } else if (arg.isObject()) {
-                    if (getEncoding(arg, ctx)) |encoding_| {
-                        encoding = encoding_;
-                    }
+                    encoding = getEncoding(arg, ctx, encoding) catch encoding;
 
                     if (ctx.hasException()) {
                         file.deinit();
@@ -3365,6 +3373,11 @@ pub const Arguments = struct {
                         };
                     }
                 }
+            }
+
+            if (ctx.hasException()) {
+                file.deinit();
+                return null;
             }
 
             const data = StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async) orelse {
@@ -3426,7 +3439,7 @@ pub const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    encoding = Encoding.fromJS(arg, ctx) orelse encoding;
+                    encoding = Encoding.assert(arg, ctx, encoding) catch encoding;
                 } else if (arg.isObject()) {
                     if (getEncoding(arg, ctx)) |encoding_| {
                         encoding = encoding_;
@@ -3452,6 +3465,11 @@ pub const Arguments = struct {
                         }
                     }
                 }
+            }
+
+            if (ctx.hasException()) {
+                path.deinit();
+                return null;
             }
 
             return OpenDir{
@@ -3544,235 +3562,6 @@ pub const Arguments = struct {
                 .path = path,
                 .mode = mode,
             };
-        }
-    };
-
-    pub const CreateReadStream = struct {
-        file: PathOrFileDescriptor,
-        flags: FileSystemFlags = FileSystemFlags.r,
-        encoding: Encoding = Encoding.utf8,
-        mode: Mode = default_permission,
-        autoClose: bool = true,
-        emitClose: bool = true,
-        start: i32 = 0,
-        end: i32 = std.math.maxInt(i32),
-        highwater_mark: u32 = 64 * 1024,
-        global_object: *JSC.JSGlobalObject,
-
-        pub fn deinit(this: CreateReadStream) void {
-            this.file.deinit();
-        }
-
-        pub fn copyToState(this: CreateReadStream, state: *JSC.Node.Readable.State) void {
-            state.encoding = this.encoding;
-            state.highwater_mark = this.highwater_mark;
-            state.start = this.start;
-            state.end = this.end;
-        }
-
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateReadStream {
-            const path = PathLike.fromJS(ctx, arguments, exception);
-            if (exception.* != null) return null;
-            if (path == null) arguments.eat();
-
-            var stream = CreateReadStream{
-                .file = undefined,
-                .global_object = ctx,
-            };
-            var fd = FileDescriptor.invalid;
-
-            if (arguments.next()) |arg| {
-                arguments.eat();
-                if (arg.isString()) {
-                    stream.encoding = Encoding.fromJS(arg, ctx) orelse stream.encoding;
-                } else if (arg.isObject()) {
-                    if (arg.get(ctx, "mode")) |mode_| {
-                        stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
-                            if (exception.* != null) {
-                                JSC.throwInvalidArguments(
-                                    "Invalid mode",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-                            }
-                            return null;
-                        };
-                    }
-
-                    if (getEncoding(arg, ctx)) |encoding_| {
-                        stream.encoding = encoding_;
-                    }
-
-                    if (arg.getTruthy(ctx, "flags")) |flags| {
-                        stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* == null) {
-                                JSC.throwInvalidArguments(
-                                    "Invalid flags",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-                            }
-                            return null;
-                        };
-                    }
-
-                    if (arg.get(ctx, "fd")) |flags| {
-                        fd = JSC.Node.fileDescriptorFromJS(ctx, flags, exception) orelse {
-                            if (exception.* != null) {
-                                JSC.throwInvalidArguments(
-                                    "Invalid file descriptor",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-                            }
-                            return null;
-                        };
-                    }
-
-                    if (arg.get(ctx, "autoClose")) |autoClose| {
-                        stream.autoClose = autoClose.toBoolean();
-                    }
-
-                    if (arg.get(ctx, "emitClose")) |emitClose| {
-                        stream.emitClose = emitClose.toBoolean();
-                    }
-
-                    if (arg.get(ctx, "start")) |start| {
-                        stream.start = start.coerce(i32, ctx);
-                    }
-
-                    if (arg.get(ctx, "end")) |end| {
-                        stream.end = end.coerce(i32, ctx);
-                    }
-
-                    if (arg.get(ctx, "highWaterMark")) |highwaterMark| {
-                        stream.highwater_mark = highwaterMark.toU32();
-                    }
-                }
-            }
-
-            if (fd.isValid()) {
-                stream.file = .{ .fd = fd };
-            } else if (path) |path_| {
-                stream.file = .{ .path = path_ };
-            } else {
-                JSC.throwInvalidArguments("Missing path or file descriptor", .{}, ctx, exception);
-                return null;
-            }
-            return stream;
-        }
-    };
-
-    pub const CreateWriteStream = struct {
-        file: PathOrFileDescriptor,
-        flags: FileSystemFlags = FileSystemFlags.w,
-        encoding: Encoding = Encoding.utf8,
-        mode: Mode = default_permission,
-        autoClose: bool = true,
-        emitClose: bool = true,
-        start: i32 = 0,
-        highwater_mark: u32 = 256 * 1024,
-        global_object: *JSC.JSGlobalObject,
-
-        pub fn deinit(this: @This()) void {
-            this.file.deinit();
-        }
-
-        pub fn copyToState(this: CreateWriteStream, state: *JSC.Node.Writable.State) void {
-            state.encoding = this.encoding;
-            state.highwater_mark = this.highwater_mark;
-            state.start = this.start;
-            state.emit_close = this.emitClose;
-        }
-
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?CreateWriteStream {
-            const path = PathLike.fromJS(ctx, arguments, exception);
-            if (exception.* != null) return null;
-            if (path == null) arguments.eat();
-
-            var stream = CreateWriteStream{
-                .file = undefined,
-                .global_object = ctx,
-            };
-            var fd: FileDescriptor = bun.invalid_fd;
-
-            if (arguments.next()) |arg| {
-                arguments.eat();
-                if (arg.isString()) {
-                    stream.encoding = Encoding.fromJS(arg, ctx) orelse stream.encoding;
-                } else if (arg.isObject()) {
-                    if (arg.get(ctx, "mode")) |mode_| {
-                        stream.mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
-                            if (exception.* != null) {
-                                JSC.throwInvalidArguments(
-                                    "Invalid mode",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-                            }
-                            return null;
-                        };
-                    }
-
-                    if (getEncoding(arg, ctx)) |encoding_| {
-                        stream.encoding = encoding_;
-                    }
-
-                    if (arg.getTruthy(ctx, "flags")) |flags| {
-                        stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* == null) {
-                                JSC.throwInvalidArguments(
-                                    "Invalid flags",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-                            }
-                            return null;
-                        };
-                    }
-
-                    if (arg.get(ctx, "fd")) |flags| {
-                        fd = JSC.Node.fileDescriptorFromJS(ctx, flags, exception) orelse {
-                            if (exception.* != null) {
-                                JSC.throwInvalidArguments(
-                                    "Invalid file descriptor",
-                                    .{},
-                                    ctx,
-                                    exception,
-                                );
-                            }
-                            return null;
-                        };
-                    }
-
-                    if (arg.get(ctx, "autoClose")) |autoClose| {
-                        stream.autoClose = autoClose.toBoolean();
-                    }
-
-                    if (arg.get(ctx, "emitClose")) |emitClose| {
-                        stream.emitClose = emitClose.toBoolean();
-                    }
-
-                    if (arg.get(ctx, "start")) |start| {
-                        stream.start = start.toInt32();
-                    }
-                }
-            }
-
-            if (fd != bun.invalid_fd) {
-                stream.file = .{ .fd = fd };
-            } else if (path) |path_| {
-                stream.file = .{ .path = path_ };
-            } else {
-                JSC.throwInvalidArguments("Missing path or file descriptor", .{}, ctx, exception);
-                return null;
-            }
-            return stream;
         }
     };
 
@@ -6551,14 +6340,6 @@ pub const NodeFS = struct {
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
         return args.createFSWatcher();
-    }
-
-    pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
-        return Maybe(Return.CreateReadStream).todo();
-    }
-
-    pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
-        return Maybe(Return.CreateWriteStream).todo();
     }
 
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'

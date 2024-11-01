@@ -96,6 +96,117 @@ it("writing to 1, 2 are possible", () => {
   expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
 });
 
+describe("test-fs-assert-encoding-error", () => {
+  const testPath = join(tmpdirSync(), "assert-encoding-error");
+  const options = "test";
+  const expectedError = expect.objectContaining({
+    code: "ERR_INVALID_ARG_VALUE",
+    name: "TypeError",
+  });
+
+  it("readFile throws on invalid encoding", () => {
+    expect(() => {
+      fs.readFile(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("readFileSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.readFileSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("readdir throws on invalid encoding", () => {
+    expect(() => {
+      fs.readdir(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("readdirSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.readdirSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("readlink throws on invalid encoding", () => {
+    expect(() => {
+      fs.readlink(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("readlinkSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.readlinkSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("writeFile throws on invalid encoding", () => {
+    expect(() => {
+      fs.writeFile(testPath, "data", options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("writeFileSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.writeFileSync(testPath, "data", options);
+    }).toThrow(expectedError);
+  });
+
+  it("appendFile throws on invalid encoding", () => {
+    expect(() => {
+      fs.appendFile(testPath, "data", options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("appendFileSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.appendFileSync(testPath, "data", options);
+    }).toThrow(expectedError);
+  });
+
+  it("watch throws on invalid encoding", () => {
+    expect(() => {
+      fs.watch(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("realpath throws on invalid encoding", () => {
+    expect(() => {
+      fs.realpath(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("realpathSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.realpathSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it("mkdtemp throws on invalid encoding", () => {
+    expect(() => {
+      fs.mkdtemp(testPath, options, () => {});
+    }).toThrow(expectedError);
+  });
+
+  it("mkdtempSync throws on invalid encoding", () => {
+    expect(() => {
+      fs.mkdtempSync(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it.todo("ReadStream throws on invalid encoding", () => {
+    expect(() => {
+      fs.ReadStream(testPath, options);
+    }).toThrow(expectedError);
+  });
+
+  it.todo("WriteStream throws on invalid encoding", () => {
+    expect(() => {
+      fs.WriteStream(testPath, options);
+    }).toThrow(expectedError);
+  });
+});
+
 // TODO: port node.js tests for these
 it("fs.readv returns object", async done => {
   const fd = await promisify(fs.open)(import.meta.path, "r");

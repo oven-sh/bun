@@ -223,7 +223,7 @@ const Socket = (function (InternalSocket) {
       const self = socket.data;
       if (!self || self.#closed) return;
       self.#closed = true;
-
+      //socket cannot be used after close
       detachSocket(self);
       if (!self.#ended) {
         // close event can be emitted when we still have data to read from the socket

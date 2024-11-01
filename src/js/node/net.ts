@@ -80,6 +80,7 @@ function endNT(socket, callback, err) {
   socket.end();
   callback(err);
 }
+
 function closeNT(callback, err) {
   callback(err);
 }
@@ -109,16 +110,14 @@ const Socket = (function (InternalSocket) {
   class Socket extends Duplex {
     static #Handlers = {
       close: Socket.#Close,
-      data({ data: self }, buffer) {
+      data(socket, buffer) {
+        const { data: self } = socket;
         if (!self) return;
 
         self.bytesRead += buffer.length;
-        const queue = self.#readQueue;
-
-        if (queue.isEmpty()) {
-          if (self.push(buffer)) return;
+        if (!self.push(buffer)) {
+          socket.pause();
         }
-        queue.push(buffer);
       },
       drain: Socket.#Drain,
       end: Socket.#End,
@@ -155,6 +154,7 @@ const Socket = (function (InternalSocket) {
           // this is not actually emitted on nodejs when socket used on the connection
           // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
           self.emit("connect", self);
+          self.emit("ready");
         }
 
         Socket.#Drain(socket);
@@ -202,14 +202,14 @@ const Socket = (function (InternalSocket) {
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
-      self.#ended = true;
-      const queue = self.#readQueue;
-      if (queue.isEmpty()) {
-        if (self.push(null)) {
-          return;
-        }
+      // we just reuse the same code but we can push null or enqueue right away
+      Socket.#EmitEndNT(self);
+    }
+    static #EmitEndNT(self) {
+      if (!self.#ended) {
+        self.#ended = true;
+        self.push(null);
       }
-      queue.push(null);
     }
     static #Close(socket) {
       const self = socket.data;
@@ -225,11 +225,9 @@ const Socket = (function (InternalSocket) {
         return;
       }
       if (!self.#ended) {
-        const queue = self.#readQueue;
-        if (queue.isEmpty()) {
-          if (self.push(null)) return;
-        }
-        queue.push(null);
+        // close event can be emitted when we still have data to read from the socket
+        // we will force the close (not allowing half open) and emit the end event after some time
+        setTimeout(Socket.#EmitEndNT, 0, self);
       }
       self.data = null;
     }
@@ -297,7 +295,7 @@ const Socket = (function (InternalSocket) {
 
         self[bunSocketServerConnections]++;
 
-        if (typeof connectionListener == "function") {
+        if (typeof connectionListener === "function") {
           this.pauseOnConnect = pauseOnConnect;
           if (!isTLS) {
             connectionListener.$call(self, _socket);
@@ -336,7 +334,7 @@ const Socket = (function (InternalSocket) {
           self.authorized = true;
         }
         const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-        if (typeof connectionListener == "function") {
+        if (typeof connectionListener === "function") {
           connectionListener.$call(server, self);
         }
         server.emit("secureConnection", self);
@@ -366,7 +364,6 @@ const Socket = (function (InternalSocket) {
     #final_callback = null;
     connecting = false;
     localAddress = "127.0.0.1";
-    #readQueue = $createFIFO();
     remotePort;
     [bunSocketInternal] = null;
     [bunTLSConnectOptions] = null;
@@ -455,6 +452,7 @@ const Socket = (function (InternalSocket) {
         // this is not actually emitted on nodejs when socket used on the connection
         // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
         this.emit("connect", this);
+        this.emit("ready");
       }
       Socket.#Drain(socket);
     }
@@ -743,14 +741,31 @@ const Socket = (function (InternalSocket) {
       return this.connecting;
     }
 
+    resume() {
+      if (!this.connecting) {
+        this[bunSocketInternal]?.resume();
+      }
+      return super.resume();
+    }
+    pause() {
+      if (!this.destroyed) {
+        this[bunSocketInternal]?.pause();
+      }
+      return super.pause();
+    }
+    read(size) {
+      if (!this.connecting) {
+        this[bunSocketInternal]?.resume();
+      }
+      return super.read(size);
+    }
+
     _read(size) {
-      const queue = this.#readQueue;
-      let chunk;
-      while ((chunk = queue.peek())) {
-        const can_continue = !this.push(chunk);
-        // always remove from queue push will queue it internally if needed
-        queue.shift();
-        if (!can_continue) break;
+      const socket = this[bunSocketInternal];
+      if (this.connecting || !socket) {
+        this.once("connect", () => this._read(size));
+      } else {
+        socket?.resume();
       }
     }
 
@@ -825,8 +840,7 @@ const Socket = (function (InternalSocket) {
     //TODO: migrate to native
     _writev(data, callback) {
       const allBuffers = data.allBuffers;
-      let chunks;
-      chunks = data;
+      const chunks = data;
       if (allBuffers) {
         for (let i = 0; i < data.length; i++) {
           data[i] = data[i].chunk;

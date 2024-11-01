@@ -736,6 +736,25 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         this.callWriteOrEnd(encoded_data, true);
     }
 
+    pub fn resumeStream(this: *WindowsNamedPipe) bool {
+        const stream = this.writer.getStream() orelse {
+            return false;
+        };
+        const readStartResult = stream.readStart(this, onReadAlloc, onReadError, onRead);
+        if (readStartResult == .err) {
+            return false;
+        }
+        return true;
+    }
+
+    pub fn pauseStream(this: *WindowsNamedPipe) bool {
+        const pipe = this.pipe orelse {
+            return false;
+        };
+        pipe.readStop();
+        return true;
+    }
+
     pub fn flush(this: *WindowsNamedPipe) void {
         if (this.wrapper) |*wrapper| {
             _ = wrapper.flush();
@@ -1083,12 +1102,55 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     }
 } else void;
 
+threadlocal var us_events = [2]i32{ 0, 0 };
+
 pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
     detached: void,
     upgradedDuplex: *UpgradedDuplex,
     pipe: *WindowsNamedPipe,
+
+    pub fn pauseResume(this: InternalSocket, comptime ssl: bool, pause: bool, buffered_amount: i32) bool {
+        switch (this) {
+            .detached => return true,
+            .done => |socket| {
+                const context = us_socket_context(@intFromBool(ssl), socket) orelse return false;
+                const loop = context.getLoop(ssl) orelse return false;
+                const poll: *Poll = @ptrCast(socket);
+                if (pause) {
+                    // Pause
+                    const events = poll.getEvents();
+                    if (events != 0) {
+                        us_events[if (buffered_amount > 0) 1 else 0] = events;
+                    }
+                    poll.change(loop, 0);
+                } else {
+                    // Resume
+                    const events = us_events[if (buffered_amount > 0) 1 else 0];
+                    poll.change(loop, events);
+                }
+                return true;
+            },
+            .connecting => |_| {
+                // always return false for connecting sockets
+                return false;
+            },
+            .upgradedDuplex => |_| {
+                // TODO: pause and resume upgraded duplex
+                return false;
+            },
+            .pipe => |pipe| {
+                if (Environment.isWindows) {
+                    if (pause) {
+                        return pipe.pauseStream();
+                    }
+                    return pipe.resumeStream();
+                }
+                return false;
+            },
+        }
+    }
     pub fn isDetached(this: InternalSocket) bool {
         return this == .detached;
     }
@@ -1178,6 +1240,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         socket: InternalSocket,
         const ThisSocket = @This();
         pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+
+        pub fn pauseStream(this: ThisSocket, buffered_amount: i32) bool {
+            return this.socket.pauseResume(is_ssl, true, buffered_amount);
+        }
+        pub fn resumeStream(this: ThisSocket, buffered_amount: i32) bool {
+            return this.socket.pauseResume(is_ssl, false, buffered_amount);
+        }
         pub fn detach(this: *ThisSocket) void {
             this.socket.detach();
         }

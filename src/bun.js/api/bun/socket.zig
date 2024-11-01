@@ -1306,6 +1306,7 @@ fn selectALPNCallback(
         return BoringSSL.SSL_TLSEXT_ERR_NOACK;
     }
 }
+
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -1375,6 +1376,7 @@ fn NewSocket(comptime ssl: bool) type {
             finalizing: bool = false,
             authorized: bool = false,
             owned_protos: bool = true,
+            is_paused: bool = false,
         };
         pub usingnamespace if (!ssl)
             JSC.Codegen.JSTCPSocket
@@ -1443,6 +1445,22 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*This {
             globalObject.throw("Cannot construct Socket", .{});
             return null;
+        }
+        pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+            log("resume", .{});
+            if (this.flags.is_paused) {
+                //TODO: change this after bytesWritten merge fix
+                this.flags.is_paused = !this.socket.resumeStream(0);
+            }
+            return .undefined;
+        }
+        pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+            log("pause", .{});
+            if (!this.flags.is_paused) {
+                //TODO: change this after bytesWritten merge fix
+                this.flags.is_paused = this.socket.pauseStream(0);
+            }
+            return .undefined;
         }
 
         pub fn handleError(this: *This, err_value: JSC.JSValue) void {

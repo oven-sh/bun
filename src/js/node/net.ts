@@ -18,6 +18,7 @@
 // NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
@@ -82,20 +83,22 @@ function endNT(socket, callback, err) {
   socket.$end();
   callback(err);
 }
-
-function closeNT(callback, err) {
-  callback(err);
+function emitCloseNT(self, hasError) {
+  self.emit("close", hasError);
 }
-
 function detachSocket(self) {
   if (!self) self = this;
-  self[bunSocketInternal] = null;
+  self._handle = null;
   const finalCallback = self[bunFinalCallback];
   if (finalCallback) {
     self[bunFinalCallback] = null;
     finalCallback();
     return;
   }
+}
+function finishSocket(hasError) {
+  detachSocket(this);
+  this.emit("close", hasError);
 }
 
 var SocketClass;
@@ -145,9 +148,10 @@ const Socket = (function (InternalSocket) {
         const self = socket.data;
         if (!self) return;
         socket.timeout(Math.ceil(self.timeout / 1000));
+        self._handle = socket;
 
         if (self.#unrefOnConnected) socket.unref();
-        self[bunSocketInternal] = socket;
+        self._handle = socket;
         self.connecting = false;
         const options = self[bunTLSConnectOptions];
 
@@ -239,8 +243,7 @@ const Socket = (function (InternalSocket) {
       const callback = self.#writeCallback;
       if (callback) {
         const writeChunk = self._pendingData;
-
-        if (socket.$write(writeChunk || "", "utf8")) {
+        if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
           self._pendingData = self.#writeCallback = null;
           callback(null);
         } else {
@@ -265,7 +268,7 @@ const Socket = (function (InternalSocket) {
       },
       open(socket) {
         const self = this.data;
-        socket[kServerSocket] = self[bunSocketInternal];
+        socket[kServerSocket] = self._handle;
         const options = self[bunSocketServerOptions];
         const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
         const _socket = new InternalSocketClass({});
@@ -367,7 +370,6 @@ const Socket = (function (InternalSocket) {
     connecting = false;
     localAddress = "127.0.0.1";
     remotePort;
-    [bunSocketInternal] = null;
     [bunTLSConnectOptions] = null;
     timeout = 0;
     #writeCallback;
@@ -376,7 +378,7 @@ const Socket = (function (InternalSocket) {
     #pendingRead;
 
     isServer = false;
-    _handle;
+    _handle = null;
     _parent;
     _parentWrap;
     #socket;
@@ -394,7 +396,6 @@ const Socket = (function (InternalSocket) {
         readable: true,
         writable: true,
       });
-      this._handle = this;
       this._parent = this;
       this._parentWrap = this;
       this.#pendingRead = undefined;
@@ -474,7 +475,7 @@ const Socket = (function (InternalSocket) {
       socket.data = this;
       socket.timeout(Math.ceil(this.timeout / 1000));
       if (this.#unrefOnConnected) socket.unref();
-      this[bunSocketInternal] = socket;
+      this._handle = socket;
       this.connecting = false;
       if (!this.#upgraded) {
         this[kBytesWritten] = socket.bytesWritten;
@@ -488,7 +489,7 @@ const Socket = (function (InternalSocket) {
 
     #closeRawConnection() {
       const connection = this.#upgraded;
-      connection[bunSocketInternal] = null;
+      connection._handle = null;
       connection.unref();
       connection.destroy();
     }
@@ -606,7 +607,7 @@ const Socket = (function (InternalSocket) {
         this._undestroy();
 
         if (connection) {
-          const socket = connection[bunSocketInternal];
+          const socket = connection._handle;
           if (!upgradeDuplex && socket) {
             // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
             upgradeDuplex = isNamedPipeSocket(socket);
@@ -625,7 +626,7 @@ const Socket = (function (InternalSocket) {
             connection.on("drain", events[2]);
             connection.on("close", events[3]);
 
-            this[bunSocketInternal] = result;
+            this._handle = result;
           } else {
             if (socket) {
               this.connecting = true;
@@ -638,18 +639,18 @@ const Socket = (function (InternalSocket) {
               if (result) {
                 const [raw, tls] = result;
                 // replace socket
-                connection[bunSocketInternal] = raw;
+                connection._handle = raw;
                 this.once("end", this.#closeRawConnection);
                 raw.connecting = false;
-                this[bunSocketInternal] = tls;
+                this._handle = tls;
               } else {
-                this[bunSocketInternal] = null;
+                this._handle = null;
                 throw new Error("Invalid socket");
               }
             } else {
               // wait to be connected
               connection.once("connect", () => {
-                const socket = connection[bunSocketInternal];
+                const socket = connection._handle;
                 if (!upgradeDuplex && socket) {
                   // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
                   upgradeDuplex = isNamedPipeSocket(socket);
@@ -669,7 +670,7 @@ const Socket = (function (InternalSocket) {
                   connection.on("drain", events[2]);
                   connection.on("close", events[3]);
 
-                  this[bunSocketInternal] = result;
+                  this._handle = result;
                 } else {
                   this.connecting = true;
                   this.#upgraded = connection;
@@ -682,12 +683,12 @@ const Socket = (function (InternalSocket) {
                   if (result) {
                     const [raw, tls] = result;
                     // replace socket
-                    connection[bunSocketInternal] = raw;
+                    connection._handle = raw;
                     this.once("end", this.#closeRawConnection);
                     raw.connecting = false;
-                    this[bunSocketInternal] = tls;
+                    this._handle = tls;
                   } else {
-                    this[bunSocketInternal] = null;
+                    this._handle = null;
                     throw new Error("Invalid socket");
                   }
                 }
@@ -725,6 +726,8 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
+      this.connecting = false;
+
       const { ending } = this._writableState;
       // lets make sure that the writable side is closed
       if (!ending) {
@@ -738,15 +741,17 @@ const Socket = (function (InternalSocket) {
       if (this.writableFinished) {
         // closed we can detach the socket
         detachSocket(self);
+        callback(err);
+        process.nextTick(emitCloseNT, this, !!err);
       } else {
+        callback(err);
         // lets wait for the finish event before detaching the socket
-        this.once("finish", detachSocket);
+        this.once("finish", finishSocket.bind(this, !!err));
       }
-      process.nextTick(closeNT, callback, err);
     }
 
     _final(callback) {
-      const socket = this[bunSocketInternal];
+      const socket = this._handle;
       // already closed call destroy
       if (!socket) return callback();
 
@@ -764,7 +769,7 @@ const Socket = (function (InternalSocket) {
     }
 
     get localPort() {
-      return this[bunSocketInternal]?.localPort;
+      return this.handle?.localPort;
     }
 
     get pending() {
@@ -773,25 +778,25 @@ const Socket = (function (InternalSocket) {
 
     resume() {
       if (!this.connecting) {
-        this[bunSocketInternal]?.resume();
+        this._handle?.resume();
       }
       return super.resume();
     }
     pause() {
       if (!this.destroyed) {
-        this[bunSocketInternal]?.pause();
+        this._handle?.pause();
       }
       return super.pause();
     }
     read(size) {
       if (!this.connecting) {
-        this[bunSocketInternal]?.resume();
+        this._handle?.resume();
       }
       return super.read(size);
     }
 
     _read(size) {
-      const socket = this[bunSocketInternal];
+      const socket = this._handle;
       if (this.connecting || !socket) {
         this.once("connect", () => this._read(size));
       } else {
@@ -809,7 +814,7 @@ const Socket = (function (InternalSocket) {
     }
 
     ref() {
-      const socket = this[bunSocketInternal];
+      const socket = this._handle;
       if (!socket) {
         this.#unrefOnConnected = false;
         return this;
@@ -819,7 +824,7 @@ const Socket = (function (InternalSocket) {
     }
 
     get remoteAddress() {
-      return this[bunSocketInternal]?.remoteAddress;
+      return this._handle?.remoteAddress;
     }
 
     get remoteFamily() {
@@ -827,7 +832,7 @@ const Socket = (function (InternalSocket) {
     }
 
     resetAndDestroy() {
-      this[bunSocketInternal]?.end();
+      this._handle?.end();
     }
 
     setKeepAlive(enable = false, initialDelay = 0) {
@@ -843,14 +848,15 @@ const Socket = (function (InternalSocket) {
     setTimeout(timeout, callback) {
       // internally or timeouts are in seconds
       // we use Math.ceil because 0 would disable the timeout and less than 1 second but greater than 1ms would be 1 second (the minimum)
-      this[bunSocketInternal]?.timeout(Math.ceil(timeout / 1000));
+      this._handle?.timeout(Math.ceil(timeout / 1000));
       this.timeout = timeout;
       if (callback) this.once("timeout", callback);
       return this;
     }
-
+    // for compatibility
+    _unrefTimer() {}
     unref() {
-      const socket = this[bunSocketInternal];
+      const socket = this._handle;
       if (!socket) {
         this.#unrefOnConnected = true;
         return this;
@@ -893,20 +899,45 @@ const Socket = (function (InternalSocket) {
       // If we are still connecting, then buffer this for later.
       // The Writable logic will buffer up any more writes while
       // waiting for this one to be done.
-      const socket = this[bunSocketInternal];
-      if (!socket) {
-        // detached but connected? wait for the socket to be attached
-        this.#writeCallback = callback;
-        this._pendingEncoding = "buffer";
-        this._pendingData = Buffer.from(chunk, encoding);
+      if (this.connecting) {
+        this._pendingData = chunk;
+        this._pendingEncoding = encoding;
+        function onClose() {
+          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+        }
+        this.once("connect", function connect() {
+          this.off("close", onClose);
+          this._write(chunk, encoding, callback);
+        });
+        this.once("close", onClose);
         return;
       }
+      this._pendingData = null;
+      this._pendingEncoding = "";
 
-      const success = socket?.$write(chunk, encoding);
+      const socket = this._handle;
+      if (!socket) {
+        callback($ERR_SOCKET_CLOSED("Socket is closed"));
+        return false;
+      }
+
+      const writeResult = socket.$write(chunk, encoding);
       this[kBytesWritten] = socket.bytesWritten;
-      if (success) {
-        callback();
-      } else if (this.#writeCallback) {
+      switch (writeResult) {
+        case -1:
+          // dropped
+          this.#writeCallback = callback;
+          this._pendingEncoding = encoding;
+          this._pendingData = chunk;
+          break;
+        default:
+          // written or buffered by the socket
+          if (socket.bufferedQueueSize === 0) {
+            callback();
+            return;
+          }
+      }
+      if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
         this.#writeCallback = callback;
@@ -943,6 +974,11 @@ class Server extends EventEmitter {
     } else {
       throw new Error("bun-net-polyfill: invalid arguments");
     }
+    //For node.js compat do not emit close on destroy.
+    options.emitClose = false;
+    options.autoDestroy = true;
+    // Handle strings directly.
+    options.decodeStrings = false;
 
     const { maxConnections } = options;
     this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;

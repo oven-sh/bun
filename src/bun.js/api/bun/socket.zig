@@ -1490,6 +1490,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (vm.isShuttingDown()) {
                 return;
             }
+            this.internalFlush();
+            // is not writable if we have buffered data
+            if (this.buffered_data_for_node_net.len > 0) return;
+
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
 
@@ -2378,13 +2382,7 @@ fn NewSocket(comptime ssl: bool) type {
                 },
             };
         }
-
-        pub fn flush(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) JSValue {
-            JSC.markBinding(@src());
+        fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
                 const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
 
@@ -2401,7 +2399,14 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             this.socket.flush();
-
+        }
+        pub fn flush(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) JSValue {
+            JSC.markBinding(@src());
+            this.internalFlush();
             return JSValue.jsUndefined();
         }
 
@@ -2721,6 +2726,12 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.JSGlobalObject,
         ) JSValue {
             return JSC.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
+        }
+        pub fn getBufferedQueueSize(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+        ) JSValue {
+            return JSC.JSValue.jsNumber(this.buffered_data_for_node_net.len);
         }
         pub fn getALPNProtocol(
             this: *This,

@@ -2958,6 +2958,65 @@ describe("binaries", () => {
     expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
     expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
   });
+
+  test("will only link global binaries for requested packages", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+      [install]
+      cache = false
+      registry = "http://localhost:${port}/"
+      globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
+      `,
+      ),
+      ,
+    ]);
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "i", "-g", `--config=${join(packageDir, "bunfig.toml")}`, "uses-what-bin"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") },
+    });
+
+    let err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out).toContain("uses-what-bin@1.5.0");
+    expect(await exited).toBe(0);
+
+    expect(await exists(join(packageDir, "global-bin-dir", "what-bin"))).toBeFalse();
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "i", "-g", `--config=${join(packageDir, "bunfig.toml")}`, "what-bin"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") },
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+    out = await Bun.readableStreamToText(stdout);
+
+    expect(out).toContain("what-bin@1.5.0");
+    expect(await exited).toBe(0);
+
+    // now `what-bin` should be installed in the global bin directory
+    if (isWindows) {
+      expect(
+        await Promise.all([
+          exists(join(packageDir, "global-bin-dir", "what-bin.exe")),
+          exists(join(packageDir, "global-bin-dir", "what-bin.bunx")),
+        ]),
+      ).toEqual([true, true]);
+    } else {
+      expect(await exists(join(packageDir, "global-bin-dir", "what-bin"))).toBeTrue();
+    }
+  });
+
   for (const global of [false, true]) {
     test(`bin types${global ? " (global)" : ""}`, async () => {
       if (global) {

@@ -195,7 +195,7 @@ pub const Bin = extern struct {
             if (this.done) return null;
             if (this.dir_iterator == null) {
                 var target = this.bin.value.dir.slice(this.string_buffer);
-                if (strings.hasPrefix(target, "./")) {
+                if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                     target = target[2..];
                 }
                 var parts = [_][]const u8{ this.package_name.slice(this.string_buffer), target };
@@ -229,7 +229,7 @@ pub const Bin = extern struct {
                     this.i += 1;
                     this.done = true;
                     const base = std.fs.path.basename(this.package_name.slice(this.string_buffer));
-                    if (strings.hasPrefix(base, "./"))
+                    if (strings.hasPrefixComptime(base, "./") or strings.hasPrefixComptime(base, ".\\"))
                         return strings.copy(&this.buf, base[2..]);
 
                     return strings.copy(&this.buf, base);
@@ -239,7 +239,7 @@ pub const Bin = extern struct {
                     this.i += 1;
                     this.done = true;
                     const base = std.fs.path.basename(this.bin.value.named_file[0].slice(this.string_buffer));
-                    if (strings.hasPrefix(base, "./"))
+                    if (strings.hasPrefixComptime(base, "./") or strings.hasPrefixComptime(base, ".\\"))
                         return strings.copy(&this.buf, base[2..]);
                     return strings.copy(&this.buf, base);
                 },
@@ -259,7 +259,7 @@ pub const Bin = extern struct {
                             this.string_buffer,
                         ),
                     );
-                    if (strings.hasPrefix(base, "./"))
+                    if (strings.hasPrefixComptime(base, "./") or strings.hasPrefixComptime(base, ".\\"))
                         return strings.copy(&this.buf, base[2..]);
                     return strings.copy(&this.buf, base);
                 },
@@ -305,7 +305,6 @@ pub const Bin = extern struct {
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
 
-        global_bin_dir: std.fs.Dir,
         global_bin_path: stringZ = "",
 
         string_buf: []const u8,
@@ -345,8 +344,8 @@ pub const Bin = extern struct {
         }
 
         fn linkBinOrCreateShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
-            bun.assertWithLocation(std.fs.path.isAbsoluteZ(abs_target), @src());
-            bun.assertWithLocation(std.fs.path.isAbsoluteZ(abs_dest), @src());
+            bun.assertWithLocation(std.fs.path.isAbsolute(abs_target), @src());
+            bun.assertWithLocation(std.fs.path.isAbsolute(abs_dest), @src());
             bun.assertWithLocation(abs_target[abs_target.len - 1] != std.fs.path.sep, @src());
             bun.assertWithLocation(abs_dest[abs_dest.len - 1] != std.fs.path.sep, @src());
 
@@ -590,6 +589,8 @@ pub const Bin = extern struct {
             return remain;
         }
 
+        // target: what the symlink points to
+        // destination: where the symlink exists on disk
         pub fn link(this: *Linker, global: bool) void {
             const package_dir = this.buildTargetPackageDir();
             var abs_dest_buf_remain = this.buildDestinationDir(global);

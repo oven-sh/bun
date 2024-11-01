@@ -61,40 +61,6 @@ export function getStdioWriteStream(fd) {
 }
 
 export function getStdinStream(fd) {
-  const tty = require("node:tty");
-  const fs = require("node:fs");
-
-  let stream;
-  if (tty.isatty(fd)) {
-    stream = new tty.ReadStream(fd);
-  } else {
-    const stat = fs.fstatSync(fd);
-    if (stat.isSocket()) {
-      const net = require("node:net");
-
-      if (process.channel && process.channel.fd === fd) {
-        stream = new net.Socket({
-          handle: process.channel,
-          readable: true,
-          writable: false,
-          manualStart: true,
-        });
-      } else {
-        stream = new net.Socket({
-          fd: fd,
-          readable: true,
-          writable: false,
-          manualStart: true,
-        });
-      }
-
-      stream._writableState.ended = true;
-    } else {
-      // Default to a file stream
-      stream = new fs.ReadStream(null, { fd: fd, autoClose: false });
-    }
-  }
-
   // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
   // but we need to extend TTY/FS ReadStream
@@ -140,10 +106,21 @@ export function getStdinStream(fd) {
             $getByIdDirectPrivate(native, "readableStreamController"),
             "underlyingByteSource",
           ).$resume(false);
-        } catch (e) {}
+        } catch (e) {
+          if (IS_BUN_DEVELOPMENT) {
+            // we assume this isn't possible, but because we aren't sure
+            // we will ignore if error during release, but make a big deal in debug
+            console.error(e);
+            $assert(!"reachable");
+          }
+        }
       }
     }
   }
+
+  const tty = require("node:tty");
+  const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
+  const stream = new ReadStream(fd);
 
   const originalOn = stream.on;
 
@@ -217,7 +194,7 @@ export function getStdinStream(fd) {
           unref();
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
         // Not a bug. Happens in unref().
         return;
@@ -263,6 +240,130 @@ export function getStdinStream(fd) {
 
   return stream;
 }
+
+// export function getStdinStream(fd) {
+//   function guessHandleType(fd) {
+//     const tty = require("node:tty");
+//     if (tty.isatty(fd)) {
+//       return "TTY";
+//     }
+
+//     // const fs = require("node:fs");
+//     // const stat = fs.fstatSync(fd);
+
+//     // if (stat.isSocket()) {
+//     //   return "SOCKET";
+//     // }
+
+//     return "FILE";
+//   }
+
+//   let stdin;
+//   switch (guessHandleType(fd)) {
+//     case "TTY": {
+//       const tty = require("node:tty");
+//       console.error("create tty readstream");
+//       stdin = new tty.ReadStream(fd);
+//       break;
+//     }
+
+//     case "FILE": {
+//       const fs = require("node:fs");
+//       stdin = new fs.ReadStream(null, { fd: fd, autoClose: false });
+//       break;
+//     }
+
+//     // case "SOCKET": {
+//     //   const net = require("node:net");
+
+//     //   // It could be that process has been started with an IPC channel
+//     //   // sitting on fd=0, in such case the pipe for this fd is already
+//     //   // present and creating a new one will lead to the assertion failure
+//     //   // in libuv.
+//     //   // @ts-ignore
+//     //   if (process.channel && process.channel.fd === fd) {
+//     //     stdin = new net.Socket({
+//     //       handle: process.channel,
+//     //       readable: true,
+//     //       writable: false,
+//     //       manualStart: true,
+//     //     });
+//     //   } else {
+//     //     stdin = new net.Socket({
+//     //       fd: fd,
+//     //       readable: true,
+//     //       writable: false,
+//     //       manualStart: true,
+//     //     });
+//     //   }
+//     //   // Make sure the stdin can't be `.end()`-ed
+//     //   stdin._writableState.ended = true;
+//     //   break;
+//     // }
+
+//     default: {
+//       // Provide a dummy contentless input for e.g. non-console
+//       // Windows applications.
+//       const { Readable } = require("node:stream");
+//       stdin = new Readable({ read() {} });
+//       stdin.push(null);
+//     }
+//   }
+
+//   // For supporting legacy API we put the FD here.
+//   stdin.fd = fd;
+
+//   // `stdin` starts out life in a paused state, but node doesn't
+//   // know yet. Explicitly to readStop() it to put it in the
+//   // not-reading state.
+//   if (stdin._handle?.readStop) {
+//     stdin._handle.reading = false;
+//     stdin._readableState.reading = false;
+//     stdin._handle.readStop();
+//   }
+
+//   // If the user calls stdin.pause(), then we need to stop reading
+//   // once the stream implementation does so (one nextTick later),
+//   // so that the process can close down.
+//   stdin.on("pause", () => {
+//     console.error("[processobjectinternals] stdin pause");
+//     process.nextTick(onpause);
+//   });
+
+//   function onpause() {
+//     console.error("[processobjectinternals] stdin onpause 1");
+//     if (stdin.unref) {
+//       console.error("[processobjectinternals] stdin onpause unref", stdin.unref);
+//       stdin.unref(); // without ever ref'ing again, the nativereadable's ref count goes negative
+//       const fileRef = Bun.file(stdin.fd);
+//       console.error("file ref is: ", fileRef);
+//       // stdin.close(); // calling close gets stuck in a tickWithoutIdle loop
+
+//       // on pipe, it works because stdin is ended by the calling process
+//       // on pause(), stdin should no longer block exit, and on resume(), it should again.
+
+//       // previously, it worked by
+//     }
+
+//     // it doesn't pass here because stdin handle is null. node
+//     // creates net.tty from socket which sets handle in node.
+//     // bun is creating net.tty from file readstream which
+//     // does not set handle. bun's net.socket doesn't set handle
+//     // either, and also doesn't work.
+//     if (!stdin._handle) return;
+//     console.error("[processobjectinternals] stdin onpause 2");
+//     if (stdin._handle.reading && !stdin.readableFlowing) {
+//       console.error("[processobjectinternals] stdin onpause 3");
+//       stdin._readableState.reading = false;
+//       stdin._handle.reading = false;
+//       stdin._handle.readStop();
+//     }
+//   }
+
+//   // No need to add deserialize callback because stdin = undefined above
+//   // causes the stream to be lazily initialized again later.
+//   return stdin;
+// }
 
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
   var queue;

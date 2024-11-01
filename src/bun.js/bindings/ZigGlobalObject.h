@@ -327,7 +327,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Bun::WorkerGlobalScope& globalEventScope;
+    Ref<Bun::WorkerGlobalScope> globalEventScope;
 
     void resetOnEachMicrotaskTick();
 

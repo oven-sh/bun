@@ -1426,8 +1426,28 @@ pub export fn napi_remove_env_cleanup_hook(env_: napi_env, fun: ?*const fn (?*an
 }
 
 pub const Finalizer = struct {
+    env: napi_env,
     fun: napi_finalize,
     data: ?*anyopaque = null,
+    hint: ?*anyopaque = null,
+
+    pub const Queue = std.fifo.LinearFifo(Finalizer, .Dynamic);
+
+    pub fn drain(this: *Finalizer.Queue) void {
+        while (this.readItem()) |*finalizer| {
+            const env = finalizer.env.?;
+            const handle_scope = NapiHandleScope.open(env, false);
+            defer if (handle_scope) |scope| scope.close(env);
+            finalizer.fun.?(env, finalizer.data, finalizer.hint);
+        }
+    }
+
+    /// Node defers finalizers to the immediate task queue.
+    /// This is most likely to account for napi addons which cause GC inside of the finalizer.
+    pub export fn napi_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
+        const vm = JSC.VirtualMachine.get();
+        vm.eventLoop().napi_finalizer_queue.writeItem(.{ .env = env, .fun = fun, .data = data, .hint = hint }) catch bun.outOfMemory();
+    }
 };
 
 // TODO: generate comptime version of this instead of runtime checking
@@ -1458,7 +1478,7 @@ pub const ThreadSafeFunction = struct {
 
     env: *NapiEnv,
 
-    finalizer: Finalizer = Finalizer{ .fun = null, .data = null },
+    finalizer: Finalizer = Finalizer{ .env = null, .fun = null, .data = null },
     channel: Queue,
 
     ctx: ?*anyopaque = null,
@@ -1581,7 +1601,7 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
-            fun(this.env, this.finalizer.data, this.ctx);
+            Finalizer.napi_enqueue_finalizer(this.env, fun, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {
@@ -1688,7 +1708,7 @@ pub export fn napi_create_threadsafe_function(
         .tracker = JSC.AsyncTaskTracker.init(vm),
     };
 
-    function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
+    function.finalizer = .{ .env = env, .data = thread_finalize_data, .fun = thread_finalize_cb };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
     function.tracker.didSchedule(vm.global);

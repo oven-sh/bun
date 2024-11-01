@@ -1,6 +1,7 @@
 #include "headers.h"
 #include "node_api.h"
 #include "root.h"
+#include "JavaScriptCore/ConstructData.h"
 
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/JSCast.h"
@@ -234,18 +235,36 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
+    // Equivalent to v8impl::Ownership::kUserland
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final
     {
         auto* weakValue = reinterpret_cast<NapiRef*>(context);
         weakValue->finalizer.call(weakValue->env, weakValue->data);
     }
+
+    static NapiRefWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
 };
 
-static NapiRefWeakHandleOwner& weakValueHandleOwner()
-{
-    static NeverDestroyed<NapiRefWeakHandleOwner> jscWeakValueHandleOwner;
-    return jscWeakValueHandleOwner;
-}
+class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
+public:
+    // Equivalent to v8impl::Ownership::kRuntime
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final
+    {
+        auto* weakValue = reinterpret_cast<NapiRef*>(context);
+        weakValue->finalizer.call(weakValue->env, weakValue->data);
+        delete weakValue;
+    }
+
+    static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefSelfDeletingWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
+};
 
 void NapiRef::ref()
 {
@@ -866,7 +885,7 @@ node_api_create_external_string_latin1(napi_env env,
     length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
         if (finalize_callback) {
-            NAPI_LOG("finalizer");
+            NAPI_LOG("latin1 string finalizer");
             finalize_callback(env, str, hint);
         }
     });
@@ -901,7 +920,7 @@ node_api_create_external_string_utf16(napi_env env,
     length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const UChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
         if (finalize_callback) {
-            NAPI_LOG("finalizer");
+            NAPI_LOG("utf16 string finalizer");
             finalize_callback(env, str, hint);
         }
     });
@@ -1007,14 +1026,13 @@ extern "C" napi_status napi_wrap(napi_env env,
     // create a new weak reference (refcount 0)
     auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
     ref->data = native_object;
-    ref->weakValueRef.set(value, weakValueHandleOwner(), ref);
+    if (result) {
+        ref->weakValueRef.set(value, NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
+    } else {
+        ref->weakValueRef.set(value, NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
+    }
     // wrap the ref in an external so that it can serve as a JSValue
-    auto* external = Bun::NapiExternal::create(globalObject->vm(),
-        globalObject->NapiExternalStructure(),
-        reinterpret_cast<void*>(ref),
-        nullptr,
-        env,
-        nullptr);
+    auto* external = Bun::NapiExternal::create(globalObject->vm(), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
     globalObject->napiWraps()->set(globalObject->vm(), cell, external);
 
     if (result) {
@@ -1044,6 +1062,13 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     if (result) {
         *result = ref->data;
     }
+
+    if (ref->isOwnedByRuntime) {
+        delete ref;
+    } else {
+        ref->finalizer.clear();
+    }
+
     external->m_value = nullptr;
 
     ref->finalizer = Bun::NapiFinalizer {};
@@ -1069,7 +1094,14 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     NAPI_RETURN_EARLY_IF_FALSE(env, external && external->m_value, napi_invalid_arg);
     auto* ref = reinterpret_cast<NapiRef*>(external->m_value);
 
-    *result = ref->data;
+    // KeepWrap
+    if (!result) {
+        return napi_invalid_arg;
+    }
+
+    if (ref) {
+        *result = ref->data;
+    }
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -1229,7 +1261,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
     }
-    ref->weakValueRef.set(val, weakValueHandleOwner(), ref);
+    ref->weakValueRef.set(val, NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
 
     *result = toNapi(ref);
     NAPI_RETURN_SUCCESS(env);
@@ -1258,14 +1290,23 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSValue objectValue = toJS(js_object);
+    JSC::JSValue objectValue = toJS(js_object);
     JSC::JSObject* object = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_object_expected);
 
-    vm.heap.addFinalizer(object, [finalize_cb, env, native_object, finalize_hint](JSCell* cell) -> void {
-        NAPI_LOG("finalizer %p", finalize_hint);
-        finalize_cb(env, native_object, finalize_hint);
-    });
+    if (result) {
+        // If they're expecting a Ref, use the ref.
+        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
+        ref->weakValueRef.set(object, NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
+        ref->data = native_object;
+        *result = toNapi(ref);
+    } else {
+        // Otherwise, it's cheaper to just call .addFinalizer.
+        vm.heap.addFinalizer(object, [env, finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
+            NAPI_LOG("finalizer %p", finalize_hint);
+            Bun::NapiFinalizer { finalize_cb, finalize_hint }.call(env, native_object);
+        });
+    }
 
     NAPI_RETURN_SUCCESS(env);
 }
@@ -2064,7 +2105,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
         if (finalize_cb != nullptr) {
-            NAPI_LOG("finalizer");
+            NAPI_LOG("external buffer finalizer");
             finalize_cb(env, p, finalize_hint);
         }
     }));
@@ -2087,7 +2128,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
         if (finalize_cb != nullptr) {
-            NAPI_LOG("finalizer");
+            NAPI_LOG("external ArrayBuffer finalizer");
             finalize_cb(env, p, finalize_hint);
         }
     }));
@@ -2583,8 +2624,7 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     NAPI_PREAMBLE(env);
 
     env->instanceData = data;
-    env->instanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
-    env->instanceDataFinalizerHint = finalize_hint;
+    env->instanceDataFinalizer = { finalize_cb, finalize_hint };
 
     NAPI_RETURN_SUCCESS(env);
 }

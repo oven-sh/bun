@@ -20,6 +20,7 @@ public:
     }
 
     void call(napi_env env, void* data);
+    void clear();
 
 private:
     napi_finalize m_callback;

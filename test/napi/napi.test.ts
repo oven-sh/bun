@@ -340,6 +340,12 @@ describe("napi", () => {
       checkSameOutput("test_type_tag", []);
     });
   });
+
+  describe("napi_external", () => {
+    it("can wrap a value and run a finalizer", () => {
+      checkSameOutput("test_external", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

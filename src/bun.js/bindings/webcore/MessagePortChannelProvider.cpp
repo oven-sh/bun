@@ -64,7 +64,7 @@ MessagePortChannelProvider& MessagePortChannelProvider::fromContext(ScriptExecut
     // if (auto workletScope = dynamicDowncast<WorkletGlobalScope>(context))
     //     return workletScope->messagePortChannelProvider();
 
-    return jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->globalEventScope.messagePortChannelProvider();
+    return jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->globalEventScope->messagePortChannelProvider();
 }
 
 } // namespace WebCore

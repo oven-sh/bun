@@ -5,8 +5,8 @@
 #include "napi_finalizer.h"
 #include "root.h"
 
-#include "BunBuiltinNames.h"
 #include "BunClientData.h"
+#include "napi.h"
 
 namespace Bun {
 

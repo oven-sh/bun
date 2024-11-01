@@ -7,7 +7,6 @@
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
-#include "js_native_api.h"
 #include "node_api.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
@@ -38,8 +37,7 @@ public:
     };
 
     void* instanceData = nullptr;
-    void* instanceDataFinalizer = nullptr;
-    void* instanceDataFinalizerHint = nullptr;
+    Bun::NapiFinalizer instanceDataFinalizer;
 
 private:
     Zig::GlobalObject* m_globalObject = nullptr;
@@ -199,6 +197,7 @@ public:
     Bun::NapiFinalizer finalizer;
     void* data = nullptr;
     uint32_t refCount = 0;
+    bool isOwnedByRuntime = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

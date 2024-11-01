@@ -11,7 +11,7 @@ void NapiFinalizer::call(napi_env env, void* data)
 {
     if (m_callback) {
         NAPI_LOG_CURRENT_FUNCTION;
-        napi_enqueue_finalizer(env, this->m_callback, data, this->m_hint);
+        napi_enqueue_finalizer(env, m_callback, data, m_hint);
     }
 }
 

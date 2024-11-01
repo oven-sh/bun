@@ -32,6 +32,10 @@ function getCommit() {
   return getEnv("BUILDKITE_COMMIT");
 }
 
+function getCommitMessage() {
+  return getEnv("BUILDKITE_MESSAGE", false) || "";
+}
+
 function getBranch() {
   return getEnv("BUILDKITE_BRANCH");
 }
@@ -83,9 +87,7 @@ async function getBuildIdWithArtifacts() {
 
   while (url) {
     const response = await fetch(`${url}.json`, {
-      headers: {
-        "Accept": "application/json",
-      },
+      headers: { "Accept": "application/json" },
     });
 
     if (!response.ok) {
@@ -111,14 +113,6 @@ async function getBuildIdWithArtifacts() {
 
     url = url.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
   }
-}
-
-function isDocumentation(filename) {
-  return /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/.test(filename);
-}
-
-function isTest(filename) {
-  return /^test/.test(filename);
 }
 
 function toYaml(obj, indent = 0) {
@@ -185,13 +179,12 @@ function getPipeline(buildId) {
   };
 
   const getLabel = platform => {
-    const { os, arch, baseline } = platform;
-
+    const { os, arch, baseline, release } = platform;
+    let label = release ? `:${os}: ${release} ${arch}` : `:${os}: ${arch}`;
     if (baseline) {
-      return `:${os}: ${arch}-baseline`;
+      label += `-baseline`;
     }
-
-    return `:${os}: ${arch}`;
+    return label;
   };
 
   // https://buildkite.com/docs/pipelines/command-step#retry-attributes
@@ -315,9 +308,9 @@ function getPipeline(buildId) {
 
     let name;
     if (os === "darwin" || os === "windows") {
-      name = getLabel(platform);
+      name = getLabel({ ...platform, release });
     } else {
-      name = getLabel({ ...platform, os: distro });
+      name = getLabel({ ...platform, os: distro, release });
     }
 
     let agents;
@@ -353,12 +346,19 @@ function getPipeline(buildId) {
       depends = [`${getKey(platform)}-build-bun`];
     }
 
+    let retry;
+    if (os !== "windows") {
+      // When the runner fails on Windows, Buildkite only detects an exit code of 1.
+      // Because of this, we don't know if the run was fatal, or soft-failed.
+      retry = getRetry();
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
       depends_on: depends,
       agents,
-      retry: getRetry(),
+      retry,
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
       parallelism,
@@ -435,29 +435,51 @@ async function main() {
   console.log(" - Repository:", getRepository());
   console.log(" - Branch:", getBranch());
   console.log(" - Commit:", getCommit());
+  console.log(" - Commit Message:", getCommitMessage());
   console.log(" - Is Main Branch:", isMainBranch());
   console.log(" - Is Merge Queue:", isMergeQueue());
   console.log(" - Is Pull Request:", isPullRequest());
 
-  let buildId;
   const changedFiles = await getChangedFiles();
   if (changedFiles) {
     console.log(
       `Found ${changedFiles.length} changed files: \n${changedFiles.map(filename => ` - ${filename}`).join("\n")}`,
     );
+  }
 
-    if (changedFiles.every(filename => isDocumentation(filename))) {
-      console.log("Since changed files are only documentation, skipping...");
-      return;
+  const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
+
+  const isSkip = () => {
+    const message = getCommitMessage();
+    if (/\[(skip ci|no ci|ci skip|ci no)\]/i.test(message)) {
+      return true;
     }
+    return changedFiles && changedFiles.every(filename => isDocumentationFile(filename));
+  };
 
-    if (changedFiles.every(filename => isTest(filename) || isDocumentation(filename))) {
-      buildId = await getBuildIdWithArtifacts();
-      if (buildId) {
-        console.log("Since changed files are only tests, using build artifacts from previous build...", buildId);
-      } else {
-        console.log("Changed files are only tests, but could not find previous build artifacts...");
-      }
+  if (isSkip()) {
+    console.log("Skipping CI due to commit message or changed files...");
+    return;
+  }
+
+  const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
+
+  const isSkipBuild = () => {
+    const message = getCommitMessage();
+    if (/\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.test(message)) {
+      return true;
+    }
+    return changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename));
+  };
+
+  let buildId;
+  if (isSkipBuild()) {
+    buildId = await getBuildIdWithArtifacts();
+    if (buildId) {
+      console.log("Skipping build due to commit message or changed files...");
+      console.log("Using build artifacts from previous build:", buildId);
+    } else {
+      console.log("Attempted to skip build, but could not find previous build");
     }
   }
 

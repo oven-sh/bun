@@ -85,9 +85,6 @@ fn literalLength(comptime T: type, comptime str: string) usize {
     };
 }
 
-// TODO: remove this
-pub const toUTF16LiteralZ = toUTF16Literal;
-
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(slice: string, comptime str: []const u8) ?OptionalUsize {
     switch (comptime str.len) {
@@ -217,9 +214,8 @@ pub fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-pub fn startsWithUUID(str: string) bool {
-    const uuid_len = 36;
-    if (str.len < uuid_len) return false;
+pub fn isUUID(str: string) bool {
+    if (str.len != uuid_len) return false;
     for (0..8) |i| {
         switch (str[i]) {
             '0'...'9', 'a'...'f', 'A'...'F' => {},
@@ -257,6 +253,12 @@ pub fn startsWithUUID(str: string) bool {
     return true;
 }
 
+pub const uuid_len = 36;
+
+pub fn startsWithUUID(str: string) bool {
+    return isUUID(str[0..@min(str.len, uuid_len)]);
+}
+
 /// https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/%40npmcli/redact/lib/matchers.js#L7
 /// /\b(npms?_)[a-zA-Z0-9]{36,48}\b/gi
 /// Returns the length of the secret if one exist.
@@ -292,6 +294,128 @@ pub fn startsWithNpmSecret(str: string) u8 {
     }
 
     return i;
+}
+
+fn startsWithRedactedItem(text: string, comptime item: string) ?struct { usize, usize } {
+    if (!strings.hasPrefixComptime(text, item)) return null;
+
+    var whitespace = false;
+    var offset: usize = item.len;
+    while (offset < text.len and std.ascii.isWhitespace(text[offset])) {
+        offset += 1;
+        whitespace = true;
+    }
+    if (offset == text.len) return null;
+    const cont = js_lexer.isIdentifierContinue(text[offset]);
+
+    // must be another identifier
+    if (!whitespace and cont) return null;
+
+    // `null` is not returned after this point. Redact to the next
+    // newline if anything is unexpected
+    if (cont) return .{ offset, indexOfChar(text[offset..], '\n') orelse text[offset..].len };
+    offset += 1;
+
+    var end = offset;
+    while (end < text.len and std.ascii.isWhitespace(text[end])) {
+        end += 1;
+    }
+
+    if (end == text.len) {
+        return .{ offset, text[offset..].len };
+    }
+
+    switch (text[end]) {
+        inline '\'', '"', '`' => |q| {
+            // attempt to find closing
+            const opening = end;
+            end += 1;
+            while (end < text.len) {
+                switch (text[end]) {
+                    '\\' => {
+                        // skip
+                        end += 1;
+                        end += 1;
+                    },
+                    q => {
+                        // closing
+                        return .{ opening + 1, (end - 1) - opening };
+                    },
+                    else => {
+                        end += 1;
+                    },
+                }
+            }
+
+            const len = strings.indexOfChar(text[offset..], '\n') orelse text[offset..].len;
+            return .{ offset, len };
+        },
+        else => {
+            const len = strings.indexOfChar(text[offset..], '\n') orelse text[offset..].len;
+            return .{ offset, len };
+        },
+    }
+}
+
+/// Returns offset and length of first secret found.
+pub fn startsWithSecret(str: string) ?struct { usize, usize } {
+    if (startsWithRedactedItem(str, "_auth")) |auth| {
+        const offset, const len = auth;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "_authToken")) |auth_token| {
+        const offset, const len = auth_token;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "email")) |email| {
+        const offset, const len = email;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "_password")) |password| {
+        const offset, const len = password;
+        return .{ offset, len };
+    }
+    if (startsWithRedactedItem(str, "token")) |token| {
+        const offset, const len = token;
+        return .{ offset, len };
+    }
+
+    if (startsWithUUID(str)) {
+        return .{ 0, 36 };
+    }
+
+    const npm_secret_len = startsWithNpmSecret(str);
+    if (npm_secret_len > 0) {
+        return .{ 0, npm_secret_len };
+    }
+
+    if (findUrlPassword(str)) |url_pass| {
+        const offset, const len = url_pass;
+        return .{ offset, len };
+    }
+
+    return null;
+}
+
+pub fn findUrlPassword(text: string) ?struct { usize, usize } {
+    if (!strings.hasPrefixComptime(text, "http")) return null;
+    var offset: usize = "http".len;
+    if (hasPrefixComptime(text[offset..], "://")) {
+        offset += "://".len;
+    } else if (hasPrefixComptime(text[offset..], "s://")) {
+        offset += "s://".len;
+    } else {
+        return null;
+    }
+    var remain = text[offset..];
+    const end = indexOfChar(remain, '\n') orelse remain.len;
+    remain = remain[0..end];
+    const at = indexOfChar(remain, '@') orelse return null;
+    const colon = indexOfCharNeg(remain[0..at], ':');
+    if (colon == -1 or colon == at - 1) return null;
+    offset += @intCast(colon + 1);
+    const len: usize = at - @as(usize, @intCast(colon + 1));
+    return .{ offset, len };
 }
 
 pub fn indexAnyComptime(target: string, comptime chars: string) ?usize {

@@ -515,7 +515,7 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string) => {
-      expect(stderr).toContain("got an empty string");
+      expect(stderr).toContain("received an empty string");
     },
   );
 });

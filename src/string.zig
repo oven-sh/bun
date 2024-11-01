@@ -341,7 +341,7 @@ pub const String = extern struct {
         return bytes;
     }
 
-    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) !struct { []u8, bool } {
+    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) OOM!struct { []u8, bool } {
         switch (this.tag) {
             .ZigString => return .{ try this.value.ZigString.toOwnedSlice(allocator), true },
             .WTFStringImpl => {

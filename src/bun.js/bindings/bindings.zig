@@ -3064,7 +3064,10 @@ pub const JSGlobalObject = opaque {
         const unwrapped = if (T == JSValue)
             result
         else switch (@typeInfo(T)) {
-            .ErrorUnion => result catch |err| return global.errorSetToCPP(err, T),
+            .ErrorUnion => result catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                return global.errorSetToCPP(err, T);
+            },
             .ErrorSet => return global.errorSetToCPP(result, T),
             else => @compileError(unreachable), // unsupported type
         };
@@ -3105,6 +3108,10 @@ pub const JSGlobalObject = opaque {
 
         if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
             std.debug.assert(!global.hasException()); // dual exception
+
+            {
+                bun.outOfMemory();
+            }
 
             global.throwOutOfMemory();
             return .zero;

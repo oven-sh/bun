@@ -614,12 +614,9 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
 
     JSValue jsValue = toJS(value);
 
-    bool putResult = object->methodTable()->put(object, globalObject, identifier, jsValue, slot);
-    NAPI_RETURN_IF_EXCEPTION(env);
-    if (!putResult) return napi_set_last_error(env, napi_generic_failure);
-
-    // we should have returned if there is an exception
-    NAPI_RETURN_SUCCESS(env);
+    // Ignoring the return value matches JS sloppy mode
+    (void)object->methodTable()->put(object, globalObject, identifier, jsValue, slot);
+    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
 extern "C" napi_status napi_set_element(napi_env env, napi_value object_,

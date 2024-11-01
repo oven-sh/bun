@@ -963,9 +963,23 @@ async function getVendorTests(cwd) {
     (a, b) => a.package.localeCompare(b.package) || a.tag.localeCompare(b.tag),
   );
 
-  /** @type {VendorTest[]} */
-  const vendorTests = await Promise.all(
-    vendors.map(async ({ package: name, repository, tag, testPath, testRunner, packageManager, skipTests }) => {
+  const shardId = parseInt(options["shard"]);
+  const maxShards = parseInt(options["max-shards"]);
+
+  /** @type {Vendor[]} */
+  let relevantVendors = [];
+  if (maxShards > 1) {
+    for (let i = 0; i < vendors.length; i++) {
+      if (i % maxShards === shardId) {
+        relevantVendors.push(vendors[i]);
+      }
+    }
+  } else {
+    relevantVendors = vendors.flat();
+  }
+
+  return Promise.all(
+    relevantVendors.map(async ({ package: name, repository, tag, testPath, testRunner, packageManager, skipTests }) => {
       const vendorPath = join(cwd, "vendor", name);
 
       if (!existsSync(vendorPath)) {
@@ -983,13 +997,6 @@ async function getVendorTests(cwd) {
         timeout: testTimeout,
         cwd: vendorPath,
       });
-
-      // await spawnSafe({
-      //   command: "git",
-      //   args: ["checkout", "-b", tag],
-      //   timeout: testTimeout,
-      //   cwd: vendorPath,
-      // });
 
       const packageJsonPath = join(vendorPath, "package.json");
       if (!existsSync(packageJsonPath)) {
@@ -1035,23 +1042,6 @@ async function getVendorTests(cwd) {
       };
     }),
   );
-
-  const shardId = parseInt(options["shard"]);
-  const maxShards = parseInt(options["max-shards"]);
-
-  /** @type {VendorTest[]} */
-  let tests = [];
-  if (maxShards > 1) {
-    for (let i = 0; i < vendorTests.length; i++) {
-      if (i % maxShards === shardId) {
-        tests.push(vendorTests[i]);
-      }
-    }
-  } else {
-    tests = vendorTests.flat();
-  }
-
-  return tests;
 }
 
 /**

@@ -1167,9 +1167,11 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
-    if (napiInstanceDataFinalizer) {
-        napi_finalize finalizer = reinterpret_cast<napi_finalize>(napiInstanceDataFinalizer);
-        finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
+    for (const auto& env : m_napiEnvs) {
+        if (env->instanceDataFinalizer) {
+            napi_finalize finalizer = reinterpret_cast<napi_finalize>(env->instanceDataFinalizer);
+            finalizer(env.get(), env->instanceData, env->instanceDataFinalizerHint);
+        }
     }
 
     if (auto* ctx = scriptExecutionContext()) {
@@ -4274,6 +4276,12 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
+{
+    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
+    return m_napiEnvs.last().get();
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

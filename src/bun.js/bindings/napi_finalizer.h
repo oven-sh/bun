@@ -19,7 +19,7 @@ public:
     {
     }
 
-    void call(JSC::JSGlobalObject* globalObject, void* data);
+    void call(napi_env env, void* data);
 
 private:
     napi_finalize m_callback;

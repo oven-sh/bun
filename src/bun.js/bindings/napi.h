@@ -8,11 +8,43 @@
 #include "BunClientData.h"
 #include <JavaScriptCore/CallFrame.h>
 #include "js_native_api.h"
+#include "node_api.h"
 #include <JavaScriptCore/JSWeakValue.h>
 #include "JSFFIFunction.h"
 #include "ZigGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
+
+struct napi_env__ {
+public:
+    napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+        : m_globalObject(globalObject)
+        , m_napiModule(napiModule)
+    {
+    }
+
+    Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    const napi_module& napiModule() const { return m_napiModule; }
+
+    // Almost all NAPI functions should set error_code to the status they're returning right before
+    // they return it
+    napi_extended_error_info m_lastNapiErrorInfo = {
+        .error_message = "",
+        // Not currently used by Bun -- always nullptr
+        .engine_reserved = nullptr,
+        // Not currently used by Bun -- always zero
+        .engine_error_code = 0,
+        .error_code = napi_ok,
+    };
+
+    void* instanceData = nullptr;
+    void* instanceDataFinalizer = nullptr;
+    void* instanceDataFinalizerHint = nullptr;
+
+private:
+    Zig::GlobalObject* m_globalObject = nullptr;
+    napi_module m_napiModule;
+};
 
 namespace JSC {
 class JSGlobalObject;
@@ -34,7 +66,7 @@ static inline JSValue toJS(napi_value val)
 
 static inline Zig::GlobalObject* toJS(napi_env val)
 {
-    return reinterpret_cast<Zig::GlobalObject*>(val);
+    return val->globalObject();
 }
 
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
@@ -45,11 +77,6 @@ static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObjec
         }
     }
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
-}
-
-static inline napi_env toNapi(JSC::JSGlobalObject* val)
-{
-    return reinterpret_cast<napi_env>(val);
 }
 
 // This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
@@ -140,13 +167,12 @@ public:
     void unref();
     void clear();
 
-    NapiRef(JSC::JSGlobalObject* global, uint32_t count, Bun::NapiFinalizer finalizer)
-        : finalizer(finalizer)
+    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
+        : env(env)
+        , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
+        , finalizer(finalizer)
+        , refCount(count)
     {
-        globalObject = JSC::Weak<JSC::JSGlobalObject>(global);
-        strongRef = {};
-        weakValueRef.clear();
-        refCount = count;
     }
 
     JSC::JSValue value() const
@@ -166,6 +192,7 @@ public:
         weakValueRef.clear();
     }
 
+    napi_env env = nullptr;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
@@ -204,7 +231,7 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JS_EXPORT_PRIVATE static NapiClass* create(VM&, Zig::GlobalObject*, WTF::String name,
+    JS_EXPORT_PRIVATE static NapiClass* create(VM&, napi_env, WTF::String name,
         napi_callback constructor,
         void* data,
         size_t property_count,
@@ -216,24 +243,27 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    napi_callback constructor()
-    {
-        return m_constructor;
-    }
-
-    void* dataPtr = nullptr;
-    napi_callback m_constructor = nullptr;
+    inline napi_callback constructor() const { return m_constructor; }
+    inline void*& dataPtr() { return m_dataPtr; }
+    inline void* const& dataPtr() const { return m_dataPtr; }
+    inline napi_env env() const { return m_env; }
 
 private:
-    NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure, void* data)
-        : Base(vm, executable, global, structure)
-        , dataPtr(data)
+    NapiClass(VM& vm, NativeExecutable* executable, napi_env env, Structure* structure, void* data)
+        : Base(vm, executable, env->globalObject(), structure)
+        , m_dataPtr(data)
+        , m_env(env)
     {
     }
+
     void finishCreation(VM&, NativeExecutable*, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);
+
+    void* m_dataPtr = nullptr;
+    napi_callback m_constructor = nullptr;
+    napi_env m_env = nullptr;
 
     DECLARE_VISIT_CHILDREN;
 };

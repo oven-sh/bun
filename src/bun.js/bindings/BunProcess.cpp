@@ -1,3 +1,5 @@
+#include "napi.h"
+
 #include "BunProcess.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
@@ -382,36 +384,56 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
-        JSC::EncodedJSValue exports);
 #if OS(WINDOWS)
 #define dlsym GetProcAddress
 #endif
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
-        JSC::EncodedJSValue)>(
+    auto napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(napi_env, napi_value)>(
         dlsym(handle, "napi_register_module_v1"));
+
+    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
 
 #if OS(WINDOWS)
 #undef dlsym
 #endif
 
-    if (!napi_register_module_v1) {
+    if (!napi_register_module_v1 || !node_api_module_get_api_version_v1) {
 #if OS(WINDOWS)
         FreeLibrary(handle);
 #else
         dlclose(handle);
 #endif
+    }
+
+    if (!napi_register_module_v1) {
         JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
+        return {};
+    }
+
+    if (!node_api_module_get_api_version_v1) {
+        JSC::throwTypeError(globalObject, scope, "symbol 'node_api_module_get_api_version_v1' not found in native module. Is this a Node API (napi) module?"_s);
         return {};
     }
 
     NapiHandleScope handleScope(globalObject);
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
-    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
+
+    napi_module nmodule {
+        .nm_version = node_api_module_get_api_version_v1(),
+        .nm_flags = 0,
+        .nm_filename = "[no filename]",
+        .nm_register_func = nullptr,
+        .nm_modname = "[no modname]",
+        .nm_priv = nullptr,
+        .reserved = {},
+    };
+
+    static_assert(sizeof(napi_value) == sizeof(EncodedJSValue), "EncodedJSValue must be reinterpretable as a pointer");
+
+    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject->makeNapiEnv(nmodule), reinterpret_cast<napi_value>(exportsValue)));
 
     RETURN_IF_EXCEPTION(scope, {});
 

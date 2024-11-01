@@ -15,12 +15,8 @@ const Async = bun.Async;
 
 /// Actually a JSGlobalObject
 pub const NapiEnv = opaque {
-    pub fn fromJS(global: *JSC.JSGlobalObject) *NapiEnv {
-        return @ptrCast(global);
-    }
-
     pub fn toJS(self: *NapiEnv) *JSC.JSGlobalObject {
-        return @ptrCast(self);
+        return NapiEnv__globalObject(self);
     }
 
     extern fn napi_set_last_error(env: napi_env, status: NapiStatus) napi_status;
@@ -52,6 +48,8 @@ pub const NapiEnv = opaque {
         }
         return self.setLastError(.generic_failure);
     }
+
+    extern fn NapiEnv__globalObject(*NapiEnv) *JSC.JSGlobalObject;
 };
 
 fn envIsNull() napi_status {
@@ -72,28 +70,28 @@ pub const Ref = opaque {};
 pub const napi_ref = *Ref;
 
 pub const NapiHandleScope = opaque {
-    pub extern fn NapiHandleScope__open(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
-    pub extern fn NapiHandleScope__close(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
-    extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
+    pub extern fn NapiHandleScope__open(env: *NapiEnv, escapable: bool) ?*NapiHandleScope;
+    pub extern fn NapiHandleScope__close(env: *NapiEnv, current: ?*NapiHandleScope) void;
+    extern fn NapiHandleScope__append(env: *NapiEnv, value: JSC.JSValueReprInt) void;
     extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
     pub fn open(env: *NapiEnv, escapable: bool) ?*NapiHandleScope {
-        return NapiHandleScope__open(env.toJS(), escapable);
+        return NapiHandleScope__open(env, escapable);
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
     pub fn close(self: ?*NapiHandleScope, env: *NapiEnv) void {
-        NapiHandleScope__close(env.toJS(), self);
+        NapiHandleScope__close(env, self);
     }
 
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
     pub fn append(env: *NapiEnv, value: JSC.JSValue) void {
-        NapiHandleScope__append(env.toJS(), @intFromEnum(value));
+        NapiHandleScope__append(env, @intFromEnum(value));
     }
 
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
@@ -1058,6 +1056,7 @@ pub const napi_async_work = struct {
     completion_task: ?*anyopaque = null,
     event_loop: *JSC.EventLoop,
     global: *JSC.JSGlobalObject,
+    env: *NapiEnv,
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
     ctx: ?*anyopaque = null,
@@ -1073,10 +1072,12 @@ pub const napi_async_work = struct {
         cancelled = 3,
     };
 
-    pub fn create(global: *JSC.JSGlobalObject, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
+    pub fn create(env: *NapiEnv, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
         const work = try bun.default_allocator.create(napi_async_work);
+        const global = env.toJS();
         work.* = .{
             .global = global,
+            .env = env,
             .execute = execute,
             .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
@@ -1100,7 +1101,7 @@ pub const napi_async_work = struct {
             }
             return;
         }
-        this.execute.?(NapiEnv.fromJS(this.global), this.ctx);
+        this.execute.?(this.env, this.ctx);
         this.status.store(@intFromEnum(Status.completed), .seq_cst);
 
         this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
@@ -1129,10 +1130,10 @@ pub const napi_async_work = struct {
     }
 
     fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
-        const handle_scope = NapiHandleScope.open(NapiEnv.fromJS(this.global), false);
-        defer if (handle_scope) |scope| scope.close(NapiEnv.fromJS(this.global));
+        const handle_scope = NapiHandleScope.open(this.env, false);
+        defer if (handle_scope) |scope| scope.close(this.env);
         this.complete.?(
-            NapiEnv.fromJS(this.global),
+            this.env,
             @intFromEnum(if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
                 NapiStatus.cancelled
             else
@@ -1306,7 +1307,7 @@ pub export fn napi_create_async_work(
     const result = result_ orelse {
         return env.invalidArg();
     };
-    result.* = napi_async_work.create(env.toJS(), execute, complete, data) catch {
+    result.* = napi_async_work.create(env, execute, complete, data) catch {
         return env.genericFailure();
     };
     return env.ok();
@@ -1580,7 +1581,7 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
-            fun(NapiEnv.fromJS(this.event_loop.global), this.finalizer.data, this.ctx);
+            fun(this.env, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {

@@ -5,11 +5,11 @@
 
 namespace Bun {
 
-void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
+void NapiFinalizer::call(napi_env env, void* data)
 {
     if (m_callback) {
         NAPI_LOG_CURRENT_FUNCTION;
-        m_callback(toNapi(globalObject), data, m_hint);
+        m_callback(env, data, m_hint);
     }
 }
 

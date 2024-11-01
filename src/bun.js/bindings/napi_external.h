@@ -48,11 +48,11 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_finalize callback)
+    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_env env, napi_finalize callback)
     {
         NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
 
-        accessor->finishCreation(vm, value, finalizer_hint, callback);
+        accessor->finishCreation(vm, value, finalizer_hint, env, callback);
 
 #if BUN_DEBUG
         if (auto* callFrame = vm.topCallFrame) {
@@ -76,11 +76,11 @@ public:
         return accessor;
     }
 
-    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_finalize callback)
+    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_env env, napi_finalize callback)
     {
         Base::finishCreation(vm);
         m_value = value;
-        napi_env = this->globalObject();
+        m_env = env;
         m_finalizer = NapiFinalizer { callback, finalizer_hint };
     }
 
@@ -90,7 +90,7 @@ public:
 
     void* m_value;
     NapiFinalizer m_finalizer;
-    JSGlobalObject* napi_env;
+    napi_env m_env;
 
 #if BUN_DEBUG
     String sourceOriginURL = String();

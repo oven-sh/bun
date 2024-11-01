@@ -54,6 +54,7 @@ class GlobalInternals;
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
+#include <node_api.h>
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -472,13 +473,6 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
-    // NAPI instance data
-    // This is not a correct implementation
-    // Addon modules can override each other's data
-    void* napiInstanceData = nullptr;
-    void* napiInstanceDataFinalizer = nullptr;
-    void* napiInstanceDataFinalizerHint = nullptr;
-
     // Used by napi_wrap to associate native objects with JS values.
     // Should only use JSCell* keys and NapiExternal values that contain NapiRefs.
     LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiWraps;
@@ -604,16 +598,8 @@ public:
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 
-    // Almost all NAPI functions should set error_code to the status they're returning right before
-    // they return it
-    napi_extended_error_info m_lastNapiErrorInfo = {
-        .error_message = "",
-        // Not currently used by Bun -- always nullptr
-        .engine_reserved = nullptr,
-        // Not currently used by Bun -- always zero
-        .engine_error_code = 0,
-        .error_code = napi_ok,
-    };
+    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
+    napi_env makeNapiEnv(const napi_module&);
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

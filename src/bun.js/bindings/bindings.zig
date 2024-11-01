@@ -4013,30 +4013,10 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn isFalsey(this: JSValue) bool {
-        switch (this) {
-            .false, .undefined, .null, .zero => return true,
-            .true => return false,
-            else => {
-                if (this.isNumber()) {
-                    const num = this.asNumber();
-                    return num == 0.0 or std.math.isNan(num);
-                }
-
-                // empty string
-                if (this.isString()) {
-                    return this.asString().length() == 0;
-                }
-
-                return false;
-            },
-        }
-
-        unreachable;
+        return !this.toBoolean();
     }
 
-    pub fn isTruthy(this: JSValue) bool {
-        return !this.isFalsey();
-    }
+    pub const isTruthy = toBoolean;
 
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
@@ -4088,7 +4068,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
-            bool => this.toBooleanSlow(globalThis),
+            bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
                     return this.asDouble();
@@ -5745,16 +5725,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return fromPtrAddress(@intFromPtr(addr));
     }
 
-    pub fn toBooleanSlow(this: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("toBooleanSlow", .{ this, global });
-    }
-
     pub fn toBoolean(this: JSValue) bool {
-        if (isEmptyOrUndefinedOrNull(this)) {
-            return false;
-        }
-
-        return asBoolean(this);
+        return cppFn("toBoolean", .{this});
     }
 
     pub fn asBoolean(this: JSValue) bool {
@@ -6044,7 +6016,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "symbolFor",
         "symbolKeyFor",
         "toBoolean",
-        "toBooleanSlow",
         "toError_",
         "toInt32",
         "toInt64",

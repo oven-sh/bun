@@ -2958,9 +2958,10 @@ pub fn ReadableStreamSource(
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                _ = globalObject; // autofix
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
-                const ref_or_unref = callFrame.argument(0).toBooleanSlow(globalObject);
+                const ref_or_unref = callFrame.argument(0).toBoolean();
                 this.setRef(ref_or_unref);
 
                 return .undefined;

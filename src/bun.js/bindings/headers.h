@@ -394,7 +394,6 @@ CPP_DECL bool JSC__JSValue__stringIncludes(JSC__JSValue JSValue0, JSC__JSGlobalO
 CPP_DECL JSC__JSValue JSC__JSValue__symbolFor(JSC__JSGlobalObject* arg0, ZigString* arg1);
 CPP_DECL bool JSC__JSValue__symbolKeyFor(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0);
 CPP_DECL int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0);
 CPP_DECL int64_t JSC__JSValue__toInt64(JSC__JSValue JSValue0);

@@ -1853,7 +1853,7 @@ inline fn createIfScope(
     }
 
     const name = ZigString.static(property);
-    const value = args[0].toBooleanSlow(globalThis);
+    const value = args[0].toBoolean();
 
     const truthy_falsey = comptime switch (tag) {
         .pass => .{ Scope.skip, Scope.call },

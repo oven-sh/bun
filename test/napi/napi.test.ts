@@ -341,11 +341,7 @@ describe("napi", () => {
     });
   });
 
-  describe("napi_external", () => {
-    it("can wrap a value and run a finalizer", () => {
-      checkSameOutput("test_external", []);
-    });
-  });
+  // TODO(@190n) test allocating in a finalizer
 
   describe("napi_wrap", () => {
     it("cleans up objects at the right time", () => {

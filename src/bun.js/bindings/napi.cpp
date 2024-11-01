@@ -1067,8 +1067,6 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     }
 
     external->m_value = nullptr;
-
-    ref->finalizer = Bun::NapiFinalizer {};
     globalObject->napiWraps()->remove(value.asCell());
 
     // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;

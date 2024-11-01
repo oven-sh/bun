@@ -15,9 +15,27 @@ static napi_value constructor(napi_env env, napi_callback_info info) {
 
   napi_value new_target;
   NODE_API_CALL(env, napi_get_new_target(env, info, &new_target));
-  printf("typeof new.target = %s\n",
-         new_target ? napi_valuetype_to_string(get_typeof(env, new_target))
-                    : "[nullptr]");
+  napi_value new_target_string;
+  NODE_API_CALL(env,
+                napi_coerce_to_string(env, new_target, &new_target_string));
+  char new_target_c_string[1024] = {0};
+  NODE_API_CALL(env, napi_get_value_string_utf8(
+                         env, new_target_string, new_target_c_string,
+                         sizeof new_target_c_string, nullptr));
+
+  // node and bun output different whitespace when stringifying a function,
+  // which we don't want the test to fail for
+  // so we attempt to delete everything in between {}
+  auto *open_brace = reinterpret_cast<char *>(
+      memchr(new_target_c_string, '{', sizeof new_target_c_string));
+  auto *close_brace = reinterpret_cast<char *>(
+      memchr(new_target_c_string, '}', sizeof new_target_c_string));
+  if (open_brace && close_brace && open_brace < close_brace) {
+    open_brace[1] = '}';
+    open_brace[2] = 0;
+  }
+
+  printf("new.target = %s\n", new_target_c_string);
 
   printf("typeof this = %s\n",
          napi_valuetype_to_string(get_typeof(env, this_value)));
@@ -63,12 +81,14 @@ static napi_value getStaticData_callback(napi_env env,
     NODE_API_CALL(
         env, napi_create_string_utf8(env, str_data, NAPI_AUTO_LENGTH, &ret));
   } else {
+    // we should hit this case as the data pointer should be null
     NODE_API_CALL(env, napi_get_undefined(env, &ret));
   }
   return ret;
 }
 
-static napi_value getter_callback(napi_env env, napi_callback_info info) {
+static napi_value static_getter_callback(napi_env env,
+                                         napi_callback_info info) {
   void *data;
 
   NODE_API_CALL(env,
@@ -80,6 +100,7 @@ static napi_value getter_callback(napi_env env, napi_callback_info info) {
     NODE_API_CALL(
         env, napi_create_string_utf8(env, str_data, NAPI_AUTO_LENGTH, &ret));
   } else {
+    // we should hit this case as the data pointer should be null
     NODE_API_CALL(env, napi_get_undefined(env, &ret));
   }
   return ret;
@@ -121,14 +142,15 @@ static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
           .utf8name = "getter",
           .name = nullptr,
           .method = nullptr,
-          .getter = getter_callback,
+          .getter = static_getter_callback,
           .setter = nullptr,
           .value = nullptr,
           .attributes = napi_default,
           // the class's data pointer should not be used instead -- it should
           // stay nullptr
           .data = nullptr,
-      }};
+      },
+  };
 
   NODE_API_CALL(
       env, napi_define_class(env, "NapiClass", NAPI_AUTO_LENGTH, constructor,

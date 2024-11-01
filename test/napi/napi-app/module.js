@@ -425,4 +425,40 @@ nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
   await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
 };
 
+nativeTests.test_napi_class = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  const instance = new NapiClass();
+  console.log("static data =", NapiClass.getStaticData());
+  console.log("static getter =", NapiClass.getter);
+  console.log("foo =", instance.foo);
+  console.log("data =", instance.getData());
+};
+
+nativeTests.test_subclass_napi_class = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  class Subclass extends NapiClass {}
+  const instance = new Subclass();
+  console.log("subclass static data =", Subclass.getStaticData());
+  console.log("subclass static getter =", Subclass.getter);
+  console.log("subclass foo =", instance.foo);
+  console.log("subclass data =", instance.getData());
+};
+
+nativeTests.test_napi_class_non_constructor_call = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  console.log("non-constructor call NapiClass() =", NapiClass());
+  console.log("global foo set to ", typeof foo != "undefined" ? foo : undefined);
+};
+
+nativeTests.test_reflect_construct_napi_class = () => {
+  const NapiClass = nativeTests.get_class_with_constructor();
+  let instance = Reflect.construct(NapiClass, [], Object);
+  console.log("reflect constructed foo =", instance.foo);
+  console.log("reflect constructed data =", instance.getData?.());
+  class Foo {}
+  instance = Reflect.construct(NapiClass, [], Foo);
+  console.log("reflect constructed foo =", instance.foo);
+  console.log("reflect constructed data =", instance.getData?.());
+};
+
 module.exports = nativeTests;

@@ -356,6 +356,15 @@ describe("napi", () => {
       checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
     });
   });
+
+  describe("napi_define_class", () => {
+    it("handles edge cases in the constructor", () => {
+      checkSameOutput("test_napi_class", []);
+      checkSameOutput("test_subclass_napi_class", []);
+      checkSameOutput("test_napi_class_non_constructor_call", []);
+      checkSameOutput("test_reflect_construct_napi_class", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

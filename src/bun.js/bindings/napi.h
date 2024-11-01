@@ -297,23 +297,12 @@ public:
 
     NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)
     {
-        auto& vm = this->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* targetFunction = jsCast<JSFunction*>(newTarget);
-        FunctionRareData* rareData = targetFunction->ensureRareData(vm);
-        auto* prototype = newTarget->get(globalObject, vm.propertyNames->prototype).getObject();
-        RETURN_IF_EXCEPTION(scope, nullptr);
-
-        // This must be kept in-sync with InternalFunction::createSubclassStructure
-        Structure* structure = rareData->internalFunctionAllocationStructure();
-        if (UNLIKELY(!(structure && structure->classInfoForCells() == this->structure()->classInfoForCells() && structure->globalObject() == globalObject))) {
-            structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+        VM& vm = globalObject->vm();
+        Structure* structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget, this->structure());
+        if (!structure) {
+            return nullptr;
         }
-
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
-        footprint->finishCreation(vm);
-        RELEASE_AND_RETURN(scope, footprint);
+        return NapiPrototype::create(vm, structure);
     }
 
 private:

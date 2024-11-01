@@ -6,15 +6,17 @@
 namespace napitests {
 
 static napi_ref ref_to_wrapped_object = nullptr;
+static bool wrap_finalize_called = false;
 
-static void delete_the_ref(napi_env env, void *_data, void *_hint) {
-  printf("delete_the_ref\n");
-  // not using NODE_API_ASSERT as this runs in a finalizer where allocating an
-  // error might cause a harder-to-debug crash
-  assert(ref_to_wrapped_object);
-  napi_delete_reference(env, ref_to_wrapped_object);
-  ref_to_wrapped_object = nullptr;
-}
+// static void delete_the_ref(napi_env env, void *_data, void *_hint) {
+//   printf("delete_the_ref\n");
+//   // not using NODE_API_ASSERT as this runs in a finalizer where allocating
+//   an
+//   // error might cause a harder-to-debug crash
+//   assert(ref_to_wrapped_object);
+//   napi_delete_reference(env, ref_to_wrapped_object);
+//   ref_to_wrapped_object = nullptr;
+// }
 
 static void finalize_for_create_wrap(napi_env env, void *opaque_data,
                                      void *opaque_hint) {
@@ -27,10 +29,12 @@ static void finalize_for_create_wrap(napi_env env, void *opaque_data,
     // TODO(@190n) implement this api in bun
     // node_api_post_finalizer(env, delete_the_ref, nullptr, nullptr);
   }
+  wrap_finalize_called = true;
 }
 
 // create_wrap(js_object: object, ask_for_ref: boolean, strong: boolean): object
 static napi_value create_wrap(const Napi::CallbackInfo &info) {
+  wrap_finalize_called = false;
   napi_env env = info.Env();
   napi_value js_object = info[0];
 
@@ -68,7 +72,12 @@ static napi_value get_wrap_data(const Napi::CallbackInfo &info) {
   napi_value js_object = info[0];
 
   void *wrapped_data;
-  NODE_API_CALL(env, napi_unwrap(env, js_object, &wrapped_data));
+  napi_status status = napi_unwrap(env, js_object, &wrapped_data);
+  if (status != napi_ok) {
+    napi_value undefined;
+    NODE_API_CALL(env, napi_get_undefined(env, &undefined));
+    return undefined;
+  }
 
   napi_value js_number;
   NODE_API_CALL(env,
@@ -142,6 +151,11 @@ static napi_value unref_wrapped_value(const Napi::CallbackInfo &info) {
   return undefined;
 }
 
+static napi_value was_wrap_finalize_called(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  return Napi::Boolean::New(env, wrap_finalize_called);
+}
+
 void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_wrap);
   REGISTER_FUNCTION(env, exports, get_wrap_data);
@@ -149,6 +163,7 @@ void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, get_wrap_data_from_ref);
   REGISTER_FUNCTION(env, exports, remove_wrap);
   REGISTER_FUNCTION(env, exports, unref_wrapped_value);
+  REGISTER_FUNCTION(env, exports, was_wrap_finalize_called);
 }
 
 } // namespace napitests

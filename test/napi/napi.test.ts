@@ -341,9 +341,24 @@ describe("napi", () => {
     });
   });
 
-  describe("napi_external", () => {
-    it("can wrap a value and run a finalizer", () => {
-      checkSameOutput("test_external", []);
+  // TODO(@190n) test allocating in a finalizer
+
+  describe("napi_wrap", () => {
+    it("cleans up objects at the right time", () => {
+      checkSameOutput("test_wrap_lifetime_without_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+    });
+  });
+
+  describe("napi_define_class", () => {
+    it("handles edge cases in the constructor", () => {
+      checkSameOutput("test_napi_class", []);
+      checkSameOutput("test_subclass_napi_class", []);
+      checkSameOutput("test_napi_class_non_constructor_call", []);
+      checkSameOutput("test_reflect_construct_napi_class", []);
     });
   });
 });

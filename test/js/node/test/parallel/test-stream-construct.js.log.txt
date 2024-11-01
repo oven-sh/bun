@@ -1,0 +1,20 @@
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-construct.js:14:25)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-construct.js:27:25)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}

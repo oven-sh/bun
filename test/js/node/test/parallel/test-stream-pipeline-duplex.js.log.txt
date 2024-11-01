@@ -1,0 +1,23 @@
+11 |     callback();
+12 |   }
+13 | });
+14 | 
+15 | pipeline(remote, local, remote, common.mustCall((err) => {
+16 |   assert.strictEqual(err.code, 'ERR_STREAM_PREMATURE_CLOSE');
+              ^
+AssertionError: Expected values to be strictly equal:
++ actual - expected
+
++ undefined
+- 'ERR_STREAM_PREMATURE_CLOSE'
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipeline-duplex.js:16:10
+      at pipelineImpl (internal:streams/pipeline:145:22)
+      at node:stream/promises:8:23
+      at new Promise (native:1:11)
+      at pipeline (node:stream/promises:7:18)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-pipeline-duplex.js:16:3
+      at native:11:43
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

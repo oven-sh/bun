@@ -1,0 +1,22 @@
+20 |   const writable = stream.Writable({ highWaterMark: ovfl });
+21 |   assert.strictEqual(writable._writableState.highWaterMark, ovfl);
+22 | 
+23 |   for (const invalidHwm of [true, false, '5', {}, -5, NaN]) {
+24 |     for (const type of [stream.Readable, stream.Writable]) {
+25 |       assert.throws(() => {
+                  ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    code: 'ERR_INVALID_ARG_VALUE',
++   message: 'options.highWaterMark',
+-   message: "The property 'options.highWaterMark' is invalid. Received true",
+    name: 'TypeError'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-streams-highwatermark.js:25:14
+      at native:11:43
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

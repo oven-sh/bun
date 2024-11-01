@@ -1,0 +1,19 @@
+184 |     await fn(value, options2);
+185 |     return kEmpty;
+186 |   }
+187 |   for await (const unused of map.@call(this, forEachFn, options))
+188 |     ;
+189 | function filter(fn, options) {
+                     ^
+TypeError: The "fn" argument must be of type Function or AsyncFunction. Received: 1
+ code: "ERR_INVALID_ARG_TYPE"
+
+      at filter (internal:streams/operators:189:16)
+      at filter (node:stream:55:20)
+      at getActual (node:assert:658:23)
+      at throws (node:assert:733:36)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-filter.js:158:10
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

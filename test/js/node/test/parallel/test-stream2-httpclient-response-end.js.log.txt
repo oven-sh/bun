@@ -1,0 +1,15 @@
+readable event
+readable event
+end event
+Mismatched <anonymous> function calls. Expected exactly 1, actual 2.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-httpclient-response-end.js:12:31)
+    at onceWrapper (node:events:208:21)
+    at onceWrapper (native)
+    at emit (node:events:83:48)
+    at <anonymous> (node:http:1312:58)
+    at promiseReactionJob (native:1:11)
+    at <anonymous> (native)
+    at processTicksAndRejections (native:7:39) {
+  originalLine: 271,
+  originalColumn: 22
+}

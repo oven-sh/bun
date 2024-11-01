@@ -1,0 +1,130 @@
+309 |     assert.strictEqual(msg.toString(), 'this is the end');
+310 |   });
+311 |   let gotError = false;
+312 |   w.on('error', function(er) {
+313 |     gotError = true;
+314 |     assert.strictEqual(er.message, 'write after end');
+                 ^
+AssertionError: Expected values to be strictly equal:
++ actual - expected
+
++ 'write'
+- 'write after end'
+        ^
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:314:12
+      at emitError (node:events:47:19)
+      at emitErrorNT (internal:streams/destroy:125:21)
+      at emitErrorCloseNT (internal:streams/destroy:108:26)
+      at processTicksAndRejections (native:7:39)
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:56:26)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:74:26)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:97:26)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:211:26)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:239:35)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:247:41)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:254:17)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:264:17)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:336:25)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:354:25)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream2-writable.js:403:25)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}

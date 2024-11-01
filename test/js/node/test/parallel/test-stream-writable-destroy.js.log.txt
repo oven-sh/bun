@@ -1,0 +1,117 @@
+738 |     }
+739 |     const error = args.pop();
+740 |     // The error message should be non-enumerable
+741 |     assert.strictEqual(Object.prototype.propertyIsEnumerable.call(error, 'message'), false);
+742 | 
+743 |     assert.throws(() => { throw error; }, validator);
+                 ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    code: 'ERR_STREAM_DESTROYED',
++   message: 'write',
++   name: 'TypeError'
+-   message: 'Cannot call write after a stream was destroyed',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/common/index.js:743:12
+      at processTicksAndRejections (native:7:39)
+738 |     }
+739 |     const error = args.pop();
+740 |     // The error message should be non-enumerable
+741 |     assert.strictEqual(Object.prototype.propertyIsEnumerable.call(error, 'message'), false);
+742 | 
+743 |     assert.throws(() => { throw error; }, validator);
+                 ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    code: 'ERR_STREAM_DESTROYED',
++   message: 'write',
++   name: 'TypeError'
+-   message: 'Cannot call write after a stream was destroyed',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/common/index.js:743:12
+      at errorBuffer (internal:streams/writable:503:21)
+      at afterWrite (internal:streams/writable:485:20)
+      at processTicksAndRejections (native:7:39)
+738 |     }
+739 |     const error = args.pop();
+740 |     // The error message should be non-enumerable
+741 |     assert.strictEqual(Object.prototype.propertyIsEnumerable.call(error, 'message'), false);
+742 | 
+743 |     assert.throws(() => { throw error; }, validator);
+                 ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    code: 'ERR_STREAM_DESTROYED',
++   message: 'write',
++   name: 'TypeError'
+-   message: 'Cannot call write after a stream was destroyed',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/common/index.js:743:12
+      at errorBuffer (internal:streams/writable:503:21)
+      at processTicksAndRejections (native:7:39)
+738 |     }
+739 |     const error = args.pop();
+740 |     // The error message should be non-enumerable
+741 |     assert.strictEqual(Object.prototype.propertyIsEnumerable.call(error, 'message'), false);
+742 | 
+743 |     assert.throws(() => { throw error; }, validator);
+                 ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
+    code: 'ERR_STREAM_DESTROYED',
++   message: 'write',
++   name: 'TypeError'
+-   message: 'Cannot call write after a stream was destroyed',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/common/index.js:743:12
+      at processTicksAndRejections (native:7:39)
+Mismatched <anonymous> function calls. Expected exactly 1, actual 2.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-destroy.js:295:29)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-destroy.js:396:29)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-writable-destroy.js:399:29)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}

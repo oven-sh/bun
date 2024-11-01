@@ -1,0 +1,33 @@
+69 | 
+70 | function pushError() {
+71 |   r.unshift(Buffer.allocUnsafe(1));
+72 |   w.end();
+73 | 
+74 |   assert.throws(() => {
+              ^
+AssertionError: Missing expected exception (Error).
+ code: "ERR_ASSERTION"
+
+      at pushError (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-unshift-read-race.js:74:10)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-unshift-read-race.js:106:22
+0: asdfasdfas
+1: 1234dfasdf
+2: 1234asdfas
+3: 1234dfasdf
+4: 1234asdfas
+5: 1234dfasdf
+6: 1234asdfas
+7: 1234dfasdf
+8: 1234asdfas
+9: 1234dfasdf
+a: 1234asdfas
+b: 1234dfasdf
+c: 1234asdfas
+d: 1234dfasdf
+e: 1234asdfas
+f: 1234dfasdf
+g: 1234asdfa
+h: 1234
+ok
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

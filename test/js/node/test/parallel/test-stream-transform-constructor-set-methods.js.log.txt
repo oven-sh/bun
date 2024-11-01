@@ -1,0 +1,23 @@
+4 | const assert = require('assert');
+5 | const { Transform } = require('stream');
+6 | 
+7 | const t = new Transform();
+8 | 
+9 | assert.throws(
+           ^
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   message: 'function is not a constructor',
++   name: 'TypeError'
+-   code: 'ERR_METHOD_NOT_IMPLEMENTED',
+-   message: 'The _transform() method is not implemented',
+-   name: 'Error'
+  }
+ code: "ERR_ASSERTION"
+
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-transform-constructor-set-methods.js:9:8
+      at native:11:43
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

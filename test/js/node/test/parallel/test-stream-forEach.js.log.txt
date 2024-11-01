@@ -1,0 +1,175 @@
+173 | async function find(fn, options) {
+174 |   for await (const result of filter.@call(this, fn, options)) {
+175 |     return result;
+176 |   }
+177 |   return @undefined;
+178 | async function forEach(fn, options) {
+                                          ^
+TypeError: The "fn" argument must be of type Function or AsyncFunction. Received: 1
+ code: "ERR_INVALID_ARG_TYPE"
+
+      at internal:streams/operators:178:37
+      at asyncFunctionResume (1:11)
+      at forEach (internal:streams/operators:178:23)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:116:30
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:115:18
+      at node:assert:672:46
+      at promiseReactionJob (1:11)
+35 |   const composedStream = staticCompose(this, stream);
+36 |   if (options?.signal) {
+37 |     addAbortSignalNoValidate(options.signal, composedStream);
+38 |   }
+39 |   return composedStream;
+40 | function map(fn, options) {
+                 ^
+RangeError: The value of "options.concurrency" is out of range. It must be an integer. Received NaN
+ code: "ERR_OUT_OF_RANGE"
+
+      at map (internal:streams/operators:40:13)
+      at internal:streams/operators:178:37
+      at asyncFunctionResume (1:11)
+      at forEach (internal:streams/operators:178:23)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:119:30
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:118:18
+      at node:assert:672:46
+      at promiseReactionJob (1:11)
+34 |     }
+35 |     return result;
+36 |   }
+37 |   throw @makeErrorWithCode(4, `The arguments hints is invalid must be an array or string of format "</styles.css>; rel=preload; as=style"`);
+38 | }
+39 | function validateObject(value, name) {
+                 ^
+TypeError: The "options" argument must be of type object. Received: 1
+ code: "ERR_INVALID_ARG_TYPE"
+
+      at map (internal:streams/operators:40:13)
+      at internal:streams/operators:178:37
+      at asyncFunctionResume (1:11)
+      at forEach (internal:streams/operators:178:23)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:124:30
+      at asyncFunctionResume (1:11)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:123:18
+      at node:assert:672:46
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:16:20)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:28:20)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:43:20)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched <anonymous> function calls. Expected exactly 10, actual 1.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:54:40)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:58:48)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:68:27)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:78:27)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:88:27)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:105:18)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:117:42)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:122:38)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}
+Mismatched noop function calls. Expected exactly 1, actual 0.
+    at <anonymous> (/Users/bun/code/bun/test/js/node/test/parallel/test-stream-forEach.js:125:42)
+    at parseModule (native)
+    at <anonymous> (native:11:43)
+    at asyncFunctionResume (native:1:11)
+    at promiseReactionJobWithoutPromiseUnwrapAsyncContext (native:1:11)
+    at promiseReactionJob (native:1:11) {
+  originalLine: 271,
+  originalColumn: 22
+}

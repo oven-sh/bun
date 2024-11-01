@@ -1,0 +1,46 @@
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   name: 'AggregateError'
+-   name: 'AbortError'
+  }
+ code: "ERR_ASSERTION"
+
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   name: 'AggregateError'
+-   name: 'AbortError'
+  }
+ code: "ERR_ASSERTION"
+
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   name: 'AggregateError'
+-   name: 'AbortError'
+  }
+ code: "ERR_ASSERTION"
+
+266 |   return async function* flatMap() {
+267 |     for await (const val of values) {
+268 |       yield* val;
+269 |     }
+270 |   }.@call(this);
+271 | function toIntegerOrInfinity(number) {
+                                  ^
+RangeError: number
+ code: "ERR_OUT_OF_RANGE"
+
+      at toIntegerOrInfinity (internal:streams/operators:271:29)
+      at take (internal:streams/operators:303:14)
+      at take (node:stream:55:20)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-drop-take.js:116:27
+      at getActual (node:assert:658:23)
+      at throws (node:assert:733:36)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-drop-take.js:116:5
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

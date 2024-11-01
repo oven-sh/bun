@@ -1,0 +1,20 @@
+169 |   assert.rejects(run, { name: 'AbortError' }).then(common.mustCall());
+170 | }
+171 | 
+172 | 
+173 | {
+174 |   const rs = fs.createReadStream('file-does-not-exist');
+                      ^
+ENOENT: No such file or directory
+   errno: -2
+ syscall: "open"
+   path: "file-does-not-exist"
+
+      at new ReadStream (node:fs:612:20)
+      at createReadStream (node:fs:602:26)
+      at /Users/bun/code/bun/test/js/node/test/parallel/test-stream-finished.js:174:17
+      at asyncFunctionResume (1:11)
+      at promiseReactionJobWithoutPromiseUnwrapAsyncContext (1:11)
+      at promiseReactionJob (1:11)
+
+Bun v1.1.34-debug+b186f0ba7 (macOS arm64)

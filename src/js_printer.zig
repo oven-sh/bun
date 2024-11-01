@@ -3568,8 +3568,11 @@ fn NewPrinter(
                                     }
                                 },
                                 .number => |num| {
-                                    item.key.?.data = .{ .e_number = .{ .value = num } };
-                                    item.flags.setPresent(.is_computed, false);
+                                    if (num >= 0) {
+                                        item.key.?.data = .{ .e_number = .{ .value = num } };
+                                        item.flags.setPresent(.is_computed, false);
+                                    }
+                                   
                                 },
                             }
                         }

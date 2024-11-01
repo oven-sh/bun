@@ -272,11 +272,7 @@ pub const UpgradeCommand = struct {
                 refresher.?.refresh();
 
                 if (log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try log.print(Output.errorWriter());
 
                     Global.exit(1);
                 } else {
@@ -293,11 +289,7 @@ pub const UpgradeCommand = struct {
                 progress.?.end();
                 refresher.?.refresh();
 
-                if (Output.enable_ansi_colors) {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try log.print(Output.errorWriter());
                 Global.exit(1);
             }
 

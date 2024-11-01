@@ -61,7 +61,7 @@ pub const Cli = struct {
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            log.printForLogLevel(Output.errorWriter()) catch {};
+            log.print(Output.errorWriter()) catch {};
 
             bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
@@ -362,11 +362,7 @@ pub const Arguments = struct {
                 if (getHomeConfigPath(&config_buf)) |path| {
                     loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
                         if (ctx.log.hasAny()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                },
-                            }
+                            ctx.log.print(Output.errorWriter()) catch {};
                         }
                         if (ctx.log.hasAny()) Output.printError("\n", .{});
                         Output.err(err, "failed to load bunfig", .{});
@@ -421,11 +417,7 @@ pub const Arguments = struct {
 
         loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
             if (ctx.log.hasAny()) {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                ctx.log.print(Output.errorWriter()) catch {};
             }
             if (ctx.log.hasAny()) Output.printError("\n", .{});
             Output.err(err, "failed to load bunfig", .{});
@@ -2277,11 +2269,7 @@ pub const Command = struct {
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                 std.fs.path.basename(file_path),

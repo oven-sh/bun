@@ -3113,7 +3113,7 @@ pub const Parser = struct {
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
                 Output.print("JSParser.parse: caught error {s} at location: {d}\n", .{ @errorName(err), p.lexer.loc().start });
-                p.log.printForLogLevel(Output.writer()) catch {};
+                p.log.print(Output.writer()) catch {};
             }
             return err;
         };
@@ -14700,7 +14700,7 @@ fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
+            p.log.print(panic_stream.writer()) catch unreachable;
 
             Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }

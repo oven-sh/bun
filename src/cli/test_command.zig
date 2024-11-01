@@ -1161,11 +1161,7 @@ pub const TestCommand = struct {
             js_ast.Stmt.Data.Store.reset();
 
             if (vm.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                vm.log.print(Output.errorWriter()) catch {};
                 vm.log.msgs.clearRetainingCapacity();
                 vm.log.errors = 0;
             }

@@ -314,11 +314,7 @@ pub const PublishCommand = struct {
                             }
 
                             if (manager.log.hasErrors()) {
-                                switch (Output.enable_ansi_colors) {
-                                    inline else => |enable_ansi_colors| {
-                                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                    },
-                                }
+                                manager.log.print(Output.errorWriter()) catch {};
                             }
 
                             Global.crash();
@@ -367,11 +363,7 @@ pub const PublishCommand = struct {
                         Output.errGeneric("failed to find package.json in tarball '{s}'", .{cli.positionals[1]});
                     },
                     error.InvalidPackageJSON => {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| {
-                                manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                            },
-                        }
+                        manager.log.print(Output.errorWriter()) catch {};
                         Output.errGeneric("failed to parse tarball package.json", .{});
                     },
                     error.PrivatePackage => {

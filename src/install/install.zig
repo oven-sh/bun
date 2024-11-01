@@ -696,7 +696,7 @@ pub const Task = struct {
                     if (pt.callback.apply.logger.errors > 0) {
                         defer pt.callback.apply.logger.deinit();
                         // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                        pt.callback.apply.logger.printForLogLevel(Output.writer()) catch {};
+                        pt.callback.apply.logger.print(Output.writer()) catch {};
                     }
                 }
             }
@@ -2754,7 +2754,7 @@ pub const PackageManager = struct {
 
     pub fn crash(this: *PackageManager) noreturn {
         if (this.options.log_level != .silent) {
-            this.log.printForLogLevel(Output.errorWriter()) catch {};
+            this.log.print(Output.errorWriter()) catch {};
         }
         Global.crash();
     }
@@ -6580,11 +6580,7 @@ pub const PackageManager = struct {
             _ = manager.decrementPendingTasks();
 
             if (task.log.msgs.items.len > 0) {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-                    },
-                }
+                try task.log.print(Output.errorWriter());
             }
 
             switch (task.tag) {
@@ -8967,7 +8963,7 @@ pub const PackageManager = struct {
                 error.InvalidPackageJSON,
                 => {
                     const log = &bun.CLI.Cli.log_;
-                    log.printForLogLevel(bun.Output.errorWriter()) catch {};
+                    log.print(bun.Output.errorWriter()) catch {};
                     bun.Global.exit(1);
                     return;
                 },
@@ -10404,11 +10400,7 @@ pub const PackageManager = struct {
     ) !void {
         if (manager.log.errors > 0) {
             if (comptime log_level != .silent) {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                manager.log.print(Output.errorWriter()) catch {};
             }
             Global.crash();
         }
@@ -10423,11 +10415,7 @@ pub const PackageManager = struct {
             },
         )) {
             .parse_err => |err| {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                manager.log.print(Output.errorWriter()) catch {};
                 Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
                     manager.original_package_json_path,
                     @errorName(err),
@@ -10627,11 +10615,7 @@ pub const PackageManager = struct {
                 },
             )) {
                 .parse_err => |err| {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                        },
-                    }
+                    manager.log.print(Output.errorWriter()) catch {};
                     Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
                         root_package_json_path,
                         @errorName(err),
@@ -11059,11 +11043,7 @@ pub const PackageManager = struct {
 
                 initializeStore();
                 const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                        },
-                    }
+                    manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
                 };
@@ -11476,11 +11456,7 @@ pub const PackageManager = struct {
 
                 initializeStore();
                 const json = JSON.parsePackageJSONUTF8AlwaysDecode(&package_json_source, manager.log, manager.allocator) catch |err| {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                        },
-                    }
+                    manager.log.print(Output.errorWriter()) catch {};
                     Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
                     Global.crash();
                 };
@@ -11948,15 +11924,20 @@ pub const PackageManager = struct {
 
     pub fn install(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .install);
+
+        const subcommand: Subcommand = if (cli.positionals.len > 1) .add else .install;
+
+        // TODO(dylan-conway): print `bun install <version>` or `bun add <version>` before logs from `init`.
+        // and cleanup install/add subcommand usage
         var manager, _ = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
-        if (manager.options.positionals.len > 1) {
+        if (subcommand == .add) {
+            manager.subcommand = .add;
             if (manager.options.shouldPrintCommandName()) {
                 Output.prettyln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
                 Output.flush();
             }
-            manager.subcommand = .add;
             return try switch (manager.options.log_level) {
                 inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
             };
@@ -12203,10 +12184,11 @@ pub const PackageManager = struct {
 
                 if (bin_linker.err) |err| {
                     if (log_level != .silent) {
-                        this.manager.log.addErrorFmtNoLoc(
+                        this.manager.log.addErrorFmtOpts(
                             this.manager.allocator,
                             "Failed to link <b>{s}<r>: {s}",
                             .{ alias, @errorName(err) },
+                            .{},
                         ) catch bun.outOfMemory();
                     }
 
@@ -14001,11 +13983,7 @@ pub const PackageManager = struct {
                     }
 
                     if (ctx.log.errors > 0) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| {
-                                try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-                            },
-                        }
+                        try manager.log.print(Output.errorWriter());
                     }
                     Output.flush();
                 }
@@ -14434,7 +14412,7 @@ pub const PackageManager = struct {
         }
 
         const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
-        try manager.log.printForLogLevel(Output.errorWriter());
+        try manager.log.print(Output.errorWriter());
         manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
@@ -14551,7 +14529,7 @@ pub const PackageManager = struct {
         }
 
         if (comptime log_level != .silent) {
-            try manager.log.printForLogLevel(Output.errorWriter());
+            try manager.log.print(Output.errorWriter());
         }
         if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
 

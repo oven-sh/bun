@@ -483,7 +483,7 @@ export fn getTests(opts_array: u64) u64 {
 
         Output.print("Error: {s}\n", .{@errorName(err)});
 
-        log_.printForLogLevel(Output.writer()) catch unreachable;
+        log_.print(Output.writer()) catch unreachable;
         return 0;
     };
 

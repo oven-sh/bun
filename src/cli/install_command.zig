@@ -9,7 +9,7 @@ pub const InstallCommand = struct {
             error.InvalidPackageJSON,
             => {
                 const log = &bun.CLI.Cli.log_;
-                log.printForLogLevel(bun.Output.errorWriter()) catch {};
+                log.print(bun.Output.errorWriter()) catch {};
                 bun.Global.exit(1);
             },
             else => |e| return e,

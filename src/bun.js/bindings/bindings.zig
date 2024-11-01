@@ -2986,6 +2986,11 @@ pub const JSGlobalObject = opaque {
         JSGlobalObject__throwOutOfMemoryError(this);
     }
 
+    pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
+        JSGlobalObject__throwOutOfMemoryError(this);
+        return .zero;
+    }
+
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));

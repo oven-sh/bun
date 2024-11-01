@@ -1254,11 +1254,7 @@ pub const Printer = struct {
                     }),
                 }
                 if (log.errors > 0) {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-                        },
-                    }
+                    try log.print(Output.errorWriter());
                 }
                 Global.crash();
             },
@@ -3943,11 +3939,7 @@ pub const Package = extern struct {
     ) !void {
         initializeStore();
         const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                },
-            }
+            log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
         };

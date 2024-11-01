@@ -1,5 +1,28 @@
 const nativeTests = require("./build/Debug/napitests.node");
 
+function assert(ok) {
+  if (!ok) throw new Error("assertion failed");
+}
+
+async function gcUntil(fn) {
+  const MAX = 100;
+  for (let i = 0; i < MAX; i++) {
+    await new Promise(resolve => {
+      setTimeout(resolve, 1);
+    });
+    if (typeof Bun == "object") {
+      Bun.gc(true);
+    } else {
+      // if this fails, you need to pass --expose-gc to node
+      global.gc();
+    }
+    if (fn()) {
+      return;
+    }
+  }
+  throw new Error(`Condition was not met after ${MAX} GC attempts`);
+}
+
 nativeTests.test_napi_class_constructor_handle_scope = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
   const x = new NapiClass();
@@ -12,16 +35,7 @@ nativeTests.test_napi_handle_scope_finalizer = async () => {
   nativeTests.create_ref_with_finalizer(Boolean(process.isBun));
 
   // Wait until it actually has been collected by ticking the event loop and forcing GC
-  while (!nativeTests.was_finalize_called()) {
-    await new Promise(resolve => {
-      setTimeout(() => resolve(), 0);
-    });
-    if (process.isBun) {
-      Bun.gc(true);
-    } else if (global.gc) {
-      global.gc();
-    }
-  }
+  await gcUntil(() => nativeTests.was_finalize_called());
 };
 
 nativeTests.test_promise_with_threadsafe_function = async () => {
@@ -178,9 +192,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
   for (const [input, expectedOutput] of i32Cases) {
     const actualOutput = nativeTests.double_to_i32(input);
     console.log(`${input} as i32 => ${actualOutput}`);
-    if (actualOutput !== expectedOutput) {
-      console.error("wrong");
-    }
+    assert(actualOutput === expectedOutput);
   }
 
   const u32Cases = [
@@ -209,9 +221,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
   for (const [input, expectedOutput] of u32Cases) {
     const actualOutput = nativeTests.double_to_u32(input);
     console.log(`${input} as u32 => ${actualOutput}`);
-    if (actualOutput !== expectedOutput) {
-      console.error("wrong");
-    }
+    assert(actualOutput === expectedOutput);
   }
 
   const i64Cases = [
@@ -244,9 +254,7 @@ nativeTests.test_number_integer_conversions_from_js = () => {
     console.log(
       `${typeof input == "number" ? input.toFixed(2) : input} as i64 => ${typeof actualOutput == "number" ? actualOutput.toFixed(2) : actualOutput}`,
     );
-    if (actualOutput !== expectedOutput) {
-      console.error("wrong");
-    }
+    assert(actualOutput === expectedOutput);
   }
 };
 
@@ -311,10 +319,110 @@ nativeTests.test_type_tag = () => {
   console.log("tagging non-object succeeds: ", !nativeTests.try_add_tag(null, 0, 0));
 
   nativeTests.add_tag(o2, 3, 4);
-  console.log("o1 matches o1:", nativeTests.check_tag(o1, 1, 2));
-  console.log("o1 matches o2:", nativeTests.check_tag(o1, 3, 4));
-  console.log("o2 matches o1:", nativeTests.check_tag(o2, 1, 2));
-  console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
+  assert(nativeTests.check_tag(o1, 1, 2));
+  assert(!nativeTests.check_tag(o1, 1, 3));
+  assert(!nativeTests.check_tag(o1, 2, 2));
+
+  assert(nativeTests.check_tag(o2, 3, 4));
+  assert(!nativeTests.check_tag(o2, 3, 5));
+  assert(!nativeTests.check_tag(o2, 4, 4));
+};
+
+// parameters to create_wrap are: object, ask_for_ref, strong
+const createWrapWithoutRef = o => nativeTests.create_wrap(o, false, false);
+const createWrapWithWeakRef = o => nativeTests.create_wrap(o, true, false);
+const createWrapWithStrongRef = o => nativeTests.create_wrap(o, true, true);
+
+nativeTests.test_wrap_lifetime_without_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithoutRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+  object = undefined;
+  await gcUntil(() => nativeTests.was_wrap_finalize_called());
+};
+
+nativeTests.test_wrap_lifetime_with_weak_ref = async () => {
+  // this looks the same as test_wrap_lifetime_without_ref because it is -- these cases should behave the same
+  let object = { foo: "bar" };
+  assert(createWrapWithWeakRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+  object = undefined;
+  await gcUntil(() => nativeTests.was_wrap_finalize_called());
+};
+
+nativeTests.test_wrap_lifetime_with_strong_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithStrongRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+
+  object = undefined;
+  // still referenced by native module so this should fail
+  try {
+    await gcUntil(() => nativeTests.was_wrap_finalize_called());
+    throw new Error("object was garbage collected while still referenced by native code");
+  } catch (e) {
+    if (!e.toString().includes("Condition was not met")) {
+      throw e;
+    }
+  }
+
+  // can still get the value using the ref
+  assert(nativeTests.get_wrap_data_from_ref() === 42);
+
+  // now we free it
+  nativeTests.unref_wrapped_value();
+  await gcUntil(() => nativeTests.was_wrap_finalize_called());
+};
+
+nativeTests.test_remove_wrap_lifetime_with_weak_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithWeakRef(object) === object);
+
+  assert(nativeTests.get_wrap_data(object) === 42);
+
+  nativeTests.remove_wrap(object);
+  assert(nativeTests.get_wrap_data(object) === undefined);
+  assert(nativeTests.get_wrap_data_from_ref() === undefined);
+  assert(nativeTests.get_object_from_ref() === object);
+
+  object = undefined;
+
+  // ref will stop working once the object is collected
+  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+
+  // finalizer shouldn't have been called
+  assert(nativeTests.was_wrap_finalize_called() === false);
+};
+
+nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithStrongRef(object) === object);
+
+  assert(nativeTests.get_wrap_data(object) === 42);
+
+  nativeTests.remove_wrap(object);
+  assert(nativeTests.get_wrap_data(object) === undefined);
+  assert(nativeTests.get_wrap_data_from_ref() === undefined);
+  assert(nativeTests.get_object_from_ref() === object);
+
+  object = undefined;
+
+  // finalizer should not be called and object should not be freed
+  try {
+    await gcUntil(() => nativeTests.was_wrap_finalize_called() || nativeTests.get_object_from_ref() === undefined);
+    throw new Error("finalizer ran");
+  } catch (e) {
+    if (!e.toString().includes("Condition was not met")) {
+      throw e;
+    }
+  }
+
+  // native code can still get the object
+  assert(JSON.stringify(nativeTests.get_object_from_ref()) === `{"foo":"bar"}`);
+
+  // now it gets deleted
+  nativeTests.unref_wrapped_value();
+  await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
 };
 
 module.exports = nativeTests;

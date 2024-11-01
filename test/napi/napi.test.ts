@@ -346,6 +346,16 @@ describe("napi", () => {
       checkSameOutput("test_external", []);
     });
   });
+
+  describe("napi_wrap", () => {
+    it("cleans up objects at the right time", () => {
+      checkSameOutput("test_wrap_lifetime_without_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
+      checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+    });
+  });
 });
 
 function checkSameOutput(test: string, args: any[] | string) {

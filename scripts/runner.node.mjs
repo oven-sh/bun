@@ -796,8 +796,6 @@ async function spawnBunInstall(execPath, options) {
   };
 }
 
-async function spawnGitClone() {}
-
 /**
  * @returns {string | undefined}
  */

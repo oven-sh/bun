@@ -1448,16 +1448,14 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             log("resume", .{});
             if (this.flags.is_paused) {
-                //TODO: change this after bytesWritten merge fix
-                this.flags.is_paused = !this.socket.resumeStream(0);
+                this.flags.is_paused = !this.socket.resumeStream(this.buffered_data_for_node_net.len > 0);
             }
             return .undefined;
         }
         pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             log("pause", .{});
             if (!this.flags.is_paused) {
-                //TODO: change this after bytesWritten merge fix
-                this.flags.is_paused = this.socket.pauseStream(0);
+                this.flags.is_paused = this.socket.pauseStream(this.buffered_data_for_node_net.len > 0);
             }
             return .undefined;
         }

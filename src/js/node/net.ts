@@ -604,7 +604,6 @@ const Socket = (function (InternalSocket) {
         // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
         // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
         this._undestroy();
-        this.#readQueue = $createFIFO();
 
         if (connection) {
           const socket = connection[bunSocketInternal];

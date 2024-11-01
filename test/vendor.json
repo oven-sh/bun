@@ -2,14 +2,14 @@
   {
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
-    "tag": "1.1.24"
+    "tag": "1.1.24",
+    "skipTests": true
   },
   {
-    "package": "uuid",
-    "repository": "https://github.com/uuidjs/uuid",
-    "tag": "v10.0.0",
-    "testRunner": "node",
-    "testPath": "src/test",
-    "skipTests": true
+    "package": "express",
+    "repository": "https://github.com/expressjs/express",
+    "tag": "5.0.1",
+    "testRunner": "mocha",
+    "testExtensions": ["js"]
   }
 ]

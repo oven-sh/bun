@@ -267,16 +267,17 @@ async function runTests() {
 
         if (testRunner === "bun") {
           await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
-        } else if (testRunner === "node") {
-          const preload = join(import.meta.dirname, "..", "test", "runners", "node.ts");
+        } else {
+          const testRunnerPath = join(import.meta.dirname, "..", "test", "runners", `${testRunner}.ts`);
+          if (!existsSync(testRunnerPath)) {
+            throw new Error(`Unsupported test runner: ${testRunner}`);
+          }
           await runTest(title, () =>
-            spawnBun(execPath, {
+            spawnBunTest(execPath, testPath, {
               cwd: vendorPath,
-              args: ["--preload", preload, testPath],
+              args: ["--preload", testRunnerPath],
             }),
           );
-        } else {
-          throw new Error(`Unsupported test runner: ${testRunner}`);
         }
       }
     }
@@ -592,15 +593,17 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @param {string} testPath
  * @param {object} [options]
  * @param {string} [options.cwd]
+ * @param {string[]} [options.args]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
-  const isReallyTest = isTestStrict(testPath);
   const absPath = join(options["cwd"], testPath);
+  const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
+  const args = options["args"] ?? [];
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, absPath] : [absPath],
+    args: isReallyTest ? ["test", ...args, `--timeout=${perTestTimeout}`, absPath] : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env: {
@@ -937,6 +940,7 @@ function getTests(cwd) {
  * @property {string} [packageManager]
  * @property {string} [testPath]
  * @property {string} [testRunner]
+ * @property {string[]} [testExtensions]
  * @property {boolean | Record<string, boolean | string>} [skipTests]
  */
 
@@ -979,68 +983,77 @@ async function getVendorTests(cwd) {
   }
 
   return Promise.all(
-    relevantVendors.map(async ({ package: name, repository, tag, testPath, testRunner, packageManager, skipTests }) => {
-      const vendorPath = join(cwd, "vendor", name);
+    relevantVendors.map(
+      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+        const vendorPath = join(cwd, "vendor", name);
 
-      if (!existsSync(vendorPath)) {
+        if (!existsSync(vendorPath)) {
+          await spawnSafe({
+            command: "git",
+            args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
+            timeout: testTimeout,
+            cwd,
+          });
+        }
+
         await spawnSafe({
           command: "git",
-          args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
+          args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
-          cwd,
+          cwd: vendorPath,
         });
-      }
 
-      await spawnSafe({
-        command: "git",
-        args: ["fetch", "--depth", "1", "origin", "tag", tag],
-        timeout: testTimeout,
-        cwd: vendorPath,
-      });
-
-      const packageJsonPath = join(vendorPath, "package.json");
-      if (!existsSync(packageJsonPath)) {
-        throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
-      }
-
-      const testPathPrefix = testPath || "test";
-      const testParentPath = join(vendorPath, testPathPrefix);
-      if (!existsSync(testParentPath)) {
-        throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
-      }
-
-      const isTest = path => {
-        if (!isJavaScriptTest(path)) {
-          return false;
+        const packageJsonPath = join(vendorPath, "package.json");
+        if (!existsSync(packageJsonPath)) {
+          throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
         }
 
-        if (typeof skipTests === "boolean") {
-          return !skipTests;
+        const testPathPrefix = testPath || "test";
+        const testParentPath = join(vendorPath, testPathPrefix);
+        if (!existsSync(testParentPath)) {
+          throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
         }
 
-        if (typeof skipTests === "object") {
-          for (const [glob, reason] of Object.entries(skipTests)) {
-            const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
-            if (pattern.test(path) && reason) {
-              return false;
+        const isTest = path => {
+          if (!isJavaScriptTest(path)) {
+            return false;
+          }
+
+          if (typeof skipTests === "boolean") {
+            return !skipTests;
+          }
+
+          if (typeof skipTests === "object") {
+            for (const [glob, reason] of Object.entries(skipTests)) {
+              const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
+              if (pattern.test(path) && reason) {
+                return false;
+              }
             }
           }
-        }
 
-        return true;
-      };
+          return true;
+        };
 
-      const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
-        .filter(filename => isTest(filename))
-        .map(filename => join(testPathPrefix, filename));
+        const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
+          .filter(filename =>
+            testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
+          )
+          .map(filename => join(testPathPrefix, filename))
+          .filter(
+            filename =>
+              !filters?.length ||
+              filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
+          );
 
-      return {
-        cwd: vendorPath,
-        packageManager: packageManager || "bun",
-        testRunner: testRunner || "bun",
-        testPaths,
-      };
-    }),
+        return {
+          cwd: vendorPath,
+          packageManager: packageManager || "bun",
+          testRunner: testRunner || "bun",
+          testPaths,
+        };
+      },
+    ),
   );
 }
 

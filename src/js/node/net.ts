@@ -905,7 +905,8 @@ const Socket = (function (InternalSocket) {
         function onClose() {
           callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
         }
-        this.once("connect", function connect() {
+        const isTLS = typeof this[bunTlsSymbol] === "function";
+        this.once(isTLS ? "secureConnect" : "connect", function connect() {
           this.off("close", onClose);
           this._write(chunk, encoding, callback);
         });
@@ -958,7 +959,7 @@ function createConnection(port, host, connectListener) {
 const connect = createConnection;
 
 class Server extends EventEmitter {
-  [bunSocketInternal] = null;
+  _handle = null;
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
@@ -988,22 +989,22 @@ class Server extends EventEmitter {
   }
 
   get listening() {
-    return !!this[bunSocketInternal];
+    return !!this._handle;
   }
 
   ref() {
-    this[bunSocketInternal]?.ref();
+    this._handle?.ref();
     return this;
   }
 
   unref() {
-    this[bunSocketInternal]?.unref();
+    this._handle?.unref();
     return this;
   }
 
   close(callback) {
     if (typeof callback === "function") {
-      if (!this[bunSocketInternal]) {
+      if (!this._handle) {
         this.once("close", function close() {
           callback(ERR_SERVER_NOT_RUNNING());
         });
@@ -1012,9 +1013,9 @@ class Server extends EventEmitter {
       }
     }
 
-    if (this[bunSocketInternal]) {
-      this[bunSocketInternal].stop(false);
-      this[bunSocketInternal] = null;
+    if (this._handle) {
+      this._handle.stop(false);
+      this._handle = null;
     }
 
     this._emitCloseIfDrained();
@@ -1032,7 +1033,7 @@ class Server extends EventEmitter {
   }
 
   _emitCloseIfDrained() {
-    if (this[bunSocketInternal] || this[bunSocketServerConnections] > 0) {
+    if (this._handle || this[bunSocketServerConnections] > 0) {
       return;
     }
     process.nextTick(() => {
@@ -1041,7 +1042,7 @@ class Server extends EventEmitter {
   }
 
   address() {
-    const server = this[bunSocketInternal];
+    const server = this._handle;
     if (server) {
       const unix = server.unix;
       if (unix) {
@@ -1076,7 +1077,7 @@ class Server extends EventEmitter {
       //in Bun case we will never error on getConnections
       //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
       //if disconnected will only pass null as well and 0 connected
-      callback(null, this[bunSocketInternal] ? this[bunSocketServerConnections] : 0);
+      callback(null, this._handle ? this[bunSocketServerConnections] : 0);
     }
     return this;
   }
@@ -1195,13 +1196,13 @@ class Server extends EventEmitter {
 
   [kRealListen](path, port, hostname, exclusive, tls, contexts, onListen) {
     if (path) {
-      this[bunSocketInternal] = Bun.listen({
+      this._handle = Bun.listen({
         unix: path,
         tls,
         socket: SocketClass[bunSocketServerHandlers],
       });
     } else {
-      this[bunSocketInternal] = Bun.listen({
+      this._handle = Bun.listen({
         exclusive,
         port,
         hostname,
@@ -1211,11 +1212,11 @@ class Server extends EventEmitter {
     }
 
     //make this instance available on handlers
-    this[bunSocketInternal].data = this;
+    this._handle.data = this;
 
     if (contexts) {
       for (const [name, context] of contexts) {
-        addServerName(this[bunSocketInternal], name, context);
+        addServerName(this._handle, name, context);
       }
     }
 

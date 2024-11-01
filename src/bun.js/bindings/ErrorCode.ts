@@ -55,6 +55,7 @@ export default [
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
   ["ERR_STREAM_WRAP", Error, "Error"],
   ["ERR_BORINGSSL", Error, "Error"],
+  ["ERR_STREAM_UNABLE_TO_PIPE", Error, "Error"],
 
   //HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError, "TypeError"],

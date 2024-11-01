@@ -219,6 +219,7 @@ function pipelineImpl(streams, callback, opts) {
   }
 
   function finishImpl(err, final) {
+    console.trace("finishImpl", err, final);
     if (err && (!error || error.code === "ERR_STREAM_PREMATURE_CLOSE")) {
       error = err;
     }
@@ -238,6 +239,7 @@ function pipelineImpl(streams, callback, opts) {
       if (!error) {
         lastStreamCleanup.forEach(fn => fn());
       }
+
       process.nextTick(callback, error, value);
     }
   }
@@ -253,7 +255,7 @@ function pipelineImpl(streams, callback, opts) {
 
     if (isNodeStream(stream)) {
       if (next !== null && (next?.closed || next?.destroyed)) {
-        throw $ERR_STREAM_CANNOT_PIPE();
+        throw $ERR_STREAM_UNABLE_TO_PIPE();
       }
 
       if (end) {

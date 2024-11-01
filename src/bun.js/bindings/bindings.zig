@@ -5726,7 +5726,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn toBoolean(this: JSValue) bool {
-        return cppFn("toBoolean", .{this});
+        return this != .zero and cppFn("toBoolean", .{this});
     }
 
     pub fn asBoolean(this: JSValue) bool {

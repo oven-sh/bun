@@ -203,7 +203,9 @@ async function runTests() {
       const { ok, error, stdoutPreview } = result;
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
-        reportAnnotationToBuildKite(title, markdown);
+        const style = title.startsWith("vendor") ? "warning" : "error";
+        const priority = title.startsWith("vendor") ? 1 : 5;
+        reportAnnotationToBuildKite({ label: title, content: markdown, style, priority });
       }
 
       if (!ok) {
@@ -244,15 +246,14 @@ async function runTests() {
   }
 
   if (vendorTests?.length) {
-    for (const { cwd, packageManager, testRunner, testPaths } of vendorTests) {
+    for (const { cwd: vendorPath, packageManager, testRunner, testPaths } of vendorTests) {
       if (!testPaths.length) {
         continue;
       }
 
-      const packageJson = join(cwd, "package.json").replace(/\\/g, "/");
-
+      const packageJson = join(vendorPath, "package.json").replace(/\\/g, "/");
       if (packageManager === "bun") {
-        const { ok } = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd }));
+        const { ok } = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
         if (!ok) {
           continue;
         }
@@ -261,18 +262,16 @@ async function runTests() {
       }
 
       for (const testPath of testPaths) {
-        const title = testPath.replace(/\\/g, "/");
-        const filePath = relative(cwd, testPath);
-        const absPath = join(cwd, filePath);
+        const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {
-          await runTest(title, () => spawnBunTest(execPath, absPath));
+          await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
         } else if (testRunner === "node") {
           const preload = join(import.meta.dirname, "..", "test", "runners", "node.ts");
           await runTest(title, () =>
             spawnBun(execPath, {
-              cwd,
-              args: ["--preload", preload, filePath],
+              cwd: vendorPath,
+              args: ["--preload", preload, testPath],
             }),
           );
         } else {
@@ -590,15 +589,18 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  *
  * @param {string} execPath
  * @param {string} testPath
+ * @param {object} [options]
+ * @param {string} [options.cwd]
  * @returns {Promise<TestResult>}
  */
-async function spawnBunTest(execPath, testPath) {
+async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
   const isReallyTest = isTestStrict(testPath);
+  const absPath = join(options["cwd"], testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
-    cwd: cwd,
+    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, absPath] : [absPath],
+    cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
@@ -993,7 +995,8 @@ async function getVendorTests(cwd) {
         throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
       }
 
-      const testParentPath = join(vendorPath, testPath || "test");
+      const testPathPrefix = testPath || "test";
+      const testParentPath = join(vendorPath, testPathPrefix);
       if (!existsSync(testParentPath)) {
         throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
       }
@@ -1019,10 +1022,9 @@ async function getVendorTests(cwd) {
         return true;
       };
 
-      const relativePath = relative(cwd, testParentPath);
       const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
         .filter(filename => isTest(filename))
-        .map(filename => join(relativePath, filename));
+        .map(filename => join(testPathPrefix, filename));
 
       return {
         cwd: vendorPath,
@@ -1714,14 +1716,21 @@ function listArtifactsFromBuildKite(glob, step) {
 }
 
 /**
- * @param {string} label
- * @param {string} content
- * @param {number | undefined} attempt
+ * @typedef {object} BuildkiteAnnotation
+ * @property {string} label
+ * @property {string} content
+ * @property {"error" | "warning" | "info"} [style]
+ * @property {number} [priority]
+ * @property {number} [attempt]
  */
-function reportAnnotationToBuildKite(label, content, attempt = 0) {
+
+/**
+ * @param {BuildkiteAnnotation} annotation
+ */
+function reportAnnotationToBuildKite({ label, content, style = "error", priority = 3, attempt = 0 }) {
   const { error, status, signal, stderr } = spawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", "error", "--context", `${label}`, "--priority", `${attempt}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", `${label}`, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
@@ -1740,11 +1749,11 @@ function reportAnnotationToBuildKite(label, content, attempt = 0) {
   const buildLabel = getBuildLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let message = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
+  let errorMessage = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
   if (stderr) {
-    message += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
+    errorMessage += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }
-  reportAnnotationToBuildKite(`${label}-error`, message, attempt + 1);
+  reportAnnotationToBuildKite({ label: `${label}-error`, content: errorMessage, attempt: attempt + 1 });
 }
 
 /**

@@ -8367,7 +8367,13 @@ pub const PackageManager = struct {
     fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
         switch (err) {
             error.LoadCAFile => {
-                if (!bun.sys.existsZ(opts.abs_ca_file_name)) {
+                var buf: if (Environment.isWindows) bun.path.PosixToWinNormalizer else void = undefined;
+                const path = if (comptime Environment.isWindows)
+                    buf.resolveZ(FileSystem.instance.top_level_dir, opts.abs_ca_file_name)
+                else
+                    opts.abs_ca_file_name;
+
+                if (!bun.sys.existsZ(path)) {
                     Output.err("HTTPThread", "could not find CA file: '{s}'", .{opts.abs_ca_file_name});
                 } else {
                     Output.err("HTTPThread", "invalid CA file: '{s}'", .{opts.abs_ca_file_name});
@@ -14851,7 +14857,14 @@ pub const PackageManager = struct {
         const original_path = this_bundler.env.get("PATH") orelse "";
 
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
-        var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch null;
+        var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch |err| {
+            Output.err(err, "failed to read directory '{s}'", .{cwd});
+            Global.crash();
+        };
+        if (current_dir == null) {
+            Output.errGeneric("directory does not exist: '{s}'", .{cwd});
+            Global.crash();
+        }
         bun.assert(current_dir != null);
         while (current_dir) |dir| {
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {

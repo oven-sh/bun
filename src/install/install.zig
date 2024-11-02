@@ -14857,14 +14857,7 @@ pub const PackageManager = struct {
         const original_path = this_bundler.env.get("PATH") orelse "";
 
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
-        var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch |err| {
-            Output.err(err, "failed to read directory '{s}'", .{cwd});
-            Global.crash();
-        };
-        if (current_dir == null) {
-            Output.errGeneric("directory does not exist: '{s}'", .{cwd});
-            Global.crash();
-        }
+        var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch null;
         bun.assert(current_dir != null);
         while (current_dir) |dir| {
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {

@@ -43,6 +43,7 @@ pub const css_values = @import("./values/values.zig");
 pub const DashedIdent = css_values.ident.DashedIdent;
 pub const DashedIdentFns = css_values.ident.DashedIdentFns;
 pub const CssColor = css_values.color.CssColor;
+pub const ColorFallbackKind = css_values.color.ColorFallbackKind;
 pub const CSSString = css_values.string.CSSString;
 pub const CSSStringFns = css_values.string.CSSStringFns;
 pub const CSSInteger = css_values.number.CSSInteger;
@@ -113,6 +114,9 @@ pub const ImportConditions = css_rules.import.ImportConditions;
 
 pub const compat = @import("./compat.zig");
 
+pub const Features = targets.Features;
+pub const Feature = compat.Feature;
+
 pub const fmtPrinterError = errors_.fmtPrinterError;
 
 pub const PrintErr = error{
@@ -161,15 +165,18 @@ pub const VendorPrefix = packed struct(u8) {
     o: bool = false,
     __unused: u3 = 0,
 
-    pub usingnamespace Bitflags(@This());
+    pub const NONE = VendorPrefix{ .none = true };
+    pub const WEBKIT = VendorPrefix{ .webkit = true };
+    pub const MOZ = VendorPrefix{ .moz = true };
 
-    pub fn all() VendorPrefix {
-        return VendorPrefix{ .webkit = true, .moz = true, .ms = true, .o = true, .none = true };
-    }
+    /// Fields listed here so we can iterate them in the order we want
+    pub const FIELDS: []const []const u8 = &.{ "webkit", "moz", "ms", "o", "none" };
+
+    pub usingnamespace Bitflags(@This());
 
     pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.asBits()) {
-            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit"),
+            VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit-"),
             VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
             VendorPrefix.asBits(.{ .ms = true }) => dest.writeStr("-ms-"),
             VendorPrefix.asBits(.{ .o = true }) => dest.writeStr("-o-"),
@@ -234,11 +241,8 @@ pub fn PrintResult(comptime T: type) type {
 }
 
 pub fn todo(comptime fmt: []const u8, args: anytype) noreturn {
+    bun.Analytics.Features.todo_panic = 1;
     std.debug.panic("TODO: " ++ fmt, args);
-}
-
-pub fn todo2(comptime fmt: []const u8) void {
-    std.debug.panic("TODO: " ++ fmt);
 }
 
 pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T)) *const fn (void, *Parser) Result(T) {
@@ -3920,7 +3924,7 @@ pub const nth = struct {
 
         if (tok.* == .delim and tok.delim == '+') return parse_signless_b(input, a, 1);
         if (tok.* == .delim and tok.delim == '-') return parse_signless_b(input, a, -1);
-        if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return parse_signless_b(input, a, tok.number.int_value.?);
+        if (tok.* == .number and tok.number.has_sign and tok.number.int_value != null) return .{ .result = NthResult{ a, tok.number.int_value.? } };
         input.reset(&start);
         return .{ .result = .{ a, 0 } };
     }
@@ -4355,7 +4359,7 @@ const Tokenizer = struct {
                     this.advance(1);
                     if (this.isEof()) break;
                 }
-                value *= std.math.pow(f64, 10, sign2 * exponent);
+                value *= bun.pow(10, sign2 * exponent);
             }
         }
 
@@ -6163,14 +6167,22 @@ pub inline fn implementDeepClone(comptime T: type, this: *const T, allocator: Al
         .Struct => {
             var strct: T = undefined;
             inline for (tyinfo.Struct.fields) |field| {
-                @field(strct, field.name) = generic.deepClone(field.type, &@field(this, field.name), allocator);
+                if (comptime generic.canTransitivelyImplementDeepClone(field.type) and @hasDecl(field.type, "__generateDeepClone")) {
+                    @field(strct, field.name) = implementDeepClone(field.type, &field(this, field.name, allocator));
+                } else {
+                    @field(strct, field.name) = generic.deepClone(field.type, &@field(this, field.name), allocator);
+                }
             }
             return strct;
         },
         .Union => {
             inline for (bun.meta.EnumFields(T), tyinfo.Union.fields) |enum_field, union_field| {
-                if (@intFromEnum(this.*) == enum_field.value)
+                if (@intFromEnum(this.*) == enum_field.value) {
+                    if (comptime generic.canTransitivelyImplementDeepClone(union_field.type) and @hasDecl(union_field.type, "__generateDeepClone")) {
+                        return @unionInit(T, enum_field.name, implementDeepClone(union_field.type, &@field(this, enum_field.name), allocator));
+                    }
                     return @unionInit(T, enum_field.name, generic.deepClone(union_field.type, &@field(this, enum_field.name), allocator));
+                }
             }
             unreachable;
         },
@@ -6216,8 +6228,14 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
                 return std.mem.eql(Child, &this.*, &other.*);
             }
             if (this.len != other.len) return false;
-            for (this.*, other.*) |a, b| {
-                if (!generic.eql(Child, &a, &b)) return false;
+            if (comptime generic.canTransitivelyImplementEql(Child) and @hasDecl(Child, "__generateEql")) {
+                for (this.*, other.*) |*a, *b| {
+                    if (!implementEql(Child, &a, &b)) return false;
+                }
+            } else {
+                for (this.*, other.*) |*a, *b| {
+                    if (!generic.eql(Child, a, b)) return false;
+                }
             }
             return true;
         },
@@ -6234,11 +6252,16 @@ pub fn implementEql(comptime T: type, this: *const T, other: *const T) bool {
             inline for (enum_fields, std.meta.fields(T)) |enum_field, union_field| {
                 if (enum_field.value == @intFromEnum(this.*)) {
                     if (union_field.type != void) {
+                        if (comptime generic.canTransitivelyImplementEql(union_field.type) and @hasDecl(union_field.type, "__generateEql")) {
+                            return implementEql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
+                        }
                         return generic.eql(union_field.type, &@field(this, enum_field.name), &@field(other, enum_field.name));
-                    } else return true;
+                    } else {
+                        return true;
+                    }
                 }
             }
-            return true;
+            unreachable;
         },
         else => @compileError("Unsupported type: " ++ @typeName(T)),
     };

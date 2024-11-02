@@ -482,13 +482,16 @@ endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
+  set(IS_ARM64 ON)
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   else()
     set(ZIG_CPU "native")
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
+  set(IS_X86_64 ON)
   if(ENABLE_BASELINE)
     set(ZIG_CPU "nehalem")
   else()
@@ -846,6 +849,29 @@ else()
     set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
   endif()
 
+  if (IS_ARM64)
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=statx
+    )
+  elseif(IS_X86_64)
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=fstat
+      -Wl,--wrap=fstat64
+      -Wl,--wrap=fstatat
+      -Wl,--wrap=fstatat64
+      -Wl,--wrap=lstat
+      -Wl,--wrap=lstat64
+      -Wl,--wrap=mknod
+      -Wl,--wrap=mknodat
+      -Wl,--wrap=stat
+      -Wl,--wrap=stat64
+      -Wl,--wrap=statx
+    )
+  endif()
+
   target_link_options(${bun} PUBLIC
     -fuse-ld=${LLD_NAME}
     -fno-pic
@@ -856,32 +882,21 @@ else()
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
+    ${ARCH_WRAP_FLAGS}
     -Wl,--wrap=cosf
     -Wl,--wrap=exp
     -Wl,--wrap=expf
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
     -Wl,--wrap=fmod
     -Wl,--wrap=fmodf
-    -Wl,--wrap=fstat
-    -Wl,--wrap=fstat64
-    -Wl,--wrap=fstatat
-    -Wl,--wrap=fstatat64
     -Wl,--wrap=log
     -Wl,--wrap=log10f
     -Wl,--wrap=log2
     -Wl,--wrap=log2f
     -Wl,--wrap=logf
-    -Wl,--wrap=lstat
-    -Wl,--wrap=lstat64
-    -Wl,--wrap=mknod
-    -Wl,--wrap=mknodat
     -Wl,--wrap=pow
+    -Wl,--wrap=powf
     -Wl,--wrap=sincosf
     -Wl,--wrap=sinf
-    -Wl,--wrap=stat
-    -Wl,--wrap=stat64
-    -Wl,--wrap=statx
     -Wl,--wrap=tanf
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy

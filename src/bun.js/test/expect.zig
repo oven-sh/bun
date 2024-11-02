@@ -1493,7 +1493,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const truthy = value.toBooleanSlow(globalThis);
+        const truthy = value.toBoolean();
         if (truthy) pass = true;
 
         if (not) pass = !pass;
@@ -1649,7 +1649,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const truthy = value.toBooleanSlow(globalThis);
+        const truthy = value.toBoolean();
         if (!truthy) pass = true;
 
         if (not) pass = !pass;
@@ -2439,7 +2439,7 @@ pub const Expect = struct {
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
                     const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                    if (!matches.toBooleanSlow(globalThis)) return .undefined;
+                    if (!matches.toBoolean()) return .undefined;
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -2524,7 +2524,7 @@ pub const Expect = struct {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (expected_value.get(globalThis, "test")) |test_fn| {
                         const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                        if (matches.toBooleanSlow(globalThis)) return .undefined;
+                        if (matches.toBoolean()) return .undefined;
                     }
                 }
 
@@ -4699,7 +4699,7 @@ pub const Expect = struct {
         const is_valid = valid: {
             if (result.isObject()) {
                 if (result.get(globalThis, "pass")) |pass_value| {
-                    pass = pass_value.toBooleanSlow(globalThis);
+                    pass = pass_value.toBoolean();
                     if (globalThis.hasException()) return false;
 
                     if (result.fastGet(globalThis, .message)) |message_value| {

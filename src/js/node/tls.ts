@@ -330,6 +330,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     #socket;
     #checkServerIdentity;
     #session;
+    alpnProtocol = null;
 
     constructor(socket, options) {
       super(socket instanceof InternalTCPSocket ? options : options || socket);
@@ -501,10 +502,6 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
     getX509Certificate() {
       throw Error("Not implented in Bun yet");
-    }
-
-    get alpnProtocol() {
-      return this[bunSocketInternal]?.alpnProtocol;
     }
 
     [buntls](port, host) {

@@ -25,6 +25,7 @@
     "esbuild": "0.18.6",
     "express": "4.18.2",
     "fast-glob": "3.3.1",
+    "filenamify": "6.0.0",
     "https-proxy-agent": "7.0.5",
     "iconv-lite": "0.6.3",
     "isbot": "5.1.13",

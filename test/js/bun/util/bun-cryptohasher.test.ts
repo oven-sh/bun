@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { withoutAggressiveGC } from "harness";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -57,8 +58,18 @@ describe("HMAC", () => {
     });
   }
 
-  test("ripemd160 is not supported", () => {
-    expect(() => new Bun.CryptoHasher("ripemd160", "key")).toThrow();
+  const unsupported = [
+    ["sha3-224"],
+    ["sha3-256"],
+    ["sha3-384"],
+    ["sha3-512"],
+    ["shake128"],
+    ["shake256"],
+    ["ripemd160"],
+  ] as const;
+  test.each(unsupported)("%s is not supported", algorithm => {
+    expect(() => new Bun.CryptoHasher(algorithm, "key")).toThrow();
+    expect(() => new Bun.CryptoHasher(algorithm)).not.toThrow();
   });
 });
 
@@ -144,6 +155,66 @@ describe("Hash is consistent", () => {
           }
         }
       });
+    });
+  }
+});
+
+describe("CryptoHasher", () => {
+  const algorithms = [
+    "blake2b256",
+    "blake2b512",
+    "ripemd160",
+    "rmd160",
+    "md4",
+    "md5",
+    "sha1",
+    "sha128",
+    "sha224",
+    "sha256",
+    "sha384",
+    "sha512",
+    "sha-1",
+    "sha-224",
+    "sha-256",
+    "sha-384",
+    "sha-512",
+    "sha-512/224",
+    "sha-512_224",
+    "sha-512224",
+    "sha512-224",
+    "sha-512/256",
+    "sha-512_256",
+    "sha-512256",
+    "sha512-256",
+    "sha384",
+    "sha3-224",
+    "sha3-256",
+    "sha3-384",
+    "sha3-512",
+    "shake128",
+    "shake256",
+  ] as const;
+
+  for (let algorithm of algorithms) {
+    describe(algorithm, () => {
+      for (let encoding of ["hex", "base64", "buffer", undefined, "base64url"] as const) {
+        describe(encoding || "default", () => {
+          test("instance", () => {
+            const hasher = new Bun.CryptoHasher(algorithm || undefined);
+            hasher.update("hello");
+            expect(hasher.digest(encoding)).toEqual(Bun.CryptoHasher.hash(algorithm, "hello", encoding));
+          });
+
+          test("consistent", () => {
+            const first = Bun.CryptoHasher.hash(algorithm, "hello", encoding);
+            withoutAggressiveGC(() => {
+              for (let i = 0; i < 100; i++) {
+                expect(Bun.CryptoHasher.hash(algorithm, "hello", encoding)).toStrictEqual(first);
+              }
+            });
+          });
+        });
+      }
     });
   }
 });

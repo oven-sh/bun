@@ -1,6 +1,8 @@
 declare module "bun" {
   declare function wipDevServerExpectHugeBreakingChanges(options: Bake.Options): never;
 
+  type Awaitable<T> = T | Promise<T>;
+
   declare namespace Bake {
     interface Options {
       /**
@@ -54,7 +56,7 @@ declare module "bun" {
       /**
        * Add extra modules
        */
-      builtInModules: Record<string, BuiltInModule>;
+      builtInModules?: Record<string, BuiltInModule>;
       /**
        * Bun offers integration for React's Server Components with an
        * interface that is generic enough to adapt to any framework.
@@ -83,12 +85,14 @@ declare module "bun" {
        * If you are unsure what to set this to for a custom server components
        * framework, choose 'false'.
        *
-       * When set `true`, when bundling "use client" components for SSR, these
-       * files will be placed in a separate bundling graph where `conditions` does
-       * not include `react-server`.
+       * When set `true`, bundling "use client" components for SSR will be
+       * placed in a separate bundling graph without the `react-server`
+       * condition. All imports that stem from here get re-bundled for
+       * this second graph, regardless if they actually differ via this
+       * condition.
        *
        * The built in framework config for React enables this flag so that server
-       * components and client components, utilize their own versions of React,
+       * components and client components utilize their own versions of React,
        * despite running in the same process. This facilitates different aspects
        * of the server and client react runtimes, such as `async` components only
        * being available on the server.
@@ -128,13 +132,39 @@ declare module "bun" {
        * during rendering.
        */
       serverRegisterClientReferenceExport: string | undefined;
+      // /**
+      //  * Allow creating client components inside of server-side files by using "use client"
+      //  * as the first line of a function declaration. This is useful for small one-off
+      //  * interactive components. This is behind a flag because it is not a feature of
+      //  * React or Next.js, but rather is implemented because it is possible to.
+      //  * 
+      //  * The client versions of these are tree-shaked extremely aggressively: anything
+      //  * not referenced by the function body will be removed entirely.
+      //  */
+      // allowAnonymousClientComponents: boolean;
     }
 
     /** Customize the React Fast Refresh transform. */
     interface ReactFastRefreshOptions {
-      /** @default "react-refresh/runtime" */
+      /** 
+       * This import has four exports, mirroring "react-refresh/runtime":
+       * 
+       * `injectIntoGlobalHook(window): void`
+       * Called on first startup, before the user entrypoint.
+       * 
+       * `register(component, uniqueId: string): void`
+       * Called on every function that starts with an uppercase letter. These
+       * may or may not be components, but they are always functions.
+       * 
+       * `createSignatureFunctionForTransform(): ReactRefreshSignatureFunction`
+       * TODO: document. A passing no-op for this api is `return () => {}`
+       * 
+       * @default "react-refresh/runtime"
+       */
       importSource: ImportSource | undefined;
     }
+
+    type ReactRefreshSignatureFunction = () => void | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
     /// Will be resolved from the point of view of the framework user's project root
     /// Examples: `react-dom`, `./entry_point.tsx`, `/absolute/path.js`
@@ -145,7 +175,13 @@ declare module "bun" {
        * The framework implementation decides and enforces the shape
        * of the route module. Bun passes it as an opaque value.
        */
-      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Response;
+      default: (request: Request, routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Response>;
+      /**
+       * Static rendering does not take a response in, and can generate
+       * multiple output files. Note that `import.meta.env.STATIC` will
+       * be inlined to true during a static build.
+       */
+      staticRender: (routeModule: unknown, routeMetadata: RouteMetadata) => Awaitable<Record<string, Blob | ArrayBuffer>>;
     }
 
     interface ClientEntryPoint {
@@ -158,11 +194,25 @@ declare module "bun" {
       onServerSideReload?: () => void;
     }
 
+    /**
+     * This object and it's children may be re-used between invocations, so it
+     * is not safe to mutate it at all.
+     */
     interface RouteMetadata {
-      /** A list of css files that the route will need to be styled */
-      styles: string[];
-      /** A list of js files that the route will need to be interactive */
-      scripts: string[];
+      /**
+       * A list of js files that the route will need to be interactive.
+       */
+      readonly scripts: ReadonlyArray<string>;
+      /**
+       * A list of css files that the route will need to be styled.
+       */
+      readonly styles: ReadonlyArray<string>;
+      /**
+       * Can be used by the framework to mention the route file. Only provided in
+       * development mode to prevent leaking these details into production
+       * builds.
+       */
+      devRoutePath?: string;
     }
   }
 

@@ -8,9 +8,8 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
 }
 
-// Server Side
 server_exports = {
-  async handleRequest(req, { clientEntryPoint }, requested_id) {
+  async handleRequest(req, routeModuleId, clientEntryUrl, styles) {
     const serverRenderer = loadModule<Bake.ServerEntryPoint>(config.main, LoadModuleType.AssertPresent).exports.default;
 
     if (!serverRenderer) {
@@ -20,9 +19,10 @@ server_exports = {
       throw new Error('Framework server entrypoint\'s "default" export is not a function.');
     }
 
-    const response = await serverRenderer(req, loadModule(requested_id, LoadModuleType.AssertPresent).exports, {
-      styles: [],
-      scripts: [clientEntryPoint],
+    const response = await serverRenderer(req, loadModule(routeModuleId, LoadModuleType.AssertPresent).exports, {
+      styles: styles,
+      scripts: [clientEntryUrl],
+      devRoutePath: routeModuleId,
     });
 
     if (!(response instanceof Response)) {

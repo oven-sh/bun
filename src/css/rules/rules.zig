@@ -196,7 +196,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                     },
                     .media => |*med| {
                         moved_rule = false;
-                        if (rules.items[rules.items.len - 1] == .media) {
+                        if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .media) {
                             var last_rule = &rules.items[rules.items.len - 1].media;
                             if (last_rule.query.eql(&med.query)) {
                                 last_rule.rules.v.appendSlice(context.allocator, med.rules.v.items) catch bun.outOfMemory();
@@ -210,7 +210,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         }
                     },
                     .supports => |*supp| {
-                        if (rules.items[rules.items.len - 1] == .supports) {
+                        if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .supports) {
                             var last_rule = &rules.items[rules.items.len - 1].supports;
                             if (last_rule.condition.eql(&supp.condition)) {
                                 continue;
@@ -240,6 +240,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         const Selector = css.selector.Selector;
                         const SelectorList = css.selector.SelectorList;
                         const Component = css.selector.Component;
+                        debug("Input style:\n  Selectors: {}\n  Decls: {}\n", .{ sty.selectors.debug(), sty.declarations.debug() });
                         if (parent_is_unused or try sty.minify(context, parent_is_unused)) {
                             continue;
                         }
@@ -250,6 +251,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                             context.targets.shouldCompileSelectors() and
                             !sty.isCompatible(context.targets.*))
                         incompatible: {
+                            debug("Making incompatible!\n", .{});
                             // The :is() selector accepts a forgiving selector list, so use that if possible.
                             // Note that :is() does not allow pseudo elements, so we need to check for that.
                             // In addition, :is() takes the highest specificity of its arguments, so if the selectors
@@ -317,6 +319,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
                         const supps = context.handler_context.getSupportsRules(AtRule, sty);
                         const logical = context.handler_context.getAdditionalRules(AtRule, sty);
+                        debug("LOGICAL: {d}\n", .{logical.items.len});
                         const StyleRule = style.StyleRule(AtRule);
 
                         const IncompatibleRuleEntry = struct { rule: StyleRule, supports: ArrayList(css.CssRule(AtRule)), logical: ArrayList(css.CssRule(AtRule)) };
@@ -350,6 +353,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                             break :incompatible_rules incompatible_rules;
                         };
+                        debug("Incompatible rules: {d}\n", .{incompatible_rules.len()});
                         defer incompatible.deinit(context.allocator);
                         defer incompatible_rules.deinit(context.allocator);
 
@@ -406,6 +410,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         }
 
                         if (logical.items.len > 0) {
+                            debug("Adding logical: {}\n", .{logical.items[0].style.selectors.debug()});
                             var log = CssRuleList(AtRule){ .v = logical };
                             try log.minify(context, parent_is_unused);
                             rules.appendSlice(context.allocator, log.v.items) catch bun.outOfMemory();
@@ -562,7 +567,7 @@ pub fn StyleRuleKey(comptime R: type) type {
                 V,
                 struct {
                     pub fn hash(_: @This(), key: This) u32 {
-                        return @intCast(key.hash);
+                        return @truncate(key.hash);
                     }
 
                     pub fn eql(_: @This(), a: This, b: This, _: usize) bool {

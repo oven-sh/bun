@@ -1,5 +1,5 @@
 {
-  "name": "pq",
+  "name": "pg",
   "dependencies": {
     "pg": "8.11.1"
   }

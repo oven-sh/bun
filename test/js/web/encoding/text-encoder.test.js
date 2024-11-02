@@ -23,6 +23,12 @@ it("not enough space for replacement character", () => {
 });
 
 describe("TextEncoder", () => {
+  it("should handle undefined", () => {
+    const encoder = new TextEncoder();
+    expect(encoder.encode(undefined).length).toBe(0);
+    expect(encoder.encode(null).length).toBe(4);
+    expect(encoder.encode("").length).toBe(0);
+  });
   it("should encode latin1 text with non-ascii latin1 characters", () => {
     var text = "H©ell©o Wor©ld!";
 

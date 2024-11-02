@@ -1576,26 +1576,15 @@ pub const ImportScanner = struct {
 /// one file, and user symbols from different files may collide with each
 /// other).
 ///
-/// The solution: For every generated symbol, we reserve two backup symbol names:
-/// - If any usages of `.primary`, fall back to `.backup`
-/// - If any usages of `.backup`, fall back to `.internal`
-/// - We *assume* the internal name is never used. In practice, it is possible. But, the
-///   internal names are so crazy long you'd have to be deliberately trying to use them.
-const StaticSymbolName = struct {
-    primary: string,
-    backup: string,
-    internal: string,
-
-    fn init(comptime basename: string) StaticSymbolName {
-        const hash_value = bun.hash(basename);
-        return comptime .{
-            .internal = std.fmt.comptimePrint("{s}_{}", .{ basename, bun.fmt.hexIntLower(hash_value) }),
-            .primary = basename,
-            .backup = "_" ++ basename ++ "$",
-        };
+/// This makes sure that there's the lowest possible chance of having a generated name
+/// collide with a user's name. This is the easiest way to do so
+pub inline fn generatedSymbolName(name: []const u8) []const u8 {
+    comptime {
+        const hash = std.hash.Wyhash.hash(0, name);
+        const hash_str = std.fmt.comptimePrint("_{}", .{bun.fmt.truncatedHash32(@intCast(hash))});
+        return name ++ hash_str;
     }
-};
-const GeneratedSymbol = @import("./runtime.zig").Runtime.GeneratedSymbol;
+}
 
 pub const SideEffects = enum(u1) {
     could_have_side_effects,
@@ -2883,7 +2872,7 @@ pub const Parser = struct {
         use_define_for_class_fields: bool = false,
         suppress_warnings_about_weird_code: bool = true,
         filepath_hash_for_hmr: u32 = 0,
-        features: RuntimeFeatures = RuntimeFeatures{},
+        features: RuntimeFeatures = .{},
 
         tree_shaking: bool = false,
         bundle: bool = false,
@@ -2901,6 +2890,10 @@ pub const Parser = struct {
         /// Used for inlining the state of import.meta.main during visiting
         import_meta_main_value: ?bool = null,
         lower_import_meta_main_for_node_js: bool = false,
+
+        /// When using react fast refresh or server components, the framework is
+        /// able to customize what import sources are used.
+        framework: ?*bun.bake.Framework = null,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
@@ -2939,7 +2932,6 @@ pub const Parser = struct {
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
-
                 .jsx = jsx,
             };
             opts.jsx.parse = loader.isJSX();
@@ -3121,7 +3113,7 @@ pub const Parser = struct {
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
                 Output.print("JSParser.parse: caught error {s} at location: {d}\n", .{ @errorName(err), p.lexer.loc().start });
-                p.log.printForLogLevel(Output.writer()) catch {};
+                p.log.print(Output.writer()) catch {};
             }
             return err;
         };
@@ -4180,8 +4172,39 @@ pub const Parser = struct {
             }
         }
 
+        if (p.server_components_wrap_ref.isValid()) {
+            const fw = p.options.framework orelse @panic("server components requires a framework configured, but none was set");
+            const sc = fw.server_components.?;
+            try p.generateReactRefreshImport(
+                &before,
+                sc.server_runtime_import,
+                &.{
+                    .{
+                        .name = sc.server_register_client_reference,
+                        .ref = p.server_components_wrap_ref,
+                        .enabled = true,
+                    },
+                },
+            );
+        }
+
         if (p.react_refresh.register_used or p.react_refresh.signature_used) {
-            try p.generateReactRefreshImport(&before);
+            try p.generateReactRefreshImport(
+                &before,
+                if (p.options.framework) |fw| fw.react_fast_refresh.?.import_source else "react-refresh/runtime",
+                &.{
+                    .{
+                        .name = "register",
+                        .enabled = p.react_refresh.register_used,
+                        .ref = p.react_refresh.register_ref,
+                    },
+                    .{
+                        .name = "createSignatureFunctionForTransform",
+                        .enabled = p.react_refresh.signature_used,
+                        .ref = p.react_refresh.create_signature_ref,
+                    },
+                },
+            );
         }
 
         var parts_slice: []js_ast.Part = &([_]js_ast.Part{});
@@ -4798,18 +4821,15 @@ fn NewParser_(
         // "visit" pass.
         enclosing_namespace_arg_ref: ?Ref = null,
 
-        // TODO: remove all these
-        jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_fragment: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_automatic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsxs_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_imports: JSXImport.Symbols = .{},
 
-        // only applicable when `.options.features.react_fast_refresh` is set.
-        // populated before visit pass starts.
+        /// only applicable when `.options.features.react_fast_refresh` is set.
+        /// populated before visit pass starts.
         react_refresh: ReactRefresh = .{},
+
+        /// only applicable when `.options.features.server_components` is
+        /// configured to wrap exports. populated before visit pass starts.
+        server_components_wrap_ref: Ref = Ref.None,
 
         jest: Jest = .{},
 
@@ -6085,13 +6105,30 @@ fn NewParser_(
             }) catch unreachable;
         }
 
-        pub fn generateReactRefreshImport(p: *P, parts: *ListManaged(js_ast.Part)) !void {
+        pub fn generateReactRefreshImport(
+            p: *P,
+            parts: *ListManaged(js_ast.Part),
+            import_path: []const u8,
+            clauses: []const ReactRefreshImportClause,
+        ) !void {
             switch (p.options.features.hot_module_reloading) {
-                inline else => |hmr| try p.generateReactRefreshImportHmr(parts, hmr),
+                inline else => |hmr| try p.generateReactRefreshImportHmr(parts, import_path, clauses, hmr),
             }
         }
 
-        fn generateReactRefreshImportHmr(p: *P, parts: *ListManaged(js_ast.Part), comptime hot_module_reloading: bool) !void {
+        const ReactRefreshImportClause = struct {
+            name: []const u8,
+            enabled: bool,
+            ref: Ref,
+        };
+
+        fn generateReactRefreshImportHmr(
+            p: *P,
+            parts: *ListManaged(js_ast.Part),
+            import_path: []const u8,
+            clauses: []const ReactRefreshImportClause,
+            comptime hot_module_reloading: bool,
+        ) !void {
             // If `hot_module_reloading`, we are going to generate a require call:
             //
             //     const { $RefreshSig$, $RefreshReg$ } = require("react-refresh/runtime")`
@@ -6101,7 +6138,7 @@ fn NewParser_(
             // already a CommonJS module, and it will actually be more efficient
             // at runtime this way.
             const allocator = p.allocator;
-            const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, "react-refresh/runtime");
+            const import_record_index = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
 
             const Item = if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem;
 
@@ -6120,18 +6157,7 @@ fn NewParser_(
             });
             try p.module_scope.generated.push(allocator, namespace_ref);
 
-            inline for (.{
-                .{
-                    .name = "register",
-                    .enabled = p.react_refresh.register_used,
-                    .ref = p.react_refresh.register_ref,
-                },
-                .{
-                    .name = "createSignatureFunctionForTransform",
-                    .enabled = p.react_refresh.signature_used,
-                    .ref = p.react_refresh.create_signature_ref,
-                },
-            }) |entry| {
+            for (clauses) |entry| {
                 if (entry.enabled) {
                     items.appendAssumeCapacity(if (hot_module_reloading) .{
                         .key = p.newExpr(E.String{ .data = entry.name }, logger.Loc.Empty),
@@ -6767,64 +6793,25 @@ fn NewParser_(
             }
 
             if (p.options.features.react_fast_refresh) {
-                // this is .. obviously.. not correct
-                p.react_refresh.create_signature_ref = (try p.declareGeneratedSymbol(.other, "$RefreshSig$")).primary;
-                p.react_refresh.register_ref = (try p.declareGeneratedSymbol(.other, "$RefreshReg$")).primary;
+                p.react_refresh.create_signature_ref = try p.declareGeneratedSymbol(.other, "$RefreshSig$");
+                p.react_refresh.register_ref = try p.declareGeneratedSymbol(.other, "$RefreshReg$");
             }
 
-            //  "React.createElement" and "createElement" become:
-            //      import { createElement } from 'react';
-            //  "Foo.Bar.createElement" becomes:
-            //      import { Bar } from 'foo';
-            //      Usages become Bar.createElement
-            switch (comptime jsx_transform_type) {
-                .react => {
-                    if (!p.options.bundle) {
-                        p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
-                        p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
-                        if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
-                            p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
-                        p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
-
-                        if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
-                            p.jsx_classic = p.declareGeneratedSymbol(.other, "ClassicImportSource") catch unreachable;
-                        }
-
-                        p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
-                    }
+            switch (p.options.features.server_components) {
+                .none, .client_side => {},
+                .wrap_exports_for_client_reference => {
+                    p.server_components_wrap_ref = try p.declareGeneratedSymbol(.other, "registerClientReference");
                 },
-
-                else => {},
-            }
-        }
-
-        // This won't work for adversarial cases
-        pub fn resolveGeneratedSymbol(p: *P, generated_symbol: *GeneratedSymbol) void {
-            if (generated_symbol.ref.isNull() or p.options.bundle) return;
-
-            if (p.symbols.items[generated_symbol.primary.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.primary.innerIndex()].hasLink())
-            {
-                p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.primary.innerIndex()].original_name;
-                return;
-            }
-
-            if (p.symbols.items[generated_symbol.backup.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.backup.innerIndex()].hasLink())
-            {
-                p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.backup.innerIndex()].original_name;
-                return;
+                // TODO: these wrapping modes.
+                .wrap_anon_server_functions => {},
+                .wrap_exports_for_server_reference => {},
             }
         }
 
         fn ensureRequireSymbol(p: *P) void {
             if (p.runtime_imports.__require != null) return;
-            const static_symbol = comptime StaticSymbolName.init("__require");
-            p.runtime_imports.__require = .{
-                .backup = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol.backup, true) catch bun.outOfMemory(),
-                .primary = p.require_ref,
-                .ref = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol.internal, true) catch bun.outOfMemory(),
-            };
+            const static_symbol = generatedSymbolName("__require");
+            p.runtime_imports.__require = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static_symbol, true) catch bun.outOfMemory();
             p.runtime_imports.put("__require", p.runtime_imports.__require.?);
         }
 
@@ -6832,37 +6819,7 @@ fn NewParser_(
             if (!p.options.features.allow_runtime)
                 return;
 
-            if (p.runtime_imports.__require) |*require| {
-                p.resolveGeneratedSymbol(require);
-            }
-
             p.ensureRequireSymbol();
-        }
-
-        pub fn resolveBundlingSymbols(p: *P) void {
-            p.resolveGeneratedSymbol(&p.runtime_imports.__export.?);
-            p.resolveGeneratedSymbol(&p.runtime_imports.__exportValue.?);
-            p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
-        }
-
-        pub fn resolveStaticJSXSymbols(p: *P) void {
-            if (p.options.bundle)
-                return;
-
-            if (p.options.features.jsx_optimization_inline) {
-                if (p.runtime_imports.__merge) |*merge| {
-                    p.resolveGeneratedSymbol(merge);
-                }
-            }
-
-            p.resolveGeneratedSymbol(&p.jsx_runtime);
-            if (FeatureFlags.support_jsxs_in_jsx_transform)
-                p.resolveGeneratedSymbol(&p.jsxs_runtime);
-            p.resolveGeneratedSymbol(&p.jsx_factory);
-            p.resolveGeneratedSymbol(&p.jsx_fragment);
-            p.resolveGeneratedSymbol(&p.jsx_classic);
-            p.resolveGeneratedSymbol(&p.jsx_automatic);
-            // p.resolveGeneratedSymbol(&p.jsx_filename);
         }
 
         fn willUseRenamer(p: *P) bool {
@@ -12501,22 +12458,13 @@ fn NewParser_(
             return ref;
         }
 
-        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !GeneratedSymbol {
-            const static = comptime StaticSymbolName.init(name);
+        fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !Ref {
+            // The bundler runs the renamer, so it is ok to not append a hash
             if (p.options.bundle) {
-                const ref = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true);
-                return .{
-                    .backup = ref,
-                    .primary = ref,
-                    .ref = ref,
-                };
+                return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, name, true);
             }
 
-            return .{
-                .backup = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.backup, true),
-                .primary = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true),
-                .ref = try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, static.internal, true),
-            };
+            return try declareSymbolMaybeGenerated(p, kind, logger.Loc.Empty, generatedSymbolName(name), true);
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
@@ -14752,7 +14700,7 @@ fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
+            p.log.print(panic_stream.writer()) catch unreachable;
 
             Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
@@ -18345,7 +18293,7 @@ fn NewParser_(
 
                             const loc_ref = LocRef{
                                 .loc = loc,
-                                .ref = p.newSymbol(.other, symbol_name) catch unreachable,
+                                .ref = (p.declareGeneratedSymbol(.other, symbol_name) catch unreachable),
                             };
 
                             p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
@@ -19491,6 +19439,22 @@ fn NewParser_(
                     data.kind = kind;
                     try stmts.append(stmt.*);
 
+                    if (data.is_export and p.options.features.server_components.wrapsExports()) {
+                        for (data.decls.slice()) |*decl| try_annotate: {
+                            const val = decl.value orelse break :try_annotate;
+                            switch (val.data) {
+                                .e_arrow, .e_function => {},
+                                else => break :try_annotate,
+                            }
+                            const id = switch (decl.binding.data) {
+                                .b_identifier => |id| id.ref,
+                                else => break :try_annotate,
+                            };
+                            const original_name = p.symbols.items[id.innerIndex()].original_name;
+                            decl.value = p.wrapValueForServerComponentReference(val, original_name);
+                        }
+                    }
+
                     if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
                         for (data.decls.slice()) |decl| try_register: {
                             const val = decl.value orelse break :try_register;
@@ -20034,7 +19998,25 @@ fn NewParser_(
                             return;
                         }
 
-                        stmts.append(stmt.*) catch bun.outOfMemory();
+                        if (p.options.features.server_components.wrapsExports() and data.func.flags.contains(.is_export)) {
+                            // Convert this into `export var <name> = registerClientReference(<func>, ...);`
+                            const name = data.func.name.?;
+                            // From the inner scope, have code reference the wrapped function.
+                            data.func.name = null;
+                            try stmts.append(p.s(S.Local{
+                                .kind = .k_var,
+                                .is_export = true,
+                                .decls = try G.Decl.List.fromSlice(p.allocator, &.{.{
+                                    .binding = p.b(B.Identifier{ .ref = name_ref }, name.loc),
+                                    .value = p.wrapValueForServerComponentReference(
+                                        p.newExpr(E.Function{ .func = data.func }, stmt.loc),
+                                        original_name,
+                                    ),
+                                }}),
+                            }, stmt.loc));
+                        } else {
+                            stmts.append(stmt.*) catch bun.outOfMemory();
+                        }
                     } else if (mark_as_dead) {
                         if (p.options.features.replace_exports.getPtr(original_name)) |replacement| {
                             _ = p.injectReplacementExport(stmts, name_ref, data.func.name.?.loc, replacement);
@@ -21900,17 +21882,16 @@ fn NewParser_(
                 if (!p.options.bundle) {
                     const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;
                     p.runtime_imports.put(name, generated_symbol);
-                    return generated_symbol.ref;
+                    return generated_symbol;
                 } else {
                     const loc_ref = js_ast.LocRef{
                         .loc = loc,
                         .ref = p.newSymbol(.other, name) catch unreachable,
                     };
-                    p.runtime_imports.put(name, .{
-                        .primary = loc_ref.ref.?,
-                        .backup = loc_ref.ref.?,
-                        .ref = loc_ref.ref.?,
-                    });
+                    p.runtime_imports.put(
+                        name,
+                        loc_ref.ref.?,
+                    );
                     p.module_scope.generated.push(p.allocator, loc_ref.ref.?) catch unreachable;
                     return loc_ref.ref.?;
                 }
@@ -23123,6 +23104,35 @@ fn NewParser_(
             }
         }
 
+        pub fn wrapValueForServerComponentReference(p: *P, val: Expr, original_name: []const u8) Expr {
+            bun.assert(p.options.features.server_components.wrapsExports());
+            bun.assert(p.current_scope == p.module_scope);
+
+            if (p.options.features.server_components == .wrap_exports_for_server_reference)
+                bun.todoPanic(@src(), "registerServerReference", .{});
+
+            const module_path = p.newExpr(E.String{
+                .data = if (p.options.jsx.development)
+                    p.source.path.pretty
+                else
+                    bun.todoPanic(@src(), "TODO: unique_key here", .{}),
+            }, logger.Loc.Empty);
+
+            // registerClientReference(
+            //   Comp,
+            //   "src/filepath.tsx",
+            //   "Comp"
+            // );
+            return p.newExpr(E.Call{
+                .target = Expr.initIdentifier(p.server_components_wrap_ref, logger.Loc.Empty),
+                .args = js_ast.ExprNodeList.fromSlice(p.allocator, &.{
+                    val,
+                    module_path,
+                    p.newExpr(E.String{ .data = original_name }, logger.Loc.Empty),
+                }) catch bun.outOfMemory(),
+            }, logger.Loc.Empty);
+        }
+
         pub fn handleReactRefreshHookCall(p: *P, hook_call: *E.Call, original_name: []const u8) void {
             bun.assert(p.options.features.react_fast_refresh);
             bun.assert(ReactRefresh.isHookName(original_name));
@@ -23556,7 +23566,7 @@ fn NewParser_(
                     js_ast.SlotCounts{},
 
                 .require_ref = if (p.runtime_imports.__require != null)
-                    p.runtime_imports.__require.?.ref
+                    p.runtime_imports.__require.?
                 else
                     p.require_ref,
 
@@ -23564,7 +23574,7 @@ fn NewParser_(
                 .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
                 .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
                 .uses_require_ref = p.runtime_imports.__require != null and
-                    p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
+                    p.symbols.items[p.runtime_imports.__require.?.inner_index].use_count_estimate > 0,
                 .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,

@@ -855,6 +855,11 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
     }
   }
 
+  if (ERR_peek_error() != 0) {
+    free_ssl_context(ssl_context);
+    return NULL;
+  }
+
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */
   return ssl_context;
 }
@@ -1106,6 +1111,8 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 SSL_CTX *create_ssl_context_from_bun_options(
     struct us_bun_socket_context_options_t options, 
     enum create_bun_socket_error_t *err) {
+  ERR_clear_error();
+
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
 
@@ -1210,6 +1217,9 @@ SSL_CTX *create_ssl_context_from_bun_options(
         free_ssl_context(ssl_context);
         return NULL;
       }
+
+     // It may return spurious errors here.
+    ERR_clear_error();
 
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,
@@ -1336,7 +1346,7 @@ void us_internal_ssl_socket_context_add_server_name(
   }
 }
 
-void us_bun_internal_ssl_socket_context_add_server_name(
+int us_bun_internal_ssl_socket_context_add_server_name(
     struct us_internal_ssl_socket_context_t *context,
     const char *hostname_pattern,
     struct us_bun_socket_context_options_t options, void *user) {
@@ -1344,6 +1354,9 @@ void us_bun_internal_ssl_socket_context_add_server_name(
   /* Try and construct an SSL_CTX from options */
   enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
   SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, &err);
+  if (ssl_context == NULL) {
+    return -1;
+  }
 
   /* Attach the user data to this context */
   if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
@@ -1351,15 +1364,15 @@ void us_bun_internal_ssl_socket_context_add_server_name(
     printf("CANNOT SET EX DATA!\n");
     abort();
 #endif
+    return -1;
   }
 
-  /* We do not want to hold any nullptr's in our SNI tree */
-  if (ssl_context) {
-    if (sni_add(context->sni, hostname_pattern, ssl_context)) {
-      /* If we already had that name, ignore */
-      free_ssl_context(ssl_context);
-    }
+  if (sni_add(context->sni, hostname_pattern, ssl_context)) {
+    /* If we already had that name, ignore */
+    free_ssl_context(ssl_context);
   }
+
+  return 0;
 }
 
 void us_internal_ssl_socket_context_on_server_name(

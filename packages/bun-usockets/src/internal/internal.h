@@ -302,7 +302,7 @@ void us_internal_ssl_socket_context_add_server_name(
     us_internal_ssl_socket_context_r context,
     const char *hostname_pattern, struct us_socket_context_options_t options,
     void *user);
-void us_bun_internal_ssl_socket_context_add_server_name(
+int us_bun_internal_ssl_socket_context_add_server_name(
     us_internal_ssl_socket_context_r context,
     const char *hostname_pattern,
     struct us_bun_socket_context_options_t options, void *user);

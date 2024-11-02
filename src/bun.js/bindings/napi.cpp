@@ -602,10 +602,8 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
     JSValue targetValue = toJS(target);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* object = targetValue.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
 
@@ -668,17 +666,12 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, key);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* target = toJS(object).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
     *result = target->hasProperty(globalObject, keyProp.toPropertyKey(globalObject));
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
-
-    scope.clearException();
-    return napi_ok;
+    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
 extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, double* result)
@@ -705,11 +698,9 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     auto* target = toJS(object).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
     JSC::EnsureStillAliveScope ensureAlive(target);
 
     auto keyProp = toJS(key);
@@ -750,18 +741,13 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     auto* target = toJS(object).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
     *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
-
-    scope.clearException();
-    return napi_ok;
+    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
 extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
@@ -777,9 +763,8 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto target = toJS(object).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     JSValue jsValue = toJS(value);
     JSC::EnsureStillAliveScope ensureAlive(jsValue);
@@ -788,7 +773,6 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
     auto identifier = JSC::Identifier::fromString(vm, WTFMove(nameStr));
 
-    // TODO should maybe be false
     PutPropertySlot slot(target, false);
 
     target->methodTable()->put(target, globalObject, identifier, jsValue, slot);
@@ -845,10 +829,9 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* target = toJS(object).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     PROPERTY_NAME_FROM_UTF8(name);
 
@@ -868,9 +851,8 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     JSObject* target = toJS(object).toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     PROPERTY_NAME_FROM_UTF8(name);
 

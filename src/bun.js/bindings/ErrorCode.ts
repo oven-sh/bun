@@ -50,12 +50,17 @@ export default [
   ["ERR_EVENT_RECURSION", Error, "Error"],
   ["ERR_MULTIPLE_CALLBACK", TypeError, "TypeError"],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error, "Error"],
+  ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
   ["ERR_STREAM_WRAP", Error, "Error"],
   ["ERR_BORINGSSL", Error, "Error"],
   ["ERR_STREAM_UNABLE_TO_PIPE", Error, "Error"],
+
+  //NET
+  ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error, "Error"],
 
   //HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError, "TypeError"],

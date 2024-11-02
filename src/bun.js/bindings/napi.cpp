@@ -600,7 +600,6 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
     NAPI_CHECK_ARG(env, value);
 
     JSValue targetValue = toJS(target);
-    NAPI_RETURN_EARLY_IF_FALSE(env, targetValue.isObject(), napi_object_expected);
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();

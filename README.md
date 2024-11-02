@@ -1,22 +1,23 @@
-<p align="center">
-  <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
-</p>
-<h1 align="center">Bun</h1>
-
-<p align="center">
-<a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
-<img src="https://img.shields.io/github/stars/oven-sh/bun" alt="stars">
-<a href="https://twitter.com/jarredsumner/status/1542824445810642946"><img src="https://img.shields.io/static/v1?label=speed&message=fast&color=success" alt="Bun speed" /></a>
-</p>
-
 <div align="center">
-  <a href="https://bun.sh/docs">Documentation</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://discord.com/invite/CXdq2DP29u">Discord</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://github.com/oven-sh/bun/issues/new">Issues</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://github.com/oven-sh/bun/issues/159">Roadmap</a>
+  <p align="center">
+    <a href="https://bun.sh">
+      <img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Bun logo" height="170">
+    </a>
+  </p>
+  
+  # Bun
+
+  <p>
+  
+  [![discord](https://img.shields.io/discord/876711213126520882)](https://bun.sh/discord)
+  ![stars](https://img.shields.io/github/stars/oven-sh/bun)
+  [![speed: fast](https://img.shields.io/static/v1?label=speed&message=fast&color=success)](https://twitter.com/jarredsumner/status/1542824445810642946)
+  </p>
+
+  [**Documentation**](https://bun.sh/docs) &nbsp;&nbsp;•&nbsp;&nbsp;
+  [**Discord**](https://discord.com/invite/CXdq2DP29u) &nbsp;&nbsp;•&nbsp;&nbsp;
+  [**Issues**](https://github.com/oven-sh/bun/issues/new) &nbsp;&nbsp;•&nbsp;&nbsp;
+  [**Roadmap**](https://github.com/oven-sh/bun/issues/159)
   <br />
 </div>
 

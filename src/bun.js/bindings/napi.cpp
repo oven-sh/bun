@@ -56,6 +56,7 @@
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
+#include <JavaScriptCore/JSMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
@@ -67,8 +68,6 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/JSWeakMap.h>
-#include <JavaScriptCore/JSWeakMapInlines.h>
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"

@@ -781,6 +781,8 @@ pub const EventLoop = struct {
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 
+    tick_without_idle_count: usize = 0,
+
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
         js_call_count_outside_tick_queue: usize = 0,
@@ -1375,6 +1377,7 @@ pub const EventLoop = struct {
         }
 
         if (loop.isActive()) {
+            this.tick_without_idle_count = 0;
             this.processGCTimer();
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
             // for the printer, this is defined:
@@ -1385,7 +1388,11 @@ pub const EventLoop = struct {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
             }
         } else {
+            if (this.tick_without_idle_count > 32) {
+                @panic("suspected tickWithoutIdle loop");
+            }
             loop.tickWithoutIdle();
+            this.tick_without_idle_count += 1;
             if (comptime Environment.isDebug) {
                 log("tickWithoutIdle", .{});
             }

@@ -51,11 +51,16 @@ export default [
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError, "TypeError"],
   ["ERR_INVALID_CHAR", TypeError, "TypeError"],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error, "Error"],
+  ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],
   ["ERR_BODY_ALREADY_USED", Error, "Error"],
   ["ERR_STREAM_WRAP", Error, "Error"],
   ["ERR_BORINGSSL", Error, "Error"],
+
+  //NET
+  ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error, "Error"],
 
   //HTTP2
   ["ERR_INVALID_HTTP_TOKEN", TypeError, "TypeError"],

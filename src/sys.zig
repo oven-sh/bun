@@ -958,6 +958,11 @@ fn openDirAtWindowsT(
         .result => |norm| norm,
     };
 
+    if (comptime T == u8) {
+        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+    } else {
+        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+    }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
 

@@ -613,6 +613,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+
+            return .{ path.len, 0 };
         } else {
             if (bun.strings.indexAnyComptimeT(T, path[3..], strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
@@ -624,6 +626,7 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+            return .{ path.len, 0 };
         }
     }
     return .{ 0, 0 };
@@ -678,6 +681,7 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
                 return path[0..2];
         }
     }
+
     // UNC
     if (path.len >= 5 and
         Platform.windows.isSeparatorT(T, path[0]) and
@@ -685,13 +689,14 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         !Platform.windows.isSeparatorT(T, path[2]) and
         path[2] != '.')
     {
-        if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
-            if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
+        if (bun.strings.indexOfAnyT(T, path[3..], "/\\")) |idx| {
+            if (bun.strings.indexOfAnyT(T, path[4 + idx ..], "/\\")) |idx_second| {
                 return path[0 .. idx + idx_second + 4 + 1]; // +1 to skip second separator
             }
-            return path[0..];
         }
+        return path[0..];
     }
+
     if (isSepAnyT(T, path[0])) return path[0..1];
     return path[0..0];
 }
@@ -793,12 +798,18 @@ pub fn normalizeStringGenericTZ(
                 } else {
                     @memcpy(buf[buf_i .. buf_i + 2], strings.literal(T, sep_str ++ sep_str));
                 }
-                @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
-                buf[buf_i + indexOfThirdUNCSlash] = options.separator;
-                @memcpy(
-                    buf[buf_i + indexOfThirdUNCSlash + 1 .. buf_i + volLen],
-                    path_[indexOfThirdUNCSlash + 1 .. volLen],
-                );
+                if (indexOfThirdUNCSlash > 0) {
+                    // we have the ending slash
+                    @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
+                    buf[buf_i + indexOfThirdUNCSlash] = options.separator;
+                    @memcpy(
+                        buf[buf_i + indexOfThirdUNCSlash + 1 .. buf_i + volLen],
+                        path_[indexOfThirdUNCSlash + 1 .. volLen],
+                    );
+                } else {
+                    // we dont have the ending slash
+                    @memcpy(buf[buf_i + 2 .. buf_i + volLen], path_[2..volLen]);
+                }
                 buf[buf_i + volLen] = options.separator;
                 buf_i += volLen + 1;
                 path_begin = volLen + 1;
@@ -1923,9 +1934,11 @@ pub const PosixToWinNormalizer = struct {
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
                     return res;
                 }
             }
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
         }
         return maybe_posix_path;
     }
@@ -1948,9 +1961,11 @@ pub const PosixToWinNormalizer = struct {
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
                     return res;
                 }
             }
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
         }
 
         return maybe_posix_path;
@@ -1975,9 +1990,12 @@ pub const PosixToWinNormalizer = struct {
                     buf[source_root.len + maybe_posix_path.len - 1] = 0;
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    assert(std.fs.path.isAbsoluteWindows(res));
                     return res;
                 }
             }
+
+            assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path));
         }
 
         @memcpy(buf.ptr, maybe_posix_path);

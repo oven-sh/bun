@@ -1466,7 +1466,9 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "tls")) |tls| {
-                if (tls.jsType().isArray()) {
+                if (tls.isFalsey()) {
+                    args.ssl_config = null;
+                } else if (tls.jsType().isArray()) {
                     var value_iter = tls.arrayIterator(global);
                     if (value_iter.len == 1) {
                         JSC.throwInvalidArguments("tls option expects at least 1 tls object", .{}, global, exception);

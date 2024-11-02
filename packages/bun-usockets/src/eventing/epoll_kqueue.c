@@ -113,6 +113,9 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 #if defined(LIBUS_USE_EPOLL) 
 
 #include <sys/syscall.h>
+#include <signal.h>
+#include <errno.h>
+
 static int has_epoll_pwait2 = -1;
 
 #ifndef SYS_epoll_pwait2
@@ -122,18 +125,21 @@ static int has_epoll_pwait2 = -1;
 #define SYS_epoll_pwait2 441
 #endif
 
-static ssize_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
-    return syscall(SYS_epoll_pwait2, epfd, events, maxevents, timeout, sigmask, sigsetsize);
-}
+extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxevents,
+                              const struct timespec* timeout, const sigset_t* sigmask);
+
 
 static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
     int ret;
+    sigset_t mask;  
+    sigemptyset(&mask);
+  
     if (has_epoll_pwait2 != 0) {
         do {
-            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, NULL, 0);
-        } while (IS_EINTR(ret));
+            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
+        } while (ret == -EINTR);
 
-        if (LIKELY(ret != -1 || errno != ENOSYS)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP)) {
             return ret;
         }
 
@@ -146,7 +152,7 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     }
 
     do {
-        ret = epoll_wait(epfd, events, maxevents, timeoutMs);
+        ret = epoll_pwait(epfd, events, maxevents, timeoutMs, &mask);
     } while (IS_EINTR(ret));
 
     return ret;

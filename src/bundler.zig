@@ -51,6 +51,7 @@ const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
@@ -1298,6 +1299,18 @@ pub const Bundler = struct {
                 }
 
                 break :brk logger.Source.initPathString(path.text, "");
+            }
+
+            if (strings.startsWith(path.text, "data:")) {
+                const data_url = DataURL.parseWithoutCheck(path.text) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
+                const body = data_url.decodeData(bun.default_allocator) catch |err| {
+                    bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                    return null;
+                };
+                break :brk logger.Source.initPathString(path.text, body);
             }
 
             const entry = bundler.resolver.caches.fs.readFileWithAllocator(

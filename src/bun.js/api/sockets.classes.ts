@@ -166,9 +166,6 @@ function generate(ssl) {
       bytesWritten: {
         getter: "getBytesWritten",
       },
-      bufferedQueueSize: {
-        getter: "getBufferedQueueSize",
-      },
       setServername: {
         fn: "setServername",
         length: 1,

@@ -2368,7 +2368,7 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        fn internalFlush(this: *This) JSValue {
+        fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
                 const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
                 this.bytes_written += written;
@@ -2715,12 +2715,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             return JSC.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
-        pub fn getBufferedQueueSize(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            return JSC.JSValue.jsNumber(this.buffered_data_for_node_net.len);
-        }
+
         pub fn getALPNProtocol(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

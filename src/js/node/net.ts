@@ -861,23 +861,11 @@ const Socket = (function (InternalSocket) {
         return;
       }
 
-      const writeResult = socket.$write(chunk, encoding);
+      const success = socket.$write(chunk, encoding);
       this[kBytesWritten] = socket.bytesWritten;
-      switch (writeResult) {
-        case -1:
-          // dropped
-          this.#writeCallback = callback;
-          this._pendingEncoding = encoding;
-          this._pendingData = chunk;
-          break;
-        default:
-          // written or buffered by the socket
-          if (socket.bufferedQueueSize === 0) {
-            callback();
-            return;
-          }
-      }
-      if (this.#writeCallback) {
+      if (success) {
+        callback();
+      } else if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
         this.#writeCallback = callback;

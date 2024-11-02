@@ -279,43 +279,34 @@ pub const RunCommand = struct {
     ) !void {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
-        const script = original_script;
-        var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
+        var copy_script_capacity: usize = original_script.len;
+        for (passthrough) |part| copy_script_capacity += 1 + part.len;
+        var copy_script = try std.ArrayList(u8).initCapacity(allocator, copy_script_capacity);
 
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
 
-        try replacePackageManagerRun(&copy_script, script);
+        try replacePackageManagerRun(&copy_script, original_script);
 
-        var combined_script: []u8 = copy_script.items;
-
-        log("Script: \"{s}\"", .{combined_script});
-
-        if (passthrough.len > 0) {
-            var combined_script_len = script.len;
-            for (passthrough) |p| {
-                combined_script_len += p.len + 1;
+        for (passthrough) |part| {
+            try copy_script.append(' ');
+            if (bun.shell.needsEscapeUtf8AsciiLatin1(part)) {
+                try bun.shell.escape8Bit(part, &copy_script, true);
+            } else {
+                try copy_script.appendSlice(part);
             }
-            var combined_script_buf = try allocator.alloc(u8, combined_script_len);
-            bun.copy(u8, combined_script_buf, script);
-            var remaining_script_buf = combined_script_buf[script.len..];
-            for (passthrough) |part| {
-                const p = part;
-                remaining_script_buf[0] = ' ';
-                bun.copy(u8, remaining_script_buf[1..], p);
-                remaining_script_buf = remaining_script_buf[p.len + 1 ..];
-            }
-            combined_script = combined_script_buf;
         }
 
+        log("Script: \"{s}\"", .{copy_script.items});
+
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{copy_script.items});
             Output.flush();
         }
 
         if (!use_system_shell) {
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -338,7 +329,7 @@ pub const RunCommand = struct {
         const argv = [_]string{
             shell_bin,
             if (Environment.isWindows) "/c" else "-c",
-            combined_script,
+            copy_script.items,
         };
 
         const ipc_fd = if (!Environment.isWindows) blk: {
@@ -841,20 +832,12 @@ pub const RunCommand = struct {
 
         const root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_bundler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("error loading current directory", .{});
             Output.flush();
             return error.CouldntReadCurrentDirectory;
@@ -1305,7 +1288,7 @@ pub const RunCommand = struct {
             Run.boot(ctx, ".") catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
@@ -1400,7 +1383,7 @@ pub const RunCommand = struct {
                     Run.boot(ctx, out_path) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-                        ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                        ctx.log.print(Output.errorWriter()) catch {};
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
@@ -1497,7 +1480,7 @@ pub const RunCommand = struct {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
@@ -1523,7 +1506,7 @@ pub const RunCommand = struct {
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
             Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
-                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+                ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
@@ -1640,7 +1623,7 @@ pub const RunCommand = struct {
         };
 
         Run.boot(ctx, normalized_filename) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
             Global.exit(1);
@@ -1713,7 +1696,7 @@ pub const BunXFastPath = struct {
             wpath,
         ) catch return;
         Run.boot(ctx, utf8) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            ctx.log.print(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);
         };

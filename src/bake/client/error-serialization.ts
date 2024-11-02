@@ -6,7 +6,7 @@ export interface DeserializedFailure {
   // If not specified, it is a client-side error.
   file: string | null;
   messages: BundlerMessage[];
-};
+}
 
 export interface BundlerMessage {
   kind: "bundler";
@@ -50,7 +50,7 @@ function readLogMsg(r: DataViewReader, level: BundlerMessageLevel) {
     notes[i] = readLogData(r);
   }
   return {
-    kind: 'bundler',
+    kind: "bundler",
     level,
     message,
     location,

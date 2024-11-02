@@ -206,7 +206,7 @@ pub const Scripts = struct {
 };
 
 pub fn isEmpty(this: *const Lockfile) bool {
-    return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
+    return this.packages.len == 0 or (this.packages.len == 1 and this.packages.get(0).resolutions.len == 0);
 }
 
 pub const LoadFromDiskResult = union(enum) {
@@ -1033,8 +1033,6 @@ pub fn cleanWithLogger(
     if (updates.len > 0) {
         const string_buf = new.buffers.string_bytes.items;
         const slice = new.packages.slice();
-        const names = slice.items(.name);
-        const resolutions = slice.items(.resolution);
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
@@ -1046,14 +1044,13 @@ pub fn cleanWithLogger(
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
         request_updated: for (updates) |*update| {
-            if (update.resolution.tag == .uninitialized) {
+            if (update.package_id == invalid_package_id) {
                 for (resolved_ids, workspace_deps) |package_id, dep| {
                     if (update.matches(dep, string_buf)) {
                         if (package_id > new.packages.len) continue;
                         update.version_buf = string_buf;
                         update.version = dep.version;
-                        update.resolution = resolutions[package_id];
-                        update.resolved_name = names[package_id];
+                        update.package_id = package_id;
 
                         continue :request_updated;
                     }
@@ -1257,11 +1254,7 @@ pub const Printer = struct {
                     }),
                 }
                 if (log.errors > 0) {
-                    switch (Output.enable_ansi_colors) {
-                        inline else => |enable_ansi_colors| {
-                            try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-                        },
-                    }
+                    try log.print(Output.errorWriter());
                 }
                 Global.crash();
             },
@@ -3946,11 +3939,7 @@ pub const Package = extern struct {
     ) !void {
         initializeStore();
         const json = JSON.parsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                },
-            }
+            log.print(Output.errorWriter()) catch {};
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
         };
@@ -4980,6 +4969,21 @@ pub const Package = extern struct {
             };
         }
 
+        if (json.asProperty("patchedDependencies")) |patched_deps| {
+            const obj = patched_deps.expr.data.e_object;
+            lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                if (key.isString() and value.isString()) {
+                    var sfb = std.heap.stackFallback(1024, allocator);
+                    const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                    const patch_path = string_builder.append(String, value.asString(allocator).?);
+                    lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
+                }
+            }
+        }
+
         bin: {
             if (json.asProperty("bin")) |bin| {
                 switch (bin.expr.data) {
@@ -5039,21 +5043,6 @@ pub const Package = extern struct {
                         }
                     },
                     else => {},
-                }
-            }
-
-            if (json.asProperty("patchedDependencies")) |patched_deps| {
-                const obj = patched_deps.expr.data.e_object;
-                lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
-                for (obj.properties.slice()) |prop| {
-                    const key = prop.key.?;
-                    const value = prop.value.?;
-                    if (key.isString() and value.isString()) {
-                        var sfb = std.heap.stackFallback(1024, allocator);
-                        const keyhash = try key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
-                        const patch_path = string_builder.append(String, value.asString(allocator).?);
-                        lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
-                    }
                 }
             }
 

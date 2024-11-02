@@ -495,12 +495,10 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 
     const writer = buffered_writer.writer();
 
-    switch (Output.enable_ansi_colors_stderr) {
-        inline else => |enable_colors| vm.log.printForLogLevelWithEnableAnsiColors(writer, enable_colors) catch {},
-    }
+    vm.log.print(writer) catch {};
 }
 
-noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
+pub noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
     @setCold(true);
     dumpBuildError(vm);
     Global.exit(1);

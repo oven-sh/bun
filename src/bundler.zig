@@ -15,7 +15,7 @@ const lex = bun.js_lexer;
 const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
@@ -449,7 +449,7 @@ pub const Bundler = struct {
             };
 
             // Only re-query if we previously had something cached.
-            if (bundler.resolver.bustDirCache(buster_name)) {
+            if (bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                 if (_resolveEntryPoint(bundler, entry_point)) |result|
                     return result
                 else |_| {
@@ -865,6 +865,9 @@ pub const Bundler = struct {
             .src_path = file_path,
             .loader = loader,
             .value = undefined,
+            .side = null,
+            .entry_point_index = null,
+            .output_kind = .chunk,
         };
 
         switch (loader) {
@@ -916,7 +919,7 @@ pub const Bundler = struct {
                         &writer,
                         .esm,
                     ),
-                    .bun, .bun_macro, .kit_server_components_ssr => try bundler.print(
+                    .bun, .bun_macro, .bake_server_components_ssr => try bundler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,
@@ -948,8 +951,6 @@ pub const Bundler = struct {
                         bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                         return null;
                     };
-                    const source = logger.Source.initRecycledFile(.{ .path = file_path, .contents = entry.contents }, bundler.allocator) catch return null;
-                    _ = source; //
                     var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, bundler.log), null)) {
                         .result => |v| v,
                         .err => |e| {
@@ -962,7 +963,7 @@ pub const Bundler = struct {
                         return null;
                     }
                     const result = sheet.toCss(alloc, bun.css.PrinterOptions{
-                        .minify = bun.getenvTruthy("BUN_CSS_MINIFY"),
+                        .minify = bundler.options.minify_whitespace,
                     }, null) catch |e| {
                         bun.handleErrorReturnTrace(e, @errorReturnTrace());
                         return null;
@@ -1056,9 +1057,6 @@ pub const Bundler = struct {
                     },
                 };
             },
-
-            // // TODO:
-            // else => {},
         }
 
         return output_file;
@@ -1371,9 +1369,6 @@ pub const Bundler = struct {
                 opts.tree_shaking = bundler.options.tree_shaking;
                 opts.features.inlining = bundler.options.inlining;
 
-                opts.features.react_fast_refresh = opts.features.hot_module_reloading and
-                    jsx.parse and
-                    bundler.options.react_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();
@@ -1455,11 +1450,11 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        JSON.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
+                        JSON.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
-                    TOML.parse(&source, bundler.log, allocator) catch return null
+                    TOML.parse(&source, bundler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 

@@ -7224,7 +7224,7 @@ pub const BundledAst = struct {
         unique_key: ?[]const u8,
     ) void {
         if (css_enabled) {
-            const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.key_path.text), '.')).value;
+            const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable
             const COPY_THRESHOLD = 128 * 1024; // 128kb
@@ -8637,7 +8637,6 @@ pub const UseDirective = enum(u2) {
 
     pub const Flags = struct {
         has_any_client: bool = false,
-        has_any_server: bool = false,
     };
 
     pub fn isBoundary(this: UseDirective, other: UseDirective) bool {
@@ -9028,18 +9027,4 @@ const ToJSError = error{
     OutOfMemory,
 };
 
-fn assertNoPointers(T: type) void {
-    switch (@typeInfo(T)) {
-        .Pointer => @compileError("no pointers!"),
-        .Struct => |s| for (s.fields) |field| {
-            assertNoPointers(field.type);
-        },
-        .Array => |a| assertNoPointers(a.child),
-        else => {},
-    }
-}
-
-inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
-    comptime assertNoPointers(@TypeOf(thing)); // catch silly mistakes
-    hasher.update(std.mem.asBytes(&thing));
-}
+const writeAnyToHasher = bun.writeAnyToHasher;

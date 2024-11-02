@@ -12,6 +12,10 @@ const ArrayList = std.ArrayListUnmanaged;
 pub const PropertyCategory = enum {
     logical,
     physical,
+
+    pub fn default() PropertyCategory {
+        return .physical;
+    }
 };
 
 pub const LogicalGroup = enum {

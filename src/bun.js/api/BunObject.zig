@@ -277,27 +277,15 @@ pub fn shellEscape(
     var outbuf = std.ArrayList(u8).init(bun.default_allocator);
     defer outbuf.deinit();
 
-    if (bunstr.isUTF16()) {
-        if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
-            const result = bun.shell.escapeUtf16(bunstr.utf16(), &outbuf, true) catch {
-                globalThis.throwOutOfMemory();
-                return .undefined;
-            };
-            if (result.is_invalid) {
-                globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
-                return .undefined;
-            }
-            var str = bun.String.createUTF8(outbuf.items[0..]);
-            return str.transferToJS(globalThis);
-        }
-        return jsval;
-    }
-
-    if (bun.shell.needsEscapeUtf8AsciiLatin1(bunstr.latin1())) {
-        bun.shell.escape8Bit(bunstr.byteSlice(), &outbuf, true) catch {
+    if (bun.shell.needsEscapeBunstr(bunstr)) {
+        const result = bun.shell.escapeBunStr(bunstr, &outbuf, true) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
         };
+        if (!result) {
+            globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
+            return .undefined;
+        }
         var str = bun.String.createUTF8(outbuf.items[0..]);
         return str.transferToJS(globalThis);
     }
@@ -3921,7 +3909,7 @@ const TOMLObject = struct {
         var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
-        const parse_result = TOMLParser.parse(&source, &log, allocator) catch {
+        const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
             return .zero;
         };
@@ -5029,8 +5017,10 @@ const InternalTestingAPIs = struct {
         var buffer = MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
-        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
-        formatter.limited = false;
+        const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+            .enable_colors = true,
+            .check_for_unhighlighted_write = false,
+        });
         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
             globalThis.throwError(err, "Error formatting code");
             return .zero;

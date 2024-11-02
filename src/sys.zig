@@ -958,6 +958,11 @@ fn openDirAtWindowsT(
         .result => |norm| norm,
     };
 
+    if (comptime T == u8) {
+        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+    } else {
+        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+    }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
 
@@ -3013,14 +3018,14 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
-    pub fn openat(other: anytype, path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn openat(other: anytype, path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
     }
 
-    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn open(path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 

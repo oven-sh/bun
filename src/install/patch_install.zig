@@ -158,7 +158,7 @@ pub const PatchTask = struct {
         if (this.callback.apply.logger.errors > 0) {
             defer this.callback.apply.logger.deinit();
             Output.errGeneric("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
-            this.callback.apply.logger.printForLogLevel(Output.errorWriter()) catch {};
+            this.callback.apply.logger.print(Output.errorWriter()) catch {};
         }
     }
 
@@ -183,7 +183,7 @@ pub const PatchTask = struct {
             }
             if (calc_hash.logger.errors > 0) {
                 Output.prettyErrorln("\n\n", .{});
-                calc_hash.logger.printForLogLevel(Output.errorWriter()) catch {};
+                calc_hash.logger.print(Output.errorWriter()) catch {};
             }
             Output.flush();
             Global.crash();
@@ -281,20 +281,22 @@ pub const PatchTask = struct {
         )) {
             .result => |txt| txt,
             .err => |e| {
-                try log.addErrorFmtNoLoc(
+                try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "failed to read patchfile: {}",
                     .{e.toSystemError()},
+                    .{},
                 );
                 return;
             },
         };
         defer this.manager.allocator.free(patchfile_txt);
         var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
-            try log.addErrorFmtNoLoc(
+            try log.addErrorFmtOpts(
                 this.manager.allocator,
                 "failed to parse patchfile: {s}",
                 .{@errorName(e)},
+                .{},
             );
             return;
         };
@@ -333,27 +335,30 @@ pub const PatchTask = struct {
         switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
             .success => {},
             .fail => |reason| {
-                return try log.addErrorFmtNoLoc(
+                return try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "{s} while executing step: {s}",
                     .{ @errorName(reason.err), reason.step.name() },
+                    .{},
                 );
             },
         }
 
-        var patch_pkg_dir = system_tmpdir.openDir(tempdir_name, .{}) catch |e| return try log.addErrorFmtNoLoc(
+        var patch_pkg_dir = system_tmpdir.openDir(tempdir_name, .{}) catch |e| return try log.addErrorFmtOpts(
             this.manager.allocator,
             "failed trying to open temporary dir to apply patch to package: {s}",
             .{@errorName(e)},
+            .{},
         );
         defer patch_pkg_dir.close();
 
         // 4. apply patch
         if (patchfile.apply(this.manager.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
-            return try log.addErrorFmtNoLoc(
+            return try log.addErrorFmtOpts(
                 this.manager.allocator,
                 "failed applying patch file: {}",
                 .{e},
+                .{},
             );
         }
 
@@ -371,7 +376,12 @@ pub const PatchTask = struct {
         )) {
             .result => |fd| fd,
             .err => |e| {
-                return try log.addErrorFmtNoLoc(this.manager.allocator, "failed adding bun tag: {}", .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])});
+                return try log.addErrorFmtOpts(
+                    this.manager.allocator,
+                    "failed adding bun tag: {}",
+                    .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])},
+                    .{},
+                );
             },
         };
         _ = bun.sys.close(buntagfd);
@@ -391,7 +401,12 @@ pub const PatchTask = struct {
             bun.toFD(this.callback.apply.cache_dir.fd),
             this.callback.apply.cache_dir_subpath,
             .{ .move_fallback = true },
-        ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "renaming changes to cache dir: {}", .{e.withPath(this.callback.apply.cache_dir_subpath)});
+        ).asErr()) |e| return try log.addErrorFmtOpts(
+            this.manager.allocator,
+            "renaming changes to cache dir: {}",
+            .{e.withPath(this.callback.apply.cache_dir_subpath)},
+            .{},
+        );
     }
 
     pub fn calcHash(this: *PatchTask) ?u64 {

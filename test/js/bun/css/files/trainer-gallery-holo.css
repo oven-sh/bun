@@ -1,0 +1,117 @@
+/*
+
+  TRAINER GALLERY HOLO
+
+*/
+
+
+
+
+
+
+
+/*
+
+  SHINE LAYERS
+
+*/
+
+.card[data-rarity="trainer gallery rare holo"] .card__shine,
+.card[data-rarity="rare holo"][data-trainer-gallery="true"] .card__shine,
+.card[data-set="swshp"][data-number="swsh020"] .card__shine {
+
+  --space: 5%;
+  --angle: -22deg;
+  --imgsize: 300% 400%;
+
+  clip-path: var(--clip-borders);
+
+  background-image:
+    repeating-linear-gradient( var(--angle),  
+      hsla(283, 49%, 60%, 0.75) calc(var(--space)*1),
+      hsla(2, 74%, 59%, 0.75) calc(var(--space)*2), 
+      hsla(53, 67%, 53%, 0.75) calc(var(--space)*3),  
+      hsla(93, 56%, 52%, 0.75) calc(var(--space)*4),  
+      hsla(176, 38%, 50%, 0.75) calc(var(--space)*5),  
+      hsla(228, 100%, 77%, 0.75) calc(var(--space)*6), 
+      hsla(283, 49%, 61%, 0.75) calc(var(--space)*7)
+    );
+    
+    background-blend-mode: color-dodge;
+    background-size: var(--imgsize);
+    background-position: 0% calc(var(--background-y) * 1), var(--background-x) var(--background-y);
+    
+    filter: brightness(calc((var(--pointer-from-center)*0.3) + 0.5)) contrast(2.3) saturate(1);
+
+}
+
+.card[data-rarity="trainer gallery rare holo"] .card__shine:after,
+.card[data-rarity="rare holo"][data-trainer-gallery="true"] .card__shine:after,
+.card[data-set="swshp"][data-number="swsh020"] .card__shine:after {
+  
+  content: "";
+
+  background-image: 
+    radial-gradient( 
+      farthest-corner ellipse 
+      at calc( ((var(--pointer-x)) * 0.5) + 25% ) calc( ((var(--pointer-y)) * 0.5) + 25% ), 
+      hsl(0, 0%, 100%) 5%, 
+      hsla(300, 100%, 11%, 0.6) 40%, 
+      hsl(0, 0%, 22%) 120% 
+    );
+
+  background-position: center center;
+  background-size: 400% 500%;
+
+  filter: brightness(calc((var(--pointer-from-center)*0.2) + 0.4)) contrast(.85) saturate(1.1);
+  mix-blend-mode: hard-light;
+
+}
+
+.card[data-rarity="trainer gallery rare holo"] .card__shine:before,
+.card[data-rarity="rare holo"][data-trainer-gallery="true"] .card__shine:before,
+.card[data-set="swshp"][data-number="swsh020"] .card__shine:before {
+  content: none;
+  display: none;
+}
+
+
+
+
+
+
+
+
+
+
+
+/*
+
+  GLARE LAYERS
+
+*/
+
+.card[data-rarity="trainer gallery rare holo"] .card__glare,
+.card[data-rarity="rare holo"][data-trainer-gallery="true"] .card__glare,
+.card[data-set="swshp"][data-number="swsh020"] .card__glare {
+
+  background-image: 
+    radial-gradient( 
+      farthest-corner circle at var(--pointer-x) var(--pointer-y), 
+      hsla(0, 0%, 100%, 1) 10%, 
+      hsla(0, 0%, 100%, 0.6) 35%, 
+      hsla(180, 11%, 35%, 1) 60% 
+    );
+
+  mix-blend-mode: soft-light;
+
+}
+
+
+.card[data-rarity="trainer gallery rare holo"] .card__glare:before,
+.card[data-rarity="rare holo"][data-trainer-gallery="true"] .card__glare:before,
+.card[data-rarity="trainer gallery rare holo"] .card__glare:after,
+.card[data-rarity="rare holo"][data-trainer-gallery="true"] .card__glare:after {
+  content: none;
+  display: none;
+}

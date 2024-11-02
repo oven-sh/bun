@@ -35,6 +35,7 @@ const http = bun.http;
 const OOM = bun.OOM;
 const Global = bun.Global;
 const PublishCommand = bun.CLI.PublishCommand;
+const File = bun.sys.File;
 
 const Npm = @This();
 
@@ -1201,28 +1202,35 @@ pub const PackageManifest = struct {
         pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const file_name = try manifestFileName(&file_path_buf, file_id, scope);
-            var cache_file = cache_dir.openFileZ(
-                file_name,
-                .{ .mode = .read_only },
-            ) catch return null;
+            const cache_file = File.openat(cache_dir, file_name, bun.O.RDONLY, 0).unwrap() catch return null;
             defer cache_file.close();
-            return loadByFile(allocator, scope, cache_file);
+
+            delete: {
+                return loadByFile(allocator, scope, cache_file) catch break :delete orelse break :delete;
+            }
+
+            // delete the outdated/invalid manifest
+            try bun.sys.unlinkat(bun.toFD(cache_dir), file_name).unwrap();
+            return null;
         }
 
-        pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: std.fs.File) !?PackageManifest {
-            const bytes = try manifest_file.readToEndAllocOptions(
-                allocator,
-                std.math.maxInt(u32),
-                manifest_file.getEndPos() catch null,
-                @alignOf(u8),
-                null,
-            );
-
+        pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: File) !?PackageManifest {
+            const bytes = try manifest_file.readToEnd(allocator).unwrap();
             errdefer allocator.free(bytes);
+
             if (bytes.len < header_bytes.len) {
                 return null;
             }
-            return try readAll(bytes, scope);
+
+            const manifest = try readAll(bytes, scope) orelse return null;
+
+            if (manifest.versions.len == 0) {
+                // it's impossible to publish a package with zero versions, bust
+                // invalid entry
+                return null;
+            }
+
+            return manifest;
         }
 
         fn readAll(bytes: []const u8, scope: *const Registry.Scope) !?PackageManifest {
@@ -1311,7 +1319,7 @@ pub const PackageManifest = struct {
                 },
             };
 
-            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, manifest_file) catch |err| {
+            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
                 global.throw("failed to load manifest file: {s}", .{@errorName(err)});
                 return .zero;
             };

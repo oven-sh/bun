@@ -158,8 +158,8 @@ pub fn migrateNPMLockfile(
     // Count pass
     var builder_ = this.stringBuilder();
     var builder = &builder_;
-    const name = (if (json.get("name")) |expr| expr.asString(allocator) else null) orelse "";
-    builder.count(name);
+    const root_pkg_name = (if (json.get("name")) |expr| expr.asString(allocator) else null) orelse "";
+    builder.count(root_pkg_name);
 
     var root_package: *E.Object = undefined;
     var packages_properties = brk: {
@@ -292,6 +292,22 @@ pub fn migrateNPMLockfile(
             }
         }
 
+        const workspace_entry = if (workspace_map) |map| map.map.get(pkg_path) else null;
+        const is_workspace = workspace_entry != null;
+
+        if (pkg.get("name")) |name_expr| {
+            if (name_expr.asString(allocator)) |name_str| {
+                builder.count(name_str);
+            }
+        }
+
+        const name = if (is_workspace)
+            workspace_entry.?.name
+        else if (pkg.get("name")) |set_name|
+            (set_name.asString(this.allocator) orelse unreachable)
+        else
+            packageNameFromPath(pkg_path);
+
         if (pkg.get("bin")) |bin| {
             if (bin.data != .e_object) return error.InvalidNPMLockfile;
             switch (bin.data.e_object.properties.len) {
@@ -300,17 +316,7 @@ pub fn migrateNPMLockfile(
                     const first_bin = bin.data.e_object.properties.at(0);
                     const key = first_bin.key.?.asString(allocator).?;
 
-                    const workspace_entry = if (workspace_map) |map| map.map.get(pkg_path) else null;
-                    const is_workspace = workspace_entry != null;
-
-                    const pkg_name = if (is_workspace)
-                        workspace_entry.?.name
-                    else if (entry.value.?.get("name")) |set_name|
-                        (set_name.asString(this.allocator) orelse return error.InvalidNPMLockfile)
-                    else
-                        packageNameFromPath(pkg_path);
-
-                    if (!strings.eql(key, pkg_name)) {
+                    if (!strings.eql(key, name)) {
                         builder.count(key);
                     }
                     builder.count(first_bin.value.?.asString(allocator) orelse return error.InvalidNPMLockfile);

@@ -148,7 +148,6 @@ const Socket = (function (InternalSocket) {
         const self = socket.data;
         if (!self) return;
         socket.timeout(Math.ceil(self.timeout / 1000));
-        self._handle = socket;
 
         if (self.#unrefOnConnected) socket.unref();
         self._handle = socket;
@@ -958,10 +957,10 @@ function createConnection(port, host, connectListener) {
 const connect = createConnection;
 
 class Server extends EventEmitter {
-  _handle = null;
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
+  _handle = null;
 
   constructor(options, connectionListener) {
     super();
@@ -1227,13 +1226,6 @@ class Server extends EventEmitter {
     //
     // process.nextTick() is not sufficient because it will run before the IO queue.
     setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
-  }
-
-  get _handle() {
-    return this;
-  }
-  set _handle(new_handle) {
-    //nothing
   }
 
   getsockname(out) {

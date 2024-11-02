@@ -29,8 +29,7 @@ function getGetter(cls, getter) {
 }
 
 function uncurryThis(func) {
-  // Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
-  return FunctionPrototypeCall.bind(func);
+  return (...args) => func.$call(...args);
 }
 
 const copyProps = (src, dest) => {

@@ -568,8 +568,12 @@ Readable.prototype.setEncoding = function (enc) {
 
   const decoder = new StringDecoder(enc);
   state.decoder = decoder;
-  // If setEncoding(null), decoder.encoding equals utf8.
-  state.encoding = state.decoder.encoding;
+
+  if (enc == null) {
+    state.encoding = "utf8";
+  } else {
+    state.encoding = state.decoder.encoding;
+  }
 
   // Iterate over current buffer to convert already stored Buffers:
   let content = "";

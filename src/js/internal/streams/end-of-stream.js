@@ -127,10 +127,10 @@ function eos(stream, options, callback) {
     }
 
     if (readable && !readableFinished && isReadableNodeStream(stream, true)) {
-      if (!isReadableFinished(stream, false)) return callback.$call(stream, $ERR_STREAM_PREMATURE_CLOSE());
+      if (!isReadableFinished(stream, false)) return callback.$call(stream, $ERR_STREAM_PREMATURE_CLOSE("readable"));
     }
     if (writable && !writableFinished) {
-      if (!isWritableFinished(stream, false)) return callback.$call(stream, $ERR_STREAM_PREMATURE_CLOSE());
+      if (!isWritableFinished(stream, false)) return callback.$call(stream, $ERR_STREAM_PREMATURE_CLOSE("writable"));
     }
 
     callback.$call(stream);

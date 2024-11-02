@@ -30,6 +30,7 @@ const Duplex = require("../streams/duplex");
 
 const kEmptyObject = Object.freeze({ __proto__: null });
 
+const { destroy } = require("../streams/destroy");
 
 function handleKnownInternalErrors(cause) {
   switch (true) {

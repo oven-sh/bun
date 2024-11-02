@@ -219,7 +219,6 @@ function pipelineImpl(streams, callback, opts) {
   }
 
   function finishImpl(err, final) {
-    console.trace("finishImpl", err, final);
     if (err && (!error || error.code === "ERR_STREAM_PREMATURE_CLOSE")) {
       error = err;
     }
@@ -296,6 +295,7 @@ function pipelineImpl(streams, callback, opts) {
       if (isTransformStream(ret)) {
         ret = makeAsyncIterable(ret?.readable);
       } else {
+        // AAAA FUCK AAAAAAA
         ret = makeAsyncIterable(ret);
       }
       ret = stream(ret, { signal });

@@ -93,9 +93,6 @@ function generate(ssl) {
       bytesWritten: {
         getter: "getBytesWritten",
       },
-      bufferedQueueSize: {
-        getter: "getBufferedQueueSize",
-      },
       write: {
         fn: "write",
         length: 3,

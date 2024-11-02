@@ -1490,9 +1490,11 @@ fn NewSocket(comptime ssl: bool) type {
             if (vm.isShuttingDown()) {
                 return;
             }
+            this.ref();
+            defer this.deref();
             this.internalFlush();
             // is not writable if we have buffered data
-            if (this.buffered_data_for_node_net.len > 0) return;
+            if (this.buffered_data_for_node_net.len > 0 or this.socket.isDetached()) return;
 
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
@@ -2727,12 +2729,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             return JSC.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
-        pub fn getBufferedQueueSize(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-        ) JSValue {
-            return JSC.JSValue.jsNumber(this.buffered_data_for_node_net.len);
-        }
+
         pub fn getALPNProtocol(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

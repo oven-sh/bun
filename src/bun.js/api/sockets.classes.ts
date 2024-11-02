@@ -83,9 +83,6 @@ function generate(ssl) {
       alpnProtocol: {
         getter: "getALPNProtocol",
       },
-      bytesWritten: {
-        getter: "getBytesWritten",
-      },
       write: {
         fn: "write",
         length: 3,
@@ -169,7 +166,9 @@ function generate(ssl) {
       bytesWritten: {
         getter: "getBytesWritten",
       },
-
+      bufferedQueueSize: {
+        getter: "getBufferedQueueSize",
+      },
       setServername: {
         fn: "setServername",
         length: 1,

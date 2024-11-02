@@ -241,7 +241,7 @@ const Socket = (function (InternalSocket) {
       if (callback) {
         const writeChunk = self._pendingData;
 
-        if (socket.$write(writeChunk || "", "utf8")) {
+        if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
           self._pendingData = self.#writeCallback = null;
           callback(null);
         } else {
@@ -856,16 +856,28 @@ const Socket = (function (InternalSocket) {
       if (!socket) {
         // detached but connected? wait for the socket to be attached
         this.#writeCallback = callback;
-        this._pendingEncoding = "buffer";
-        this._pendingData = Buffer.from(chunk, encoding);
+        this._pendingEncoding = encoding;
+        this._pendingData = chunk;
         return;
       }
 
-      const success = socket?.$write(chunk, encoding);
+      const writeResult = socket.$write(chunk, encoding);
       this[kBytesWritten] = socket.bytesWritten;
-      if (success) {
-        callback();
-      } else if (this.#writeCallback) {
+      switch (writeResult) {
+        case -1:
+          // dropped
+          this.#writeCallback = callback;
+          this._pendingEncoding = encoding;
+          this._pendingData = chunk;
+          break;
+        default:
+          // written or buffered by the socket
+          if (socket.bufferedQueueSize === 0) {
+            callback();
+            return;
+          }
+      }
+      if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
         this.#writeCallback = callback;

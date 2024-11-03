@@ -50,6 +50,7 @@ interface PluginBuilderExt extends PluginBuilder {
 export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: BuildConfigExt) {
   var onLoadPlugins = new Map<string, [RegExp, AnyFunction][]>();
   var onResolvePlugins = new Map<string, [RegExp, AnyFunction][]>();
+  var onBeforeParsePlugins = new Map<string, [RegExp, AnyFunction][]>();
 
   function validate(filterObject: PluginConstraints, callback, map) {
     if (!filterObject || !$isObject(filterObject)) {
@@ -58,6 +59,12 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
 
     if (!callback || !$isCallable(callback)) {
       throw new TypeError("callback must be a function");
+    }
+
+    if (map === onBeforeParsePlugins) {
+      if (typeof callback.ptr !== "number" && typeof callback?.native?.ptr !== "number") {
+        throw new TypeError("onBeforeParse callback must be an FFI function");
+      }
     }
 
     var { filter, namespace = "file" } = filterObject;
@@ -99,9 +106,14 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     validate(filterObject, callback, onResolvePlugins);
   }
 
+  function onBeforeParse(filterObject, callback) {
+    validate(filterObject, callback, onBeforeParsePlugins);
+  }
+
   const processSetupResult = () => {
     var anyOnLoad = false,
-      anyOnResolve = false;
+      anyOnResolve = false,
+      anyOnBeforeParse = false;
 
     for (var [namespace, callbacks] of onLoadPlugins.entries()) {
       for (var [filter] of callbacks) {
@@ -114,6 +126,13 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       for (var [filter] of callbacks) {
         this.addFilter(filter, namespace, 0);
         anyOnResolve = true;
+      }
+    }
+
+    for (var [namespace, callbacks] of onBeforeParsePlugins.entries()) {
+      for (var [filter, callback] of callbacks) {
+        this.onBeforeParse(filter, namespace, callback);
+        anyOnBeforeParse = true;
       }
     }
 
@@ -151,7 +170,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
       }
     }
 
-    return anyOnLoad || anyOnResolve;
+    return anyOnLoad || anyOnResolve || anyOnBeforeParse;
   };
 
   var setupResult = setup({
@@ -160,6 +179,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
+    onBeforeParse,
     onStart: notImplementedIssueFn(2771, "On-start callbacks"),
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: () => {

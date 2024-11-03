@@ -373,6 +373,9 @@ pub const BundleV2 = struct {
     /// See the comment in `Chunk.OutputPiece`
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
+    has_on_parse_plugins: bool = false,
+
+    finalizers: std.ArrayListUnmanaged(CacheEntry.External) = .{},
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -399,6 +402,10 @@ pub const BundleV2 = struct {
             .browser => this.client_bundler,
             .bake_server_components_ssr => this.ssr_bundler,
         };
+    }
+
+    pub fn hasOnParsePlugins(this: *const BundleV2) bool {
+        return this.has_on_parse_plugins;
     }
 
     /// Same semantics as bundlerForTarget for `path_to_source_index_map`
@@ -1520,8 +1527,9 @@ pub const BundleV2 = struct {
             .task = JSBundleCompletionTask.TaskCompletion.init(completion),
         };
 
-        if (plugins) |plugin|
+        if (plugins) |plugin| {
             plugin.setConfig(completion);
+        }
 
         // Ensure this exists before we spawn the thread to prevent any race
         // conditions from creating two
@@ -1973,6 +1981,16 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinit(this: *BundleV2) void {
+        {
+            // We do this first to make it harder for any dangling pointers to data to be used in there.
+            var on_parse_finalizers = this.finalizers;
+            this.finalizers = .{};
+            for (on_parse_finalizers.items) |finalizer| {
+                finalizer.call();
+            }
+            on_parse_finalizers.deinit(bun.default_allocator);
+        }
+
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
@@ -2674,6 +2692,10 @@ pub const BundleV2 = struct {
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
         const trace = tracer(@src(), "onParseTaskComplete");
         defer trace.end();
+        if (parse_result.external.function != null) {
+            this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
+        }
+
         defer bun.default_allocator.destroy(parse_result);
 
         const graph = &this.graph;
@@ -3139,6 +3161,7 @@ pub const ParseTask = struct {
         },
         contents: string,
     },
+    external: CacheEntry.External = .{},
     side_effects: _resolver.SideEffects,
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
@@ -3158,6 +3181,7 @@ pub const ParseTask = struct {
         ctx: *BundleV2,
         value: Value,
         watcher_data: WatcherData,
+        external: CacheEntry.External = .{},
 
         pub const Value = union(enum) {
             success: Success,
@@ -3592,23 +3616,17 @@ pub const ParseTask = struct {
         return ast;
     }
 
-    fn run(
+    fn getCodeForParseTaskWithoutPlugins(
         task: *ParseTask,
-        this: *ThreadPool.Worker,
-        step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
-    ) anyerror!Result.Success {
-        const allocator = this.allocator;
-
-        var data = this.data;
-        var bundler = &data.bundler;
-        errdefer bundler.resetStore();
-        var resolver: *Resolver = &bundler.resolver;
-        var file_path = task.path;
-        step.* = .read_file;
-        const loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
-
-        var entry: CacheEntry = switch (task.contents_or_fd) {
+        bundler: *Bundler,
+        resolver: *Resolver,
+        allocator: std.mem.Allocator,
+        file_path: *Fs.Path,
+        loader: Loader,
+        experimental_css: bool,
+    ) !CacheEntry {
+        return switch (task.contents_or_fd) {
             .fd => |contents| brk: {
                 const trace = tracer(@src(), "readFile");
                 defer trace.end();
@@ -3619,7 +3637,7 @@ pub const ParseTask = struct {
                             switch (file) {
                                 .code => |code| break :brk .{ .contents = code },
                                 .import => |path| {
-                                    file_path = Fs.Path.init(path);
+                                    file_path.* = Fs.Path.init(path);
                                     break :lookup_builtin;
                                 },
                             }
@@ -3632,7 +3650,7 @@ pub const ParseTask = struct {
                 }
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
-                    if (loader.shouldCopyForBundling(this.ctx.bundler.options.experimental_css))
+                    if (loader.shouldCopyForBundling(experimental_css))
                         // The OutputFile will own the memory for the contents
                         bun.default_allocator
                     else
@@ -3675,8 +3693,303 @@ pub const ParseTask = struct {
                 .fd = bun.invalid_fd,
             },
         };
+    }
 
-        errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
+    fn getCodeForParseTask(
+        task: *ParseTask,
+        log: *Logger.Log,
+        bundler: *Bundler,
+        resolver: *Resolver,
+        allocator: std.mem.Allocator,
+        file_path: *Fs.Path,
+        loader: *Loader,
+        experimental_css: bool,
+    ) !CacheEntry {
+        const might_have_on_parse_plugins = brk: {
+            if (task.source_index.isRuntime()) break :brk false;
+            const plugin = task.ctx.plugins orelse break :brk false;
+            if (!plugin.hasOnBeforeParsePlugins()) break :brk false;
+
+            if (strings.eqlComptime(file_path.namespace, "node")) {
+                break :brk false;
+            }
+            break :brk true;
+        };
+
+        if (!might_have_on_parse_plugins) {
+            return getCodeForParseTaskWithoutPlugins(task, log, bundler, resolver, allocator, file_path, loader.*, experimental_css);
+        }
+
+        var should_continue_running: i32 = 1;
+
+        var ctx = OnBeforeParsePlugin{
+            .task = task,
+            .log = log,
+            .bundler = bundler,
+            .resolver = resolver,
+            .allocator = allocator,
+            .file_path = file_path,
+            .loader = loader,
+            .experimental_css = experimental_css,
+            .deferred_error = null,
+            .should_continue_running = &should_continue_running,
+        };
+
+        return try ctx.run(task.ctx.plugins.?);
+    }
+
+    const OnBeforeParsePlugin = struct {
+        task: *ParseTask,
+        log: *Logger.Log,
+        bundler: *Bundler,
+        resolver: *Resolver,
+        allocator: std.mem.Allocator,
+        file_path: *Fs.Path,
+        loader: *Loader,
+        experimental_css: bool,
+        deferred_error: ?anyerror = null,
+        should_continue_running: *i32,
+
+        result: ?*OnBeforeParseResult = null,
+
+        const OnBeforeParseArguments = extern struct {
+            context: *OnBeforeParsePlugin,
+            path_ptr: [*]const u8 = "",
+            path_len: usize = 0,
+            namespace_ptr: [*]const u8 = "file",
+            namespace_len: usize = "file".len,
+            default_loader: Loader = .file,
+        };
+
+        const BunLogOptions = extern struct {
+            message_ptr: ?[*]const u8 = null,
+            message_len: usize = 0,
+            path_ptr: ?[*]const u8 = null,
+            path_len: usize = 0,
+            source_line_text_ptr: ?[*]const u8 = null,
+            source_line_text_len: usize = 0,
+            level: Logger.Log.Level = .err,
+            line: i32 = 0,
+            column: i32 = 0,
+            lineEnd: i32 = 0,
+            columnEnd: i32 = 0,
+
+            pub fn sourceLineText(this: *const BunLogOptions) string {
+                if (this.source_line_text_ptr) |ptr| {
+                    if (this.source_line_text_len > 0) {
+                        return ptr[0..this.source_line_text_len];
+                    }
+                }
+                return "";
+            }
+
+            pub fn path(this: *const BunLogOptions) string {
+                if (this.path_ptr) |ptr| {
+                    if (this.path_len > 0) {
+                        return ptr[0..this.path_len];
+                    }
+                }
+                return "";
+            }
+
+            pub fn message(this: *const BunLogOptions) string {
+                if (this.message_ptr) |ptr| {
+                    if (this.message_len > 0) {
+                        return ptr[0..this.message_len];
+                    }
+                }
+                return "";
+            }
+
+            pub fn append(this: *const BunLogOptions, log: *Logger.Log, namespace: string) void {
+                const allocator = log.msgs.allocator;
+                const source_line_text = this.sourceLineText();
+                const location = Logger.Location.init(
+                    this.path(),
+                    namespace,
+                    @max(this.line, -1),
+                    @max(this.column, -1),
+                    @max(this.columnEnd - this.column, 0),
+                    if (source_line_text.len > 0) allocator.dupe(u8, source_line_text) catch bun.outOfMemory() else null,
+                    null,
+                );
+                var msg = Logger.Msg{ .data = .{ .location = location, .text = allocator.dupe(u8, this.message()) catch bun.outOfMemory() } };
+                switch (this.level) {
+                    .err => msg.kind = .err,
+                    .warn => msg.kind = .warn,
+                    .verbose => msg.kind = .verbose,
+                    .debug => msg.kind = .debug,
+                    else => {},
+                }
+                if (msg.kind == .err) {
+                    log.errors += 1;
+                } else if (msg.kind == .warn) {
+                    log.warnings += 1;
+                }
+                log.addMsg(msg) catch bun.outOfMemory();
+            }
+
+            pub fn logFn(
+                args_: ?*OnBeforeParseArguments,
+                log_options_: ?*BunLogOptions,
+            ) callconv(.C) void {
+                const args = args_ orelse return;
+                const log_options = log_options_ orelse return;
+                log_options.append(args.context.log, args.context.file_path.namespace);
+            }
+        };
+
+        const OnBeforeParseResult = extern struct {
+            source_ptr: ?[*]const u8 = null,
+            source_len: usize = 0,
+            loader: Loader,
+
+            fetch_source_code_fn: *const fn (*const OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+
+            user_context: ?*anyopaque = null,
+            free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
+
+            log: *const fn (
+                args_: ?*OnBeforeParseArguments,
+                log_options_: ?*BunLogOptions,
+            ) callconv(.C) void = &BunLogOptions.logFn,
+        };
+
+        pub fn fetchSourceCode(args: *const OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+            debug("fetchSourceCode", .{});
+            const this = args.context;
+            if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {
+                return 1;
+            }
+
+            if (result.source_ptr != null) {
+                return 0;
+            }
+
+            const entry = getCodeForParseTaskWithoutPlugins(
+                this.task,
+                this.log,
+                this.bundler,
+                this.resolver,
+                this.allocator,
+                this.file_path,
+
+                // Allow the user to modify the loader
+                result.loader,
+
+                this.experimental_css,
+            ) catch |err| {
+                this.deferred_error = err;
+                this.should_continue_running.* = 0;
+                return 1;
+            };
+            result.source_ptr = entry.contents.ptr;
+            result.source_len = entry.contents.len;
+            result.free_user_context = null;
+            result.user_context = null;
+            return 0;
+        }
+
+        pub export fn OnBeforeParsePlugin__isDone(this: *OnBeforeParsePlugin) i32 {
+            if (this.should_continue_running.* != 1) {
+                return 1;
+            }
+
+            const result = this.result orelse return 1;
+            if (result.source_ptr != null) {
+                return 1;
+            }
+
+            return 0;
+        }
+
+        pub fn run(this: *OnBeforeParsePlugin, plugin: *JSC.API.JSBundler.Plugin) !CacheEntry {
+            var args = OnBeforeParseArguments{
+                .context = this,
+                .path_ptr = this.file_path.text.ptr,
+                .path_len = this.file_path.text.len,
+                .default_loader = this.loader.*,
+            };
+            if (this.file_path.namespace.len > 0) {
+                args.namespace_ptr = this.file_path.namespace.ptr;
+                args.namespace_len = this.file_path.namespace.len;
+            }
+            var result = OnBeforeParseResult{
+                .loader = this.loader.*,
+            };
+            this.result = &result;
+            const count = plugin.callOnBeforeParsePlugins(
+                this,
+                if (bun.strings.eqlComptime(this.file_path.namespace, "file"))
+                    &bun.String.empty
+                else
+                    &bun.String.init(this.file_path.namespace),
+
+                &bun.String.init(this.file_path.text),
+                &args,
+                this.result,
+                this.should_continue_running,
+            );
+            if (comptime Environment.enable_logs)
+                debug("callOnBeforeParsePlugins({s}:{s}) = {d}", .{ this.file_path.namespace, this.file_path.text, count });
+            if (count > 0) {
+                if (this.deferred_error) |err| {
+                    if (result.free_user_context) |free_user_context| {
+                        free_user_context(result.user_context);
+                    }
+
+                    return err;
+                }
+
+                if (this.log.errors > 0) {
+                    if (result.free_user_context) |free_user_context| {
+                        free_user_context(result.user_context);
+                    }
+
+                    return error.SyntaxError;
+                }
+
+                if (result.source_ptr) |ptr| {
+                    if (result.free_user_context != null) {
+                        this.task.external = CacheEntry.External{
+                            .ctx = result.user_context,
+                            .function = result.free_user_context,
+                        };
+                    }
+                    this.loader.* = result.loader;
+                    return CacheEntry{
+                        .contents = ptr[0..result.source_len],
+                        .external = .{
+                            .ctx = result.user_context,
+                            .function = result.free_user_context,
+                        },
+                    };
+                }
+            }
+
+            return try getCodeForParseTaskWithoutPlugins(this.task, this.log, this.bundler, this.resolver, this.allocator, this.file_path, this.loader.*, this.experimental_css);
+        }
+    };
+
+    fn run(
+        task: *ParseTask,
+        this: *ThreadPool.Worker,
+        step: *ParseTask.Result.Error.Step,
+        log: *Logger.Log,
+    ) anyerror!Result.Success {
+        const allocator = this.allocator;
+
+        var data = this.data;
+        var bundler = &data.bundler;
+        errdefer bundler.resetStore();
+        var resolver: *Resolver = &bundler.resolver;
+        var file_path = task.path;
+        step.* = .read_file;
+        var loader = task.loader orelse file_path.loader(&bundler.options.loaders) orelse options.Loader.file;
+
+        const original_contents_or_fd = task.contents_or_fd;
+        var entry = try getCodeForParseTask(task, log, bundler, resolver, allocator, &file_path, &loader, this.ctx.bundler.options.experimental_css);
+        errdefer if (original_contents_or_fd == .fd) entry.deinit(allocator);
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
             entry.fd.isValid() and !entry.fd.isStdio() and
@@ -3685,10 +3998,12 @@ pub const ParseTask = struct {
             _ = entry.closeFD();
             task.contents_or_fd = .{ .fd = .{ .file = bun.invalid_fd, .dir = bun.invalid_fd } };
         } else {
-            task.contents_or_fd = .{ .fd = .{
-                .file = entry.fd,
-                .dir = bun.invalid_fd,
-            } };
+            task.contents_or_fd = .{
+                .fd = .{
+                    .file = entry.fd,
+                    .dir = bun.invalid_fd,
+                },
+            };
         }
         step.* = .parse;
 
@@ -3869,6 +4184,7 @@ pub const ParseTask = struct {
             .ctx = this.ctx,
             .task = undefined,
             .value = value,
+            .external = this.external,
             .watcher_data = .{
                 .fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.file else bun.invalid_fd,
                 .dir_fd = if (this.contents_or_fd == .fd) this.contents_or_fd.fd.dir else bun.invalid_fd,

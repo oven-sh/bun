@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include "JSFFIFunction.h"
 
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -23,7 +24,10 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
+#include "ErrorCode.h"
 namespace Bun {
+
+extern "C" int OnBeforeParsePlugin__isDone(void* context);
 
 #define WRAP_BUNDLER_PLUGIN(argName) jsNumber(bitwise_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(bitwise_cast<uintptr_t>(callFrame->argument(0).asDouble()))
@@ -37,15 +41,17 @@ JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addError);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync);
+JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse);
 
-void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString)
+void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, unsigned& index)
 {
-    auto* nsGroup = group(namespaceString);
+    auto* nsGroup = group(namespaceString, index);
 
     if (nsGroup == nullptr) {
         namespaces.append(namespaceString);
         groups.append(Vector<Yarr::RegularExpression> {});
         nsGroup = &groups.last();
+        index = namespaces.size() - 1;
     }
 
     Yarr::RegularExpression regex(
@@ -55,55 +61,40 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTFMove(regex));
 }
 
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
+static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
 {
     constexpr bool usesPatternContextBuffer = false;
-    if (isOnLoad) {
-        if (this->onLoad.fileNamespace.isEmpty() && this->onLoad.namespaces.isEmpty())
-            return false;
 
-        // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
+    if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
+        return false;
 
-        auto* group = this->onLoad.group(namespaceString);
-        if (group == nullptr) {
-            return false;
-        }
+    // Avoid unnecessary string copies
+    auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
+    unsigned index = 0;
+    auto* group = list.group(namespaceString, index);
+    if (group == nullptr) {
+        return false;
+    }
 
-        auto& filters = *group;
-        auto pathString = path->toWTFString(BunString::ZeroCopy);
+    auto& filters = *group;
+    auto pathString = path->toWTFString(BunString::ZeroCopy);
 
-        for (auto& filter : filters) {
-            Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
-            if (filter.match(pathString) > -1) {
-                return true;
-            }
-        }
-
-    } else {
-        if (this->onResolve.fileNamespace.isEmpty() && this->onResolve.namespaces.isEmpty())
-            return false;
-
-        // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
-
-        auto* group = this->onResolve.group(namespaceString);
-        if (group == nullptr) {
-            return false;
-        }
-
-        auto pathString = path->toWTFString(BunString::ZeroCopy);
-        auto& filters = *group;
-
-        for (auto& filter : filters) {
-            Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
-            if (filter.match(pathString) > -1) {
-                return true;
-            }
+    for (auto& filter : filters) {
+        Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+        if (filter.match(pathString) > -1) {
+            return true;
         }
     }
 
     return false;
+}
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
+{
+    if (isOnLoad) {
+        return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
+    } else {
+        return anyMatchesForNamespace(vm, this->onResolve, namespaceStr, path);
+    }
 }
 
 static const HashTableValue JSBundlerPluginHashTable[] = {
@@ -111,6 +102,7 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "addError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_addError, 3 } },
     { "onLoadAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onLoadAsync, 3 } },
     { "onResolveAsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onResolveAsync, 4 } },
+    { "onBeforeParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_onBeforeParse, 4 } },
 };
 
 class JSBundlerPlugin final : public JSC::JSNonFinalObject {
@@ -155,7 +147,6 @@ public:
     Bun::BundlerPlugin plugin;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
-    JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> moduleFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
 
 private:
@@ -196,14 +187,103 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
         namespaceStr = String();
     }
 
-    bool isOnLoad = callFrame->argument(2).toNumber(globalObject) == 1;
+    uint32_t isOnLoad = callFrame->argument(2).toUInt32(globalObject);
     auto& vm = globalObject->vm();
 
+    unsigned index = 0;
     if (isOnLoad) {
-        thisObject->plugin.onLoad.append(vm, regExp->regExp(), namespaceStr);
+        thisObject->plugin.onLoad.append(vm, regExp->regExp(), namespaceStr, index);
     } else {
-        thisObject->plugin.onResolve.append(vm, regExp->regExp(), namespaceStr);
+        thisObject->plugin.onResolve.append(vm, regExp->regExp(), namespaceStr, index);
     }
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+static JSBundlerPluginNativeOnBeforeParseCallback nativeCallbackFromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    if (auto* fn = jsDynamicCast<JSFFIFunction*>(value)) {
+        return reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(fn->symbolFromDynamicLibrary);
+    }
+
+    if (auto* object = value.getObject()) {
+        if (auto callbackValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(globalObject->vm(), String("native"_s)))) {
+            if (auto* fn = jsDynamicCast<JSFFIFunction*>(callbackValue)) {
+                return reinterpret_cast<JSBundlerPluginNativeOnBeforeParseCallback>(fn->symbolFromDynamicLibrary);
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback)
+{
+    unsigned index = 0;
+    this->BundlerPlugin::NamespaceList::append(vm, filter, namespaceString, index);
+    if (index == std::numeric_limits<unsigned>::max()) {
+        this->fileCallbacks.append(callback);
+    } else {
+        if (this->namespaceCallbacks.size() <= index) {
+            this->namespaceCallbacks.grow(index + 1);
+        }
+        this->namespaceCallbacks[index].append(callback);
+    }
+}
+
+int BundlerPlugin::NativePluginList::call(JSC::VM& vm, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, void* onBeforeParseArgs, void* onBeforeParseResult)
+{
+    unsigned index = 0;
+    const auto* group = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
+    if (group == nullptr) {
+        return -1;
+    }
+
+    const auto& callbacks = index == std::numeric_limits<unsigned>::max() ? this->fileCallbacks : this->namespaceCallbacks[index];
+    ASSERT_WITH_MESSAGE(callbacks.size() == group->size(), "Number of callbacks and filters must match");
+    if (callbacks.isEmpty()) {
+        return -1;
+    }
+
+    int count = 0;
+    constexpr bool usesPatternContextBuffer = false;
+    const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
+    for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
+        Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+        if (group->at(i).match(path) > -1) {
+            callbacks[i](1, onBeforeParseArgs, onBeforeParseResult);
+            count++;
+        }
+        if (OnBeforeParsePlugin__isDone(bunContextPtr)) {
+            return count;
+        }
+    }
+
+    return count;
+}
+JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
+    if (thisObject->plugin.tombstoned) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::RegExpObject* regExp = jsCast<JSC::RegExpObject*>(callFrame->argument(0));
+    WTF::String namespaceStr = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (namespaceStr == "file"_s) {
+        namespaceStr = String();
+    }
+
+    auto* callback = nativeCallbackFromJS(globalObject, callFrame->argument(2));
+    if (!callback) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected callback (2nd argument) to be an FFI function"_s);
+        return {};
+    }
+
+    thisObject->plugin.onBeforeParse.append(vm, regExp->regExp(), namespaceStr, callback);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -422,6 +502,23 @@ extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* c
 extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.tombstone();
+}
+
+extern "C" int JSBundlerPlugin__callOnBeforeParsePlugins(
+    Bun::JSBundlerPlugin* plugin,
+    void* bunContextPtr,
+    const BunString* namespaceStr,
+    const BunString* pathString,
+    void* onBeforeParseArgs,
+    void* onBeforeParseResult,
+    int* shouldContinue)
+{
+    return plugin->plugin.onBeforeParse.call(plugin->vm(), shouldContinue, bunContextPtr, namespaceStr, pathString, onBeforeParseArgs, onBeforeParseResult);
+}
+
+extern "C" int JSBundlerPlugin__hasOnBeforeParsePlugins(Bun::JSBundlerPlugin* plugin)
+{
+    return plugin->plugin.onBeforeParse.namespaceCallbacks.size() > 0 || plugin->plugin.onBeforeParse.fileCallbacks.size() > 0;
 }
 
 } // namespace Bun

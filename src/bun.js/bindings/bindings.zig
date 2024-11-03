@@ -6683,6 +6683,7 @@ const private = struct {
         functionPointer: JSHostFunctionPtr,
         strong: bool,
         add_ptr_field: bool,
+        inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -6701,7 +6702,7 @@ pub fn NewFunction(
     comptime functionPointer: anytype,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false, null);
 }
 
 pub fn createCallback(
@@ -6710,7 +6711,7 @@ pub fn createCallback(
     argCount: u32,
     comptime functionPointer: anytype,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false, null);
 }
 
 pub fn NewRuntimeFunction(
@@ -6720,9 +6721,10 @@ pub fn NewRuntimeFunction(
     functionPointer: JSHostFunctionPtr,
     strong: bool,
     add_ptr_property: bool,
+    inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {

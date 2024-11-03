@@ -19,8 +19,8 @@ static const bun_loader_t BunLoaderToml = 7;
 static const bun_loader_t BunLoaderWasm = 8;
 static const bun_loader_t BunLoaderNapi = 9;
 static const bun_loader_t BunLoaderBase64 = 10;
-static const bun_loader_t BunLoaderDataurl = 10;
-static const bun_loader_t BunLoaderText = 11;
+static const bun_loader_t BunLoaderDataurl = 11;
+static const bun_loader_t BunLoaderText = 12;
 
 typedef uint8_t bun_target_t;
 static const bun_target_t BunTargetBrowser = 0;

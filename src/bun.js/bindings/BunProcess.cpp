@@ -2212,6 +2212,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     return {};
 }
 
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_process_methods.cc#L465-L470
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -2221,10 +2222,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     if (arg0.isAnyInt()) {
         exitCode = static_cast<uint8_t>(arg0.toInt32(globalObject) % 256);
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-    } else if (!arg0.isUndefinedOrNull()) {
-        throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
-        return {};
     } else {
+        // ignore non-integers, matching Node.js behavior.
         exitCode = Bun__getExitCode(bunVM(globalObject));
     }
 

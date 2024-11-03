@@ -1306,7 +1306,7 @@ pub const Bundler = struct {
                     bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} parsing data url \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;
                 };
-                const body = data_url.decodeData(bun.default_allocator) catch |err| {
+                const body = data_url.decodeData(this_parse.allocator) catch |err| {
                     bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} decoding data \"{s}\"", .{ @errorName(err), path.text }) catch {};
                     return null;
                 };

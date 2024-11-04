@@ -27,6 +27,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
+#include "EventLoopTask.h"
 
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -2711,6 +2712,14 @@ extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, Encoded
     process->queueNextTick(vm, globalObject, JSValue::decode(value), JSValue::decode(arg1));
 }
 JSC_DECLARE_HOST_FUNCTION(Bun__Process__queueNextTick1);
+
+extern "C" void Bun__queueFinishNapiFinalizers(JSGlobalObject* jsGlobalObject)
+{
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
+    globalObject->queueTask(new EventLoopTask([globalObject](ScriptExecutionContext&) {
+        globalObject->finishNapiFinalizers();
+    }));
+}
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {

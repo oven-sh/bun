@@ -3,15 +3,17 @@
 #include "napi.h"
 #include "napi_macros.h"
 
-extern "C" void napi_enqueue_finalizer(napi_env env, napi_finalize finalize_cb, void* data, void* hint);
-
 namespace Bun {
 
-void NapiFinalizer::call(napi_env env, void* data)
+void NapiFinalizer::call(napi_env env, void* data, bool immediate)
 {
     if (m_callback) {
         NAPI_LOG_CURRENT_FUNCTION;
-        napi_enqueue_finalizer(env, m_callback, data, m_hint);
+        if (immediate) {
+            m_callback(env, data, m_hint);
+        } else {
+            napi_internal_enqueue_finalizer(env, m_callback, data, m_hint);
+        }
     }
 }
 

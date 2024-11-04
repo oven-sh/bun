@@ -14,16 +14,57 @@
 #include "napi_handle_scope.h"
 #include "napi_finalizer.h"
 
+#include <unordered_set>
+
+extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_crash_in_gc(napi_env);
+
 struct napi_env__ {
 public:
     napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
     {
+        napi_internal_register_cleanup_zig(this);
     }
 
-    Zig::GlobalObject* globalObject() const { return m_globalObject; }
-    const napi_module& napiModule() const { return m_napiModule; }
+    void cleanup()
+    {
+        for (const BoundFinalizer& boundFinalizer : m_finalizers) {
+            Bun::NapiHandleScope handle_scope(m_globalObject);
+            if (boundFinalizer.callback) {
+                boundFinalizer.callback(this, boundFinalizer.hint, boundFinalizer.data);
+            }
+        }
+
+        m_finalizers.clear();
+    }
+
+    void removeFinalizer(napi_finalize callback, void* hint, void* data)
+    {
+        m_finalizers.erase({ callback, hint, data });
+    }
+
+    void addFinalizer(napi_finalize callback, void* hint, void* data)
+    {
+        m_finalizers.emplace(callback, hint, data);
+    }
+
+    void checkGC()
+    {
+        if (UNLIKELY(!mustAlwaysDefer() && m_globalObject->vm().heap.mutatorState() == JSC::MutatorState::Sweeping)) {
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE(
+                "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
+                "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
+                "inside the finalizer to defer the code to the next event loop tick.\n",
+                m_napiModule.nm_version);
+        }
+    }
+
+    inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    inline const napi_module& napiModule() const { return m_napiModule; }
+
+    inline bool mustAlwaysDefer() const { return m_napiModule.nm_version <= 8; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -37,12 +78,53 @@ public:
     };
 
     void* instanceData = nullptr;
-    Bun::NapiFinalizer instanceDataFinalizer;
+    WTF::RefPtr<Bun::NapiFinalizer> instanceDataFinalizer;
 
 private:
+    struct BoundFinalizer {
+        napi_finalize callback = nullptr;
+        void* hint = nullptr;
+        void* data = nullptr;
+
+        BoundFinalizer() = default;
+
+        BoundFinalizer(const Bun::NapiFinalizer& finalizer, void* data)
+            : callback(finalizer.callback())
+            , hint(finalizer.hint())
+            , data(data)
+        {
+        }
+
+        BoundFinalizer(napi_finalize callback, void* hint, void* data)
+            : callback(callback)
+            , hint(hint)
+            , data(data)
+        {
+        }
+
+        bool operator==(const BoundFinalizer& other) const
+        {
+            return this == &other || (callback == other.callback && hint == other.hint && data == other.data);
+        }
+
+        struct Hash {
+            std::size_t operator()(const napi_env__::BoundFinalizer& bound) const
+            {
+                constexpr std::hash<void*> hasher;
+                constexpr std::ptrdiff_t magic = 0x9e3779b9;
+                return (hasher(reinterpret_cast<void*>(bound.callback)) + magic) ^ (hasher(bound.hint) + magic) ^ (hasher(bound.data) + magic);
+            }
+        };
+    };
+
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
+    // TODO(@heimskr): Use WTF::HashSet
+    std::unordered_set<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
 };
+
+extern "C" void napi_internal_cleanup_env_cpp(napi_env);
+extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
 namespace JSC {
 class JSGlobalObject;
@@ -54,7 +136,6 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 }
 
 namespace Zig {
-
 using namespace JSC;
 
 static inline JSValue toJS(napi_value val)
@@ -165,11 +246,12 @@ public:
     void unref();
     void clear();
 
-    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
+    NapiRef(napi_env env, uint32_t count, WTF::RefPtr<Bun::NapiFinalizer> finalizer, bool defer)
         : env(env)
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
-        , finalizer(finalizer)
+        , finalizer(std::move(finalizer))
         , refCount(count)
+        , defer(defer)
     {
     }
 
@@ -194,10 +276,11 @@ public:
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
-    Bun::NapiFinalizer finalizer;
+    WTF::RefPtr<Bun::NapiFinalizer> finalizer;
     void* data = nullptr;
     uint32_t refCount = 0;
     bool isOwnedByRuntime = false;
+    bool defer = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

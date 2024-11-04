@@ -427,6 +427,7 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 }
 
 extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+extern fn Bun__queueFinishNapiFinalizers(?*JSC.JSGlobalObject) callconv(.C) void;
 
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
@@ -1317,6 +1318,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn onBeforeExit(this: *VirtualMachine) void {
+        Bun__queueFinishNapiFinalizers(this.global);
         this.exit_handler.dispatchOnBeforeExit();
         var dispatch = false;
         while (true) {

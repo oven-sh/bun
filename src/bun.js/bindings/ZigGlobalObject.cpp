@@ -1164,7 +1164,9 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 GlobalObject::~GlobalObject()
 {
     for (const auto& env : m_napiEnvs) {
-        env->instanceDataFinalizer.call(env.get(), env->instanceData);
+        if (env->instanceDataFinalizer) {
+            env->instanceDataFinalizer->call(env.get(), env->instanceData);
+        }
     }
 
     if (auto* ctx = scriptExecutionContext()) {
@@ -4275,6 +4277,13 @@ napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
 {
     m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
     return m_napiEnvs.last().get();
+}
+
+void GlobalObject::finishNapiFinalizers()
+{
+    for (const auto& env : m_napiEnvs) {
+        env->cleanup();
+    }
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

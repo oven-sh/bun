@@ -49,7 +49,16 @@ pub const NapiEnv = opaque {
         return self.setLastError(.generic_failure);
     }
 
+    pub fn checkGC(self: *NapiEnv) void {
+        napi_internal_check_gc(self);
+    }
+
+    pub fn getVersion(self: *NapiEnv) u32 {
+        return napi_internal_get_version(self);
+    }
+
     extern fn NapiEnv__globalObject(*NapiEnv) *JSC.JSGlobalObject;
+    extern fn napi_internal_get_version(*NapiEnv) u32;
 };
 
 fn envIsNull() napi_status {
@@ -280,6 +289,7 @@ pub export fn napi_get_undefined(env_: napi_env, result_: ?*napi_value) napi_sta
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -291,6 +301,7 @@ pub export fn napi_get_null(env_: napi_env, result_: ?*napi_value) napi_status {
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -303,6 +314,7 @@ pub export fn napi_get_boolean(env_: napi_env, value: bool, result_: ?*napi_valu
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -314,6 +326,7 @@ pub export fn napi_create_array(env_: napi_env, result_: ?*napi_value) napi_stat
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -325,6 +338,7 @@ pub export fn napi_create_array_with_length(env_: napi_env, length: usize, resul
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -344,6 +358,7 @@ pub export fn napi_create_int32(env_: napi_env, value: i32, result_: ?*napi_valu
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -355,6 +370,7 @@ pub export fn napi_create_uint32(env_: napi_env, value: u32, result_: ?*napi_val
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -366,6 +382,7 @@ pub export fn napi_create_int64(env_: napi_env, value: i64, result_: ?*napi_valu
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -557,6 +574,7 @@ pub export fn napi_is_array(env_: napi_env, value_: napi_value, result_: ?*bool)
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -639,6 +657,7 @@ pub export fn napi_open_handle_scope(env_: napi_env, result_: ?*napi_handle_scop
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -651,6 +670,7 @@ pub export fn napi_close_handle_scope(env_: napi_env, handle_scope: napi_handle_
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     if (handle_scope) |scope| {
         scope.close(env);
     }
@@ -735,6 +755,7 @@ pub export fn napi_open_escapable_handle_scope(env_: napi_env, result_: ?*napi_e
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -746,6 +767,7 @@ pub export fn napi_close_escapable_handle_scope(env_: napi_env, scope: napi_esca
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     if (scope) |s| {
         s.close(env);
     }
@@ -756,6 +778,7 @@ pub export fn napi_escape_handle(env_: napi_env, scope_: napi_escapable_handle_s
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -793,6 +816,7 @@ pub export fn napi_is_error(env_: napi_env, value_: napi_value, result: *bool) n
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const value = value_.get();
     result.* = value.isAnyError();
     return env.ok();
@@ -804,6 +828,7 @@ pub export fn napi_is_arraybuffer(env_: napi_env, value_: napi_value, result_: ?
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -820,6 +845,7 @@ pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const arraybuffer = arraybuffer_.get();
     const array_buffer = arraybuffer.asArrayBuffer(env.toJS()) orelse return env.setLastError(.arraybuffer_expected);
     const slice = array_buffer.slice();
@@ -834,6 +860,7 @@ pub export fn napi_is_typedarray(env_: napi_env, value_: napi_value, result_: ?*
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const value = value_.get();
     const result = result_ orelse return env.invalidArg();
     result.* = value.jsTypeLoose().isTypedArray();
@@ -852,6 +879,7 @@ pub export fn napi_get_typedarray_info(
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const typedarray = typedarray_.get();
     if (typedarray.isEmptyOrUndefinedOrNull())
         return env.invalidArg();
@@ -900,6 +928,7 @@ pub export fn napi_get_dataview_info(
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const dataview = dataview_.get();
     const array_buffer = dataview.asArrayBuffer(env.toJS()) orelse return env.setLastError(.object_expected);
     if (maybe_bytelength) |bytelength|
@@ -924,7 +953,7 @@ pub export fn napi_get_version(env_: napi_env, result_: ?*u32) napi_status {
     const result = result_ orelse {
         return env.invalidArg();
     };
-    result.* = NAPI_VERSION;
+    result.* = env.getVersion();
     return env.ok();
 }
 pub export fn napi_create_promise(env_: napi_env, deferred_: ?*napi_deferred, promise_: ?*napi_value) napi_status {
@@ -972,6 +1001,7 @@ pub export fn napi_is_promise(env_: napi_env, value_: napi_value, is_promise_: ?
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const value = value_.get();
     const is_promise = is_promise_ orelse {
         return env.invalidArg();
@@ -1003,6 +1033,7 @@ pub export fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: ?*bool)
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const is_date = is_date_ orelse {
         return env.invalidArg();
     };
@@ -1017,6 +1048,7 @@ pub export fn napi_create_bigint_int64(env_: napi_env, value: i64, result_: ?*na
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -1028,6 +1060,7 @@ pub export fn napi_create_bigint_uint64(env_: napi_env, value: u64, result_: ?*n
     const env = env_ orelse {
         return envIsNull();
     };
+    env.checkGC();
     const result = result_ orelse {
         return env.invalidArg();
     };
@@ -1397,6 +1430,19 @@ pub export fn napi_add_env_cleanup_hook(env_: napi_env, fun: ?*const fn (?*anyop
     env.toJS().bunVM().rareData().pushCleanupHook(env.toJS(), arg, fun.?);
     return env.ok();
 }
+
+extern fn napi_internal_cleanup_env_cpp(env: napi_env) callconv(.C) void;
+extern fn napi_internal_check_gc(env: napi_env) callconv(.C) void;
+
+pub export fn napi_internal_register_cleanup_zig(env_: napi_env) void {
+    const env = env_.?;
+    env.toJS().bunVM().rareData().pushCleanupHook(env.toJS(), env, struct {
+        fn callback(data: ?*anyopaque) callconv(.C) void {
+            napi_internal_cleanup_env_cpp(@ptrCast(data));
+        }
+    }.callback);
+}
+
 pub export fn napi_remove_env_cleanup_hook(env_: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     log("napi_remove_env_cleanup_hook", .{});
     const env = env_ orelse {
@@ -1425,6 +1471,8 @@ pub export fn napi_remove_env_cleanup_hook(env_: napi_env, fun: ?*const fn (?*an
     return env.ok();
 }
 
+extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.C) void;
+
 pub const Finalizer = struct {
     env: napi_env,
     fun: napi_finalize,
@@ -1438,7 +1486,10 @@ pub const Finalizer = struct {
             const env = finalizer.env.?;
             const handle_scope = NapiHandleScope.open(env, false);
             defer if (handle_scope) |scope| scope.close(env);
-            finalizer.fun.?(env, finalizer.data, finalizer.hint);
+            if (finalizer.fun) |fun| {
+                fun(env, finalizer.data, finalizer.hint);
+            }
+            napi_internal_remove_finalizer(env, finalizer.fun, finalizer.hint, finalizer.data);
             if (env.toJS().tryTakeException()) |exception| {
                 _ = env.toJS().bunVM().uncaughtException(env.toJS(), exception, false);
             }
@@ -1447,7 +1498,7 @@ pub const Finalizer = struct {
 
     /// Node defers finalizers to the immediate task queue.
     /// This is most likely to account for napi addons which cause GC inside of the finalizer.
-    pub export fn napi_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
+    pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
         const vm = JSC.VirtualMachine.get();
         vm.eventLoop().napi_finalizer_queue.writeItem(.{ .env = env, .fun = fun, .data = data, .hint = hint }) catch bun.outOfMemory();
     }
@@ -1604,7 +1655,7 @@ pub const ThreadSafeFunction = struct {
         this.unref();
 
         if (this.finalizer.fun) |fun| {
-            Finalizer.napi_enqueue_finalizer(this.env, fun, this.finalizer.data, this.ctx);
+            Finalizer.napi_internal_enqueue_finalizer(this.env, fun, this.finalizer.data, this.ctx);
         }
 
         if (this.callback == .js) {

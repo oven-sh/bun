@@ -402,7 +402,18 @@ const Socket = (function (InternalSocket) {
     [kSetKeepAlive];
     [kSetKeepAliveInitialDelay];
     constructor(options) {
-      const { socket, signal, write, read, allowHalfOpen = false, onread = null, ...opts } = options || {};
+      const {
+        socket,
+        signal,
+        write,
+        read,
+        allowHalfOpen = false,
+        onread = null,
+        noDelay = false,
+        keepAlive = false,
+        keepAliveInitialDelay = 0,
+        ...opts
+      } = options || {};
       super({
         ...opts,
         allowHalfOpen,
@@ -414,9 +425,9 @@ const Socket = (function (InternalSocket) {
       this.#pendingRead = undefined;
       this.#upgraded = null;
 
-      this[kSetNoDelay] = Boolean(options.noDelay);
-      this[kSetKeepAlive] = Boolean(options.keepAlive);
-      this[kSetKeepAliveInitialDelay] = ~~(options.keepAliveInitialDelay / 1000);
+      this[kSetNoDelay] = Boolean(noDelay);
+      this[kSetKeepAlive] = Boolean(keepAlive);
+      this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
       if (socket instanceof Socket) {
         this.#socket = socket;
       }

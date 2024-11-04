@@ -414,11 +414,17 @@ const Socket = (function (InternalSocket) {
         keepAliveInitialDelay = 0,
         ...opts
       } = options || {};
+
       super({
         ...opts,
         allowHalfOpen,
         readable: true,
         writable: true,
+        //For node.js compat do not emit close on destroy.
+        emitClose: false,
+        autoDestroy: true,
+        // Handle strings directly.
+        decodeStrings: false,
       });
       this._parent = this;
       this._parentWrap = this;
@@ -1028,12 +1034,6 @@ class Server extends EventEmitter {
     } else {
       throw new Error("bun-net-polyfill: invalid arguments");
     }
-    //For node.js compat do not emit close on destroy.
-    options.emitClose = false;
-    options.autoDestroy = true;
-    // Handle strings directly.
-    options.decodeStrings = false;
-
     const { maxConnections } = options;
     this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
 

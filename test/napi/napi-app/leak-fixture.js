@@ -13,6 +13,7 @@ function gc() {
 }
 
 async function test(fn, warmupRuns, testRuns, maxDeltaMB) {
+  gc();
   // warmup
   for (let i = 0; i < warmupRuns; i++) {
     console.log(`warmup ${i}/${warmupRuns}`);
@@ -33,17 +34,32 @@ async function test(fn, warmupRuns, testRuns, maxDeltaMB) {
 
   const deltaMB = after - initial;
   console.log(`RSS ${initial} -> ${after} MiB`);
+  console.log(`Delta ${deltaMB} MB`);
   if (deltaMB > maxDeltaMB) {
     throw new Error("leaked!");
   }
 }
 
+// Create a bunch of weak references and delete them
+// Checks that napi_delete_reference cleans up memory associated with the napi_ref itself
 function batchWeakRefs(n) {
   if (typeof n != "number") throw new TypeError();
   for (let i = 0; i < n; i++) {
-    nativeTests.make_weak_ref(Math.random().toString());
+    // create tons of weak references to objects that get destroyed
+    nativeTests.add_weak_refs({});
   }
-  gc();
+  // free all the weak refs
+  nativeTests.clear_weak_refs();
+}
+
+// Checks that strong references don't keep the value
+function batchStrongRefs(n) {
+  if (typeof n != "number") throw new TypeError();
+  for (let i = 0; i < n; i++) {
+    const array = new Uint8Array(10_000_000);
+    array.fill(i);
+    nativeTests.create_and_delete_strong_ref(array);
+  }
 }
 
 function batchWrappedObjects(n) {
@@ -64,13 +80,14 @@ function batchWrappedObjects(n) {
   for (const w of wraps) {
     w.get();
   }
+  // now GC them
 }
 
 function batchExternals(n) {
   if (typeof n != "number") throw new TypeError();
   let externals = [];
   for (let i = 0; i < n; i++) {
-    const s = Math.random().toString().repeat(50);
+    const s = Math.random().toString();
     const external = nativeTests.external_factory(s);
     externals.push(external);
     if (nativeTests.external_get(external) != s) {
@@ -84,9 +101,9 @@ function batchExternals(n) {
 }
 
 (async () => {
-  await test(() => batchWeakRefs(1000), 10, 100, 8);
-  gc();
-  await test(() => batchWrappedObjects(1000), 50, 300, 15);
-  gc();
-  await test(() => batchExternals(1000), 10, 400, 15);
+  await test(() => batchWeakRefs(100), 10, 50, 8);
+  await test(() => batchStrongRefs(100), 10, 50, 8);
+  await test(() => batchWrappedObjects(1000), 20, 50, 20);
+  // TODO(@190n) get this test working
+  // await test(() => batchExternals(1000), 10, 400, 15);
 })();

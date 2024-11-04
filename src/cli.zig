@@ -61,7 +61,7 @@ pub const Cli = struct {
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            log.printForLogLevel(Output.errorWriter()) catch {};
+            log.print(Output.errorWriter()) catch {};
 
             bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
@@ -362,11 +362,7 @@ pub const Arguments = struct {
                 if (getHomeConfigPath(&config_buf)) |path| {
                     loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
                         if (ctx.log.hasAny()) {
-                            switch (Output.enable_ansi_colors) {
-                                inline else => |enable_ansi_colors| {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                                },
-                            }
+                            ctx.log.print(Output.errorWriter()) catch {};
                         }
                         if (ctx.log.hasAny()) Output.printError("\n", .{});
                         Output.err(err, "failed to load bunfig", .{});
@@ -421,11 +417,7 @@ pub const Arguments = struct {
 
         loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
             if (ctx.log.hasAny()) {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                ctx.log.print(Output.errorWriter()) catch {};
             }
             if (ctx.log.hasAny()) Output.printError("\n", .{});
             Output.err(err, "failed to load bunfig", .{});
@@ -777,9 +769,11 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-            if (args.flag("--app")) {
-                ctx.bundler_options.bake = true;
-                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+            if (comptime FeatureFlags.bake) {
+                if (args.flag("--app")) {
+                    ctx.bundler_options.bake = true;
+                    ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+                }
             }
 
             // TODO: support --format=esm
@@ -941,19 +935,21 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (args.flag("--server-components")) {
-                if (!bun.FeatureFlags.cli_server_components) {
-                    // TODO: i want to disable this in non-canary
-                    // but i also want to have tests that can run for PRs
-                }
-                ctx.bundler_options.server_components = true;
-                if (opts.target) |target| {
-                    if (!bun.options.Target.from(target).isServerSide()) {
-                        bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
-                        Global.crash();
+            if (comptime FeatureFlags.bake) {
+                if (args.flag("--server-components")) {
+                    if (!bun.FeatureFlags.cli_server_components) {
+                        // TODO: i want to disable this in non-canary
+                        // but i also want to have tests that can run for PRs
                     }
-                } else {
-                    opts.target = .bun;
+                    ctx.bundler_options.server_components = true;
+                    if (opts.target) |target| {
+                        if (!bun.options.Target.from(target).isServerSide()) {
+                            bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                            Global.crash();
+                        }
+                    } else {
+                        opts.target = .bun;
+                    }
                 }
             }
 
@@ -2277,11 +2273,7 @@ pub const Command = struct {
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                 std.fs.path.basename(file_path),

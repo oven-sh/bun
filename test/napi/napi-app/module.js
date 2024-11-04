@@ -79,6 +79,10 @@ nativeTests.test_get_property = () => {
         },
       },
     ),
+    5,
+    "hello",
+    null,
+    undefined,
   ];
   const keys = [
     "foo",
@@ -92,6 +96,8 @@ nativeTests.test_get_property = () => {
         throw new Error("Symbol.toPrimitive");
       },
     },
+    "toString",
+    "slice",
   ];
 
   for (const object of objects) {
@@ -100,7 +106,14 @@ nativeTests.test_get_property = () => {
         const ret = nativeTests.perform_get(object, key);
         console.log("native function returned", ret);
       } catch (e) {
-        console.log("threw", e.toString());
+        if (e instanceof TypeError) {
+          const message = e.message;
+          assert(
+            message.includes("Cannot convert undefined or null to object") || message.includes("is not an object"),
+          );
+        } else {
+          console.log("threw", e.toString());
+        }
       }
     }
   }
@@ -127,6 +140,10 @@ nativeTests.test_set_property = () => {
         },
       },
     ),
+    5,
+    "hello",
+    null,
+    undefined,
   ];
   const keys = [
     "foo",
@@ -140,6 +157,8 @@ nativeTests.test_set_property = () => {
         throw new Error("Symbol.toPrimitive");
       },
     },
+    "toString",
+    "slice",
   ];
 
   for (const object of objects) {
@@ -152,7 +171,14 @@ nativeTests.test_set_property = () => {
           throw new Error("setting property did not throw an error, but the property was not actually set");
         }
       } catch (e) {
-        console.log("threw", e.toString());
+        if (e instanceof TypeError) {
+          const message = e.message;
+          assert(
+            message.includes("Cannot convert undefined or null to object") || message.includes("is not an object"),
+          );
+        } else {
+          console.log("threw", e.toString());
+        }
       }
     }
   }

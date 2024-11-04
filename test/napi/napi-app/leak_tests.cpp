@@ -2,13 +2,35 @@
 
 #include "utils.h"
 #include <cassert>
+#include <vector>
 
 namespace napitests {
 
-Napi::Value make_weak_ref(const Napi::CallbackInfo &info) {
+static std::vector<Napi::Reference<Napi::Value>> global_weak_refs;
+
+// add a weak reference to a global array
+// this will cause extra memory usage for the ref, but it should not retain the
+// JS object being referenced
+Napi::Value add_weak_refs(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
-  // weak reference
-  auto ref = Napi::Reference<Napi::Value>::New(info[0], 0);
+  for (int i = 0; i < 50; i++) {
+    global_weak_refs.emplace_back(
+        Napi::Reference<Napi::Value>::New(info[0], 0));
+  }
+  return env.Undefined();
+}
+
+// delete all the weak refs created by add_weak_ref
+Napi::Value clear_weak_refs(const Napi::CallbackInfo &info) {
+  global_weak_refs.clear();
+  return info.Env().Undefined();
+}
+
+// create a strong reference to a JS value, and then delete it
+Napi::Value create_and_delete_strong_ref(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  // strong reference
+  auto ref = Napi::Reference<Napi::Value>::New(info[0], 2);
   // destructor will be called
   return env.Undefined();
 }
@@ -30,9 +52,8 @@ public:
     napi_value js_object;
     NODE_API_CALL(env, napi_create_object(env, &js_object));
 
-    unsigned canary = static_cast<unsigned>(random());
     WrappedObject *native_object =
-        new WrappedObject(string, canary, supports_node_api_post_finalize);
+        new WrappedObject(string, supports_node_api_post_finalize);
     NODE_API_CALL(env, napi_wrap(env, js_object, native_object, basic_finalize,
                                  nullptr, &native_object->m_ref));
     napi_property_descriptor property = {
@@ -60,16 +81,17 @@ public:
   }
 
 private:
-  WrappedObject(char *string, unsigned canary,
-                bool supports_node_api_post_finalize)
-      : m_string(string), m_canary(canary), m_pcanary(new unsigned(canary)),
-        m_supports_node_api_post_finalize(supports_node_api_post_finalize) {}
+  static constexpr size_t big_alloc_size = 5'000'000;
+
+  WrappedObject(char *string, bool supports_node_api_post_finalize)
+      : m_string(string), m_big_alloc(new char[big_alloc_size]),
+        m_supports_node_api_post_finalize(supports_node_api_post_finalize) {
+    memset(m_big_alloc, big_alloc_size, 'x');
+  }
 
   ~WrappedObject() {
     delete[] m_string;
-    assert(*m_pcanary == m_canary);
-    delete m_pcanary;
-    m_pcanary = nullptr;
+    delete[] m_big_alloc;
   }
 
   static void delete_ref(napi_env env, void *data, void *hint) {
@@ -89,8 +111,7 @@ private:
   }
 
   char *m_string;
-  unsigned m_canary;
-  unsigned *m_pcanary;
+  char *m_big_alloc;
   napi_ref m_ref = nullptr;
   bool m_supports_node_api_post_finalize;
 };
@@ -127,7 +148,9 @@ private:
 };
 
 void register_leak_tests(Napi::Env env, Napi::Object exports) {
-  REGISTER_FUNCTION(env, exports, make_weak_ref);
+  REGISTER_FUNCTION(env, exports, add_weak_refs);
+  REGISTER_FUNCTION(env, exports, clear_weak_refs);
+  REGISTER_FUNCTION(env, exports, create_and_delete_strong_ref);
   exports.Set("wrapped_object_factory",
               Napi::Function::New(env, WrappedObject::factory));
   exports.Set("external_factory",

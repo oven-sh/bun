@@ -56,6 +56,7 @@
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
+#include <JavaScriptCore/JSMapInlines.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 
@@ -68,8 +69,6 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/JSWeakMap.h>
-#include <JavaScriptCore/JSWeakMapInlines.h>
 #include "CommonJSModuleRecord.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
@@ -619,10 +618,10 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
     NAPI_CHECK_ARG(env, value);
 
     JSValue targetValue = toJS(target);
-    NAPI_RETURN_EARLY_IF_FALSE(env, targetValue.isObject(), napi_object_expected);
 
     auto globalObject = toJS(env);
-    auto* object = targetValue.getObject();
+    auto* object = targetValue.toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
 
@@ -685,8 +684,8 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, key);
 
     auto globalObject = toJS(env);
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
     *result = target->hasProperty(globalObject, keyProp.toPropertyKey(globalObject));
@@ -718,8 +717,8 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
 
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
     JSC::EnsureStillAliveScope ensureAlive(target);
 
     auto keyProp = toJS(key);
@@ -736,13 +735,11 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, key);
 
     auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
 
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    auto* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -762,11 +759,11 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     NAPI_CHECK_ARG(env, result);
 
     auto globalObject = toJS(env);
-    auto* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+
+    auto* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
-    NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
     *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
@@ -782,11 +779,10 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     NAPI_RETURN_EARLY_IF_FALSE(env, *utf8name, napi_invalid_arg);
     NAPI_CHECK_ARG(env, value);
 
-    auto target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
-
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     JSValue jsValue = toJS(value);
     JSC::EnsureStillAliveScope ensureAlive(jsValue);
@@ -795,7 +791,6 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
     auto identifier = JSC::Identifier::fromString(vm, WTFMove(nameStr));
 
-    // TODO should maybe be false
     PutPropertySlot slot(target, false);
 
     target->methodTable()->put(target, globalObject, identifier, jsValue, slot);
@@ -853,13 +848,13 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
-    JSObject* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    JSObject* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     PROPERTY_NAME_FROM_UTF8(name);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
     *result = target->getPropertySlot(globalObject, name, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
@@ -876,8 +871,8 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    JSObject* target = toJS(object).getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, target, napi_object_expected);
+    JSObject* target = toJS(object).toObject(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
 
     PROPERTY_NAME_FROM_UTF8(name);
 

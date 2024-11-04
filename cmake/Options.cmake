@@ -138,7 +138,7 @@ if(CMAKE_HOST_LINUX AND NOT WIN32 AND NOT APPLE)
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
   )
-  if(LINUX_DISTRO MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"")
+  if(LINUX_DISTRO MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux( ARM)?\"|NAME=\"openSUSE Tumbleweed\"")
     set(DEFAULT_STATIC_LIBATOMIC OFF)
   endif()
 endif()

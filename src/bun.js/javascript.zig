@@ -178,13 +178,14 @@ pub const SavedSourceMap = struct {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
+                            false,
                             true,
                         );
                     } else {
                         try fail.toData(path).writeFormat(
                             Output.errorWriter(),
                             logger.Kind.warn,
-
+                            false,
                             false,
                         );
                     }
@@ -1515,11 +1516,7 @@ pub const VirtualMachine = struct {
             this.global.handleRejectedPromises();
 
             if (this.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                this.log.print(Output.errorWriter()) catch {};
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }
@@ -3544,7 +3541,7 @@ pub const VirtualMachine = struct {
                         "<r><b>{d} |<r> {}" ++ fmt,
                         allow_ansi_color,
                     ),
-                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                 );
             } else {
                 try writer.print(
@@ -3552,7 +3549,7 @@ pub const VirtualMachine = struct {
                         "<r><b>{d} |<r> {}\n",
                         allow_ansi_color,
                     ),
-                    .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                    .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                 );
             }
         }
@@ -3589,7 +3586,7 @@ pub const VirtualMachine = struct {
                             "<r><b>- |<r> {}" ++ fmt,
                             allow_ansi_color,
                         ),
-                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
                     );
                 } else {
                     try writer.print(
@@ -3597,7 +3594,7 @@ pub const VirtualMachine = struct {
                             "<r><d>- |<r> {}\n",
                             allow_ansi_color,
                         ),
-                        .{bun.fmt.fmtJavaScript(text, allow_ansi_color)},
+                        .{bun.fmt.fmtJavaScript(text, .{ .enable_colors = allow_ansi_color })},
                     );
                 }
 
@@ -3622,7 +3619,7 @@ pub const VirtualMachine = struct {
                             "<r><b>{d} |<r> {}" ++ fmt,
                             allow_ansi_color,
                         ),
-                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                     );
                 } else {
                     try writer.print(
@@ -3630,7 +3627,7 @@ pub const VirtualMachine = struct {
                             "<r><b>{d} |<r> {}\n",
                             allow_ansi_color,
                         ),
-                        .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
+                        .{ display_line, bun.fmt.fmtJavaScript(clamped, .{ .enable_colors = allow_ansi_color }) },
                     );
 
                     if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {

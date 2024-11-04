@@ -75,11 +75,13 @@ pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
         parent = parent[0 .. parent.len - 1];
     }
 
-    const contains = if (comptime !bun.Environment.isLinux)
-        strings.containsCaseInsensitiveASCII
+    const startsWith = if (comptime !bun.Environment.isLinux)
+        strings.hasPrefixCaseInsensitive
     else
-        strings.contains;
-    if (!contains(child, parent)) return .unrelated;
+        strings.hasPrefix;
+
+    if (parent.len > child.len) return .unrelated;
+    if (!startsWith(child, parent)) return .unrelated;
 
     if (child.len == parent.len) return .equal;
     if (isSepAny(child[parent.len])) return .parent;

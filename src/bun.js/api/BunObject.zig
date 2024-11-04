@@ -3914,7 +3914,7 @@ const TOMLObject = struct {
         var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
-        const parse_result = TOMLParser.parse(&source, &log, allocator) catch {
+        const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to parse toml"));
             return .zero;
         };
@@ -5022,8 +5022,10 @@ const InternalTestingAPIs = struct {
         var buffer = MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
-        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
-        formatter.limited = false;
+        const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+            .enable_colors = true,
+            .check_for_unhighlighted_write = false,
+        });
         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
             globalThis.throwError(err, "Error formatting code");
             return .zero;

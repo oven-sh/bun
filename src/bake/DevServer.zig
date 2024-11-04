@@ -676,14 +676,14 @@ fn bundle(dev: *DevServer, files: []const BakeEntryPoint) BundleError!void {
     const bundle_result = bv2.runFromBakeDevServer(files) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-        bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
+        bv2.bundler.log.print(Output.errorWriter()) catch {};
 
         Output.warn("BundleV2.runFromBakeDevServer returned error.{s}", .{@errorName(err)});
 
         return;
     };
 
-    bv2.bundler.log.printForLogLevel(Output.errorWriter()) catch {};
+    bv2.bundler.log.print(Output.errorWriter()) catch {};
 
     try dev.finalizeBundle(bv2, bundle_result);
 
@@ -1155,7 +1155,7 @@ pub fn handleParseTaskFailure(
         bun.path.relative(dev.root, abs_path),
     });
     Output.flush();
-    log.printForLogLevel(Output.errorWriter()) catch {};
+    log.print(Output.errorWriter()) catch {};
 
     return switch (graph) {
         .server => dev.server_graph.insertFailure(abs_path, log, false),
@@ -2866,7 +2866,7 @@ pub const SerializedFailure = struct {
             inline else => |k| @intFromEnum(@field(ErrorKind, "bundler_log_" ++ @tagName(k))),
         });
         try writeLogData(msg.data, w);
-        const notes = msg.notes orelse &.{};
+        const notes = msg.notes;
         try w.writeInt(u32, @intCast(notes.len), .little);
         for (notes) |note| {
             try writeLogData(note, w);

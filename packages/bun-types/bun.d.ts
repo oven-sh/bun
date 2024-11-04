@@ -4362,6 +4362,11 @@ declare module "bun" {
      * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
      */
     setMaxSendFragment(size: number): boolean;
+
+    /**
+     * The number of bytes written to the socket.
+     */
+    readonly bytesWritten: number;
   }
 
   interface SocketListener<Data = undefined> extends Disposable {

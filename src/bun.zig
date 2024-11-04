@@ -2365,7 +2365,7 @@ pub const win32 = struct {
         return original_mode;
     }
 
-    const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
+    const watcherChildEnv: [:0]const u16 = strings.toUTF16Literal("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
     const watcher_reload_exit: w.DWORD = 3224497970;

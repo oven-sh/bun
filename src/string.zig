@@ -341,7 +341,7 @@ pub const String = extern struct {
         return bytes;
     }
 
-    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) !struct { []u8, bool } {
+    pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) OOM!struct { []u8, bool } {
         switch (this.tag) {
             .ZigString => return .{ try this.value.ZigString.toOwnedSlice(allocator), true },
             .WTFStringImpl => {
@@ -893,7 +893,7 @@ pub const String = extern struct {
     }
 
     pub fn encode(self: String, enc: JSC.Node.Encoding) []u8 {
-        return self.toZigString().encode(enc);
+        return self.toZigString().encodeWithAllocator(bun.default_allocator, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {

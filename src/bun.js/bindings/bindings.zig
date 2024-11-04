@@ -208,9 +208,13 @@ pub const ZigString = extern struct {
     }
 
     pub fn encode(this: ZigString, encoding: JSC.Node.Encoding) []u8 {
+        return this.encodeWithAllocator(bun.default_allocator, encoding);
+    }
+
+    pub fn encodeWithAllocator(this: ZigString, allocator: std.mem.Allocator, encoding: JSC.Node.Encoding) []u8 {
         return switch (this.as()) {
             inline else => |repr| switch (encoding) {
-                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, enc),
+                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, enc),
             },
         };
     }
@@ -2982,6 +2986,11 @@ pub const JSGlobalObject = opaque {
         JSGlobalObject__throwOutOfMemoryError(this);
     }
 
+    pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
+        JSGlobalObject__throwOutOfMemoryError(this);
+        return .zero;
+    }
+
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
@@ -4129,6 +4138,12 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }
 
+    pub fn isFalsey(this: JSValue) bool {
+        return !this.toBoolean();
+    }
+
+    pub const isTruthy = toBoolean;
+
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
@@ -4179,7 +4194,7 @@ pub const JSValue = enum(i64) {
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
-            bool => this.toBooleanSlow(globalThis),
+            bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
                     return this.asDouble();
@@ -5304,6 +5319,7 @@ pub const JSValue = enum(i64) {
         message,
         @"error",
         default,
+        encoding,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
@@ -5721,7 +5737,7 @@ pub const JSValue = enum(i64) {
     pub inline fn getBooleanLoose(this: JSValue, global: *JSGlobalObject, comptime property_name: []const u8) JSError!?bool {
         const prop = try this.get2(global, property_name) orelse
             return null;
-        return prop.toBooleanSlow(global);
+        return prop.toBoolean(global);
     }
 
     /// Many Node.js APIs use `validateBoolean`
@@ -5931,17 +5947,9 @@ pub const JSValue = enum(i64) {
         return fromPtrAddress(@intFromPtr(addr));
     }
 
-    /// Equivalent of JavaScript `!!value`
-    pub fn toBooleanSlow(value: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("toBooleanSlow", .{ value, global });
-    }
-
+    /// Equivalent to the `!!` operator
     pub fn toBoolean(this: JSValue) bool {
-        if (isEmptyOrUndefinedOrNull(this)) {
-            return false;
-        }
-
-        return asBoolean(this);
+        return this != .zero and cppFn("toBoolean", .{this});
     }
 
     pub fn asBoolean(this: JSValue) bool {
@@ -6234,7 +6242,6 @@ pub const JSValue = enum(i64) {
         "symbolFor",
         "symbolKeyFor",
         "toBoolean",
-        "toBooleanSlow",
         "toError_",
         "toInt32",
         "toInt64",

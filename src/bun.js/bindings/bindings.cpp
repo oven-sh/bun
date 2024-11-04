@@ -3889,10 +3889,6 @@ bool JSC__JSValue__symbolKeyFor(JSC__JSValue symbolValue_, JSC__JSGlobalObject* 
     return true;
 }
 
-bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0)
-{
-    return JSC::JSValue::decode(JSValue0).asBoolean();
-}
 int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).asInt32();
@@ -5004,6 +5000,7 @@ enum class BuiltinNamesMap : uint8_t {
     message,
     error,
     defaultKeyword,
+    encoding,
 };
 
 static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -5065,6 +5062,9 @@ static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, u
     case BuiltinNamesMap::defaultKeyword: {
         return vm.propertyNames->defaultKeyword;
     }
+    case BuiltinNamesMap::encoding: {
+        return clientData->builtinNames().encodingPublicName();
+    }
     default: {
         ASSERT_NOT_REACHED();
         return Identifier();
@@ -5100,9 +5100,10 @@ extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSG
     return JSValue::encode({});
 }
 
-bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)
+bool JSC__JSValue__toBoolean(JSC__JSValue JSValue0)
 {
-    return JSValue::decode(JSValue0).toBoolean(globalObject);
+    // We count masquerades as undefined as true.
+    return JSValue::decode(JSValue0).pureToBoolean() != TriState::False;
 }
 
 template<bool nonIndexedOnly>

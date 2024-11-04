@@ -496,6 +496,19 @@ void us_socket_ref(struct us_socket_t *s) {
     // do nothing if not using libuv
 }
 
+void us_socket_nodelay(struct us_socket_t *s, int enabled) {
+    if (!us_socket_is_shut_down(0, s)) {
+        bsd_socket_nodelay(us_poll_fd((struct us_poll_t *) s), enabled);
+    }
+}
+
+int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay){
+    if (!us_socket_is_shut_down(0, s)) {
+        bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
+    }
+    return 0;
+}
+
 void us_socket_unref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_unref((uv_handle_t*)s->p.uv_p);

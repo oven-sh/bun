@@ -1446,6 +1446,8 @@ fn NewSocket(comptime ssl: bool) type {
             return null;
         }
         pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+
             log("resume", .{});
             if (this.flags.is_paused) {
                 this.flags.is_paused = !this.socket.resumeStream(this.buffered_data_for_node_net.len > 0);
@@ -1453,11 +1455,51 @@ fn NewSocket(comptime ssl: bool) type {
             return .undefined;
         }
         pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+
             log("pause", .{});
             if (!this.flags.is_paused) {
                 this.flags.is_paused = this.socket.pauseStream(this.buffered_data_for_node_net.len > 0);
             }
             return .undefined;
+        }
+
+        pub fn setKeepAlive(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+            const args = callframe.arguments(2);
+
+            const enabled: bool = brk: {
+                if (args.len >= 1) {
+                    break :brk args.ptr[0].coerce(bool, globalThis);
+                }
+                break :brk false;
+            };
+
+            const initialDelay: u32 = brk: {
+                if (args.len > 1) {
+                    const signedDelay = args.ptr[1].coerce(i32, globalThis);
+                    if (signedDelay < 0) {
+                        globalThis.throwInvalidArguments("initialDelay must be a positive number", .{});
+                    }
+                    break :brk @intCast(signedDelay);
+                }
+                break :brk 0;
+            };
+
+            return JSValue.jsBoolean(this.socket.setKeepAlive(enabled, initialDelay));
+        }
+
+        pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+            JSC.markBinding(@src());
+            const args = callframe.arguments(1);
+            const enabled: bool = brk: {
+                if (args.len >= 1) {
+                    break :brk args.ptr[0].coerce(bool, globalThis);
+                }
+                break :brk true;
+            };
+
+            return JSValue.jsBoolean(this.socket.setNoDelay(enabled));
         }
 
         pub fn handleError(this: *This, err_value: JSC.JSValue) void {

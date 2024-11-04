@@ -318,6 +318,74 @@ void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled) {
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (void *) &enabled, sizeof(enabled));
 }
 
+int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {
+
+#ifndef _WIN32
+    if(setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on))) {
+        return errno;
+    }
+
+    if (!on)
+        return 0;
+
+    if (delay == 0)
+        return -1;
+
+
+#ifdef TCP_KEEPIDLE
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &delay, sizeof(delay)))
+    return errno;
+#elif defined(TCP_KEEPALIVE)
+  /* Darwin/macOS uses TCP_KEEPALIVE in place of TCP_KEEPIDLE. */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &delay, sizeof(delay)))
+    return errno;
+#endif
+
+#ifdef TCP_KEEPINTVL
+  int intvl = 1;  /*  1 second; same as default on Win32 */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl)))
+    return errno;
+#endif
+
+#ifdef TCP_KEEPCNT
+  int cnt = 10;  /* 10 retries; same as hardcoded on Win32 */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt)))
+    return errno;
+#endif
+
+    return 0;
+    #else
+    if (setsockopt(fd,
+                    SOL_SOCKET,
+                    SO_KEEPALIVE,
+                    (const char*)&enable,
+                    sizeof enable) == -1) {
+        return WSAGetLastError();
+    }
+
+    if (!enable)
+        return 0;
+
+    if (delay < 1) {
+        #ifdef LIBUS_USE_LIBUV
+            return -4071; //UV_EINVAL;
+        #else
+            //TODO: revisit this when IOCP loop is implemented without libuv here
+            return 4071;
+        #endif
+    }
+    if (setsockopt(fd,
+                    IPPROTO_TCP,
+                    TCP_KEEPALIVE,
+                    (const char*)&delay,
+                    sizeof delay) == -1) {
+        return WSAGetLastError();
+    }
+
+    return 0;
+    #endif
+}
+
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
     // Linux TCP_CORK has the same underlying corking mechanism as with MSG_MORE
 #ifdef TCP_CORK

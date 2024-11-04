@@ -78,6 +78,9 @@ const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 const kRealListen = Symbol("kRealListen");
+const kSetNoDelay = Symbol("kSetNoDelay");
+const kSetKeepAlive = Symbol("kSetKeepAlive");
+const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 
 function endNT(socket, callback, err) {
   socket.$end();
@@ -160,6 +163,15 @@ const Socket = (function (InternalSocket) {
             self.setSession(session);
           }
         }
+
+        if (self[kSetNoDelay]) {
+          socket.setNoDelay(true);
+        }
+
+        if (self[kSetKeepAlive]) {
+          socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+        }
+
         if (!self.#upgraded) {
           self[kBytesWritten] = socket.bytesWritten;
           // this is not actually emitted on nodejs when socket used on the connection
@@ -386,7 +398,9 @@ const Socket = (function (InternalSocket) {
     #upgraded;
     #unrefOnConnected = false;
     #handlers = Socket.#Handlers;
-
+    [kSetNoDelay];
+    [kSetKeepAlive];
+    [kSetKeepAliveInitialDelay];
     constructor(options) {
       const { socket, signal, write, read, allowHalfOpen = false, onread = null, ...opts } = options || {};
       super({
@@ -399,6 +413,10 @@ const Socket = (function (InternalSocket) {
       this._parentWrap = this;
       this.#pendingRead = undefined;
       this.#upgraded = null;
+
+      this[kSetNoDelay] = Boolean(options.noDelay);
+      this[kSetKeepAlive] = Boolean(options.keepAlive);
+      this[kSetKeepAliveInitialDelay] = ~~(options.keepAliveInitialDelay / 1000);
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -475,6 +493,15 @@ const Socket = (function (InternalSocket) {
       if (this.#unrefOnConnected) socket.unref();
       this._handle = socket;
       this.connecting = false;
+
+      if (this[kSetNoDelay]) {
+        socket.setNoDelay(true);
+      }
+
+      if (this[kSetKeepAlive]) {
+        socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+      }
+
       if (!this.#upgraded) {
         this[kBytesWritten] = socket.bytesWritten;
         // this is not actually emitted on nodejs when socket used on the connection
@@ -833,13 +860,42 @@ const Socket = (function (InternalSocket) {
       this._handle?.end();
     }
 
-    setKeepAlive(enable = false, initialDelay = 0) {
-      // TODO
+    setKeepAlive(enable = false, initialDelayMsecs = 0) {
+      enable = Boolean(enable);
+      const initialDelay = ~~(initialDelayMsecs / 1000);
+
+      if (!this._handle) {
+        this[kSetKeepAlive] = enable;
+        this[kSetKeepAliveInitialDelay] = initialDelay;
+        return this;
+      }
+
+      if (!this._handle.setKeepAlive) {
+        return this;
+      }
+
+      if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
+        this[kSetKeepAlive] = enable;
+        this[kSetKeepAliveInitialDelay] = initialDelay;
+        this._handle.setKeepAlive(enable, initialDelay);
+      }
+
       return this;
     }
 
-    setNoDelay(noDelay = true) {
-      // TODO
+    setNoDelay(enable = true) {
+      // Backwards compatibility: assume true when `enable` is omitted
+      enable = Boolean(enable === undefined ? true : enable);
+
+      if (!this._handle) {
+        this[kSetNoDelay] = enable;
+        return this;
+      }
+
+      if (this._handle.setNoDelay && enable !== this[kSetNoDelay]) {
+        this[kSetNoDelay] = enable;
+        this._handle.setNoDelay(enable);
+      }
       return this;
     }
 

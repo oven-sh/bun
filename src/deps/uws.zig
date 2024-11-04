@@ -1167,6 +1167,25 @@ pub const InternalSocket = union(enum) {
     pub fn detach(this: *InternalSocket) void {
         this.* = .detached;
     }
+    pub fn setNoDelay(this: InternalSocket, enabled: bool) bool {
+        switch (this) {
+            .pipe, .upgradedDuplex, .connecting, .detached => return false,
+            .connected => |socket| {
+                // only supported by connected sockets
+                us_socket_nodelay(socket, @intFromBool(enabled));
+                return true;
+            },
+        }
+    }
+    pub fn setKeepAlive(this: InternalSocket, enabled: bool, delay: u32) bool {
+        switch (this) {
+            .pipe, .upgradedDuplex, .connecting, .detached => return false,
+            .connected => |socket| {
+                // only supported by connected sockets and can fail
+                return us_socket_keepalive(socket, @intFromBool(enabled), delay) == 0;
+            },
+        }
+    }
     pub fn close(this: InternalSocket, comptime is_ssl: bool, code: CloseCode) void {
         switch (this) {
             .detached => {},
@@ -1247,7 +1266,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         socket: InternalSocket,
         const ThisSocket = @This();
         pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
-
+        pub fn setNoDelay(this: ThisSocket, enabled: bool) bool {
+            return this.socket.setNoDelay(enabled);
+        }
+        pub fn setKeepAlive(this: ThisSocket, enabled: bool, delay: u32) bool {
+            return this.socket.setKeepAlive(enabled, delay);
+        }
         pub fn pauseStream(this: ThisSocket, hasBufferedData: bool) bool {
             return this.socket.pauseResume(is_ssl, true, hasBufferedData);
         }
@@ -2782,6 +2806,9 @@ extern fn us_socket_shutdown_read(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_is_closed(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_close(ssl: i32, s: ?*Socket, code: CloseCode, reason: ?*anyopaque) ?*Socket;
+
+extern fn us_socket_nodelay(s: ?*Socket, enable: c_int) void;
+extern fn us_socket_keepalive(s: ?*Socket, enable: c_int, delay: c_uint) c_int;
 
 extern fn us_connecting_socket_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
 extern fn us_connecting_socket_long_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;

@@ -68,36 +68,31 @@ declare module "bun" {
      * resolved as import specifiers.
      */
     interface Framework {
-      /** Deprecated */
-      clientEntryPoint: string;
-      /** Deprecated */
-      serverEntryPoint: string;
-
       /**
        * Customize the bundler options. Plugins in this array are merged
        * with any plugins the user has.
        * @default {}
        */
       bundlerOptions?: BundlerOptions | undefined;
-      // /**
-      //  * The translation of files to routes is unopinionated and left
-      //  * to framework authors. This interface allows most flexibility
-      //  * between the already established conventions while allowing
-      //  * new ideas to be explored too.
-      //  * @default []
-      //  */
-      // fileSystemRouters?: FrameworkFileSystemRouter[] ;
-      // /**
-      //  * A list of directories that should be served statically. If the directory
-      //  * does not exist in the user's project, it is ignored.
-      //  *
-      //  * Example: 'public' or 'static'
-      //  *
-      //  * Different frameworks have different opinions, some use 'static', some
-      //  * use 'public'.
-      //  * @default []
-      //  */
-      // staticRouters?: Array<StaticRouter> | undefined;
+      /**
+       * The translation of files to routes is unopinionated and left
+       * to framework authors. This interface allows most flexibility
+       * between the already established conventions while allowing
+       * new ideas to be explored too.
+       * @default []
+       */
+      fileSystemRouterTypes?: FrameworkFileSystemRouterType[] ;
+      /**
+       * A list of directories that should be served statically. If the directory
+       * does not exist in the user's project, it is ignored.
+       *
+       * Example: 'public' or 'static'
+       *
+       * Different frameworks have different opinions, some use 'static', some
+       * use 'public'.
+       * @default []
+       */
+      staticRouters?: Array<StaticRouter> | undefined;
       /**
        * Add extra modules. This can be used to, for example, replace `react`
        * with a different resolution.
@@ -119,6 +114,13 @@ declare module "bun" {
        * @default false
        */
       reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
+
+      // /**
+      //  * Called after the list of routes is updated. This can be used to
+      //  * implement framework-specific features like `.d.ts` generation:
+      //  * https://nextjs.org/docs/app/building-your-application/configuring/typescript#statically-typed-links
+      //  */
+      // onRouteListUpdate?: (routes: OnRouteListUpdateItem) => void;
     }
 
     type BuiltInModule = { import: string; code: string } | { import: string; path: string };
@@ -222,7 +224,16 @@ declare module "bun" {
       | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
     /** This API is similar, but unrelated to `Bun.FileSystemRouter`  */
-    interface FrameworkFileSystemRouter {
+    interface FrameworkFileSystemRouterType {
+      /**
+       * Relative to project root. For example: `src/pages`.
+       */
+      root: string;
+      /**
+       * The prefix to serve this directory on.
+       * @default "/"
+       */
+      prefix?: string | undefined;
       /**
        * This file is the entrypoint of the server application. This module
        * must `export default` a fetch function, which takes a request and the
@@ -235,15 +246,20 @@ declare module "bun" {
        */
       serverEntryPoint: ImportSource<ServerEntryPoint>;
       /**
-       * This file is the true entrypoint of the client application.
+       * This file is the true entrypoint of the client application. If null,
+       * a client will not be bundled, and the route will not receive bundling
+       * for client-side interactivity.
        */
-      clientEntryPoint: ImportSource<ClientEntryPoint>;
+      clientEntryPoint?: ImportSource<ClientEntryPoint> | null;
+      /** Do not traverse into directories and files that start with an `_` */
+      ignoreUnderscores?: boolean;
       /**
-       * Relative to project root. For example: `src/pages`.
+       * @default ["node_modules", ".git"]
        */
-      root: string;
+      ignoreDirs?: string[];
       /**
-       * Extensions to match on
+       * Extensions to match on.
+       * '*' - any extension
        */
       extensions: string[] | "*";
       /**

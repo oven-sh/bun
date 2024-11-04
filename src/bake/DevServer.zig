@@ -1288,7 +1288,7 @@ fn sendStubErrorMessage(dev: *DevServer, route: *Route, resp: *Response, err: JS
     resp.end(a.items, true); // TODO: "You should never call res.end(huge buffer)"
 }
 
-const FileKind = enum {
+const FileKind = enum(u2) {
     /// Files that failed to bundle or do not exist on disk will appear in the
     /// graph as "unknown".
     unknown,

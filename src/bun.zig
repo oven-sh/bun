@@ -2088,8 +2088,6 @@ pub const WTF = struct {
     pub const StringImpl = @import("./string.zig").WTFStringImpl;
 };
 
-pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
-
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
@@ -3467,6 +3465,9 @@ pub fn SliceIterator(comptime T: type) type {
 }
 
 pub const Futex = @import("./futex.zig");
+
+// TODO: migrate
+pub const ArenaAllocator = std.heap.ArenaAllocator;
 
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;

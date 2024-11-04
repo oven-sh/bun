@@ -1342,6 +1342,11 @@ pub const String = extern struct {
         const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
     }
+
+    // TODO: move ZigString.Slice here
+    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
+    /// Must call `.deinit` to release memory
+    pub const Slice = ZigString.Slice;
 };
 
 pub const SliceWithUnderlyingString = struct {

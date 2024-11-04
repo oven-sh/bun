@@ -228,7 +228,7 @@ pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime n
 }
 
 pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !T {
-    const str = value.toBunString(globalThis);
+    const str = try value.toBunString2(globalThis);
     defer str.deref();
     inline for (@typeInfo(T).Enum.fields) |enum_field| {
         if (str.eqlComptime(enum_field.name))

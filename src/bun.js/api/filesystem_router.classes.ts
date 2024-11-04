@@ -33,6 +33,21 @@ export default [
   }),
 
   define({
+    name: "FrameworkFileSystemRouter",
+    construct: true,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    proto: {
+      match: {
+        fn: "match",
+        length: 1,
+      },
+    },
+    klass: {},
+  }),
+
+  define({
     name: "MatchedRoute",
     noConstructor: true,
     JSType: "0b11101110",

@@ -3107,7 +3107,7 @@ pub const JSGlobalObject = opaque {
         );
 
         if (possible_errors.OutOfMemory and err == error.OutOfMemory) {
-            std.debug.assert(!global.hasException()); // dual exception
+            bun.assert(!global.hasException()); // dual exception
 
             {
                 bun.outOfMemory();
@@ -3118,7 +3118,7 @@ pub const JSGlobalObject = opaque {
         }
 
         if (possible_errors.JSError and err == error.JSError) {
-            std.debug.assert(global.hasException()); // Exception was cleared, yet returned.
+            bun.assert(global.hasException()); // Exception was cleared, yet returned.
             return .zero;
         }
 
@@ -5192,6 +5192,19 @@ pub const JSValue = enum(i64) {
         return str.toUTF8(allocator);
     }
 
+    /// Convert a JSValue to a string, potentially calling `toString` on the
+    /// JSValue in JavaScript. Can throw an error.
+    pub fn toSlice2(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
+        const str = try bun.String.fromJS2(this, global);
+        defer str.deref();
+
+        // This keeps the WTF::StringImpl alive if it was originally a latin1
+        // ASCII-only string.
+        //
+        // Otherwise, it will be cloned using the allocator.
+        return str.toUTF8(allocator);
+    }
+
     pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
         return getZigString(this, global).toSliceZ(allocator);
     }
@@ -6761,7 +6774,7 @@ pub const CallFrame = opaque {
         };
     }
 
-    pub fn argument(self: *const CallFrame, comptime i: comptime_int) JSC.JSValue {
+    pub inline fn argument(self: *const CallFrame, i: usize) JSC.JSValue {
         return self.argumentsPtr()[i];
     }
 
@@ -6775,6 +6788,15 @@ pub const CallFrame = opaque {
 
     extern fn Bun__CallFrame__isFromBunMain(*const CallFrame, *const VM) bool;
     pub const isFromBunMain = Bun__CallFrame__isFromBunMain;
+
+    /// Usage: `const arg1, const arg2 = call_frame.argumentsAsArray(2);`
+    pub fn argumentsAsArray(call_frame: *const CallFrame, comptime count: usize) [count]JSValue {
+        var value: [count]JSValue = .{.undefined} ** count;
+        for (0..@min(call_frame.argumentsCount(), count)) |i| {
+            value[i] = call_frame.argument(i);
+        }
+        return value;
+    }
 };
 
 pub const EncodedJSValue = extern union {

@@ -13,8 +13,18 @@ export function react(): Bake.Framework {
       { import: "bun-framework-react/server.tsx", path: require.resolve("./server.tsx") },
       { import: "bun-framework-react/ssr.tsx", path: require.resolve("./ssr.tsx") },
     ],
-    clientEntryPoint: "bun-framework-react/client.tsx",
-    serverEntryPoint: "bun-framework-react/server.tsx",
+    fileSystemRouterTypes: [
+      {
+        root: 'pages',
+        clientEntryPoint: "bun-framework-react/client.tsx",
+        serverEntryPoint: "bun-framework-react/server.tsx",
+        extensions: ["jsx", "tsx"],
+        style: 'nextjs-pages',
+      },
+    ],
+    staticRouters: [
+      "public",
+    ],
     reactFastRefresh: {
       importSource: "react-refresh/runtime",
     },

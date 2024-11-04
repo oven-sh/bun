@@ -110,7 +110,7 @@ Object.$defineProperty(Stream, "promises", {
   },
 });
 
-Object.$defineProperty(Stream, "pipeline", {
+Object.$defineProperty(pipeline, customPromisify, {
   __proto__: null,
   enumerable: true,
   get() {

@@ -2,6 +2,9 @@
 // permission from the author, Mathias Buus (@mafintosh).
 
 "use strict";
+
+const duplexify = require("internal/streams/duplexify");
+
 const primordials = require("internal/primordials");
 const { ArrayIsArray, Promise, SymbolAsyncIterator, SymbolDispose } = primordials;
 
@@ -71,10 +74,11 @@ function popCallback(streams) {
 function makeAsyncIterable(val) {
   if (isIterable(val)) {
     return val;
-  } else if (isReadableNodeStream(val)) {
+  } else if (isReadableNodeStream(val, false)) {
     // Legacy streams are not Iterable.
     return fromReadable(val);
   }
+  console.log("makeAsyncIterable", val);
   throw $ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
 }
 
@@ -195,10 +199,10 @@ function pipelineImpl(streams, callback, opts) {
   validateAbortSignal(outerSignal, "options.signal");
 
   function abort() {
-    finishImpl(new AbortError());
+    finishImpl(new AbortError(undefined, { cause: outerSignal?.reason }));
   }
 
-  addAbortListener ??= require("../../node/events").addAbortListener;
+  addAbortListener ??= require("node:events").addAbortListener;
   let disposable;
   if (outerSignal) {
     disposable = addAbortListener(outerSignal, abort);
@@ -238,7 +242,6 @@ function pipelineImpl(streams, callback, opts) {
       if (!error) {
         lastStreamCleanup.forEach(fn => fn());
       }
-
       process.nextTick(callback, error, value);
     }
   }
@@ -289,13 +292,13 @@ function pipelineImpl(streams, callback, opts) {
       } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
         ret = stream;
       } else {
-        ret = Duplex.from(stream);
+        ret = duplexify(stream);
       }
     } else if (typeof stream === "function") {
       if (isTransformStream(ret)) {
         ret = makeAsyncIterable(ret?.readable);
       } else {
-        // AAAA FUCK AAAAAAA
+        console.log(streams.length, i);
         ret = makeAsyncIterable(ret);
       }
       ret = stream(ret, { signal });
@@ -382,7 +385,9 @@ function pipelineImpl(streams, callback, opts) {
     } else if (isWebStream(stream)) {
       if (isReadableNodeStream(ret)) {
         finishCount++;
+        console.log("ret5", ret);
         pumpToWeb(makeAsyncIterable(ret), stream, finish, { end });
+        console.log("ret6");
       } else if (isReadableStream(ret) || isIterable(ret)) {
         finishCount++;
         pumpToWeb(ret, stream, finish, { end });

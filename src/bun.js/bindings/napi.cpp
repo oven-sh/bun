@@ -763,7 +763,9 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     auto* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    auto keyProp = toJS(key);
+    JSValue keyProp = toJS(key);
+    NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
+
     *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }

@@ -769,9 +769,11 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-            if (args.flag("--app")) {
-                ctx.bundler_options.bake = true;
-                ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+            if (comptime FeatureFlags.bake) {
+                if (args.flag("--app")) {
+                    ctx.bundler_options.bake = true;
+                    ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+                }
             }
 
             // TODO: support --format=esm
@@ -933,19 +935,21 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (args.flag("--server-components")) {
-                if (!bun.FeatureFlags.cli_server_components) {
-                    // TODO: i want to disable this in non-canary
-                    // but i also want to have tests that can run for PRs
-                }
-                ctx.bundler_options.server_components = true;
-                if (opts.target) |target| {
-                    if (!bun.options.Target.from(target).isServerSide()) {
-                        bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
-                        Global.crash();
+            if (comptime FeatureFlags.bake) {
+                if (args.flag("--server-components")) {
+                    if (!bun.FeatureFlags.cli_server_components) {
+                        // TODO: i want to disable this in non-canary
+                        // but i also want to have tests that can run for PRs
                     }
-                } else {
-                    opts.target = .bun;
+                    ctx.bundler_options.server_components = true;
+                    if (opts.target) |target| {
+                        if (!bun.options.Target.from(target).isServerSide()) {
+                            bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                            Global.crash();
+                        }
+                    } else {
+                        opts.target = .bun;
+                    }
                 }
             }
 

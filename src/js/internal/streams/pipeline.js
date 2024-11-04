@@ -298,7 +298,6 @@ function pipelineImpl(streams, callback, opts) {
       if (isTransformStream(ret)) {
         ret = makeAsyncIterable(ret?.readable);
       } else {
-        console.log(streams.length, i);
         ret = makeAsyncIterable(ret);
       }
       ret = stream(ret, { signal });
@@ -385,9 +384,7 @@ function pipelineImpl(streams, callback, opts) {
     } else if (isWebStream(stream)) {
       if (isReadableNodeStream(ret)) {
         finishCount++;
-        console.log("ret5", ret);
         pumpToWeb(makeAsyncIterable(ret), stream, finish, { end });
-        console.log("ret6");
       } else if (isReadableStream(ret) || isIterable(ret)) {
         finishCount++;
         pumpToWeb(ret, stream, finish, { end });

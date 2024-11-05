@@ -418,10 +418,10 @@ async function main() {
   if (isBuildkite) {
     console.log("Setting canary revision...");
     const canaryRevision = buildRelease ? 0 : await getCanaryRevision();
-    await spawnSafe("buildkite-agent", ["meta-data", "set", "canary", `${canaryRevision}`]);
+    await spawnSafe(["buildkite-agent", "meta-data", "set", "canary", `${canaryRevision}`]);
 
     console.log("Uploading pipeline...");
-    await spawnSafe("buildkite-agent", ["pipeline", "upload", contentPath]);
+    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath]);
   }
 }
 

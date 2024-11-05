@@ -32,6 +32,10 @@ const compose = require("internal/streams/compose");
 const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const { pipeline } = require("internal/streams/pipeline");
 const { destroyer } = require("internal/streams/destroy");
+const {
+  ReadableFromWeb,
+  newReadableStreamFromStreamReadable,
+} = require("internal/webstreams/adapters");
 const eos = require("internal/streams/end-of-stream");
 
 const promises = require("node:stream/promises");
@@ -560,8 +564,8 @@ NativeWritable.prototype.unref = function unref() {
 
 var kEnsureConstructed = Symbol("kEnsureConstructed");
 Stream[Symbol.for("::bunternal::")] = { 
-  _ReadableFromWeb: null, 
-  ReadableFromWebForUndici: null, 
+  _ReadableFromWeb: newReadableStreamFromStreamReadable, 
+  _ReadableFromWebForUndici: ReadableFromWeb, 
   kEnsureConstructed 
 };
 Stream._getNativeReadableStreamPrototype = getNativeReadableStreamPrototype;

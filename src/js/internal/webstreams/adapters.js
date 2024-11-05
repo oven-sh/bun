@@ -22,7 +22,7 @@ const { validateObject, validateBoolean } = require("../validators");
 
 const { createDeferredPromise } = require("../../node/util");
 
-const { Readable } = require("../streams/readable");
+const Readable = require("../streams/readable");
 
 const { isReadableStream, isWritableStream } = require("../streams/utils");
 
@@ -843,128 +843,125 @@ function getNativeReadableStream(Readable, stream, options) {
   return new NativeReadable(ptr, options);
 }
 
-class ReadableFromWeb extends Readable {
-  #reader;
-  #closed;
-  #pendingChunks;
-  #stream;
+function ReadableFromWeb(options, stream) {
+  const { objectMode, highWaterMark, encoding, signal } = options;
+  Readable.$call(this, {
+    objectMode,
+    highWaterMark,
+    encoding,
+    signal,
+  });
+  this._reader = undefined;
+  this._closed = false;
+  this._pendingChunks = [];
+  this._stream = stream;
+}
 
-  constructor(options, stream) {
-    const { objectMode, highWaterMark, encoding, signal } = options;
-    super({
-      objectMode,
-      highWaterMark,
-      encoding,
-      signal,
-    });
-    this.#pendingChunks = [];
-    this.#reader = undefined;
-    this.#stream = stream;
-    this.#closed = false;
+ReadableFromWeb.prototype = {};
+Object.setPrototypeOf(ReadableFromWeb.prototype, Readable.prototype);
+Object.setPrototypeOf(ReadableFromWeb, Readable);
+
+ReadableFromWeb.prototype._drainPending = function() {
+  var pendingChunks = this._pendingChunks,
+    pendingChunksI = 0,
+    pendingChunksCount = pendingChunks.length;
+
+  for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
+    const chunk = pendingChunks[pendingChunksI];
+    pendingChunks[pendingChunksI] = undefined;
+    if (!this.push(chunk, undefined)) {
+      this._pendingChunks = pendingChunks.slice(pendingChunksI + 1);
+      return true;
+    }
   }
 
-  #drainPending() {
-    var pendingChunks = this.#pendingChunks,
-      pendingChunksI = 0,
-      pendingChunksCount = pendingChunks.length;
-
-    for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
-      const chunk = pendingChunks[pendingChunksI];
-      pendingChunks[pendingChunksI] = undefined;
-      if (!this.push(chunk, undefined)) {
-        this.#pendingChunks = pendingChunks.slice(pendingChunksI + 1);
-        return true;
-      }
-    }
-
-    if (pendingChunksCount > 0) {
-      this.#pendingChunks = [];
-    }
-
-    return false;
+  if (pendingChunksCount > 0) {
+    this._pendingChunks = [];
   }
 
-  #handleDone(reader) {
-    reader.releaseLock();
-    this.#reader = undefined;
-    this.#closed = true;
-    this.push(null);
+  return false;
+};
+
+ReadableFromWeb.prototype._handleDone = function(reader) {
+  reader.releaseLock();
+  this._reader = undefined;
+  this._closed = true;
+  this.push(null);
+  return;
+};
+
+ReadableFromWeb.prototype._read = async function() {
+  $debug("ReadableFromWeb _read()", this.__id);
+  var stream = this._stream,
+    reader = this._reader;
+  if (stream) {
+    reader = this._reader = stream.getReader();
+    this._stream = undefined;
+  } else if (this._drainPending()) {
     return;
   }
 
-  async _read() {
-    $debug("ReadableFromWeb _read()", this.__id);
-    var stream = this.#stream,
-      reader = this.#reader;
-    if (stream) {
-      reader = this.#reader = stream.getReader();
-      this.#stream = undefined;
-    } else if (this.#drainPending()) {
-      return;
-    }
+  var deferredError;
+  try {
+    do {
+      var done = false,
+        value;
+      const firstResult = reader.readMany();
 
-    var deferredError;
-    try {
-      do {
-        var done = false,
-          value;
-        const firstResult = reader.readMany();
+      if ($isPromise(firstResult)) {
+        ({ done, value } = await firstResult);
 
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-
-          if (this.#closed) {
-            this.#pendingChunks.push(...value);
-            return;
-          }
-        } else {
-          ({ done, value } = firstResult);
-        }
-
-        if (done) {
-          this.#handleDone(reader);
+        if (this._closed) {
+          this._pendingChunks.push(...value);
           return;
         }
-
-        if (!this.push(value[0])) {
-          this.#pendingChunks = value.slice(1);
-          return;
-        }
-
-        for (let i = 1, count = value.length; i < count; i++) {
-          if (!this.push(value[i])) {
-            this.#pendingChunks = value.slice(i + 1);
-            return;
-          }
-        }
-      } while (!this.#closed);
-    } catch (e) {
-      deferredError = e;
-    } finally {
-      if (deferredError) throw deferredError;
-    }
-  }
-
-  _destroy(error, callback) {
-    if (!this.#closed) {
-      var reader = this.#reader;
-      if (reader) {
-        this.#reader = undefined;
-        reader.cancel(error).finally(() => {
-          this.#closed = true;
-          callback(error);
-        });
+      } else {
+        ({ done, value } = firstResult);
       }
 
-      return;
-    }
-    try {
-      callback(error);
-    } catch (error) {
-      globalThis.reportError(error);
-    }
+      if (done) {
+        this._handleDone(reader);
+        return;
+      }
+
+      if (!this.push(value[0])) {
+        this._pendingChunks = value.slice(1);
+        return;
+      }
+
+      for (let i = 1, count = value.length; i < count; i++) {
+        if (!this.push(value[i])) {
+          this._pendingChunks = value.slice(i + 1);
+          return;
+        }
+      }
+    } while (!this._closed);
+  } catch (e) {
+    deferredError = e;
+  } finally {
+    if (deferredError) throw deferredError;
   }
-}
+};
+
+ReadableFromWeb.prototype._destroy = function(error, callback) {
+  if (!this._closed) {
+    var reader = this._reader;
+    if (reader) {
+      this._reader = undefined;
+      reader.cancel(error).finally(() => {
+        this._closed = true;
+        callback(error);
+      });
+    }
+
+    return;
+  }
+  try {
+    callback(error);
+  } catch (error) {
+    globalThis.reportError(error);
+  }
+};
 
 function newStreamReadableFromReadableStream(readableStream, options = {}) {
   if (!(readableStream instanceof ReadableStream)) {
@@ -1103,4 +1100,5 @@ export default {
 
   newStreamReadableFromReadableStream,
   newReadableStreamFromStreamReadable,
+  ReadableFromWeb
 };

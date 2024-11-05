@@ -425,6 +425,7 @@ install_bun() {
 		mkdir -p "$HOME/.bun/bin"
 		wget -O "$HOME/.bun/bin/bun" https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-arm64
 		chmod +x "$HOME/.bun/bin/bun"
+		append_to_path "$HOME/.bun/bin"
 		return
 	fi
   bash="$(require bash)"

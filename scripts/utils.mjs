@@ -701,7 +701,7 @@ export async function getChangedFiles(cwd, base, head) {
   base ||= getCommit(cwd);
   head ||= `${base}^1`;
 
-  const url = `https://api.github.com/repos/${repository}/compare/${base}...${head}`;
+  const url = `https://api.github.com/repos/${repository}/compare/${head}...${base}`;
   console.log({ url });
   const { error, body } = await curl(url, { json: true });
 

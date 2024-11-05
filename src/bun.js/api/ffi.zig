@@ -76,6 +76,24 @@ const IOTask = JSC.IOTask;
 const TCC = @import("../../tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
+const Offsets = extern struct {
+    JSArrayBufferView__offsetOfLength: u32,
+    JSArrayBufferView__offsetOfByteOffset: u32,
+    JSArrayBufferView__offsetOfVector: u32,
+    JSCell__offsetOfType: u32,
+
+    extern "C" var Bun__FFI__offsets: Offsets;
+    extern "C" fn Bun__FFI__ensureOffsetsAreLoaded() void;
+    fn loadOnce() void {
+        Bun__FFI__ensureOffsetsAreLoaded();
+    }
+    var once = std.once(loadOnce);
+    pub fn get() *const Offsets {
+        once.call();
+        return &Bun__FFI__offsets;
+    }
+};
+
 pub const FFI = struct {
     dylib: ?std.DynLib = null,
     relocated_bytes_to_free: ?[]u8 = null,
@@ -609,7 +627,7 @@ pub const FFI = struct {
             }
         }
 
-        const symbols_object = object.get(globalThis, "symbols") orelse .undefined;
+        const symbols_object = object.getOwn(globalThis, "symbols") orelse .undefined;
         if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
             _ = globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
         }
@@ -629,7 +647,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "library")) |library_value| {
+        if (object.getOwn(globalThis, "library")) |library_value| {
             compile_c.libraries = StringArray.fromJS(globalThis, library_value, "library");
         }
 
@@ -712,7 +730,7 @@ pub const FFI = struct {
             return .zero;
         }
 
-        if (object.get(globalThis, "source")) |source_value| {
+        if (object.getOwn(globalThis, "source")) |source_value| {
             if (source_value.isArray()) {
                 compile_c.source = .{ .files = .{} };
                 var iter = source_value.arrayIterator(globalThis);
@@ -1283,7 +1301,7 @@ pub const FFI = struct {
 
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
-        if (value.get(global, "args")) |args| {
+        if (value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
                 return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
@@ -1359,6 +1377,11 @@ pub const FFI = struct {
         if (return_type == ABIType.napi_env) {
             abi_types.clearAndFree(allocator);
             return ZigString.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
+        }
+
+        if (return_type == .buffer) {
+            abi_types.clearAndFree(allocator);
+            return ZigString.static("Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)").toErrorInstance(global);
         }
 
         if (function.threadsafe and return_type != ABIType.void) {
@@ -1494,7 +1517,7 @@ pub const FFI = struct {
         };
 
         pub fn ffiHeader() string {
-            return if (Environment.embed_code)
+            return if (Environment.codegen_embed)
                 @embedFile("./FFI.h")
             else
                 bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
@@ -1542,14 +1565,7 @@ pub const FFI = struct {
             }
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
-            const Sizes = @import("../bindings/sizes.zig");
 
-            var symbol_buf: [256]u8 = undefined;
-            TCC.tcc_define_symbol(
-                state,
-                "Bun_FFI_PointerOffsetToArgumentsList",
-                std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
-            );
             CompilerRT.define(state);
 
             // TCC.tcc_define_symbol(
@@ -1784,7 +1800,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  void* handleScope = NapiHandleScope__push(JS_GLOBAL_OBJECT, false);
+                    \\  void* handleScope = NapiHandleScope__open(JS_GLOBAL_OBJECT, false);
                     \\
                 );
             }
@@ -1897,7 +1913,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  NapiHandleScope__pop(JS_GLOBAL_OBJECT, handleScope);
+                    \\  NapiHandleScope__close(JS_GLOBAL_OBJECT, handleScope);
                     \\
                 );
             }
@@ -2064,7 +2080,7 @@ pub const FFI = struct {
         function = 17,
         napi_env = 18,
         napi_value = 19,
-
+        buffer = 20,
         pub const max = @intFromEnum(ABIType.napi_value);
 
         /// Types that we can directly pass through as an `int64_t`
@@ -2104,6 +2120,8 @@ pub const FFI = struct {
             .{ "uint64_t", ABIType.uint64_t },
             .{ "uint8_t", ABIType.uint8_t },
             .{ "usize", ABIType.uint64_t },
+            .{ "size_t", ABIType.uint64_t },
+            .{ "buffer", ABIType.buffer },
             .{ "void*", ABIType.ptr },
             .{ "ptr", ABIType.ptr },
             .{ "pointer", ABIType.ptr },
@@ -2219,6 +2237,9 @@ pub const FFI = struct {
                         try writer.writeAll(".asNapiValue");
                         return;
                     },
+                    .buffer => {
+                        try writer.writeAll("JSVALUE_TO_TYPED_ARRAY_VECTOR(");
+                    },
                 }
                 // if (self.fromi64) {
                 //     try writer.writeAll("EncodedJSValue{ ");
@@ -2274,6 +2295,9 @@ pub const FFI = struct {
                     .napi_value => {
                         try writer.print("((EncodedJSValue) {{.asNapiValue = {s} }} )", .{self.symbol});
                     },
+                    .buffer => {
+                        try writer.writeAll("0");
+                    },
                 }
             }
         };
@@ -2302,7 +2326,7 @@ pub const FFI = struct {
 
         pub fn typenameLabel(this: ABIType) []const u8 {
             return switch (this) {
-                .function, .cstring, .ptr => "void*",
+                .buffer, .function, .cstring, .ptr => "void*",
                 .bool => "bool",
                 .int8_t => "int8_t",
                 .uint8_t => "uint8_t",
@@ -2345,6 +2369,7 @@ pub const FFI = struct {
                 .void => "void",
                 .napi_env => "napi_env",
                 .napi_value => "napi_value",
+                .buffer => "buffer",
             };
         }
     };
@@ -2423,13 +2448,47 @@ const CompilerRT = struct {
             // there
             _ = TCC.tcc_compile_string(state, @embedFile(("libtcc1.c")));
         }
+
+        const Sizes = @import("../bindings/sizes.zig");
+        var symbol_buf: [256]u8 = undefined;
+        TCC.tcc_define_symbol(
+            state,
+            "Bun_FFI_PointerOffsetToArgumentsList",
+            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
+        );
+        const offsets = Offsets.get();
+        TCC.tcc_define_symbol(
+            state,
+            "JSArrayBufferView__offsetOfLength",
+            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfLength}) catch unreachable,
+        );
+        TCC.tcc_define_symbol(
+            state,
+            "JSArrayBufferView__offsetOfVector",
+            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfVector}) catch unreachable,
+        );
+        TCC.tcc_define_symbol(
+            state,
+            "JSCell__offsetOfType",
+            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSCell__offsetOfType}) catch unreachable,
+        );
+        TCC.tcc_define_symbol(
+            state,
+            "JSTypeArrayBufferViewMin",
+            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.min_typed_array)}) catch unreachable,
+        );
+        TCC.tcc_define_symbol(
+            state,
+            "JSTypeArrayBufferViewMax",
+            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.max_typed_array)}) catch unreachable,
+        );
     }
 
     pub fn inject(state: *TCC.TCCState) void {
         _ = TCC.tcc_add_symbol(state, "memset", &memset);
         _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__push", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__push);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__pop", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__pop);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open);
+        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close);
 
         _ = TCC.tcc_add_symbol(
             state,

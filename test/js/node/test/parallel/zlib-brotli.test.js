@@ -30,35 +30,35 @@ test("Quality parameter at stream creation", () => {
 });
 
 test("Setting out-of-bounds option values or keys", () => {
-  // expect(() => {
-  //   zlib.createBrotliCompress({
-  //     params: {
-  //       10000: 0,
-  //     },
-  //   });
-  // }).toThrow(
-  //   expect.objectContaining({
-  //     code: "ERR_BROTLI_INVALID_PARAM",
-  //     name: "RangeError",
-  //     message: expect.any(String),
-  //   }),
-  // );
+  expect(() => {
+    zlib.createBrotliCompress({
+      params: {
+        10000: 0,
+      },
+    });
+  }).toThrow(
+    expect.objectContaining({
+      code: "ERR_BROTLI_INVALID_PARAM",
+      name: "RangeError",
+      message: expect.any(String),
+    }),
+  );
 
   // Test that accidentally using duplicate keys fails.
-  // expect(() => {
-  //   zlib.createBrotliCompress({
-  //     params: {
-  //       0: 0,
-  //       "00": 0,
-  //     },
-  //   });
-  // }).toThrow(
-  //   expect.objectContaining({
-  //     code: "ERR_BROTLI_INVALID_PARAM",
-  //     name: "RangeError",
-  //     message: expect.any(String),
-  //   }),
-  // );
+  expect(() => {
+    zlib.createBrotliCompress({
+      params: {
+        0: 0,
+        "00": 0,
+      },
+    });
+  }).toThrow(
+    expect.objectContaining({
+      code: "ERR_BROTLI_INVALID_PARAM",
+      name: "RangeError",
+      message: expect.any(String),
+    }),
+  );
 
   expect(() => {
     zlib.createBrotliCompress({

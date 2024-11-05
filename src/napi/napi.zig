@@ -65,23 +65,33 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const NapiHandleScope = opaque {
-    pub extern fn NapiHandleScope__push(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
-    pub extern fn NapiHandleScope__pop(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
+    pub extern fn NapiHandleScope__open(globalObject: *JSC.JSGlobalObject, escapable: bool) ?*NapiHandleScope;
+    pub extern fn NapiHandleScope__close(globalObject: *JSC.JSGlobalObject, current: ?*NapiHandleScope) void;
     extern fn NapiHandleScope__append(globalObject: *JSC.JSGlobalObject, value: JSC.JSValueReprInt) void;
     extern fn NapiHandleScope__escape(handleScope: *NapiHandleScope, value: JSC.JSValueReprInt) bool;
 
-    pub fn push(env: napi_env, escapable: bool) ?*NapiHandleScope {
-        return NapiHandleScope__push(env, escapable);
+    /// Create a new handle scope in the given environment, or return null if creating one now is
+    /// unsafe (i.e. inside a finalizer)
+    pub fn open(env: napi_env, escapable: bool) ?*NapiHandleScope {
+        return NapiHandleScope__open(env, escapable);
     }
 
-    pub fn pop(self: ?*NapiHandleScope, env: napi_env) void {
-        NapiHandleScope__pop(env, self);
+    /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
+    /// Asserts that self is the current handle scope in env.
+    pub fn close(self: ?*NapiHandleScope, env: napi_env) void {
+        NapiHandleScope__close(env, self);
     }
 
+    /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
+    /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
+    /// native module doesn't keep it visible on the stack.
     pub fn append(env: napi_env, value: JSC.JSValue) void {
         NapiHandleScope__append(env, @intFromEnum(value));
     }
 
+    /// Move a value from the current handle scope (which must be escapable) to the reserved escape
+    /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
+    /// Returns an error if escape() has already been called on this handle scope.
     pub fn escape(self: *NapiHandleScope, value: JSC.JSValue) error{EscapeCalledTwice}!void {
         if (!NapiHandleScope__escape(self, @intFromEnum(value))) {
             return error.EscapeCalledTwice;
@@ -286,29 +296,17 @@ pub export fn napi_create_array(env: napi_env, result_: ?*napi_value) napi_statu
     result.set(env, JSValue.createEmptyArray(env, 0));
     return .ok;
 }
-const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
-    var args: [128]JSC.JSValue = undefined;
-    for (args, 0..) |_, i| {
-        args[i] = JSValue.jsUndefined();
-    }
-    break :brk args;
-};
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result_: ?*napi_value) napi_status {
     log("napi_create_array_with_length", .{});
     const result = result_ orelse {
         return invalidArg();
     };
 
-    const len = @as(u32, @intCast(length));
+    // JSC createEmptyArray takes u32
+    // Node and V8 convert out-of-bounds array sizes to 0
+    const len = std.math.cast(u32, length) orelse 0;
 
     const array = JSC.JSValue.createEmptyArray(env, len);
-    array.ensureStillAlive();
-
-    var i: u32 = 0;
-    while (i < len) : (i += 1) {
-        array.putIndex(env, i, JSValue.jsUndefined());
-    }
-
     array.ensureStillAlive();
     result.set(env, array);
     return .ok;
@@ -438,42 +436,9 @@ pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
 pub extern fn napi_get_value_double(env: napi_env, value: napi_value, result: *f64) napi_status;
-pub export fn napi_get_value_int32(_: napi_env, value_: napi_value, result_: ?*i32) napi_status {
-    log("napi_get_value_int32", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(i32);
-    return .ok;
-}
-pub export fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status {
-    log("napi_get_value_uint32", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(u32);
-    return .ok;
-}
-pub export fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status {
-    log("napi_get_value_int64", .{});
-    const result = result_ orelse {
-        return invalidArg();
-    };
-    const value = value_.get();
-    if (!value.isNumber()) {
-        return .number_expected;
-    }
-    result.* = value.to(i64);
-    return .ok;
-}
+pub extern fn napi_get_value_int32(_: napi_env, value_: napi_value, result: ?*i32) napi_status;
+pub extern fn napi_get_value_uint32(_: napi_env, value_: napi_value, result_: ?*u32) napi_status;
+pub extern fn napi_get_value_int64(_: napi_env, value_: napi_value, result_: ?*i64) napi_status;
 pub export fn napi_get_value_bool(_: napi_env, value_: napi_value, result_: ?*bool) napi_status {
     log("napi_get_value_bool", .{});
     const result = result_ orelse {
@@ -749,14 +714,14 @@ pub export fn napi_open_handle_scope(env: napi_env, result_: ?*napi_handle_scope
     const result = result_ orelse {
         return invalidArg();
     };
-    result.* = NapiHandleScope.push(env, false);
+    result.* = NapiHandleScope.open(env, false);
     return .ok;
 }
 
 pub export fn napi_close_handle_scope(env: napi_env, handle_scope: napi_handle_scope) napi_status {
     log("napi_close_handle_scope", .{});
     if (handle_scope) |scope| {
-        scope.pop(env);
+        scope.close(env);
     }
 
     return .ok;
@@ -812,7 +777,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv_: napi_value
 // We don't want to fail to load the library because of that
 // so we instead return an error and warn the user
 fn notImplementedYet(comptime name: []const u8) void {
-    bun.once(
+    bun.onceUnsafe(
         struct {
             pub fn warn() void {
                 if (JSC.VirtualMachine.get().log.level.atLeast(.warn)) {
@@ -830,13 +795,13 @@ pub export fn napi_open_escapable_handle_scope(env: napi_env, result_: ?*napi_es
     const result = result_ orelse {
         return invalidArg();
     };
-    result.* = NapiHandleScope.push(env, true);
+    result.* = NapiHandleScope.open(env, true);
     return .ok;
 }
 pub export fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status {
     log("napi_close_escapable_handle_scope", .{});
     if (scope) |s| {
-        s.pop(env);
+        s.close(env);
     }
     return .ok;
 }
@@ -852,16 +817,8 @@ pub export fn napi_escape_handle(_: napi_env, scope_: napi_escapable_handle_scop
     result.* = escapee;
     return .ok;
 }
-pub export fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status {
-    log("napi_type_tag_object", .{});
-    notImplementedYet("napi_type_tag_object");
-    return genericFailure();
-}
-pub export fn napi_check_object_type_tag(_: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status {
-    log("napi_check_object_type_tag", .{});
-    notImplementedYet("napi_check_object_type_tag");
-    return genericFailure();
-}
+pub extern fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status;
+pub extern fn napi_check_object_type_tag(_: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status;
 
 // do nothing for both of these
 pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
@@ -1202,9 +1159,9 @@ pub const napi_async_work = struct {
         this.wait_for_deinit = true;
     }
 
-    pub fn runFromJS(this: *napi_async_work) void {
-        const handle_scope = NapiHandleScope.push(this.global, false);
-        defer if (handle_scope) |scope| scope.pop(this.global);
+    fn runFromJSWithError(this: *napi_async_work) bun.JSError!void {
+        const handle_scope = NapiHandleScope.open(this.global, false);
+        defer if (handle_scope) |scope| scope.close(this.global);
         this.complete.?(
             this.global,
             if (this.status.load(.seq_cst) == @intFromEnum(Status.cancelled))
@@ -1213,6 +1170,15 @@ pub const napi_async_work = struct {
                 napi_status.ok,
             this.ctx.?,
         );
+        if (this.global.hasException()) {
+            return error.JSError;
+        }
+    }
+
+    pub fn runFromJS(this: *napi_async_work) void {
+        this.runFromJSWithError() catch |e| {
+            this.global.reportActiveExceptionAsUnhandled(e);
+        };
     }
 };
 pub const napi_threadsafe_function = *ThreadSafeFunction;
@@ -1583,8 +1549,8 @@ pub const ThreadSafeFunction = struct {
                     log("call() {}", .{str});
                 }
 
-                const handle_scope = NapiHandleScope.push(globalObject, false);
-                defer if (handle_scope) |scope| scope.pop(globalObject);
+                const handle_scope = NapiHandleScope.open(globalObject, false);
+                defer if (handle_scope) |scope| scope.close(globalObject);
                 cb.napi_threadsafe_function_call_js(globalObject, napi_value.create(globalObject, cb.js), this.ctx, task);
             },
         }
@@ -1845,6 +1811,8 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v86String19ContainsOnlyOneByteEv() *anyopaque;
     pub extern fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm() *anyopaque;
     pub extern fn _ZN2v812api_internal13DisposeGlobalEPm() *anyopaque;
+    pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
+    pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
 } else struct {
@@ -1913,6 +1881,8 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?ContainsOnlyOneByte@String@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?GlobalizeReference@api_internal@v8@@YAPEA_KPEAVIsolate@internal@2@_K@Z"() *anyopaque;
     pub extern fn @"?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"() *anyopaque;
+    pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
+    pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

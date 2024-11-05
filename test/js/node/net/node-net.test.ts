@@ -1,11 +1,10 @@
-import { Socket as _BunSocket, resolve, TCPSocketListener } from "bun";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, isWindows, expectMaxObjectTypeCount } from "harness";
-import { connect, createServer, createConnection, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
-import { join } from "node:path";
-import { once } from "node:events";
-import { randomUUID } from "node:crypto";
+import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tmpdirSync } from "harness";
+import { randomUUID } from "node:crypto";
+import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
+import { join } from "node:path";
 
 const socket_domain = tmpdirSync();
 

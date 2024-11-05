@@ -44,6 +44,7 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
+const OOM = bun.OOM;
 
 pub const Cli = struct {
     pub const CompileTarget = @import("./compile_target.zig");
@@ -60,7 +61,7 @@ pub const Cli = struct {
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            log.printForLogLevel(Output.errorWriter()) catch {};
+            log.print(Output.errorWriter()) catch {};
 
             bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
@@ -72,10 +73,23 @@ pub const Cli = struct {
 
 pub const debug_flags = if (Environment.isDebug) struct {
     var resolve_breakpoints: []const []const u8 = &.{};
+    var print_breakpoints: []const []const u8 = &.{};
 
     pub fn hasResolveBreakpoint(str: []const u8) bool {
         for (resolve_breakpoints) |bp| {
             if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn hasPrintBreakpoint(path: fs.Path) bool {
+        for (print_breakpoints) |bp| {
+            if (strings.contains(path.pretty, bp)) {
+                return true;
+            }
+            if (strings.contains(path.text, bp)) {
                 return true;
             }
         }
@@ -116,6 +130,9 @@ pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 pub const OutdatedCommand = @import("./cli/outdated_command.zig").OutdatedCommand;
+pub const PublishCommand = @import("./cli/publish_command.zig").PublishCommand;
+pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
+pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -173,13 +190,15 @@ pub const Arguments = struct {
 
     const debug_params = [_]ParamType{
         clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+        clap.parseParam("--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string") catch unreachable,
     };
 
     const transpiler_params_ = [_]ParamType{
-        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
+        clap.parseParam("--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
-        clap.parseParam("--tsconfig-override <STR>         Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
-        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
+        clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls.") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -237,12 +256,15 @@ pub const Arguments = struct {
 
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
+        clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
@@ -253,16 +275,22 @@ pub const Arguments = struct {
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)") catch unreachable,
-        clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
         clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+        clap.parseParam("--experimental-css               Enabled experimental CSS bundling") catch unreachable,
+        clap.parseParam("--experimental-css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
-    };
+    } ++ if (FeatureFlags.bake) [_]ParamType{
+        clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake") catch unreachable,
+        clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
+        clap.parseParam("--define-client <STR>...         When --server-components is set, these defines are applied to client components. Same format as --define") catch unreachable,
+        clap.parseParam("--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically") catch unreachable,
+    } else .{};
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
     // TODO: update test completions
@@ -325,14 +353,21 @@ pub const Arguments = struct {
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
         var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
 
                 if (getHomeConfigPath(&config_buf)) |path| {
-                    try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+                    loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                        if (ctx.log.hasAny()) {
+                            ctx.log.print(Output.errorWriter()) catch {};
+                        }
+                        if (ctx.log.hasAny()) Output.printError("\n", .{});
+                        Output.err(err, "failed to load bunfig", .{});
+                        Global.crash();
+                    };
                 }
             }
         }
@@ -380,7 +415,14 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         }
 
-        try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
+        loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {
+            if (ctx.log.hasAny()) {
+                ctx.log.print(Output.errorWriter()) catch {};
+            }
+            if (ctx.log.hasAny()) Output.printError("\n", .{});
+            Output.err(err, "failed to load bunfig", .{});
+            Global.crash();
+        };
     }
 
     pub fn loadConfigWithCmdArgs(
@@ -388,7 +430,7 @@ pub const Arguments = struct {
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
         ctx: Command.Context,
-    ) !void {
+    ) OOM!void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
@@ -545,6 +587,8 @@ pub const Arguments = struct {
             };
         }
 
+        opts.drop = args.options("--drop");
+
         const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
 
         if (loader_tuple.keys.len > 0) {
@@ -559,7 +603,6 @@ pub const Arguments = struct {
         else
             null;
 
-        opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
@@ -724,10 +767,36 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
+            ctx.bundler_options.bytecode = args.flag("--bytecode");
+
+            if (comptime FeatureFlags.bake) {
+                if (args.flag("--app")) {
+                    ctx.bundler_options.bake = true;
+                    ctx.bundler_options.bake_debug_dump_server = args.flag("--debug-dump-server-files");
+                }
+            }
+
+            // TODO: support --format=esm
+            if (ctx.bundler_options.bytecode) {
+                ctx.bundler_options.output_format = .cjs;
+                ctx.args.target = .bun;
+            }
 
             if (args.option("--public-path")) |public_path| {
                 ctx.bundler_options.public_path = public_path;
             }
+
+            if (args.option("--banner")) |banner| {
+                ctx.bundler_options.banner = banner;
+            }
+
+            if (args.option("--footer")) |footer| {
+                ctx.bundler_options.footer = footer;
+            }
+
+            const experimental_css = args.flag("--experimental-css");
+            ctx.bundler_options.experimental_css = experimental_css;
+            ctx.bundler_options.css_chunking = args.flag("--experimental-css-chunking");
 
             const minify_flag = args.flag("--minify");
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
@@ -780,8 +849,18 @@ pub const Arguments = struct {
                     else => invalidTarget(&diag, _target),
                 };
 
-                if (opts.target.? == .bun)
+                if (opts.target.? == .bun) {
                     ctx.debug.run_in_bun = opts.target.? == .bun;
+                } else {
+                    if (ctx.bundler_options.bytecode) {
+                        Output.errGeneric("target must be 'bun' when bytecode is true. Received: {s}", .{@tagName(opts.target.?)});
+                        Global.exit(1);
+                    }
+
+                    if (ctx.bundler_options.bake) {
+                        Output.errGeneric("target must be 'bun' when using --app. Received: {s}", .{@tagName(opts.target.?)});
+                    }
+                }
             }
 
             if (args.flag("--watch")) {
@@ -821,22 +900,23 @@ pub const Arguments = struct {
                 };
 
                 switch (format) {
-                    .internal_kit_dev => {
+                    .internal_bake_dev => {
                         bun.Output.warn("--format={s} is for debugging only, and may experience breaking changes at any moment", .{format_str});
                         bun.Output.flush();
                     },
                     .cjs => {
-                        // Make this a soft error in debug to allow experimenting with these flags.
-                        const function = if (Environment.isDebug) Output.debugWarn else Output.errGeneric;
-                        function("Format '{s}' are not implemented", .{@tagName(format)});
-                        if (!Environment.isDebug) {
-                            Global.crash();
+                        if (ctx.args.target == null) {
+                            ctx.args.target = .node;
                         }
                     },
                     else => {},
                 }
 
                 ctx.bundler_options.output_format = format;
+                if (format != .cjs and ctx.bundler_options.bytecode) {
+                    Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                    Global.exit(1);
+                }
             }
 
             if (args.flag("--splitting")) {
@@ -855,8 +935,22 @@ pub const Arguments = struct {
                 ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
-            if (args.flag("--server-components")) {
-                ctx.bundler_options.react_server_components = true;
+            if (comptime FeatureFlags.bake) {
+                if (args.flag("--server-components")) {
+                    if (!bun.FeatureFlags.cli_server_components) {
+                        // TODO: i want to disable this in non-canary
+                        // but i also want to have tests that can run for PRs
+                    }
+                    ctx.bundler_options.server_components = true;
+                    if (opts.target) |target| {
+                        if (!bun.options.Target.from(target).isServerSide()) {
+                            bun.Output.errGeneric("Cannot use client-side --target={s} with --server-components", .{@tagName(target)});
+                            Global.crash();
+                        }
+                    } else {
+                        opts.target = .bun;
+                    }
+                }
             }
 
             if (args.flag("--react-fast-refresh")) {
@@ -986,9 +1080,9 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0 and opts.framework == null) {
-                Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
+            if (opts.entry_points.len == 0 and !ctx.bundler_options.bake) {
+                Output.prettyln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                Output.pretty("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
                 Output.flush();
                 Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
@@ -1030,6 +1124,7 @@ pub const Arguments = struct {
 
         if (Environment.isDebug) {
             debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
+            debug_flags.print_breakpoints = args.options("--breakpoint-print");
         }
 
         return opts;
@@ -1041,7 +1136,6 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
-const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
@@ -1117,9 +1211,9 @@ pub const HelpCommand = struct {
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
-        \\  <b><blue>pack<r>                           Archive the current workspace package
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>publish<r>                        Publish a package to the npm registry
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
@@ -1187,9 +1281,9 @@ pub const HelpCommand = struct {
         printWithReason(reason, false);
 
         if (reason == .invalid_command) {
-            std.process.exit(1);
+            Global.exit(1);
         }
-        std.process.exit(0);
+        Global.exit(0);
     }
 };
 
@@ -1223,6 +1317,10 @@ pub var is_bunx_exe = false;
 
 pub const Command = struct {
     var script_name_buf: bun.PathBuffer = undefined;
+
+    pub fn get() Context {
+        return global_cli_ctx;
+    }
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -1295,18 +1393,18 @@ pub const Command = struct {
         args: Api.TransformOptions,
         log: *logger.Log,
         allocator: std.mem.Allocator,
-        positionals: []const string = &[_]string{},
-        passthrough: []const string = &[_]string{},
+        positionals: []const string = &.{},
+        passthrough: []const string = &.{},
         install: ?*Api.BunInstall = null,
 
-        debug: DebugOptions = DebugOptions{},
-        test_options: TestOptions = TestOptions{},
-        bundler_options: BundlerOptions = BundlerOptions{},
-        runtime_options: RuntimeOptions = RuntimeOptions{},
+        debug: DebugOptions = .{},
+        test_options: TestOptions = .{},
+        bundler_options: BundlerOptions = .{},
+        runtime_options: RuntimeOptions = .{},
 
-        filters: []const []const u8 = &[_][]const u8{},
+        filters: []const []const u8 = &.{},
 
-        preloads: []const string = &[_]string{},
+        preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
@@ -1320,7 +1418,7 @@ pub const Command = struct {
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
-            react_server_components: bool = false,
+            server_components: bool = false,
             react_fast_refresh: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
@@ -1331,6 +1429,14 @@ pub const Command = struct {
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
+            bytecode: bool = false,
+            banner: []const u8 = "",
+            footer: []const u8 = "",
+            experimental_css: bool = false,
+            css_chunking: bool = false,
+
+            bake: bool = false,
+            bake_debug_dump_server: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
@@ -1365,7 +1471,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]const u8 = undefined,
+        buf: [][:0]const u8,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1428,7 +1534,7 @@ pub const Command = struct {
         }
 
         const first_arg_name = next_arg;
-        const RootCommandMatcher = strings.ExactSizeMatcher(16);
+        const RootCommandMatcher = strings.ExactSizeMatcher(12);
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
             RootCommandMatcher.case("init") => .InitCommand,
@@ -1477,6 +1583,7 @@ pub const Command = struct {
             RootCommandMatcher.case("exec") => .ExecCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
+            RootCommandMatcher.case("publish") => .PublishCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1490,7 +1597,6 @@ pub const Command = struct {
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .ReservedCommand,
-            RootCommandMatcher.case("publish") => .ReservedCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
@@ -1620,6 +1726,13 @@ pub const Command = struct {
                 try OutdatedCommand.exec(ctx);
                 return;
             },
+            .PublishCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PublishCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PublishCommand);
+
+                try PublishCommand.exec(ctx);
+                return;
+            },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BunxCommand);
@@ -1661,6 +1774,20 @@ pub const Command = struct {
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .PackageManagerCommand);
+
+                // const maybe_subcommand, const maybe_arg = PackageManagerCommand.which(command_index);
+                // if (maybe_subcommand) |subcommand| {
+                //     return switch (subcommand) {
+                //         inline else => |tag| try PackageManagerCommand.exec(ctx, tag),
+                //     };
+                // }
+
+                // PackageManagerCommand.printHelp();
+
+                // if (maybe_arg) |arg| {
+                //     Output.errGeneric("\"{s}\" unknown command", .{arg});
+                //     Global.crash();
+                // }
 
                 try PackageManagerCommand.exec(ctx);
                 return;
@@ -1712,7 +1839,7 @@ pub const Command = struct {
                     const index = AddCompletions.index;
 
                     outer: {
-                        if (filter.len > 1) {
+                        if (filter.len > 1 and filter[1].len > 0) {
                             const first_letter: FirstLetter = switch (filter[1][0]) {
                                 'a' => FirstLetter.a,
                                 'b' => FirstLetter.b,
@@ -2146,11 +2273,7 @@ pub const Command = struct {
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
+            ctx.log.print(Output.errorWriter()) catch {};
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                 std.fs.path.basename(file_path),
@@ -2188,6 +2311,7 @@ pub const Command = struct {
         PatchCommand,
         PatchCommitCommand,
         OutdatedCommand,
+        PublishCommand,
 
         /// Used by crash reports.
         ///
@@ -2220,6 +2344,7 @@ pub const Command = struct {
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
                 .OutdatedCommand => 'o',
+                .PublishCommand => 'k',
             };
         }
 
@@ -2443,9 +2568,10 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand => {
+                .OutdatedCommand, .PublishCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
+                        .PublishCommand => .publish,
                     });
                 },
                 else => {
@@ -2465,6 +2591,7 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
+                .PublishCommand,
                 => true,
                 else => false,
             };
@@ -2483,6 +2610,7 @@ pub const Command = struct {
                 .PatchCommand,
                 .PatchCommitCommand,
                 .OutdatedCommand,
+                .PublishCommand,
                 => true,
                 else => false,
             };
@@ -2503,6 +2631,7 @@ pub const Command = struct {
             .RunCommand = true,
             .RunAsNodeCommand = true,
             .OutdatedCommand = true,
+            .PublishCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -2517,6 +2646,7 @@ pub const Command = struct {
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .OutdatedCommand = true,
+            .PublishCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -2532,6 +2662,7 @@ pub const Command = struct {
             .UnlinkCommand = false,
             .BunxCommand = false,
             .OutdatedCommand = false,
+            .PublishCommand = false,
         });
     };
 };

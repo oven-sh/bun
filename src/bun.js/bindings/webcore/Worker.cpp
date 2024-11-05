@@ -434,14 +434,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
     if (callFrame->argumentCount() < 1) {
         throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return {};
     }
 
     auto port = callFrame->argument(0);
 
     if (!port.isObject()) {
         throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-        return JSC::JSValue::encode(jsUndefined());
+        return {};
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
@@ -452,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-    return JSC::JSValue::encode(jsUndefined());
+    return {};
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)

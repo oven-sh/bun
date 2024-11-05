@@ -6,6 +6,8 @@ const Match = ExactSizeMatcher(2);
 const Output = bun.Output;
 const Environment = bun.Environment;
 const StringBuilder = bun.StringBuilder;
+const string = bun.string;
+const strings = bun.strings;
 
 const fmt = std.fmt;
 
@@ -14,6 +16,34 @@ const assert = bun.assert;
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
+
+    pub const List = struct {
+        list: []Header = &.{},
+
+        pub fn get(this: *const List, name: string) ?string {
+            for (this.list) |header| {
+                if (strings.eqlCaseInsensitiveASCII(header.name, name, true)) {
+                    return header.value;
+                }
+            }
+            return null;
+        }
+
+        pub fn getIfOtherIsAbsent(this: *const List, name: string, other: string) ?string {
+            var value: ?string = null;
+            for (this.list) |header| {
+                if (strings.eqlCaseInsensitiveASCII(header.name, other, true)) {
+                    return null;
+                }
+
+                if (value == null and strings.eqlCaseInsensitiveASCII(header.name, name, true)) {
+                    value = header.value;
+                }
+            }
+
+            return value;
+        }
+    };
 
     pub fn isMultiline(self: Header) bool {
         return @intFromPtr(self.name.ptr) == 0;
@@ -214,9 +244,9 @@ const StatusCodeFormatter = struct {
 
 pub const Response = struct {
     minor_version: usize = 0,
-    status_code: usize = 0,
+    status_code: u32 = 0,
     status: []const u8 = "",
-    headers: []Header = &.{},
+    headers: Header.List = .{},
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -234,7 +264,7 @@ pub const Response = struct {
                 self.status,
             },
         );
-        for (self.headers) |header| {
+        for (self.headers.list) |header| {
             if (Output.enable_ansi_colors_stderr) {
                 _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
             }
@@ -247,7 +277,7 @@ pub const Response = struct {
     pub fn count(this: *const Response, builder: *StringBuilder) void {
         builder.count(this.status);
 
-        for (this.headers) |header| {
+        for (this.headers.list) |header| {
             header.count(builder);
         }
     }
@@ -256,11 +286,11 @@ pub const Response = struct {
         var that = this.*;
         that.status = builder.append(this.status);
 
-        for (this.headers, 0..) |header, i| {
+        for (this.headers.list, 0..) |header, i| {
             headers[i] = header.clone(builder);
         }
 
-        that.headers = headers[0..this.headers.len];
+        that.headers.list = headers[0..this.headers.list.len];
 
         return that;
     }
@@ -295,9 +325,9 @@ pub const Response = struct {
             },
             else => Response{
                 .minor_version = @as(usize, @intCast(minor_version)),
-                .status_code = @as(usize, @intCast(status_code)),
+                .status_code = @as(u32, @intCast(status_code)),
                 .status = status,
-                .headers = src[0..@min(num_headers, src.len)],
+                .headers = .{ .list = src[0..@min(num_headers, src.len)] },
                 .bytes_read = rc,
             },
         };

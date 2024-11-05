@@ -39,10 +39,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 
-fn ErrorBuilder(comptime code_: Error, comptime fmt_: [:0]const u8, Args: type) type {
+fn ErrorBuilder(comptime code: Error, comptime fmt: [:0]const u8, Args: type) type {
   return struct {
-      const code = code_;
-      const fmt = fmt_;
       globalThis: *JSC.JSGlobalObject,
       args: Args,
 
@@ -60,7 +58,6 @@ fn ErrorBuilder(comptime code_: Error, comptime fmt_: [:0]const u8, Args: type) 
       pub inline fn reject(this: @This()) JSC.JSValue {
         return JSC.JSPromise.rejectedPromiseValue(this.globalThis, code.fmt(this.globalThis, fmt, this.args));
       }
-
   };
 }
 

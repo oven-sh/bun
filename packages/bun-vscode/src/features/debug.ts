@@ -1,8 +1,14 @@
 import { DebugSession } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 import * as vscode from "vscode";
-import type { DAP } from "../../../bun-debug-adapter-protocol";
-import { DebugAdapter, UnixSignal } from "../../../bun-debug-adapter-protocol";
+import {
+  DAP,
+  DebugAdapter,
+  getAvailablePort,
+  getRandomId,
+  TCPSocketSignal,
+  UnixSignal,
+} from "../../../bun-debug-adapter-protocol";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -81,7 +87,7 @@ function debugFileCommand(resource?: vscode.Uri) {
   if (path) debugCommand(path);
 }
 
-function injectDebugTerminal(terminal: vscode.Terminal): void {
+async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   if (!getConfig("debugTerminal.enabled")) return;
 
   const { name, creationOptions } = terminal;
@@ -97,14 +103,16 @@ function injectDebugTerminal(terminal: vscode.Terminal): void {
   const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
   const query = stopOnEntry ? "break=1" : "wait=1";
 
-  const { adapter, signal } = new TerminalDebugSession();
+  const debugSession = new TerminalDebugSession();
+  await debugSession.initialize();
+  const { adapter, signal } = debugSession;
   const debug = vscode.window.createTerminal({
     ...creationOptions,
     name: "JavaScript Debug Terminal",
     env: {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
-      "BUN_INSPECT_NOTIFY": `${signal.url}`,
+      "BUN_INSPECT_NOTIFY": signal.url,
     },
   });
 
@@ -153,7 +161,9 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 }
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
-  createDebugAdapterDescriptor(session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+  async createDebugAdapterDescriptor(
+    session: vscode.DebugSession,
+  ): Promise<vscode.ProviderResult<vscode.DebugAdapterDescriptor>> {
     const { configuration } = session;
     const { request, url } = configuration;
 
@@ -166,18 +176,28 @@ class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory 
     }
 
     const adapter = new FileDebugSession(session.id);
+    await adapter.initialize();
     return new vscode.DebugAdapterInlineImplementation(adapter);
   }
 }
 
 class FileDebugSession extends DebugSession {
-  readonly adapter: DebugAdapter;
+  adapter: DebugAdapter;
+  sessionId?: string;
 
   constructor(sessionId?: string) {
     super();
-    const uniqueId = sessionId ?? Math.random().toString(36).slice(2);
-    const url = `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+    this.sessionId = sessionId;
+  }
 
+  async initialize() {
+    const uniqueId = this.sessionId ?? Math.random().toString(36).slice(2);
+    let url;
+    if (process.platform === "win32") {
+      url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+    } else {
+      url = `ws+unix://${tmpdir()}/${uniqueId}.sock`;
+    }
     this.adapter = new DebugAdapter(url);
     this.adapter.on("Adapter.response", response => this.sendResponse(response));
     this.adapter.on("Adapter.event", event => this.sendEvent(event));
@@ -204,11 +224,19 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  readonly signal: UnixSignal;
+  signal: TCPSocketSignal | UnixSignal;
 
   constructor() {
     super();
-    this.signal = new UnixSignal();
+  }
+
+  async initialize() {
+    await super.initialize();
+    if (process.platform === "win32") {
+      this.signal = new TCPSocketSignal(await getAvailablePort());
+    } else {
+      this.signal = new UnixSignal();
+    }
     this.signal.on("Signal.received", () => {
       vscode.debug.startDebugging(undefined, {
         ...ATTACH_CONFIGURATION,
@@ -222,7 +250,7 @@ class TerminalDebugSession extends FileDebugSession {
       name: "Bun Terminal",
       env: {
         "BUN_INSPECT": `${this.adapter.url}?wait=1`,
-        "BUN_INSPECT_NOTIFY": `${this.signal.url}`,
+        "BUN_INSPECT_NOTIFY": this.signal.url,
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),

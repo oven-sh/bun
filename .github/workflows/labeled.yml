@@ -83,6 +83,26 @@ jobs:
           echo "latest=$(cat LATEST)" >> $GITHUB_OUTPUT
 
           rm -rf is-outdated.txt outdated.txt latest.txt
+      - name: Generate comment text with Sentry Link
+        if: github.event.label.name == 'crash'
+        # ignore if fail
+        continue-on-error: true
+        id: generate-comment-text
+        env:
+          GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_EVENTS_SECRET }}
+        shell: bash
+        run: |
+          bun scripts/associate-issue-with-sentry.ts
+
+          if [[ -f "sentry-link.txt" ]]; then
+            echo "sentry-link=$(cat sentry-link.txt)" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -f "sentry-id.txt" ]]; then
+            echo "sentry-id=$(cat sentry-id.txt)" >> $GITHUB_OUTPUT
+          fi
+
       - name: Add labels
         uses: actions-cool/issues-helper@v3
         if: github.event.label.name == 'crash'
@@ -92,7 +112,7 @@ jobs:
           issue-number: ${{ github.event.issue.number }}
           labels: ${{ steps.add-labels.outputs.labels }}
       - name: Comment outdated
-        if: steps.add-labels.outputs.is-outdated == 'true' && github.event.label.name == 'crash'
+        if: steps.add-labels.outputs.is-outdated == 'true' && github.event.label.name == 'crash' && steps.generate-comment-text.outputs.sentry-link == ''
         uses: actions-cool/issues-helper@v3
         with:
           actions: "create-comment"
@@ -106,6 +126,40 @@ jobs:
             ```sh
             bun upgrade
             ```
+      - name: Comment with Sentry Link and outdated version
+        if: steps.generate-comment-text.outputs.sentry-link != '' && github.event.label.name == 'crash' && steps.add-labels.outputs.is-outdated == 'true'
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "create-comment"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            @${{ github.event.issue.user.login }}, thank you for reporting this crash. The latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.oudated }}.
+
+            Are you able to reproduce this crash on the latest version of Bun?
+
+            ```sh
+            bun upgrade
+            ```
+
+            For Bun's internal tracking, this issue is [${{ steps.generate-comment-text.outputs.sentry-id }}](${{ steps.generate-comment-text.outputs.sentry-link }}).
+
+            <!-- sentry-id: ${{ steps.generate-comment-text.outputs.sentry-id }} -->
+            <!-- sentry-link: ${{ steps.generate-comment-text.outputs.sentry-link }} -->
+      - name: Comment with Sentry Link
+        if: steps.generate-comment-text.outputs.sentry-link != '' && github.event.label.name == 'crash' && steps.add-labels.outputs.is-outdated != 'true'
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "create-comment"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            Thank you for reporting this crash. 
+
+            For Bun's internal tracking, this issue is [${{ steps.generate-comment-text.outputs.sentry-id }}](${{ steps.generate-comment-text.outputs.sentry-link }}).
+
+            <!-- sentry-id: ${{ steps.generate-comment-text.outputs.sentry-id }} -->
+            <!-- sentry-link: ${{ steps.generate-comment-text.outputs.sentry-link }} -->
       - name: Comment needs repro
         if: github.event.label.name == 'needs repro'
         uses: actions-cool/issues-helper@v3
@@ -114,4 +168,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            Hello @${{ github.event.issue.user.login }}. Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun), or [CodeSandbox](https://codesandbox.io/templates/bun). Issues marked with `needs repro` will be closed if they have no activity within 3 days.
+            Hello @${{ github.event.issue.user.login }}. Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun), [CodeSandbox](https://codesandbox.io/templates/bun), or provide a bulleted list of commands to run that reproduce this issue. Issues marked with `needs repro` will be closed if they have no activity within 3 days.

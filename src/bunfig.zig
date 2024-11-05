@@ -52,12 +52,20 @@ pub const Bunfig = struct {
         ctx: Command.Context,
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
-            this.log.addError(this.source, loc, text) catch unreachable;
+            this.log.addErrorOpts(text, .{
+                .source = this.source,
+                .loc = loc,
+                .redact_sensitive_information = true,
+            }) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
         fn addErrorFormat(this: *Parser, loc: logger.Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
-            this.log.addErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
+            this.log.addErrorFmtOpts(allocator, text, args, .{
+                .source = this.source,
+                .loc = loc,
+                .redact_sensitive_information = true,
+            }) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
@@ -336,15 +344,15 @@ pub const Bunfig = struct {
             }
 
             if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
-                if (json.get("install")) |_bun| {
+                if (json.getObject("install")) |install_obj| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
-                        const install_ = try this.allocator.create(Api.BunInstall);
-                        install_.* = std.mem.zeroes(Api.BunInstall);
-                        this.ctx.install = install_;
-                        break :brk install_;
+                        const install = try this.allocator.create(Api.BunInstall);
+                        install.* = std.mem.zeroes(Api.BunInstall);
+                        this.ctx.install = install;
+                        break :brk install;
                     };
 
-                    if (_bun.get("auto")) |auto_install_expr| {
+                    if (install_obj.get("auto")) |auto_install_expr| {
                         if (auto_install_expr.data == .e_string) {
                             this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
                                 try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
@@ -361,13 +369,46 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (_bun.get("exact")) |exact| {
+                    if (install_obj.get("cafile")) |cafile| {
+                        install.cafile = try cafile.asStringCloned(allocator) orelse {
+                            try this.addError(cafile.loc, "Invalid cafile. Expected a string.");
+                            return;
+                        };
+                    }
+
+                    if (install_obj.get("ca")) |ca| {
+                        switch (ca.data) {
+                            .e_array => |arr| {
+                                var list = try allocator.alloc([]const u8, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    list[i] = try item.asStringCloned(allocator) orelse {
+                                        try this.addError(item.loc, "Invalid CA. Expected a string.");
+                                        return;
+                                    };
+                                }
+                                install.ca = .{
+                                    .list = list,
+                                };
+                            },
+                            .e_string => |str| {
+                                install.ca = .{
+                                    .str = try str.stringCloned(allocator),
+                                };
+                            },
+                            else => {
+                                try this.addError(ca.loc, "Invalid CA. Expected a string or an array of strings.");
+                                return;
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("exact")) |exact| {
                         if (exact.asBool()) |value| {
                             install.exact = value;
                         }
                     }
 
-                    if (_bun.get("prefer")) |prefer_expr| {
+                    if (install_obj.get("prefer")) |prefer_expr| {
                         try this.expectString(prefer_expr);
 
                         if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {
@@ -377,11 +418,11 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (_bun.get("registry")) |registry| {
+                    if (install_obj.get("registry")) |registry| {
                         install.default_registry = try this.parseRegistry(registry);
                     }
 
-                    if (_bun.get("scopes")) |scopes| {
+                    if (install_obj.get("scopes")) |scopes| {
                         var registry_map = install.scoped orelse Api.NpmRegistryMap{};
                         try this.expect(scopes, .e_object);
 
@@ -399,32 +440,32 @@ pub const Bunfig = struct {
                         install.scoped = registry_map;
                     }
 
-                    if (_bun.get("dryRun")) |dry_run| {
+                    if (install_obj.get("dryRun")) |dry_run| {
                         if (dry_run.asBool()) |value| {
                             install.dry_run = value;
                         }
                     }
 
-                    if (_bun.get("production")) |production| {
+                    if (install_obj.get("production")) |production| {
                         if (production.asBool()) |value| {
                             install.production = value;
                         }
                     }
 
-                    if (_bun.get("frozenLockfile")) |frozen_lockfile| {
+                    if (install_obj.get("frozenLockfile")) |frozen_lockfile| {
                         if (frozen_lockfile.asBool()) |value| {
                             install.frozen_lockfile = value;
                         }
                     }
 
-                    if (_bun.get("concurrentScripts")) |jobs| {
+                    if (install_obj.get("concurrentScripts")) |jobs| {
                         if (jobs.data == .e_number) {
                             install.concurrent_scripts = jobs.data.e_number.toU32();
                             if (install.concurrent_scripts.? == 0) install.concurrent_scripts = null;
                         }
                     }
 
-                    if (_bun.get("lockfile")) |lockfile_expr| {
+                    if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);
                             if (lockfile.asString(this.allocator)) |value| {
@@ -457,41 +498,41 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (_bun.get("optional")) |optional| {
+                    if (install_obj.get("optional")) |optional| {
                         if (optional.asBool()) |value| {
                             install.save_optional = value;
                         }
                     }
 
-                    if (_bun.get("peer")) |optional| {
+                    if (install_obj.get("peer")) |optional| {
                         if (optional.asBool()) |value| {
                             install.save_peer = value;
                         }
                     }
 
-                    if (_bun.get("dev")) |optional| {
+                    if (install_obj.get("dev")) |optional| {
                         if (optional.asBool()) |value| {
                             install.save_dev = value;
                         }
                     }
 
-                    if (_bun.get("globalDir")) |dir| {
+                    if (install_obj.get("globalDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
                             install.global_dir = value;
                         }
                     }
 
-                    if (_bun.get("globalBinDir")) |dir| {
+                    if (install_obj.get("globalBinDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
                             install.global_bin_dir = value;
                         }
                     }
 
-                    if (_bun.get("logLevel")) |expr| {
+                    if (install_obj.get("logLevel")) |expr| {
                         try this.loadLogLevel(expr);
                     }
 
-                    if (_bun.get("cache")) |cache| {
+                    if (install_obj.get("cache")) |cache| {
                         load: {
                             if (cache.asBool()) |value| {
                                 if (!value) {
@@ -684,20 +725,6 @@ pub const Bunfig = struct {
                 jsx.development = jsx_dev;
             }
 
-            switch (comptime cmd) {
-                .AutoCommand, .BuildCommand => {
-                    if (json.get("publicDir")) |public_dir| {
-                        try this.expectString(public_dir);
-                        this.bunfig.router = Api.RouteConfig{
-                            .extensions = &.{},
-                            .dir = &.{},
-                            .static_dir = try public_dir.data.e_string.string(allocator),
-                        };
-                    }
-                },
-                else => {},
-            }
-
             if (json.get("debug")) |expr| {
                 if (expr.get("editor")) |editor| {
                     if (editor.asString(allocator)) |value| {
@@ -738,13 +765,6 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (json.get("framework")) |expr| {
-                try this.expectString(expr);
-                this.bunfig.framework = Api.FrameworkConfig{
-                    .package = expr.asString(allocator).?,
-                };
-            }
-
             if (json.get("loader")) |expr| {
                 try this.expect(expr, .e_object);
                 const properties = expr.data.e_object.properties.slice();
@@ -779,9 +799,18 @@ pub const Bunfig = struct {
             switch (expr.data) {
                 .e_string, .e_utf8_string => {},
                 else => {
-                    this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
-                        @as(js_ast.Expr.Tag, expr.data),
-                    }) catch unreachable;
+                    this.log.addErrorFmtOpts(
+                        this.allocator,
+                        "expected string but received {}",
+                        .{
+                            @as(js_ast.Expr.Tag, expr.data),
+                        },
+                        .{
+                            .source = this.source,
+                            .loc = expr.loc,
+                            .redact_sensitive_information = true,
+                        },
+                    ) catch unreachable;
                     return error.@"Invalid Bunfig";
                 },
             }
@@ -789,10 +818,19 @@ pub const Bunfig = struct {
 
         pub fn expect(this: *Parser, expr: js_ast.Expr, token: js_ast.Expr.Tag) !void {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
-                this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected {} but received {}", .{
-                    token,
-                    @as(js_ast.Expr.Tag, expr.data),
-                }) catch unreachable;
+                this.log.addErrorFmtOpts(
+                    this.allocator,
+                    "expected {} but received {}",
+                    .{
+                        token,
+                        @as(js_ast.Expr.Tag, expr.data),
+                    },
+                    .{
+                        .source = this.source,
+                        .loc = expr.loc,
+                        .redact_sensitive_information = true,
+                    },
+                ) catch unreachable;
                 return error.@"Invalid Bunfig";
             }
         }
@@ -801,14 +839,20 @@ pub const Bunfig = struct {
     pub fn parse(allocator: std.mem.Allocator, source: logger.Source, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         const log_count = ctx.log.errors + ctx.log.warnings;
 
-        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator) catch |err| {
+        const expr = if (strings.eqlComptime(source.path.name.ext[1..], "toml")) TOML.parse(&source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
-                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+                try ctx.log.addErrorOpts("Failed to parse", .{
+                    .source = &source,
+                    .redact_sensitive_information = true,
+                });
             }
             return err;
-        } else JSONParser.ParseTSConfig(&source, ctx.log, allocator) catch |err| {
+        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
-                ctx.log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Failed to parse", .{}) catch unreachable;
+                try ctx.log.addErrorOpts("Failed to parse", .{
+                    .source = &source,
+                    .redact_sensitive_information = true,
+                });
             }
             return err;
         };

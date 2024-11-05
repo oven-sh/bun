@@ -109,32 +109,24 @@ describe("zlib.brotli", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
-  it("can compress streaming", () => {
+  it("can compress streaming", async () => {
     const encoder = zlib.createBrotliCompress();
     for (const chunk of window(inputString, 55)) {
-      encoder._transform(chunk, undefined, (err, data) => {
-        expect(err).toBeUndefined();
-        expect(data).toEqual(Buffer(0));
-      });
+      encoder.push(chunk);
     }
-    encoder._flush((err, data) => {
-      expect(err).toBeUndefined();
-      expect(data).toEqual(compressedBuffer);
-    });
+    encoder.push(null);
+    const buf = await new Response(encoder).text();
+    expect(buf).toEqual(inputString);
   });
 
-  it("can decompress streaming", () => {
+  it("can decompress streaming", async () => {
     const decoder = zlib.createBrotliDecompress();
     for (const chunk of window(compressedBuffer, 10)) {
-      decoder._transform(chunk, undefined, (err, data) => {
-        expect(err).toBeUndefined();
-        expect(data).toEqual(Buffer(0));
-      });
+      decoder.push(chunk);
     }
-    decoder._flush((err, data) => {
-      expect(err).toBeUndefined();
-      expect(data).toEqual(Buffer.from(inputString));
-    });
+    decoder.push(null);
+    const buf = await new Response(decoder).bytes();
+    expect(buf).toEqual(compressedBuffer);
   });
 
   it("can roundtrip an empty string", async () => {
@@ -144,19 +136,15 @@ describe("zlib.brotli", () => {
     expect(roundtrip.toString()).toEqual(input);
   });
 
-  it("can compress streaming big", () => {
+  it("can compress streaming big", async () => {
     const encoder = zlib.createBrotliCompress();
-    // prettier-ignore
-    for (const chunk of window(inputString+inputString+inputString+inputString, 65)) {
-      encoder._transform(chunk, undefined, (err, data) => {
-        expect(err).toBeUndefined();
-        expect(data).toEqual(Buffer(0));
-      });
+    const input = inputString + inputString + inputString + inputString;
+    for (const chunk of window(input, 65)) {
+      encoder.push(chunk);
     }
-    encoder._flush((err, data) => {
-      expect(err).toBeUndefined();
-      expect(data.length).toBeGreaterThan(0);
-    });
+    encoder.push(null);
+    const buf = await new Response(encoder).text();
+    expect(buf).toEqual(input);
   });
 
   it("fully works as a stream.Transform", async () => {
@@ -315,17 +303,17 @@ for (const [compress, decompressor] of [
     stream => {
       stream.end(compressed);
     },
-    // stream => {
-    //   stream.write(compressed);
-    //   stream.write(trailingData);
-    // },
+    stream => {
+      stream.write(compressed);
+      stream.write(trailingData);
+    },
     stream => {
       stream.write(compressed);
       stream.end(trailingData);
     },
-    // stream => {
-    //   stream.write(Buffer.concat([compressed, trailingData]));
-    // },
+    stream => {
+      stream.write(Buffer.concat([compressed, trailingData]));
+    },
     stream => {
       stream.end(Buffer.concat([compressed, trailingData]));
     },

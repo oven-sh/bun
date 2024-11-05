@@ -19,7 +19,7 @@ const Bin = @import("./bin.zig").Bin;
 const Environment = bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
 const HTTPClient = bun.http;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
@@ -31,8 +31,213 @@ const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
+const http = bun.http;
+const OOM = bun.OOM;
+const Global = bun.Global;
+const PublishCommand = bun.CLI.PublishCommand;
+const File = bun.sys.File;
 
 const Npm = @This();
+
+const WhoamiError = OOM || error{
+    NeedAuth,
+    ProbablyInvalidAuth,
+};
+
+pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiError!string {
+    const registry = manager.options.scope;
+
+    if (registry.user.len > 0) {
+        const sep = strings.indexOfChar(registry.user, ':').?;
+        return registry.user[0..sep];
+    }
+
+    if (registry.url.username.len > 0) return registry.url.username;
+
+    if (registry.token.len == 0) {
+        return error.NeedAuth;
+    }
+
+    const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
+    const ci_name = bun.detectCI();
+
+    var print_buf = std.ArrayList(u8).init(allocator);
+    defer print_buf.deinit();
+    var print_writer = print_buf.writer();
+
+    var headers: http.HeaderBuilder = .{};
+
+    {
+        headers.count("accept", "*/*");
+        headers.count("accept-encoding", "gzip,deflate");
+
+        try print_writer.print("Bearer {s}", .{registry.token});
+        headers.count("authorization", print_buf.items);
+        print_buf.clearRetainingCapacity();
+
+        // no otp needed, just use auth-type from options
+        headers.count("npm-auth-type", auth_type);
+        headers.count("npm-command", "whoami");
+
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
+            Global.user_agent,
+            Global.os_name,
+            Global.arch_name,
+            // TODO: figure out how npm determines workspaces=true
+            false,
+            if (ci_name != null) " ci/" else "",
+            ci_name orelse "",
+        });
+        headers.count("user-agent", print_buf.items);
+        print_buf.clearRetainingCapacity();
+
+        headers.count("Connection", "keep-alive");
+        headers.count("Host", registry.url.host);
+    }
+
+    try headers.allocate(allocator);
+
+    {
+        headers.append("accept", "*/*");
+        headers.append("accept-encoding", "gzip/deflate");
+
+        try print_writer.print("Bearer {s}", .{registry.token});
+        headers.append("authorization", print_buf.items);
+        print_buf.clearRetainingCapacity();
+
+        headers.append("npm-auth-type", auth_type);
+        headers.append("npm-command", "whoami");
+
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
+            Global.user_agent,
+            Global.os_name,
+            Global.arch_name,
+            false,
+            if (ci_name != null) " ci/" else "",
+            ci_name orelse "",
+        });
+        headers.append("user-agent", print_buf.items);
+        print_buf.clearRetainingCapacity();
+
+        headers.append("Connection", "keep-alive");
+        headers.append("Host", registry.url.host);
+    }
+
+    try print_writer.print("{s}/-/whoami", .{
+        strings.withoutTrailingSlash(registry.url.href),
+    });
+
+    var response_buf = try MutableString.init(allocator, 1024);
+
+    const url = URL.parse(print_buf.items);
+
+    var req = http.AsyncHTTP.initSync(
+        allocator,
+        .GET,
+        url,
+        headers.entries,
+        headers.content.ptr.?[0..headers.content.len],
+        &response_buf,
+        "",
+        null,
+        null,
+        .follow,
+    );
+
+    const res = req.sendSync() catch |err| {
+        switch (err) {
+            error.OutOfMemory => |oom| return oom,
+            else => {
+                Output.err(err, "whoami request failed to send", .{});
+                Global.crash();
+            },
+        }
+    };
+
+    if (res.status_code >= 400) {
+        const otp_response = false;
+        try responseError(
+            allocator,
+            &req,
+            &res,
+            null,
+            &response_buf,
+            otp_response,
+        );
+    }
+
+    if (res.headers.getIfOtherIsAbsent("npm-notice", "x-local-cache")) |notice| {
+        Output.printError("\n", .{});
+        Output.note("{s}", .{notice});
+        Output.flush();
+    }
+
+    var log = logger.Log.init(allocator);
+    const source = logger.Source.initPathString("???", response_buf.list.items);
+    const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+        switch (err) {
+            error.OutOfMemory => |oom| return oom,
+            else => {
+                Output.err(err, "failed to parse '/-/whoami' response body as JSON", .{});
+                Global.crash();
+            },
+        }
+    };
+
+    const username, _ = try json.getString(allocator, "username") orelse {
+        // no username, invalid auth probably
+        return error.ProbablyInvalidAuth;
+    };
+    return username;
+}
+
+pub fn responseError(
+    allocator: std.mem.Allocator,
+    req: *const http.AsyncHTTP,
+    res: *const bun.picohttp.Response,
+    // `<name>@<version>`
+    pkg_id: ?struct { string, string },
+    response_body: *MutableString,
+    comptime otp_response: bool,
+) OOM!noreturn {
+    const message = message: {
+        var log = logger.Log.init(allocator);
+        const source = logger.Source.initPathString("???", response_body.list.items);
+        const json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+            switch (err) {
+                error.OutOfMemory => |oom| return oom,
+                else => break :message null,
+            }
+        };
+
+        const @"error", _ = try json.getString(allocator, "error") orelse break :message null;
+        break :message @"error";
+    };
+
+    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n", .{
+        res.status_code,
+        if (res.status.len > 0) " " else "",
+        res.status,
+        bun.fmt.redactedNpmUrl(req.url.href),
+    });
+
+    if (res.status_code == 404 and pkg_id != null) {
+        const package_name, const package_version = pkg_id.?;
+        Output.prettyErrorln("\n - '{s}@{s}' does not exist in this registry", .{ package_name, package_version });
+    } else {
+        if (message) |msg| {
+            if (comptime otp_response) {
+                if (res.status_code == 401 and strings.containsComptime(msg, "You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.")) {
+                    Output.prettyErrorln("\n - Received invalid OTP", .{});
+                    Global.crash();
+                }
+            }
+            Output.prettyErrorln("\n - {s}", .{msg});
+        }
+    }
+
+    Global.crash();
+}
 
 pub const Registry = struct {
     pub const default_url = "https://registry.npmjs.org/";
@@ -52,6 +257,9 @@ pub const Registry = struct {
         url: URL,
         url_hash: u64,
         token: string = "",
+
+        // username and password combo, `user:pass`
+        user: string = "",
 
         pub fn hash(str: string) u64 {
             return String.Builder.stringHash(str);
@@ -82,6 +290,7 @@ pub const Registry = struct {
 
             var url = URL.parse(registry.url);
             var auth: string = "";
+            var user: []u8 = "";
             var needs_normalize = false;
 
             if (registry.token.len == 0) {
@@ -176,12 +385,12 @@ pub const Registry = struct {
 
                     if (registry.username.len > 0 and registry.password.len > 0 and auth.len == 0) {
                         var output_buf = try allocator.alloc(u8, registry.username.len + registry.password.len + 1 + std.base64.standard.Encoder.calcSize(registry.username.len + registry.password.len + 1));
-                        var input_buf = output_buf[0 .. registry.username.len + registry.password.len + 1];
-                        @memcpy(input_buf[0..registry.username.len], registry.username);
-                        input_buf[registry.username.len] = ':';
-                        @memcpy(input_buf[registry.username.len + 1 ..][0..registry.password.len], registry.password);
-                        output_buf = output_buf[input_buf.len..];
-                        auth = std.base64.standard.Encoder.encode(output_buf, input_buf);
+                        user = output_buf[0 .. registry.username.len + registry.password.len + 1];
+                        @memcpy(user[0..registry.username.len], registry.username);
+                        user[registry.username.len] = ':';
+                        @memcpy(user[registry.username.len + 1 ..][0..registry.password.len], registry.password);
+                        output_buf = output_buf[user.len..];
+                        auth = std.base64.standard.Encoder.encode(output_buf, user);
                         break :outer;
                     }
                 }
@@ -207,6 +416,7 @@ pub const Registry = struct {
                 .url_hash = url_hash,
                 .token = registry.token,
                 .auth = auth,
+                .user = user,
             };
         }
     };
@@ -249,7 +459,7 @@ pub const Registry = struct {
 
         var newly_last_modified: string = "";
         var new_etag: string = "";
-        for (response.headers) |header| {
+        for (response.headers.list) |header| {
             if (!(header.name.len == "last-modified".len or header.name.len == "etag".len)) continue;
 
             const hashed = HTTPClient.hashHeaderName(header.name);
@@ -992,28 +1202,35 @@ pub const PackageManifest = struct {
         pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const file_name = try manifestFileName(&file_path_buf, file_id, scope);
-            var cache_file = cache_dir.openFileZ(
-                file_name,
-                .{ .mode = .read_only },
-            ) catch return null;
+            const cache_file = File.openat(cache_dir, file_name, bun.O.RDONLY, 0).unwrap() catch return null;
             defer cache_file.close();
-            return loadByFile(allocator, scope, cache_file);
+
+            delete: {
+                return loadByFile(allocator, scope, cache_file) catch break :delete orelse break :delete;
+            }
+
+            // delete the outdated/invalid manifest
+            try bun.sys.unlinkat(bun.toFD(cache_dir), file_name).unwrap();
+            return null;
         }
 
-        pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: std.fs.File) !?PackageManifest {
-            const bytes = try manifest_file.readToEndAllocOptions(
-                allocator,
-                std.math.maxInt(u32),
-                manifest_file.getEndPos() catch null,
-                @alignOf(u8),
-                null,
-            );
-
+        pub fn loadByFile(allocator: std.mem.Allocator, scope: *const Registry.Scope, manifest_file: File) !?PackageManifest {
+            const bytes = try manifest_file.readToEnd(allocator).unwrap();
             errdefer allocator.free(bytes);
+
             if (bytes.len < header_bytes.len) {
                 return null;
             }
-            return try readAll(bytes, scope);
+
+            const manifest = try readAll(bytes, scope) orelse return null;
+
+            if (manifest.versions.len == 0) {
+                // it's impossible to publish a package with zero versions, bust
+                // invalid entry
+                return null;
+            }
+
+            return manifest;
         }
 
         fn readAll(bytes: []const u8, scope: *const Registry.Scope) !?PackageManifest {
@@ -1102,7 +1319,7 @@ pub const PackageManifest = struct {
                 },
             };
 
-            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, manifest_file) catch |err| {
+            const maybe_package_manifest = Serializer.loadByFile(bun.default_allocator, &scope, File.from(manifest_file)) catch |err| {
                 global.throw("failed to load manifest file: {s}", .{@errorName(err)});
                 return .zero;
             };
@@ -1280,7 +1497,7 @@ pub const PackageManifest = struct {
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
         var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        const json = json_parser.ParseJSONUTF8(
+        const json = JSON.parseUTF8(
             &source,
             log,
             arena.allocator(),

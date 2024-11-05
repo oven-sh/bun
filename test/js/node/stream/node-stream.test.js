@@ -342,7 +342,7 @@ it.if(isMacOS || isGlibcVersionAtLeast("2.36.0"))("TTY streams", () => {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  expect(stdout.toString()).toBe("");
+  expect(stdout.toString()).toEqual(expect.stringContaining("bun test v1."));
   try {
     expect(stderr.toString()).toContain("0 fail");
   } catch (error) {

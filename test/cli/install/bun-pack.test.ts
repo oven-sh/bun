@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isWindows, runBunInstall, tmpdirSync } from "harness";
+import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
 import { join } from "path";
 
 var packageDir: string;
@@ -10,30 +10,6 @@ var packageDir: string;
 beforeEach(() => {
   packageDir = tmpdirSync();
 });
-
-async function pack(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "pm", "pack", ...args],
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    env,
-  });
-
-  const err = await Bun.readableStreamToText(stderr);
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("warning:");
-  expect(err).not.toContain("failed");
-  expect(err).not.toContain("panic:");
-
-  const out = await Bun.readableStreamToText(stdout);
-
-  const exitCode = await exited;
-  expect(exitCode).toBe(0);
-
-  return { out, err };
-}
 
 async function packExpectError(cwd: string, env: NodeJS.ProcessEnv, ...args: string[]) {
   const { stdout, stderr, exited } = spawn({
@@ -534,7 +510,6 @@ describe("workspaces", () => {
       'error: Failed to resolve workspace version for "pkg1" in `dependencies`. Run `bun install` and try again.',
     );
 
-    await rm(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
     await runBunInstall(bunEnv, packageDir);
     await pack(packageDir, bunEnv);
     const tarball = readTarball(join(packageDir, "pack-workspace-protocol-fail-2.2.3.tgz"));
@@ -974,11 +949,7 @@ describe("bins", () => {
     ]);
 
     expect(tarball.entries[0].perm & 0o644).toBe(0o644);
-    if (isWindows) {
-      expect(tarball.entries[1].perm & 0o111).toBe(0);
-    } else {
-      expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
-    }
+    expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
   });
 
   test("directory", async () => {
@@ -1013,13 +984,8 @@ describe("bins", () => {
     ]);
 
     expect(tarball.entries[0].perm & 0o644).toBe(0o644);
-    if (isWindows) {
-      expect(tarball.entries[1].perm & 0o111).toBe(0);
-      expect(tarball.entries[2].perm & 0o111).toBe(0);
-    } else {
-      expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
-      expect(tarball.entries[2].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
-    }
+    expect(tarball.entries[1].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
+    expect(tarball.entries[2].perm & (0o644 | 0o111)).toBe(0o644 | 0o111);
   });
 });
 

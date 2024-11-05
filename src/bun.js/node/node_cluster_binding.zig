@@ -26,18 +26,14 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return .false;
     }
     if (message.isUndefined()) {
-        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalThis.throwMissingArgumentsValue(&.{"message"});
     }
     if (!handle.isNull()) {
         globalThis.throw("passing 'handle' not implemented yet", .{});
         return .zero;
     }
     if (!message.isObject()) {
-        return globalThis.throwValueRet(globalThis.ERR_INVALID_ARG_TYPE_static(
-            ZigString.static("message"),
-            ZigString.static("object"),
-            message,
-        ));
+        return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
         child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
@@ -66,7 +62,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     if (!good) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
-        ex.put(globalThis, ZigString.static("syscall"), ZigString.static("write").toJS(globalThis));
+        ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = JSC.JSFunction.create(globalThis, "", S.impl, 1, .{});
         Bun__Process__queueNextTick1(globalThis, fnvalue, ex);
         return .false;
@@ -188,14 +184,10 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     const ipc_data = subprocess.ipc() orelse return .false;
 
     if (message.isUndefined()) {
-        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
+        return globalThis.throwMissingArgumentsValue(&.{"message"});
     }
     if (!message.isObject()) {
-        return globalThis.throwValueRet(globalThis.ERR_INVALID_ARG_TYPE_static(
-            ZigString.static("message"),
-            ZigString.static("object"),
-            message,
-        ));
+        return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
         ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
@@ -264,14 +256,10 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
     const arguments = callframe.arguments(1).ptr;
 
     if (arguments.len == 0) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(ZigString.static("enabled").toJS(globalObject)));
+        return globalObject.throwMissingArgumentsValue(&.{"enabled"});
     }
     if (!arguments[0].isBoolean()) {
-        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
-            ZigString.static("enabled"),
-            ZigString.static("boolean"),
-            arguments[0],
-        ));
+        return globalObject.throwInvalidArgumentTypeValue("enabled", "boolean", arguments[0]);
     }
 
     const enabled = arguments[0].toBoolean();

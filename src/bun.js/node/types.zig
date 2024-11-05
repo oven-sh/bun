@@ -23,6 +23,7 @@ const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
+const validators = @import("./util/validators.zig");
 
 pub const Path = @import("./path.zig");
 
@@ -59,8 +60,8 @@ pub const Flavor = enum {
 /// - "path"
 /// - "errno"
 pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
-    const hasRetry = @hasDecl(ErrorTypeT, "retry");
-    const hasTodo = @hasDecl(ErrorTypeT, "todo");
+    const hasRetry = ErrorTypeT != void and @hasDecl(ErrorTypeT, "retry");
+    const hasTodo = ErrorTypeT != void and @hasDecl(ErrorTypeT, "todo");
 
     return union(Tag) {
         pub const ErrorType = ErrorTypeT;
@@ -69,7 +70,13 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         err: ErrorType,
         result: ReturnType,
 
-        pub const Tag = enum { err, result };
+        /// NOTE: this has to have a well defined layout (e.g. setting to `u8`)
+        /// experienced a bug with a Maybe(void, void)
+        /// creating the `err` variant of this type
+        /// resulted in Zig incorrectly setting the tag, leading to a switch
+        /// statement to just not work.
+        /// we (Zack, Dylan, Dave, Mason) observed that it was set to 0xFF in ReleaseFast in the debugger
+        pub const Tag = enum(u8) { err, result };
 
         pub const retry: @This() = if (hasRetry) .{ .err = ErrorType.retry } else .{ .err = ErrorType{} };
 
@@ -114,6 +121,23 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
+        /// Unwrap the value if it is `result` or use the provided `default_value`
+        ///
+        /// `default_value` must be comptime known so the optimizer can optimize this branch out
+        pub inline fn unwrapOr(this: @This(), comptime default_value: ReturnType) ReturnType {
+            return switch (this) {
+                .result => |v| v,
+                .err => default_value,
+            };
+        }
+
+        pub inline fn unwrapOrNoOptmizations(this: @This(), default_value: ReturnType) ReturnType {
+            return switch (this) {
+                .result => |v| v,
+                .err => default_value,
+            };
+        }
+
         pub inline fn initErr(e: ErrorType) Maybe(ReturnType, ErrorType) {
             return .{ .err = e };
         }
@@ -131,8 +155,47 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return null;
         }
 
+        pub inline fn asValue(this: *const @This()) ?ReturnType {
+            if (this.* == .result) return this.result;
+            return null;
+        }
+
+        pub inline fn isOk(this: *const @This()) bool {
+            return switch (this.*) {
+                .result => true,
+                .err => false,
+            };
+        }
+
+        pub inline fn isErr(this: *const @This()) bool {
+            return switch (this.*) {
+                .result => false,
+                .err => true,
+            };
+        }
+
         pub inline fn initResult(result: ReturnType) Maybe(ReturnType, ErrorType) {
             return .{ .result = result };
+        }
+
+        pub inline fn mapErr(this: @This(), comptime E: type, err_fn: *const fn (ErrorTypeT) E) Maybe(ReturnType, E) {
+            return switch (this) {
+                .result => |v| .{ .result = v },
+                .err => |e| .{ .err = err_fn(e) },
+            };
+        }
+
+        pub inline fn toCssResult(this: @This()) Maybe(ReturnType, bun.css.ParseError(bun.css.ParserError)) {
+            return switch (ErrorTypeT) {
+                bun.css.BasicParseError => {
+                    return switch (this) {
+                        .result => |v| return .{ .result = v },
+                        .err => |e| return .{ .err = e.intoDefaultParseError() },
+                    };
+                },
+                bun.css.ParseError(bun.css.ParserError) => @compileError("Already a ParseError(ParserError)"),
+                else => @compileError("Bad!"),
+            };
         }
 
         pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -312,12 +375,51 @@ pub const BlobOrStringOrBuffer = union(enum) {
     }
 
     pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
-        if (value.as(JSC.WebCore.Blob)) |blob| {
-            if (blob.store) |store| {
-                store.ref();
-            }
-            return .{ .blob = blob.* };
+        return fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global, allocator, value, encoding_value, is_async, false);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool, allow_request_response: bool) ?BlobOrStringOrBuffer {
+        switch (value.jsType()) {
+            .Blob => {
+                if (value.as(JSC.WebCore.Blob)) |blob| {
+                    if (blob.store) |store| {
+                        store.ref();
+                    }
+                    return .{ .blob = blob.* };
+                }
+            },
+            .DOMWrapper => {
+                if (allow_request_response) {
+                    if (value.as(JSC.WebCore.Request)) |request| {
+                        request.body.value.toBlobIfPossible();
+
+                        if (request.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                            var any_blob = any_blob_;
+                            defer any_blob.detach();
+                            return .{ .blob = any_blob.toBlob(global) };
+                        }
+
+                        global.throwInvalidArguments("Only buffered Request/Response bodies are supported for now.", .{});
+                        return null;
+                    }
+
+                    if (value.as(JSC.WebCore.Response)) |response| {
+                        response.body.value.toBlobIfPossible();
+
+                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                            var any_blob = any_blob_;
+                            defer any_blob.detach();
+                            return .{ .blob = any_blob.toBlob(global) };
+                        }
+
+                        global.throwInvalidArguments("Only buffered Request/Response bodies are supported for now.", .{});
+                        return null;
+                    }
+                }
+            },
+            else => {},
         }
+
         return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
@@ -567,7 +669,6 @@ pub const Encoding = enum(u8) {
         };
     }
 
-    /// Caller must verify the value is a string
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
         return map.fromJSCaseInsensitive(global, value);
     }
@@ -575,6 +676,40 @@ pub const Encoding = enum(u8) {
     /// Caller must verify the value is a string
     pub fn from(slice: []const u8) ?Encoding {
         return strings.inMapCaseInsensitive(slice, map);
+    }
+
+    pub fn assert(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) !Encoding {
+        if (value.isFalsey()) {
+            return default;
+        }
+
+        if (!value.isString()) {
+            throwEncodingError(globalObject, value);
+            return error.JSError;
+        }
+
+        return fromJSWithDefaultOnEmpty(value, globalObject, default) orelse {
+            throwEncodingError(globalObject, value);
+            return error.JSError;
+        };
+    }
+
+    pub fn fromJSWithDefaultOnEmpty(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) ?Encoding {
+        const str = bun.String.tryFromJS(value, globalObject) orelse return null;
+        defer str.deref();
+        if (str.isEmpty()) {
+            return default;
+        }
+        return str.inMapCaseInsensitive(Encoding.map);
+    }
+
+    pub fn throwEncodingError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        globalObject.ERR_INVALID_ARG_VALUE(
+            "encoding '{}' is an invalid encoding",
+            .{
+                value.fmtString(globalObject),
+            },
+        ).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
@@ -1148,13 +1283,15 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber()) brk: {
-        if (!value.isUInt32AsAnyInt()) {
-            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.asNumber()}).toJS().asObjectRef();
-            return null;
-        }
-        break :brk @as(Mode, @truncate(value.to(Mode)));
+        const m = validators.validateUint32(ctx, value, "mode", .{}, false) catch return null;
+        break :brk @as(Mode, @as(u24, @truncate(m)));
     } else brk: {
         if (value.isUndefinedOrNull()) return null;
+
+        if (!value.isString()) {
+            _ = ctx.throwInvalidArgumentTypeValue("mode", "number", value);
+            return null;
+        }
 
         //        An easier method of constructing the mode is to use a sequence of
         //        three octal digits (e.g. 765). The left-most digit (7 in the example),
@@ -1170,15 +1307,11 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         }
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
-            JSC.throwInvalidArguments("Invalid mode string: must be an octal number", .{}, ctx, exception);
+            var formatter = bun.JSC.ConsoleObject.Formatter{ .globalThis = ctx };
+            exception.* = ctx.ERR_INVALID_ARG_VALUE("The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS().asObjectRef();
             return null;
         };
     };
-
-    if (mode_int < 0) {
-        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
-        return null;
-    }
 
     return mode_int & 0o777;
 }
@@ -1875,6 +2008,7 @@ pub const Process = struct {
 
         var args = std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1) catch bun.outOfMemory();
         defer args.deinit();
+        defer for (args.items) |*arg| arg.deref();
 
         var seen_run = false;
         var prev: ?[]const u8 = null;
@@ -2031,11 +2165,14 @@ pub const Process = struct {
                 fs.top_level_dir = fs.top_level_dir_buf[0..into_cwd_buf.len];
 
                 const len = fs.top_level_dir.len;
-                fs.top_level_dir_buf[len] = std.fs.path.sep;
-                fs.top_level_dir_buf[len + 1] = 0;
-                fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
-
-                var str = bun.String.createUTF8(strings.withoutTrailingSlash(fs.top_level_dir));
+                // Ensure the path ends with a slash
+                if (fs.top_level_dir_buf[len - 1] != std.fs.path.sep) {
+                    fs.top_level_dir_buf[len] = std.fs.path.sep;
+                    fs.top_level_dir_buf[len + 1] = 0;
+                    fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
+                }
+                const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
+                var str = bun.String.createUTF8(withoutTrailingSlash(fs.top_level_dir));
                 return str.transferToJS(globalObject);
             },
             .err => |e| {
@@ -2059,6 +2196,7 @@ pub const Process = struct {
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
+    pub export const Bun__version_with_sha: [*:0]const u8 = "v" ++ bun.Global.package_json_version_with_sha;
     pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
     pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
     pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;

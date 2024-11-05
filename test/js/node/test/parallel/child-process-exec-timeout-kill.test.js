@@ -34,13 +34,13 @@ test("exec with timeout and killSignal", done => {
     (err, stdout, stderr) => {
       console.log("[stdout]", stdout.trim());
       console.log("[stderr]", stderr.trim());
-
-      expect(err.killed).toBe(true);
-      expect(err.code).toBeNull();
-      expect(err.signal).toBe("SIGKILL");
-      expect(err.cmd).toBe(cmd);
       expect(stdout.trim()).toBe("");
       expect(stderr.trim()).toBe("");
+
+      expect(err?.killed).toBe(true);
+      expect(err?.code).toBeNull();
+      expect(err?.signal).toBe("SIGKILL");
+      expect(err?.cmd).toBe(cmd);
       done();
     },
   );

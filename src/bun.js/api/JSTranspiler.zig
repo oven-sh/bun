@@ -55,7 +55,6 @@ const default_transform_options: Api.TransformOptions = brk: {
     var opts = std.mem.zeroes(Api.TransformOptions);
     opts.disable_hmr = true;
     opts.target = Api.Target.browser;
-    opts.serve = false;
     break :brk opts;
 };
 
@@ -330,7 +329,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         return transpiler;
     }
 
-    if (object.getIfPropertyExists(globalObject, "define")) |define| {
+    if (object.getTruthy(globalObject, "define")) |define| {
         define: {
             if (define.isUndefinedOrNull()) {
                 break :define;
@@ -483,7 +482,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         else => false,
     };
 
-    if (object.getIfPropertyExists(globalThis, "macro")) |macros| {
+    if (object.getTruthy(globalThis, "macro")) |macros| {
         macros: {
             if (macros.isUndefinedOrNull()) break :macros;
             if (macros.isBoolean()) {
@@ -827,8 +826,7 @@ pub fn constructor(
     bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
     bundler.options.inlining = transpiler_options.runtime.inlining;
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
-    bundler.options.jsx.supports_fast_refresh = bundler.options.hot_module_reloading and
-        bundler.options.allow_runtime and transpiler_options.runtime.react_fast_refresh;
+    bundler.options.react_fast_refresh = false;
 
     const transpiler = allocator.create(Transpiler) catch unreachable;
     transpiler.* = Transpiler{
@@ -845,7 +843,7 @@ pub fn finalize(
     this: *Transpiler,
 ) callconv(.C) void {
     this.bundler.log.deinit();
-    this.scan_pass_result.named_imports.deinit();
+    this.scan_pass_result.named_imports.deinit(this.scan_pass_result.import_records.allocator);
     this.scan_pass_result.import_records.deinit();
     this.scan_pass_result.used_symbols.deinit();
     if (this.buffer_writer != null) {
@@ -881,19 +879,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         // .allocator = this.
     };
 
-    var parse_result = this.bundler.parse(parse_options, null);
-
-    // necessary because we don't run the linker
-    if (parse_result) |*res| {
-        for (res.ast.import_records.slice()) |*import| {
-            if (import.kind.isCommonJS()) {
-                import.do_commonjs_transform_in_printer = true;
-                import.module_id = @as(u32, @truncate(bun.hash(import.path.pretty)));
-            }
-        }
-    }
-
-    return parse_result;
+    return this.bundler.parse(parse_options, null);
 }
 
 pub fn scan(

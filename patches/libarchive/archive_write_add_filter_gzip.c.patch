@@ -1,0 +1,58 @@
+--- a/libarchive/archive_write_add_filter_gzip.c
++++ b/libarchive/archive_write_add_filter_gzip.c
+@@ -58,6 +58,7 @@ archive_write_set_compression_gzip(struct archive *a)
+ struct private_data {
+ 	int		 compression_level;
+ 	int		 timestamp;
++	unsigned char 	os;
+ #ifdef HAVE_ZLIB_H
+ 	z_stream	 stream;
+ 	int64_t		 total_in;
+@@ -106,6 +107,7 @@ archive_write_add_filter_gzip(struct archive *_a)
+ 		archive_set_error(&a->archive, ENOMEM, "Out of memory");
+ 		return (ARCHIVE_FATAL);
+ 	}
++	data->os = 3; /* default Unix */
+ 	f->data = data;
+ 	f->open = &archive_compressor_gzip_open;
+ 	f->options = &archive_compressor_gzip_options;
+@@ -166,6 +168,30 @@ archive_compressor_gzip_options(struct archive_write_filter *f, const char *key,
+ 		return (ARCHIVE_OK);
+ 	}
+ 
++	if (strcmp(key, "os") == 0) {
++		if (value == NULL) 
++			return (ARCHIVE_WARN);
++
++		if (strcmp(value, "FAT") == 0) data->os = 0;
++		else if (strcmp(value, "Amiga") == 0) data->os = 1;
++		else if (strcmp(value, "VMS") == 0 || strcmp(value, "OpenVMS") == 0) data->os = 2;
++		else if (strcmp(value, "Unix") == 0) data->os = 3;
++		else if (strcmp(value, "VM") == 0 || strcmp(value, "VM/CMS") == 0) data->os = 4;
++		else if (strcmp(value, "Atari TOS") == 0) data->os = 5;
++		else if (strcmp(value, "HPFS") == 0) data->os = 6; 
++		else if (strcmp(value, "Macintosh") == 0) data->os = 7;
++		else if (strcmp(value, "Z-System") == 0) data->os = 8;
++		else if (strcmp(value, "CP/M") == 0) data->os = 9;
++		else if (strcmp(value, "TOPS-20") == 0) data->os = 10;
++		else if (strcmp(value, "NTFS") == 0) data->os = 11;
++		else if (strcmp(value, "QDOS") == 0) data->os = 12;
++		else if (strcmp(value, "Acorn RISCOS") == 0) data->os = 13;
++		else if (strcmp(value, "Unknown") == 0) data->os = 255;
++		else return (ARCHIVE_WARN);
++
++		return (ARCHIVE_OK);
++	}
++
+ 	/* Note: The "warn" return is just to inform the options
+ 	 * supervisor that we didn't handle it.  It will generate
+ 	 * a suitable error if no one used this option. */
+@@ -226,7 +252,7 @@ archive_compressor_gzip_open(struct archive_write_filter *f)
+ 	    data->compressed[8] = 4;
+     else
+ 	    data->compressed[8] = 0;
+-	data->compressed[9] = 3; /* OS=Unix */
++	data->compressed[9] = data->os;
+ 	data->stream.next_out += 10;
+ 	data->stream.avail_out -= 10;
+ 

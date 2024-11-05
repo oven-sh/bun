@@ -1,9 +1,9 @@
 import assert from "assert";
 import { describe, expect, it, test } from "bun:test";
+import { isWindows } from "harness";
 import path from "node:path";
 
 const { file } = import.meta;
-const isWindows = process.platform === "win32";
 const sep = isWindows ? "\\" : "/";
 
 describe("browserify path tests", () => {

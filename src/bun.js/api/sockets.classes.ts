@@ -163,7 +163,9 @@ function generate(ssl) {
         fn: "reload",
         length: 1,
       },
-
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
       setServername: {
         fn: "setServername",
         length: 1,
@@ -171,6 +173,16 @@ function generate(ssl) {
       getServername: {
         fn: "getServername",
         length: 0,
+      },
+      "writeBuffered": {
+        fn: "writeBuffered",
+        length: 2,
+        privateSymbol: "write",
+      },
+      "endBuffered": {
+        fn: "endBuffered",
+        length: 2,
+        privateSymbol: "end",
       },
     },
     finalize: true,

@@ -8,6 +8,8 @@
 #include <stdio.h>
 #endif
 
+#include <stdint.h>
+
 #if __has_include(<node/node_api.h>)
 
 #include <node/node_api.h>
@@ -19,6 +21,8 @@ napi_value napi_main(napi_env env) {
 }
 
 #endif
+
+uint8_t lastByte(uint8_t *arr, size_t len) { return arr[len - 1]; }
 
 int main() {
 

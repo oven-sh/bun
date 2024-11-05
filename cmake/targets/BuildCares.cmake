@@ -18,6 +18,7 @@ register_cmake_command(
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCARES_SHARED=OFF
     -DCARES_BUILD_TOOLS=OFF # this was set to ON?
+    -DCMAKE_INSTALL_LIBDIR=lib
   LIB_PATH
     lib
   LIBRARIES

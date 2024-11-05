@@ -132,7 +132,7 @@ pub fn parseJSON(
         bun.JSAst.Stmt.Data.Store.reset();
     }
     debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
+    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
         return error.InvalidJSON;
     };
 

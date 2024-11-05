@@ -1493,7 +1493,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const truthy = value.toBooleanSlow(globalThis);
+        const truthy = value.toBoolean();
         if (truthy) pass = true;
 
         if (not) pass = !pass;
@@ -1649,7 +1649,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const truthy = value.toBooleanSlow(globalThis);
+        const truthy = value.toBoolean();
         if (!truthy) pass = true;
 
         if (not) pass = !pass;
@@ -2316,6 +2316,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
 
+        var return_value_from_function: JSValue = .zero;
         const result_: ?JSValue = brk: {
             if (!value.jsType().isFunction()) {
                 if (this.flags.promise != .none) {
@@ -2336,8 +2337,7 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{}) catch |err|
-                globalThis.takeException(err);
+            return_value_from_function = value.call(globalThis, .undefined, &.{}) catch |err| globalThis.takeException(err);
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
@@ -2439,7 +2439,7 @@ pub const Expect = struct {
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
                     const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                    if (!matches.toBooleanSlow(globalThis)) return .undefined;
+                    if (!matches.toBoolean()) return .undefined;
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -2524,7 +2524,7 @@ pub const Expect = struct {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (expected_value.get(globalThis, "test")) |test_fn| {
                         const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch |err| globalThis.takeException(err);
-                        if (matches.toBooleanSlow(globalThis)) return .undefined;
+                        if (matches.toBoolean()) return .undefined;
                     }
                 }
 
@@ -2628,12 +2628,13 @@ pub const Expect = struct {
         }
 
         // did not throw
+        const result = return_value_from_function;
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received_line = "Received function did not throw\n";
+        const received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n";
 
         if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const signature = comptime getSignature("toThrow", "", false);
-            this.throw(globalThis, signature, "\n\n" ++ received_line, .{});
+            this.throw(globalThis, signature, "\n\n" ++ received_line, .{result.toFmt(&formatter)});
             return .zero;
         }
 
@@ -2641,26 +2642,26 @@ pub const Expect = struct {
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         if (expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_message.toFmt(&formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
             return .zero;
         }
 
         const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
         var expected_class = ZigString.Empty;
         expected_value.getClassName(globalThis, &expected_class);
-        this.throw(globalThis, signature, expected_fmt, .{expected_class});
+        this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
         return .zero;
     }
     pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
@@ -2757,7 +2758,7 @@ pub const Expect = struct {
             };
             defer pretty_value.deinit();
 
-            if (strings.eqlLong(pretty_value.toOwnedSliceLeaky(), saved_value, true)) {
+            if (strings.eqlLong(pretty_value.slice(), saved_value, true)) {
                 Jest.runner.?.snapshots.passed += 1;
                 return .undefined;
             }
@@ -2766,7 +2767,7 @@ pub const Expect = struct {
             const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
-                .received_string = pretty_value.toOwnedSliceLeaky(),
+                .received_string = pretty_value.slice(),
                 .expected_string = saved_value,
                 .globalThis = globalThis,
             };
@@ -4645,7 +4646,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), ZigString.init("InvalidMatcherError").toJS(globalThis));
+        err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
         globalThis.throwValue(err);
     }
 
@@ -4698,7 +4699,7 @@ pub const Expect = struct {
         const is_valid = valid: {
             if (result.isObject()) {
                 if (result.get(globalThis, "pass")) |pass_value| {
-                    pass = pass_value.toBooleanSlow(globalThis);
+                    pass = pass_value.toBoolean();
                     if (globalThis.hasException()) return false;
 
                     if (result.fastGet(globalThis, .message)) |message_value| {
@@ -5443,7 +5444,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
             return .zero;
         };
         if (printed) {
-            return bun.String.init(mutable_string.toOwnedSliceLeaky()).toJS();
+            return bun.String.init(mutable_string.slice()).toJS();
         }
         return ExpectMatcherUtils.printValue(globalThis, this, null);
     }

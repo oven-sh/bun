@@ -71,17 +71,30 @@ const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
+const bunFinalCallback = Symbol("::bunFinalCallback::");
 const kServerSocket = Symbol("kServerSocket");
+const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 const kRealListen = Symbol("kRealListen");
 
 function endNT(socket, callback, err) {
-  socket.end();
+  socket.$end();
   callback(err);
 }
 function closeNT(callback, err) {
   callback(err);
+}
+
+function detachSocket(self) {
+  if (!self) self = this;
+  self[bunSocketInternal] = null;
+  const finalCallback = self[bunFinalCallback];
+  if (finalCallback) {
+    self[bunFinalCallback] = null;
+    finalCallback();
+    return;
+  }
 }
 
 var SocketClass;
@@ -132,7 +145,6 @@ const Socket = (function (InternalSocket) {
       open(socket) {
         const self = socket.data;
         if (!self) return;
-
         socket.timeout(Math.ceil(self.timeout / 1000));
 
         if (self.#unrefOnConnected) socket.unref();
@@ -146,8 +158,8 @@ const Socket = (function (InternalSocket) {
             self.setSession(session);
           }
         }
-
         if (!self.#upgraded) {
+          self[kBytesWritten] = socket.bytesWritten;
           // this is not actually emitted on nodejs when socket used on the connection
           // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
           self.emit("connect", self);
@@ -164,7 +176,7 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
 
         self.emit("secure", self);
-
+        self.alpnProtocol = socket.alpnProtocol;
         const { checkServerIdentity } = self[bunTLSConnectOptions];
         if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
           const cert = self.getPeerCertificate(true);
@@ -175,7 +187,6 @@ const Socket = (function (InternalSocket) {
             self.authorized = false;
             self.authorizationError = verifyError.code || verifyError.message;
             if (self._rejectUnauthorized) {
-              self.emit("error", verifyError);
               self.destroy(verifyError);
               return;
             }
@@ -213,13 +224,7 @@ const Socket = (function (InternalSocket) {
       if (!self || self.#closed) return;
       self.#closed = true;
       //socket cannot be used after close
-      self[bunSocketInternal] = null;
-      const finalCallback = self.#final_callback;
-      if (finalCallback) {
-        self.#final_callback = null;
-        finalCallback();
-        return;
-      }
+      detachSocket(self);
       if (!self.#ended) {
         const queue = self.#readQueue;
         if (queue.isEmpty()) {
@@ -234,17 +239,16 @@ const Socket = (function (InternalSocket) {
       if (!self) return;
       const callback = self.#writeCallback;
       if (callback) {
-        const chunk = self.#writeChunk;
-        const written = socket.write(chunk);
+        const writeChunk = self._pendingData;
 
-        self.bytesWritten += written;
-        if (written < chunk.length) {
-          self.#writeChunk = chunk.slice(written);
-        } else {
-          self.#writeCallback = null;
-          self.#writeChunk = null;
+        if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+          self._pendingData = self.#writeCallback = null;
           callback(null);
+        } else {
+          self._pendingData = null;
         }
+
+        self[kBytesWritten] = socket.bytesWritten;
       }
     }
 
@@ -293,11 +297,8 @@ const Socket = (function (InternalSocket) {
 
         if (typeof connectionListener == "function") {
           this.pauseOnConnect = pauseOnConnect;
-          if (isTLS) {
-            // add secureConnection event handler
-            self.once("secureConnection", () => connectionListener(_socket));
-          } else {
-            connectionListener(_socket);
+          if (!isTLS) {
+            connectionListener.$call(self, _socket);
           }
         }
         self.emit("connection", _socket);
@@ -314,6 +315,7 @@ const Socket = (function (InternalSocket) {
         self._secureEstablished = !!success;
         self.servername = socket.getServername();
         const server = self.server;
+        self.alpnProtocol = socket.alpnProtocol;
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
             self.authorized = false;
@@ -331,7 +333,11 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        self.server.emit("secureConnection", self);
+        const connectionListener = server[bunSocketServerOptions]?.connectionListener;
+        if (typeof connectionListener == "function") {
+          connectionListener.$call(server, self);
+        }
+        server.emit("secureConnection", self);
         // after secureConnection event we emmit secure and secureConnect
         self.emit("secure", self);
         self.emit("secureConnect", verifyError);
@@ -351,10 +357,10 @@ const Socket = (function (InternalSocket) {
     };
 
     bytesRead = 0;
-    bytesWritten = 0;
+    [kBytesWritten] = undefined;
     #closed = false;
     #ended = false;
-    #final_callback = null;
+    [bunFinalCallback] = null;
     connecting = false;
     localAddress = "127.0.0.1";
     #readQueue = $createFIFO();
@@ -363,7 +369,8 @@ const Socket = (function (InternalSocket) {
     [bunTLSConnectOptions] = null;
     timeout = 0;
     #writeCallback;
-    #writeChunk;
+    _pendingData;
+    _pendingEncoding; // for compatibility
     #pendingRead;
 
     isServer = false;
@@ -432,6 +439,34 @@ const Socket = (function (InternalSocket) {
       return this.writableLength;
     }
 
+    get _bytesDispatched() {
+      return this[kBytesWritten] || 0;
+    }
+
+    get bytesWritten() {
+      let bytes = this[kBytesWritten] || 0;
+      const data = this._pendingData;
+      const writableBuffer = this.writableBuffer;
+      if (!writableBuffer) return undefined;
+
+      for (const el of writableBuffer) {
+        bytes += el.chunk instanceof Buffer ? el.chunk.length : Buffer.byteLength(el.chunk, el.encoding);
+      }
+
+      if ($isArray(data)) {
+        // Was a writev, iterate over chunks to get total length
+        for (let i = 0; i < data.length; i++) {
+          const chunk = data[i];
+
+          if (data.allBuffers || chunk instanceof Buffer) bytes += chunk.length;
+          else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
+        }
+      } else if (data) {
+        bytes += data.byteLength;
+      }
+      return bytes;
+    }
+
     #attach(port, socket) {
       this.remotePort = port;
       socket.data = this;
@@ -440,6 +475,7 @@ const Socket = (function (InternalSocket) {
       this[bunSocketInternal] = socket;
       this.connecting = false;
       if (!this.#upgraded) {
+        this[kBytesWritten] = socket.bytesWritten;
         // this is not actually emitted on nodejs when socket used on the connection
         // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
         this.emit("connect", this);
@@ -560,6 +596,13 @@ const Socket = (function (InternalSocket) {
 
       // start using existing connection
       try {
+        // reset the underlying writable object when establishing a new connection
+        // this is a function on `Duplex`, originally defined on `Writable`
+        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
+        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+        this._undestroy();
+        this.#readQueue = $createFIFO();
+
         if (connection) {
           const socket = connection[bunSocketInternal];
           if (!upgradeDuplex && socket) {
@@ -676,23 +719,27 @@ const Socket = (function (InternalSocket) {
       } catch (error) {
         process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
-      // reset the underlying writable object when establishing a new connection
-      // this is a function on `Duplex`, originally defined on `Writable`
-      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
-      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
-      this._undestroy();
       return this;
     }
 
     _destroy(err, callback) {
-      const socket = this[bunSocketInternal];
-      if (socket) {
-        this[bunSocketInternal] = null;
-        // we still have a socket, call end before destroy
-        process.nextTick(endNT, socket, callback, err);
-        return;
+      const { ending } = this._writableState;
+      // lets make sure that the writable side is closed
+      if (!ending) {
+        // at this state destroyed will be true but we need to close the writable side
+        this._writableState.destroyed = false;
+        this.end();
+        // we now restore the destroyed flag
+        this._writableState.destroyed = true;
       }
-      // no socket, just destroy
+
+      if (this.writableFinished) {
+        // closed we can detach the socket
+        detachSocket(self);
+      } else {
+        // lets wait for the finish event before detaching the socket
+        this.once("finish", detachSocket);
+      }
       process.nextTick(closeNT, callback, err);
     }
 
@@ -703,10 +750,9 @@ const Socket = (function (InternalSocket) {
 
       if (this.allowHalfOpen) {
         // wait socket close event
-        this.#final_callback = callback;
+        this[bunFinalCallback] = callback;
       } else {
         // emit FIN not allowing half open
-        this[bunSocketInternal] = null;
         process.nextTick(endNT, socket, callback);
       }
     }
@@ -803,23 +849,26 @@ const Socket = (function (InternalSocket) {
     }
 
     _write(chunk, encoding, callback) {
-      if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
-      var written = this[bunSocketInternal]?.write(chunk);
-      if (written == chunk.length) {
+      // If we are still connecting, then buffer this for later.
+      // The Writable logic will buffer up any more writes while
+      // waiting for this one to be done.
+      const socket = this[bunSocketInternal];
+      if (!socket) {
+        // detached but connected? wait for the socket to be attached
+        this.#writeCallback = callback;
+        this._pendingEncoding = encoding;
+        this._pendingData = chunk;
+        return;
+      }
+
+      const success = socket.$write(chunk, encoding);
+      this[kBytesWritten] = socket.bytesWritten;
+      if (success) {
         callback();
       } else if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
-        if (written > 0) {
-          if (typeof chunk == "string") {
-            chunk = chunk.slice(written);
-          } else {
-            chunk = chunk.subarray(written);
-          }
-        }
-
         this.#writeCallback = callback;
-        this.#writeChunk = chunk;
       }
     }
   },
@@ -879,7 +928,7 @@ class Server extends EventEmitter {
     if (typeof callback === "function") {
       if (!this[bunSocketInternal]) {
         this.once("close", function close() {
-          callback(new ERR_SERVER_NOT_RUNNING());
+          callback(ERR_SERVER_NOT_RUNNING());
         });
       } else {
         this.once("close", callback);

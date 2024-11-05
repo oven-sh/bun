@@ -96,7 +96,7 @@ describe("spawn()", () => {
   it("should disallow invalid filename", () => {
     // @ts-ignore
     expect(() => spawn(123)).toThrow({
-      message: 'The "file" argument must be of type string. Received: 123',
+      message: 'The "file" argument must be of type string. Received 123',
       code: "ERR_INVALID_ARG_TYPE",
     });
   });
@@ -278,6 +278,33 @@ describe("spawn()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
     expect(isValidSemver(stdout.trim())).toBe(true);
+  });
+
+  describe("stdio", () => {
+    it("ignore", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "ignore" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("inherit", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "inherit" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).toBeNull();
+      expect(child.stderr).toBeNull();
+    });
+    it("pipe", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "pipe" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
+    it.todo("overlapped", () => {
+      const child = spawn(bunExe(), ["-v"], { stdio: "overlapped" });
+      expect(!!child).toBe(true);
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+    });
   });
 });
 

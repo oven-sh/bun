@@ -443,7 +443,7 @@ pub const JestPrettyFormat = struct {
 
                 // Is this a react element?
                 if (js_type.isObject()) {
-                    if (value.get(globalThis, "$$typeof")) |typeof_symbol| {
+                    if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                         var reactElement = ZigString.init("react.element");
                         var react_fragment = ZigString.init("react.fragment");
 
@@ -463,8 +463,8 @@ pub const JestPrettyFormat = struct {
                         .Symbol => .Symbol,
                         .BooleanObject => .Boolean,
                         .JSFunction => .Function,
-                        .JSWeakMap, .JSMap => .Map,
-                        .JSWeakSet, .JSSet => .Set,
+                        .WeakMap, .Map => .Map,
+                        .WeakSet, .Set => .Set,
                         .JSDate => .JSON,
                         .JSPromise => .Promise,
                         .Object,
@@ -861,7 +861,7 @@ pub const JestPrettyFormat = struct {
 
                             writer.print(
                                 comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                                .{JSPrinter.formatJSONString(key.slice())},
+                                .{bun.fmt.formatJSONString(key.slice())},
                             );
                         }
                     } else {
@@ -1317,7 +1317,7 @@ pub const JestPrettyFormat = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
-                    const map_name = if (value.jsType() == .JSWeakMap) "WeakMap" else "Map";
+                    const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{map_name});
@@ -1347,7 +1347,7 @@ pub const JestPrettyFormat = struct {
 
                     this.writeIndent(Writer, writer_) catch {};
 
-                    const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
+                    const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                     if (length == 0) {
                         return writer.print("{s} {{}}", .{set_name});

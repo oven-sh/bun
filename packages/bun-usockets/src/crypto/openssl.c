@@ -855,6 +855,11 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
     }
   }
 
+  if (ERR_peek_error() != 0) {
+    free_ssl_context(ssl_context);
+    return NULL;
+  }
+
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */
   return ssl_context;
 }
@@ -1104,7 +1109,10 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
 }
 
 SSL_CTX *create_ssl_context_from_bun_options(
-    struct us_bun_socket_context_options_t options) {
+    struct us_bun_socket_context_options_t options, 
+    enum create_bun_socket_error_t *err) {
+  ERR_clear_error();
+
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
 
@@ -1174,6 +1182,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     STACK_OF(X509_NAME) * ca_list;
     ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
+      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1181,6 +1190,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     SSL_CTX_set_client_CA_list(ssl_context, ca_list);
     if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name,
                                       NULL) != 1) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
       free_ssl_context(ssl_context);
       return NULL;
     }
@@ -1203,9 +1213,13 @@ SSL_CTX *create_ssl_context_from_bun_options(
       }
 
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         free_ssl_context(ssl_context);
         return NULL;
       }
+
+     // It may return spurious errors here.
+    ERR_clear_error();
 
       if (options.reject_unauthorized) {
         SSL_CTX_set_verify(ssl_context,
@@ -1332,13 +1346,17 @@ void us_internal_ssl_socket_context_add_server_name(
   }
 }
 
-void us_bun_internal_ssl_socket_context_add_server_name(
+int us_bun_internal_ssl_socket_context_add_server_name(
     struct us_internal_ssl_socket_context_t *context,
     const char *hostname_pattern,
     struct us_bun_socket_context_options_t options, void *user) {
 
   /* Try and construct an SSL_CTX from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options);
+  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, &err);
+  if (ssl_context == NULL) {
+    return -1;
+  }
 
   /* Attach the user data to this context */
   if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
@@ -1346,15 +1364,15 @@ void us_bun_internal_ssl_socket_context_add_server_name(
     printf("CANNOT SET EX DATA!\n");
     abort();
 #endif
+    return -1;
   }
 
-  /* We do not want to hold any nullptr's in our SNI tree */
-  if (ssl_context) {
-    if (sni_add(context->sni, hostname_pattern, ssl_context)) {
-      /* If we already had that name, ignore */
-      free_ssl_context(ssl_context);
-    }
+  if (sni_add(context->sni, hostname_pattern, ssl_context)) {
+    /* If we already had that name, ignore */
+    free_ssl_context(ssl_context);
   }
+
+  return 0;
 }
 
 void us_internal_ssl_socket_context_on_server_name(
@@ -1468,14 +1486,15 @@ struct us_internal_ssl_socket_context_t *us_internal_create_ssl_socket_context(
 struct us_internal_ssl_socket_context_t *
 us_internal_bun_create_ssl_socket_context(
     struct us_loop_t *loop, int context_ext_size,
-    struct us_bun_socket_context_options_t options) {
+    struct us_bun_socket_context_options_t options,
+    enum create_bun_socket_error_t *err) {
   /* If we haven't initialized the loop data yet, do so .
    * This is needed because loop data holds shared OpenSSL data and
    * the function is also responsible for initializing OpenSSL */
   us_internal_init_loop_ssl_data(loop);
 
   /* First of all we try and create the SSL context from options */
-  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options);
+  SSL_CTX *ssl_context = create_ssl_context_from_bun_options(options, err);
   if (!ssl_context) {
     /* We simply fail early if we cannot even create the OpenSSL context */
     return NULL;
@@ -1487,7 +1506,7 @@ us_internal_bun_create_ssl_socket_context(
       (struct us_internal_ssl_socket_context_t *)us_create_bun_socket_context(
           0, loop,
           sizeof(struct us_internal_ssl_socket_context_t) + context_ext_size,
-          options);
+          options, err);
 
   /* I guess this is the only optional callback */
   context->on_server_name = NULL;
@@ -1983,9 +2002,10 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   struct us_socket_context_t *old_context = us_socket_context(0, s);
   us_socket_context_ref(0,old_context);
 
+  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
   struct us_socket_context_t *context = us_create_bun_socket_context(
       1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
-      options);
+      options, &err);
   
   // Handle SSL context creation failure
   if (UNLIKELY(!context)) {

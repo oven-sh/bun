@@ -56,6 +56,13 @@ export const iniInternals = {
   loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
+export const cssInternals = {
+  minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
+  testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
+  prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
+  attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
+};
+
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
@@ -125,4 +132,12 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
   "npm.zig",
   "OperatingSystem.jsFunctionOperatingSystemIsMatch",
   1,
+);
+
+export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
+
+export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
+  "NodeModuleModule.cpp",
+  "jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  0,
 );

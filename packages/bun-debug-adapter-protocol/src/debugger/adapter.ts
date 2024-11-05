@@ -2,12 +2,26 @@ import type { InspectorEventMap } from "../../../bun-inspector-protocol/src/insp
 import type { JSC } from "../../../bun-inspector-protocol/src/protocol";
 import type { DAP } from "../protocol";
 // @ts-ignore
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { WebSocketInspector, remoteObjectToString } from "../../../bun-inspector-protocol/index";
-import { UnixSignal, randomUnixPath } from "./signal";
+import { AddressInfo, createServer } from "node:net";
+import * as path from "node:path";
+import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index";
+import { randomUnixPath, TCPSocketSignal, UnixSignal } from "./signal";
 import { Location, SourceMap } from "./sourcemap";
+
+export async function getAvailablePort(): Promise<number> {
+  const server = createServer();
+  server.listen(0);
+  return new Promise((resolve, reject) => {
+    server.on("listening", () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => {
+        resolve(port);
+      });
+    });
+  });
+}
 
 const capabilities: DAP.Capabilities = {
   supportsConfigurationDoneRequest: true,
@@ -489,36 +503,73 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           ...env,
         };
 
-    const url = `ws+unix://${randomUnixPath()}`;
-    const signal = new UnixSignal();
+    if (process.platform !== "win32") {
+      // we're on unix
+      const url = `ws+unix://${randomUnixPath()}`;
+      const signal = new UnixSignal();
 
-    signal.on("Signal.received", () => {
-      this.#attach({ url });
-    });
+      signal.on("Signal.received", () => {
+        this.#attach({ url });
+      });
 
-    this.once("Adapter.terminated", () => {
-      signal.close();
-    });
+      this.once("Adapter.terminated", () => {
+        signal.close();
+      });
 
-    const query = stopOnEntry ? "break=1" : "wait=1";
-    processEnv["BUN_INSPECT"] = `${url}?${query}`;
-    processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
+      const query = stopOnEntry ? "break=1" : "wait=1";
+      processEnv["BUN_INSPECT"] = `${url}?${query}`;
+      processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
 
-    // This is probably not correct, but it's the best we can do for now.
-    processEnv["FORCE_COLOR"] = "1";
-    processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
-    processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
+      // This is probably not correct, but it's the best we can do for now.
+      processEnv["FORCE_COLOR"] = "1";
+      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
 
-    const started = await this.#spawn({
-      command: runtime,
-      args: processArgs,
-      env: processEnv,
-      cwd,
-      isDebugee: true,
-    });
+      const started = await this.#spawn({
+        command: runtime,
+        args: processArgs,
+        env: processEnv,
+        cwd,
+        isDebugee: true,
+      });
 
-    if (!started) {
-      throw new Error("Program could not be started.");
+      if (!started) {
+        throw new Error("Program could not be started.");
+      }
+    } else {
+      // we're on windows
+      // Create TCPSocketSignal
+      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`; // 127.0.0.1 so it resolves correctly on windows
+      const signal = new TCPSocketSignal(await getAvailablePort());
+
+      signal.on("Signal.received", async () => {
+        this.#attach({ url });
+      });
+
+      this.once("Adapter.terminated", () => {
+        signal.close();
+      });
+
+      const query = stopOnEntry ? "break=1" : "wait=1";
+      processEnv["BUN_INSPECT"] = `${url}?${query}`;
+      processEnv["BUN_INSPECT_NOTIFY"] = signal.url; // 127.0.0.1 so it resolves correctly on windows
+
+      // This is probably not correct, but it's the best we can do for now.
+      processEnv["FORCE_COLOR"] = "1";
+      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
+      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
+
+      const started = await this.#spawn({
+        command: runtime,
+        args: processArgs,
+        env: processEnv,
+        cwd,
+        isDebugee: true,
+      });
+
+      if (!started) {
+        throw new Error("Program could not be started.");
+      }
     }
   }
 
@@ -684,6 +735,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async breakpointLocations(request: DAP.BreakpointLocationsRequest): Promise<DAP.BreakpointLocationsResponse> {
     const { line, endLine, column, endColumn, source: source0 } = request;
+    if (process.platform === "win32") {
+      source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
+    }
     const source = await this.#getSource(sourceToId(source0));
 
     const { locations } = await this.send("Debugger.getBreakpointLocations", {
@@ -788,6 +842,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
   }
 
   async #setBreakpointsByUrl(url: string, requests: DAP.SourceBreakpoint[], unsetOld?: boolean): Promise<Breakpoint[]> {
+    if (process.platform === "win32") {
+      url = url ? normalizeWindowsPath(url) : url;
+    }
     const source = this.#getSourceIfPresent(url);
 
     // If the source is not loaded, set a placeholder breakpoint at the start of the file.
@@ -1161,6 +1218,9 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   async gotoTargets(request: DAP.GotoTargetsRequest): Promise<DAP.GotoTargetsResponse> {
     const { source: source0 } = request;
+    if (process.platform === "win32") {
+      source0.path = source0.path ? normalizeWindowsPath(source0.path) : source0.path;
+    }
     const source = await this.#getSource(sourceToId(source0));
 
     const { breakpoints } = await this.breakpointLocations(request);
@@ -1327,7 +1387,7 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
     // 1. If it has a `path`, the client retrieves the source from the file system.
     // 2. If it has a `sourceReference`, the client sends a `source` request.
     //    Moreover, the code is usually shown in a read-only editor.
-    const isUserCode = url.startsWith("/");
+    const isUserCode = path.isAbsolute(url);
     const sourceMap = SourceMap(sourceMapURL);
     const name = sourceName(url);
     const presentationHint = sourcePresentationHint(url);
@@ -1646,12 +1706,11 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
     // If the source does not have a path or is a builtin module,
     // it cannot be retrieved from the file system.
-    if (typeof sourceId === "number" || !sourceId.startsWith("/")) {
+    if (typeof sourceId === "number" || !path.isAbsolute(sourceId)) {
       throw new Error(`Source not found: ${sourceId}`);
     }
 
     // If the source is not present, it may not have been loaded yet.
-    // In that case, wait for it to be loaded.
     let resolves = this.#pendingSources.get(sourceId);
     if (!resolves) {
       this.#pendingSources.set(sourceId, (resolves = []));
@@ -2107,7 +2166,6 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
 
   close(): void {
     this.#process?.kill();
-    // this.#signal?.close();
     this.#inspector.close();
     this.#reset();
   }
@@ -2149,10 +2207,10 @@ function titleize(name: string): string {
 }
 
 function sourcePresentationHint(url?: string): DAP.Source["presentationHint"] {
-  if (!url || !url.startsWith("/")) {
+  if (!url || !path.isAbsolute(url)) {
     return "deemphasize";
   }
-  if (url.includes("/node_modules/")) {
+  if (url.includes("/node_modules/") || url.includes("\\node_modules\\")) {
     return "normal";
   }
   return "emphasize";
@@ -2163,6 +2221,9 @@ function sourceName(url?: string): string {
     return "unknown.js";
   }
   if (isJavaScript(url)) {
+    if (process.platform === "win32") {
+      url = url.replaceAll("\\", "/");
+    }
     return url.split("/").pop() || url;
   }
   return `${url}.js`;
@@ -2566,4 +2627,16 @@ let sequence = 1;
 
 function nextId(): number {
   return sequence++;
+}
+
+export function getRandomId() {
+  return Math.random().toString(36).slice(2);
+}
+
+export function normalizeWindowsPath(winPath: string): string {
+  winPath = path.normalize(winPath);
+  if (winPath[1] === ":" && (winPath[2] === "\\" || winPath[2] === "/")) {
+    return (winPath.charAt(0).toUpperCase() + winPath.slice(1)).replaceAll("\\\\", "\\");
+  }
+  return winPath;
 }

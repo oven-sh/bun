@@ -467,4 +467,28 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("module");
     },
   });
+  itBundled("minify/ConstantFoldingUnaryPlusString", {
+    files: {
+      "/entry.ts": `
+        // supported
+        capture(+'1.0');
+        capture(+'-123.567');
+        capture(+'8.325');
+        capture(+'100000000');
+        // unsupported
+        capture(+'\\u0030\\u002e\\u0031');
+        capture(+'\\x30\\x2e\\x31');
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "1",
+      "-123.567",
+      "8.325",
+      "1e8",
+      // untouched
+      "+\"0.1\"",
+      "+\"0.1\"",
+    ],
+  });
 });

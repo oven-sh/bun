@@ -1321,7 +1321,7 @@ pub const Error = enum(i32) {
         error_value.put(
             globalThis,
             JSC.ZigString.static("name"),
-            JSC.ZigString.init("DNSException").toJS(globalThis),
+            bun.String.static("DNSException").toJS(globalThis),
         );
         error_value.put(
             globalThis,

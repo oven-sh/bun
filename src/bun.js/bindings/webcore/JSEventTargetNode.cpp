@@ -20,7 +20,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
 
     if (callFrame->argumentCount() < 2) {
         throwTypeError(globalObject, throwScope, "getEventListeners needs 2 arguments"_s);
-        return JSValue::encode(jsUndefined());
+        return {};
     }
 
     JSValue thisValue = callFrame->argument(0);

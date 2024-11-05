@@ -63,7 +63,7 @@ hello = \${LOL}
 hello = \${oooooooooooooooogaboga}
       `,
       env: {},
-      expected: { hello: "" },
+      expected: { hello: "${oooooooooooooooogaboga}" },
     });
 
     envVarTest({

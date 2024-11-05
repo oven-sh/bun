@@ -557,7 +557,7 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.get(globalThis, "asUint8Array")) |val| {
+                if (value.getOwn(globalThis, "asUint8Array")) |val| {
                     if (val.isBoolean()) {
                         as_uint8array = val.toBoolean();
                         empty = false;
@@ -2958,9 +2958,10 @@ pub fn ReadableStreamSource(
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
+                _ = globalObject; // autofix
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
-                const ref_or_unref = callFrame.argument(0).toBooleanSlow(globalObject);
+                const ref_or_unref = callFrame.argument(0).toBoolean();
                 this.setRef(ref_or_unref);
 
                 return .undefined;

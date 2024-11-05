@@ -219,7 +219,7 @@ pub fn messageWithTypeAndLevel(
     }
 }
 
-const TablePrinter = struct {
+pub const TablePrinter = struct {
     const Column = struct {
         name: String,
         width: u32 = 1,
@@ -342,7 +342,7 @@ const TablePrinter = struct {
             //  - otherwise: iterate the object properties, and create the columns on-demand
             if (!this.properties.isUndefined()) {
                 for (columns.items[1..]) |*column| {
-                    if (row_value.getWithString(this.globalObject, column.name)) |value| {
+                    if (row_value.getOwn(this.globalObject, column.name)) |value| {
                         column.width = @max(column.width, this.getWidthForValue(value));
                     }
                 }
@@ -436,7 +436,7 @@ const TablePrinter = struct {
                     value = row_value;
                 }
             } else if (row_value.isObject()) {
-                value = row_value.getWithString(this.globalObject, col.name) orelse JSValue.zero;
+                value = row_value.getOwn(this.globalObject, col.name) orelse JSValue.zero;
             }
 
             if (value.isEmpty()) {
@@ -666,6 +666,69 @@ pub const FormatOptions = struct {
     ordered_properties: bool = false,
     quote_strings: bool = false,
     max_depth: u16 = 2,
+    single_line: bool = false,
+
+    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) !void {
+        const arg1 = arguments[0];
+
+        if (arg1.isObject()) {
+            if (arg1.getTruthy(globalThis, "depth")) |opt| {
+                if (opt.isInt32()) {
+                    const arg = opt.toInt32();
+                    if (arg < 0) {
+                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return error.JSError;
+                    }
+                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
+                } else if (opt.isNumber()) {
+                    const v = opt.coerce(f64, globalThis);
+                    if (std.math.isInf(v)) {
+                        formatOptions.max_depth = std.math.maxInt(u16);
+                    } else {
+                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return error.JSError;
+                    }
+                }
+            }
+            if (try arg1.getOptional(globalThis, "colors", bool)) |opt| {
+                formatOptions.enable_colors = opt;
+            }
+            if (try arg1.getOptional(globalThis, "sorted", bool)) |opt| {
+                formatOptions.ordered_properties = opt;
+            }
+
+            if (try arg1.getOptional(globalThis, "compact", bool)) |opt| {
+                formatOptions.single_line = opt;
+            }
+        } else {
+            // formatOptions.show_hidden = arg1.toBoolean();
+            if (arguments.len > 0) {
+                var depthArg = arg1;
+                if (depthArg.isInt32()) {
+                    const arg = depthArg.toInt32();
+                    if (arg < 0) {
+                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return error.JSError;
+                    }
+                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
+                } else if (depthArg.isNumber()) {
+                    const v = depthArg.coerce(f64, globalThis);
+                    if (std.math.isInf(v)) {
+                        formatOptions.max_depth = std.math.maxInt(u16);
+                    } else {
+                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return error.JSError;
+                    }
+                }
+                if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
+                    formatOptions.enable_colors = arguments[1].coerce(bool, globalThis);
+                    if (globalThis.hasException()) {
+                        return error.JSError;
+                    }
+                }
+            }
+        }
+    }
 };
 
 pub fn format2(
@@ -694,6 +757,7 @@ pub fn format2(
             .ordered_properties = options.ordered_properties,
             .quote_strings = options.quote_strings,
             .max_depth = options.max_depth,
+            .single_line = options.single_line,
         };
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
 
@@ -771,6 +835,7 @@ pub fn format2(
         .globalThis = global,
         .ordered_properties = options.ordered_properties,
         .quote_strings = options.quote_strings,
+        .single_line = options.single_line,
     };
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
 
@@ -1118,7 +1183,7 @@ pub const Formatter = struct {
 
             // Is this a react element?
             if (js_type.isObject()) {
-                if (value.get(globalThis, "$$typeof")) |typeof_symbol| {
+                if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     var reactElement = ZigString.init("react.element");
                     var react_fragment = ZigString.init("react.fragment");
 
@@ -1138,13 +1203,18 @@ pub const Formatter = struct {
                     .Symbol => .Symbol,
                     .BooleanObject => .Boolean,
                     .JSFunction => .Function,
-                    .JSWeakMap, JSValue.JSType.JSMap => .Map,
-                    .JSMapIterator => .MapIterator,
-                    .JSSetIterator => .SetIterator,
-                    .JSWeakSet, JSValue.JSType.JSSet => .Set,
+                    .WeakMap, JSValue.JSType.Map => .Map,
+                    .MapIterator => .MapIterator,
+                    .SetIterator => .SetIterator,
+                    .WeakSet, JSValue.JSType.Set => .Set,
                     .JSDate => .JSON,
                     .JSPromise => .Promise,
 
+                    .WrapForValidIterator,
+                    .RegExpStringIterator,
+                    .JSArrayIterator,
+                    .Iterator,
+                    .IteratorHelper,
                     .Object,
                     .FinalObject,
                     .ModuleNamespaceObject,
@@ -1778,7 +1848,7 @@ pub const Formatter = struct {
 
                         writer.print(
                             comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
-                            .{JSPrinter.formatJSONString(key.slice())},
+                            .{bun.fmt.formatJSONString(key.slice())},
                         );
                     }
                 } else if (Environment.isDebug and is_private_symbol) {
@@ -2433,7 +2503,7 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const map_name = if (value.jsType() == .JSWeakMap) "WeakMap" else "Map";
+                const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
 
                 if (length == 0) {
                     return writer.print("{s} {{}}", .{map_name});
@@ -2541,7 +2611,7 @@ pub const Formatter = struct {
                     this.writeIndent(Writer, writer_) catch {};
                 }
 
-                const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
+                const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
 
                 if (length == 0) {
                     return writer.print("{s} {{}}", .{set_name});

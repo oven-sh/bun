@@ -631,7 +631,8 @@ pub const UDPSocket = struct {
         };
 
         const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return bun.String.createLatin1(slice).toJS(globalThis);
+        var str = bun.String.createLatin1(slice);
+        return str.transferToJS(globalThis);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
@@ -671,9 +672,9 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
     ) JSValue {
         return switch (this.config.binary_type) {
-            .Buffer => JSC.ZigString.init("buffer").toJS(globalThis),
-            .Uint8Array => JSC.ZigString.init("uint8array").toJS(globalThis),
-            .ArrayBuffer => JSC.ZigString.init("arraybuffer").toJS(globalThis),
+            .Buffer => bun.String.static("buffer").toJS(globalThis),
+            .Uint8Array => bun.String.static("uint8array").toJS(globalThis),
+            .ArrayBuffer => bun.String.static("arraybuffer").toJS(globalThis),
             else => @panic("Invalid binary type"),
         };
     }

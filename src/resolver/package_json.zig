@@ -148,9 +148,9 @@ pub const PackageJSON = struct {
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
-        unspecified: void,
+        unspecified,
         /// "sideEffects": false
-        false: void,
+        false,
         /// "sideEffects": ["file.js", "other.js"]
         map: Map,
         // /// "sideEffects": ["side_effects/*.js"]
@@ -641,7 +641,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -727,7 +727,7 @@ pub const PackageJSON = struct {
             }
 
             // Read the "browser" property, but only when targeting the browser
-            if (r.opts.target.supportsBrowserField()) {
+            if (r.opts.target == .browser) {
                 // We both want the ability to have the option of CJS vs. ESM and the
                 // option of having node vs. browser. The way to do this is to use the
                 // object literal form of the "browser" field like this:

@@ -2,7 +2,7 @@
 
 #include "root.h"
 
-#include "V8TaggedPointer.h"
+#include "shim/TaggedPointer.h"
 
 namespace v8 {
 
@@ -10,33 +10,33 @@ template<class T>
 class Local final {
 public:
     Local()
-        : location(nullptr)
+        : m_location(nullptr)
     {
     }
 
     Local(TaggedPointer* slot)
-        : location(slot)
+        : m_location(slot)
     {
     }
 
-    bool IsEmpty() const { return location == nullptr; }
+    bool IsEmpty() const { return m_location == nullptr; }
 
-    T* operator*() const { return reinterpret_cast<T*>(location); }
-    T* operator->() const { return reinterpret_cast<T*>(location); }
+    T* operator*() const { return reinterpret_cast<T*>(m_location); }
+    T* operator->() const { return reinterpret_cast<T*>(m_location); }
 
     template<class U>
     Local<U> reinterpret() const
     {
-        return Local<U>(location);
+        return Local<U>(m_location);
     }
 
     TaggedPointer tagged() const
     {
-        return *location;
+        return *m_location;
     }
 
 private:
-    TaggedPointer* location;
+    TaggedPointer* m_location;
 };
 
-}
+} // namespace v8

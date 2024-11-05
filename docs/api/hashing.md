@@ -206,4 +206,42 @@ console.log(arr);
 // => Uint8Array(32) [ 185, 77, 39, 185, 147, ... ]
 ```
 
-<!-- Bun.sha; -->
+### HMAC in `Bun.CryptoHasher`
+
+`Bun.CryptoHasher` can be used to compute HMAC digests. To do so, pass the key to the constructor.
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256", "secret-key");
+hasher.update("hello world");
+console.log(hasher.digest("hex"));
+// => "095d5a21fe6d0646db223fdf3de6436bb8dfb2fab0b51677ecf6441fcf5f2a67"
+```
+
+When using HMAC, a more limited set of algorithms are supported:
+
+- `"blake2b512"`
+- `"md5"`
+- `"sha1"`
+- `"sha224"`
+- `"sha256"`
+- `"sha384"`
+- `"sha512-224"`
+- `"sha512-256"`
+- `"sha512"`
+
+Unlike the non-HMAC `Bun.CryptoHasher`, the HMAC `Bun.CryptoHasher` instance is not reset after `.digest()` is called, and attempting to use the same instance again will throw an error.
+
+Other methods like `.copy()` and `.update()` are supported (as long as it's before `.digest()`), but methods like `.digest()` that finalize the hasher are not.
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256", "secret-key");
+hasher.update("hello world");
+
+const copy = hasher.copy();
+copy.update("!");
+console.log(copy.digest("hex"));
+// => "3840176c3d8923f59ac402b7550404b28ab11cb0ef1fa199130a5c37864b5497"
+
+console.log(hasher.digest("hex"));
+// => "095d5a21fe6d0646db223fdf3de6436bb8dfb2fab0b51677ecf6441fcf5f2a67"
+```

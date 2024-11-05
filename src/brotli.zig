@@ -9,7 +9,7 @@ const BrotliEncoder = c.BrotliEncoder;
 
 const mimalloc = bun.Mimalloc;
 
-const BrotliAllocator = struct {
+pub const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");

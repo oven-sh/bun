@@ -63,8 +63,6 @@ pub const Linker = struct {
 
     plugin_runner: ?*PluginRunner = null,
 
-    onImportCSS: ?OnImportCallback = null,
-
     pub const runtime_source_path = "bun:wrap";
 
     pub const TaggedResolution = struct {
@@ -281,6 +279,10 @@ pub const Linker = struct {
 
                             // don't link bun
                             continue;
+                        }
+
+                        if (strings.hasSuffixComptime(import_record.path.text, ".css")) {
+                            import_record.tag = .css;
                         }
 
                         // Resolve dynamic imports lazily for perf
@@ -599,7 +601,7 @@ pub const Linker = struct {
             else => {},
         }
         if (had_resolve_errors) return error.ResolveMessage;
-        result.ast.externals = try externals.toOwnedSlice();
+        externals.clearAndFree();
     }
 
     fn whenModuleNotFound(
@@ -621,7 +623,7 @@ pub const Linker = struct {
         }
 
         if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
-            if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+            if (linker.options.target == .browser and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                 try linker.log.addResolveError(
                     &result.source,
                     import_record.range,
@@ -746,25 +748,12 @@ pub const Linker = struct {
                     if (use_hashed_name) {
                         const basepath = Fs.Path.init(source_path);
 
-                        if (linker.options.serve) {
-                            var hash_buf: [64]u8 = undefined;
-                            const modkey = try linker.getModKey(basepath, null);
-                            return Fs.Path.init(try origin.joinAlloc(
-                                linker.allocator,
-                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{bun.fmt.hexIntLower(modkey.hash())}) catch unreachable,
-                                dirname,
-                                basename,
-                                absolute_pathname.ext,
-                                source_path,
-                            ));
-                        }
-
                         basename = try linker.getHashedFilename(basepath, null);
                     }
 
                     return Fs.Path.init(try origin.joinAlloc(
                         linker.allocator,
-                        linker.options.routes.asset_prefix_path,
+                        "",
                         dirname,
                         basename,
                         absolute_pathname.ext,
@@ -792,7 +781,7 @@ pub const Linker = struct {
 
         import_record.path = try linker.generateImportPath(
             source_dir,
-            if (path.is_symlink and import_path_format == .absolute_url and linker.options.target.isNotBun()) path.pretty else path.text,
+            if (path.is_symlink and import_path_format == .absolute_url and !linker.options.target.isBun()) path.pretty else path.text,
             loader == .file or loader == .wasm,
             path.namespace,
             origin,
@@ -804,9 +793,6 @@ pub const Linker = struct {
                 if (!linker.options.target.isBun())
                     _ = try linker.enqueueResolveResult(resolve_result);
 
-                if (linker.onImportCSS) |callback| {
-                    callback(resolve_result, import_record, origin);
-                }
                 // This saves us a less reliable string check
                 import_record.print_mode = .css;
             },
@@ -820,7 +806,7 @@ pub const Linker = struct {
                 // if we're building for bun
                 // it's more complicated
                 // loader plugins could be executed between when this is called and the import is evaluated
-                // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworkss
+                // but we want to preserve the semantics of "file" returning import paths for compatibility with frontend frameworkss
                 if (!linker.options.target.isBun()) {
                     import_record.print_mode = .import_path;
                 }

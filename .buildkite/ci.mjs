@@ -7,113 +7,15 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-function getEnv(name, required = true) {
-  const value = process.env[name];
-
-  if (!value && required) {
-    throw new Error(`Missing environment variable: ${name}`);
-  }
-
-  return value;
-}
-
-function getRepository() {
-  const url = getEnv("BUILDKITE_PULL_REQUEST_REPO", false) || getEnv("BUILDKITE_REPO");
-  const match = url.match(/github.com\/([^/]+)\/([^/]+)\.git$/);
-  if (!match) {
-    throw new Error(`Unsupported repository: ${url}`);
-  }
-  const [, owner, repo] = match;
-  return `${owner}/${repo}`;
-}
-
-function getCommit() {
-  return getEnv("BUILDKITE_COMMIT");
-}
-
-function getCommitMessage() {
-  return getEnv("BUILDKITE_MESSAGE", false) || "";
-}
-
-function getBranch() {
-  return getEnv("BUILDKITE_BRANCH");
-}
-
-function getMainBranch() {
-  return getEnv("BUILDKITE_PIPELINE_DEFAULT_BRANCH", false) || "main";
-}
-
-function isFork() {
-  const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
-  return !!repository && repository !== getEnv("BUILDKITE_REPO");
-}
-
-function isMainBranch() {
-  return getBranch() === getMainBranch() && !isFork();
-}
-
-function isMergeQueue() {
-  return /^gh-readonly-queue/.test(getEnv("BUILDKITE_BRANCH"));
-}
-
-function isPullRequest() {
-  return getEnv("BUILDKITE_PULL_REQUEST", false) === "true";
-}
-
-async function getChangedFiles() {
-  const repository = getRepository();
-  const head = getCommit();
-  const base = `${head}^1`;
-
-  try {
-    const response = await fetch(`https://api.github.com/repos/${repository}/compare/${base}...${head}`);
-    if (response.ok) {
-      const { files } = await response.json();
-      return files.filter(({ status }) => !/removed|unchanged/i.test(status)).map(({ filename }) => filename);
-    }
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-function getBuildUrl() {
-  return getEnv("BUILDKITE_BUILD_URL");
-}
-
-async function getBuildIdWithArtifacts() {
-  let depth = 0;
-  let url = getBuildUrl();
-
-  while (url) {
-    const response = await fetch(`${url}.json`, {
-      headers: { "Accept": "application/json" },
-    });
-
-    if (!response.ok) {
-      return;
-    }
-
-    const { id, state, prev_branch_build: lastBuild, steps } = await response.json();
-    if (depth++) {
-      if (state === "failed" || state === "passed") {
-        const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
-        if (buildSteps.length) {
-          if (buildSteps.every(({ outcome }) => outcome === "passed")) {
-            return id;
-          }
-          return;
-        }
-      }
-    }
-
-    if (!lastBuild) {
-      return;
-    }
-
-    url = url.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
-  }
-}
+import {
+  getChangedFiles,
+  getCommitMessage,
+  getPreviousBuildId,
+  isFork,
+  isMainBranch,
+  isMergeQueue,
+  printEnvironment,
+} from "../scripts/utils.mjs";
 
 function toYaml(obj, indent = 0) {
   const spaces = " ".repeat(indent);
@@ -431,58 +333,64 @@ function getPipeline(buildId) {
 }
 
 async function main() {
-  console.log("Checking environment...");
-  console.log(" - Repository:", getRepository());
-  console.log(" - Branch:", getBranch());
-  console.log(" - Commit:", getCommit());
-  console.log(" - Commit Message:", getCommitMessage());
-  console.log(" - Is Main Branch:", isMainBranch());
-  console.log(" - Is Merge Queue:", isMergeQueue());
-  console.log(" - Is Pull Request:", isPullRequest());
+  printEnvironment();
 
+  console.log("Checking changed files...");
   const changedFiles = await getChangedFiles();
   if (changedFiles) {
-    console.log(
-      `Found ${changedFiles.length} changed files: \n${changedFiles.map(filename => ` - ${filename}`).join("\n")}`,
-    );
+    if (changedFiles.length) {
+      changedFiles.forEach(filename => console.log(` - ${filename}`));
+    } else {
+      console.log(" - No changed files");
+    }
   }
 
   const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
+  const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
 
-  const isSkip = () => {
+  console.log("Checking if CI should be skipped...");
+  {
     const message = getCommitMessage();
-    if (/\[(skip ci|no ci|ci skip|ci no)\]/i.test(message)) {
-      return true;
+    const match = /\[(skip ci|no ci|ci skip|ci no)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      return;
     }
-    return changedFiles && changedFiles.every(filename => isDocumentationFile(filename));
-  };
-
-  if (isSkip()) {
-    console.log("Skipping CI due to commit message or changed files...");
+  }
+  if (changedFiles && changedFiles.every(filename => isDocumentationFile(filename))) {
+    console.log(" - Yes, because all changed files are documentation");
     return;
   }
 
-  const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
-
-  const isSkipBuild = () => {
+  console.log("Checking if build should be skipped...");
+  let buildSkip;
+  {
     const message = getCommitMessage();
-    if (/\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.test(message)) {
-      return true;
+    const match = /\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      buildSkip = true;
     }
-    return changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename));
-  };
+  }
+  if (changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename))) {
+    console.log(" - Yes, because all changed files are tests or documentation");
+    buildSkip = true;
+  }
 
   let buildId;
-  if (isSkipBuild()) {
-    buildId = await getBuildIdWithArtifacts();
+  if (buildSkip) {
+    console.log("Checking if a previous build is available...");
+    buildId = await getPreviousBuildId();
     if (buildId) {
-      console.log("Skipping build due to commit message or changed files...");
-      console.log("Using build artifacts from previous build:", buildId);
+      console.log(" - Yes, found a previous build:", buildId);
     } else {
-      console.log("Attempted to skip build, but could not find previous build");
+      console.log(" - No, either there is no previous build on this branch or every previous build failed");
     }
   }
 
+  console.log("Generating pipeline...");
   const pipeline = getPipeline(buildId);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");

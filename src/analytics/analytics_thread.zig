@@ -119,6 +119,13 @@ pub const Features = struct {
     pub var virtual_modules: usize = 0;
     pub var workers_spawned: usize = 0;
     pub var workers_terminated: usize = 0;
+    pub var napi_module_register: usize = 0;
+    pub var process_dlopen: usize = 0;
+
+    comptime {
+        @export(napi_module_register, .{ .name = "Bun__napi_module_register_count" });
+        @export(process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+    }
 
     pub fn formatter() Formatter {
         return Formatter{};

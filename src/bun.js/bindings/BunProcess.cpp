@@ -271,6 +271,8 @@ extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
 
+extern "C" size_t Bun__process_dlopen_count;
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -349,6 +351,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     CString utf8 = filename.utf8();
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 #endif
+
+    Bun__process_dlopen_count++;
 
     if (!handle) {
 #if OS(WINDOWS)

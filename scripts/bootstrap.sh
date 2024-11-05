@@ -170,6 +170,12 @@ check_system() {
 		fi
 		if [ -n "$VERSION_ID" ]; then
 			release="$VERSION_ID"
+
+			if [ "$distro" = "alpine" ]; then
+				if [ "$(echo $release | grep -c '_')" = "1" ]; then
+					release="edge"
+				fi
+			fi
 		fi
 	fi
 
@@ -195,20 +201,28 @@ check_system() {
 		apt="$(which apt-get)"
 		if [ -f "$apt" ]; then
 			pm="apt"
+
 		else
 			dnf="$(which dnf)"
 			if [ -f "$dnf" ]; then
 				pm="dnf"
+
 			else
         yum="$(which yum)"
         if [ -f "$yum" ]; then
           pm="yum"
+
+				else
+					apk="$(which apk)"
+					if [ -f "$apk" ]; then
+						pm="apk"
+					fi
         fi
 			fi
 		fi
 
 		if [ -z "$pm" ]; then
-			error "No package manager found. (apt, dnf, yum)"
+			error "No package manager found. (apt, dnf, yum, apk)"
 		fi
 	fi
 
@@ -261,18 +275,19 @@ package_manager() {
 	dnf) execute dnf "$@" ;;
 	yum) execute "$yum" "$@" ;;
 	brew)
-    if ! [ -f "$(which brew)" ]; then
+    if ! [ -f "$brew" ]; then
       install_brew
     fi
-    execute_non_root brew "$@"
+    execute_non_root "$brew" "$@"
     ;;
+	apk) execute "$apk" "$@" ;;
 	*) error "Unsupported package manager: $pm" ;;
 	esac
 }
 
 update_packages() {
 	case "$pm" in
-	apt)
+	apt | apk)
     package_manager update
     ;;
 	esac
@@ -307,6 +322,9 @@ install_packages() {
 		package_manager install --force --formula "$@"
     package_manager link --force --overwrite "$@"
 		;;
+	apk)
+		package_manager add "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -316,7 +334,7 @@ install_packages() {
 get_version() {
   command="$1"
   path="$(which "$command")"
-  
+
   if [ -f "$path" ]; then
     case "$command" in
       go | zig) "$path" version ;;
@@ -403,6 +421,12 @@ install_nodejs() {
 }
 
 install_bun() {
+	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ] && [ "$arch" = "aarch64" ]; then
+		mkdir -p "$HOME/.bun/bin"
+		wget -O "$HOME/.bun/bin/bun" https://pub-61e0d0e2da4146a099e4545a59a9f0f7.r2.dev/bun-musl-arm64
+		chmod +x "$HOME/.bun/bin/bun"
+		return
+	fi
   bash="$(require bash)"
   script=$(download_file "https://bun.sh/install")
 
@@ -433,30 +457,27 @@ install_rosetta() {
 
 install_build_essentials() {
 	case "$pm" in
-	apt) install_packages \
-		build-essential \
-		ninja-build \
-		xz-utils
+	apt)
+		install_packages build-essential ninja-build xz-utils pkg-config golang
     ;;
-	dnf | yum) install_packages \
-		ninja-build \
-		gcc-c++ \
-		xz
+	dnf | yum)
+		install_packages ninja-build gcc-c++ xz pkg-config golang
     ;;
-	brew) install_packages \
-		ninja
+	brew)
+		install_packages ninja pkg-config golang
+    ;;
+	apk)
+		install_packages ninja xz
     ;;
 	esac
 
 	install_packages \
 		make \
 		cmake \
-		pkg-config \
 		python3 \
 		libtool \
 		ruby \
-		perl \
-		golang
+		perl
 
 	install_llvm
 	install_ccache
@@ -465,6 +486,10 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
+	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
+		print "18.1.8"
+		return
+	fi
   case "$os" in
   linux)
     print "16.0.6"
@@ -489,6 +514,9 @@ install_llvm() {
   brew)
     install_packages "llvm@$(llvm_version)"
     ;;
+  apk)
+    install_packages "llvm$(llvm_version)-dev" "clang$(llvm_version)-dev" "lld$(llvm_version)-dev"
+    ;;
 	esac
 }
 
@@ -501,6 +529,10 @@ install_ccache() {
 }
 
 install_rust() {
+	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
+		install_packages rust
+		return
+	fi
   sh="$(require sh)"
   script=$(download_file "https://sh.rustup.rs")
   execute "$sh" "$script" -y
@@ -698,6 +730,9 @@ install_chrome_dependencies() {
 			xorg-x11-fonts-misc \
 			xorg-x11-fonts-Type1 \
 			xorg-x11-utils
+		;;
+	apk)
+		echo # TODO:
 		;;
 	esac
 }

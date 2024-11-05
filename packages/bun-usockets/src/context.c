@@ -371,6 +371,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     ls->s.long_timeout = 255;
     ls->s.low_prio_state = 0;
     ls->s.next = 0;
+    ls->s.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -402,6 +403,8 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     ls->s.long_timeout = 255;
     ls->s.low_prio_state = 0;
     ls->s.next = 0;
+    ls->s.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+
     us_internal_socket_context_link_listen_socket(context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -431,6 +434,8 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->long_timeout = 255;
     socket->low_prio_state = 0;
     socket->connect_state = NULL;
+    socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+
     us_internal_socket_context_link_socket(context, socket);
 
     return socket;
@@ -552,6 +557,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
         s->low_prio_state = 0;
+        s->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(s->context, s);
 
@@ -727,6 +733,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->long_timeout = 255;
     connect_socket->low_prio_state = 0;
     connect_socket->connect_state = NULL;
+    connect_socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_socket(context, connect_socket);
 
     return connect_socket;

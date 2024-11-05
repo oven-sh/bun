@@ -4496,6 +4496,7 @@ declare module "bun" {
     port: number;
     tls?: TLSOptions;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
@@ -4503,6 +4504,7 @@ declare module "bun" {
     port: number;
     tls?: boolean;
     exclusive?: boolean;
+    allowHalfOpen?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {

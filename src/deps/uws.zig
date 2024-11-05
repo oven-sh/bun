@@ -9,6 +9,7 @@ pub const u_int32_t = c_uint;
 pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
+pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
 pub const Socket = opaque {
     pub fn write2(this: *Socket, first: []const u8, second: []const u8) i32 {
         const rc = us_socket_write2(0, this, first.ptr, first.len, second.ptr, second.len);
@@ -1834,6 +1835,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: Context,
             comptime socket_field_name: []const u8,
+            allowHalfOpen: bool,
         ) ?*Context {
             debug("connect({s}, {d})", .{ host, port });
 
@@ -1850,7 +1852,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
-            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
+            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, if (allowHalfOpen) LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
             const socket_ = if (did_dns_resolve == 1)
                 ThisSocket{
                     .socket = .{ .connected = @ptrCast(socket) },
@@ -1873,8 +1875,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
+            allowHalfOpen: bool,
         ) !*Context {
-            const this_socket = try connectAnon(host, port, socket_ctx, ctx);
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx, allowHalfOpen);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -1930,6 +1933,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             path: []const u8,
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
+            allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -1937,7 +1941,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, path_.len, 0, 8) orelse
+            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, path_.len, if (allowHalfOpen) LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8) orelse
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .connected = socket } };
@@ -1952,6 +1956,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             port: i32,
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
+            allowHalfOpen: bool,
         ) !ThisSocket {
             debug("connect({s}, {d})", .{ raw_host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -1972,7 +1977,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 socket_ctx,
                 host.ptr,
                 port,
-                0,
+                if (allowHalfOpen) LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
             ) orelse return error.FailedToOpenSocket;

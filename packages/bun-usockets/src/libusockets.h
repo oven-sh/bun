@@ -91,9 +91,11 @@ extern "C" {
 
 enum {
     /* No meaning, default listen option */
-    LIBUS_LISTEN_DEFAULT,
+    LIBUS_LISTEN_DEFAULT = 0,
     /* We exclusively own this port, do not share it */
-    LIBUS_LISTEN_EXCLUSIVE_PORT
+    LIBUS_LISTEN_EXCLUSIVE_PORT = 1,
+    /* Allow socket to keep writing after readable side closes */
+    LIBUS_SOCKET_ALLOW_HALF_OPEN = 2,
 };
 
 /* Library types publicly available */

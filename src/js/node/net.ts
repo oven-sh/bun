@@ -71,8 +71,6 @@ const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
-const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
-const bunFinalCallback = Symbol("::bunFinalCallback::");
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -92,12 +90,6 @@ function emitCloseNT(self, hasError) {
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
-  const finalCallback = self[bunFinalCallback];
-  if (finalCallback) {
-    self[bunFinalCallback] = null;
-    finalCallback();
-    return;
-  }
 }
 function finishSocket(hasError) {
   detachSocket(this);
@@ -377,7 +369,6 @@ const Socket = (function (InternalSocket) {
     [kBytesWritten] = undefined;
     #closed = false;
     #ended = false;
-    [bunFinalCallback] = null;
     connecting = false;
     localAddress = "127.0.0.1";
     remotePort;
@@ -575,6 +566,7 @@ const Socket = (function (InternalSocket) {
           data: this,
           fd: fd,
           socket: this.#handlers,
+          allowHalfOpen: this.allowHalfOpen,
         }).catch(error => {
           this.emit("error", error);
           this.emit("close");
@@ -744,6 +736,7 @@ const Socket = (function (InternalSocket) {
             unix: path,
             socket: this.#handlers,
             tls,
+            allowHalfOpen: this.allowHalfOpen,
           }).catch(error => {
             this.emit("error", error);
             this.emit("close");
@@ -756,6 +749,7 @@ const Socket = (function (InternalSocket) {
             port: port,
             socket: this.#handlers,
             tls,
+            allowHalfOpen: this.allowHalfOpen,
           }).catch(error => {
             this.emit("error", error);
             this.emit("close");
@@ -797,13 +791,8 @@ const Socket = (function (InternalSocket) {
       // already closed call destroy
       if (!socket) return callback();
 
-      if (this.allowHalfOpen) {
-        // wait socket close event
-        this[bunFinalCallback] = callback;
-      } else {
-        // emit FIN not allowing half open
-        process.nextTick(endNT, socket, callback);
-      }
+      // emit FIN allowHalfOpen only allow the readable side to close first
+      process.nextTick(endNT, socket, callback);
     }
 
     get localFamily() {
@@ -1252,6 +1241,7 @@ class Server extends EventEmitter {
       this._handle = Bun.listen({
         unix: path,
         tls,
+        allowHalfOpen: this[bunSocketServerOptions]?.allowHalfOpen || false,
         socket: SocketClass[bunSocketServerHandlers],
       });
     } else {
@@ -1260,6 +1250,7 @@ class Server extends EventEmitter {
         port,
         hostname,
         tls,
+        allowHalfOpen: this[bunSocketServerOptions]?.allowHalfOpen || false,
         socket: SocketClass[bunSocketServerHandlers],
       });
     }

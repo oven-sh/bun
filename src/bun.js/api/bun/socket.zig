@@ -313,6 +313,7 @@ pub const SocketConfig = struct {
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
     exclusive: bool = false,
+    allowHalfOpen: bool = false,
 
     pub fn fromJS(
         vm: *JSC.VirtualMachine,
@@ -323,6 +324,7 @@ pub const SocketConfig = struct {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
+        var allowHalfOpen = false;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -368,6 +370,9 @@ pub const SocketConfig = struct {
 
             if (opts.getTruthy(globalObject, "exclusive")) |_| {
                 exclusive = true;
+            }
+            if (opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
+                allowHalfOpen = true;
             }
 
             if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
@@ -442,6 +447,7 @@ pub const SocketConfig = struct {
             .handlers = handlers,
             .default_data = default_data,
             .exclusive = exclusive,
+            .allowHalfOpen = allowHalfOpen,
         };
     }
 };
@@ -591,7 +597,10 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        const socket_flags: i32 = if (exclusive) 1 else 0;
+        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else uws.LIBUS_LISTEN_DEFAULT;
+        if (socket_config.allowHalfOpen) {
+            socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
+        }
         defer if (ssl != null) ssl.?.deinit();
 
         if (Environment.isWindows) {
@@ -1260,7 +1269,7 @@ pub const Listener = struct {
                 });
 
                 SocketType.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
-
+                socket.flags.allow_half_open = socket_config.allowHalfOpen;
                 socket.doConnect(connection) catch {
                     socket.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                     return promise_value;
@@ -1376,6 +1385,7 @@ fn NewSocket(comptime ssl: bool) type {
             authorized: bool = false,
             owned_protos: bool = true,
             is_paused: bool = false,
+            allow_half_open: bool = false,
         };
         pub usingnamespace if (!ssl)
             JSC.Codegen.JSTCPSocket
@@ -1425,6 +1435,7 @@ fn NewSocket(comptime ssl: bool) type {
                         c.port,
                         this.socket_context.?,
                         this,
+                        this.flags.allow_half_open,
                     );
                 },
                 .unix => |u| {
@@ -1432,6 +1443,7 @@ fn NewSocket(comptime ssl: bool) type {
                         u,
                         this.socket_context.?,
                         this,
+                        this.flags.allow_half_open,
                     );
                 },
                 .fd => |f| {
@@ -1485,12 +1497,14 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 break :brk 0;
             };
+            log("setKeepAlive({}, {})", .{ enabled, initialDelay });
 
             return JSValue.jsBoolean(this.socket.setKeepAlive(enabled, initialDelay));
         }
 
         pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
+
             const args = callframe.arguments(1);
             const enabled: bool = brk: {
                 if (args.len >= 1) {
@@ -1498,6 +1512,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 break :brk true;
             };
+            log("setNoDelay({})", .{enabled});
 
             return JSValue.jsBoolean(this.socket.setNoDelay(enabled));
         }

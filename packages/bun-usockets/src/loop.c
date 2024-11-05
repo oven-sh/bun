@@ -275,7 +275,7 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
-void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events) {
+void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
@@ -293,7 +293,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                us_internal_socket_after_open((struct us_socket_t *) p, error);
+                us_internal_socket_after_open((struct us_socket_t *) p, error || eof);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;
@@ -318,6 +318,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         s->timeout = 255;
                         s->long_timeout = 255;
                         s->low_prio_state = 0;
+                        s->allow_half_open = listen_socket->s.allow_half_open;
+
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -422,16 +424,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #endif
                     } else if (!length) {
-                        if (us_socket_is_shut_down(0, s)) {
-                            /* We got FIN back after sending it */
-                            /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
-                            s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
-                            return;
-                        } else {
-                            /* We got FIN, so stop polling for readable */
-                            us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
-                            s = s->context->on_end(s);
-                        }
+                        eof = 1; // lets handle EOF in the same place
+                        break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
@@ -442,7 +436,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 } while (s);
             }
 
-            /* Such as epollerr epollhup */
+            if(eof && s) {
+                if (us_socket_is_shut_down(0, s)) {
+                    /* We got FIN back after sending it */
+                    s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    return;
+                }
+                if(s->allow_half_open) {
+                    /* We got a Error but is EOF and we allow half open so stop polling for readable and keep going*/
+                    us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                    s = s->context->on_end(s);
+                } else {
+                    /* We dont allow half open just emit end and close the socket */
+                    s = s->context->on_end(s);
+                    s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    return;
+                }
+            } 
+            /* Such as epollerr or EV_ERROR */
             if (error && s) {
                 /* Todo: decide what code we give here */
                 s = us_socket_close(0, s, error, NULL);

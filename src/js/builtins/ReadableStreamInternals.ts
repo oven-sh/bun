@@ -1443,7 +1443,7 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
 
 $alwaysInline = true;
 export function isReadableStreamLocked(stream) {
-  // $assert($isReadableStream(stream));
+  $assert($isReadableStream(stream));
   return (
     // Case 1. Is there a reader actively using it?
     !!$getByIdDirectPrivate(stream, "reader") ||

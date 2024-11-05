@@ -279,14 +279,7 @@ function aborted(signal: AbortSignal, resource: object) {
 }
 
 function createDeferredPromise() {
-  let resolve;
-  let reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-
-  return { promise, resolve, reject };
+  return $newPromiseCapability(Promise);
 }
 
 var kEmptyObject = Object.freeze({ __proto__: null });

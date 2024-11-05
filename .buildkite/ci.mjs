@@ -222,7 +222,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-vendor`,
-      label: `${getLabel(platform)} - build-vendor`,
+      label: `build-vendor`,
       agents: {
         os,
         arch,
@@ -242,7 +242,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-cpp`,
-      label: `${getLabel(platform)} - build-cpp`,
+      label: `build-cpp`,
       agents: {
         os,
         arch,
@@ -264,7 +264,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-zig`,
-      label: `${getLabel(platform)} - build-zig`,
+      label: `build-zig`,
       agents: {
         queue: "build-zig",
       },
@@ -282,7 +282,7 @@ function getPipeline(buildId) {
 
     return {
       key: `${getKey(platform)}-build-bun`,
-      label: `${getLabel(platform)} - build-bun`,
+      label: `build-bun`,
       depends_on: [
         `${getKey(platform)}-build-vendor`,
         `${getKey(platform)}-build-cpp`,

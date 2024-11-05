@@ -413,9 +413,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return {};
     }
 
-    if (!node_api_module_get_api_version_v1) {
-        JSC::throwTypeError(globalObject, scope, "symbol 'node_api_module_get_api_version_v1' not found in native module. Is this a Node API (napi) module?"_s);
-        return {};
+    // TODO(@heimskr): get the module version without node_api_module_get_api_version_v1 a different way
+    int module_version = 8;
+    if (node_api_module_get_api_version_v1) {
+        module_version = node_api_module_get_api_version_v1();
     }
 
     NapiHandleScope handleScope(globalObject);
@@ -423,7 +424,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
     napi_module nmodule {
-        .nm_version = node_api_module_get_api_version_v1(),
+        .nm_version = module_version,
         .nm_flags = 0,
         .nm_filename = "[no filename]",
         .nm_register_func = nullptr,

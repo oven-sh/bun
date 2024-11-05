@@ -3503,7 +3503,7 @@ bool JSC__JSValue__isUndefinedOrNull(JSC__JSValue JSValue0)
 JSC__JSValue JSC__JSValue__jsBoolean(bool arg0)
 {
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
@@ -3512,32 +3512,35 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
-};
-JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
+}
+JSC__JSValue JSC__JSValue__jsNull()
+{
+    return JSC::JSValue::encode(JSC::jsNull());
+}
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromInt32(int32_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {

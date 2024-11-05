@@ -795,7 +795,7 @@ export function getBuildLabel() {
 /**
  * @param {string} [filename]
  * @param {number} [line]
- * @returns {string | undefined}
+ * @returns {URL | undefined}
  */
 export function getFileUrl(filename, line) {
   let cwd;
@@ -818,9 +818,9 @@ export function getFileUrl(filename, line) {
 
   if (pullRequest) {
     const fileMd5 = createHash("sha256").update(filePath).digest("hex");
-    const url = new URL(`pull/${pullRequest}/files#diff-${fileMd5}`, `${baseUrl}/`).toString();
+    const url = new URL(`pull/${pullRequest}/files#diff-${fileMd5}`, `${baseUrl}/`);
     if (typeof line !== "undefined") {
-      return `${url}R${line}`;
+      return new URL(`R${line}`, url);
     }
     return url;
   }
@@ -828,7 +828,7 @@ export function getFileUrl(filename, line) {
   const commit = getCommit(cwd);
   const url = new URL(`blob/${commit}/${filePath}`, `${baseUrl}/`).toString();
   if (typeof line !== "undefined") {
-    return `${url}#L${line}`;
+    return new URL(`#L${line}`, url);
   }
   return url;
 }
@@ -1338,6 +1338,16 @@ export function getDistroRelease() {
  * @returns {Promise<number | undefined>}
  */
 export async function getCanaryRevision() {
+  if (isBuildkite) {
+    const { error, stdout } = await spawn(["buildkite-agent", "meta-data", "get", "canary"]);
+    if (!error) {
+      const revision = parseInt(stdout.trim());
+      if (!isNaN(revision)) {
+        return revision;
+      }
+    }
+  }
+
   const { error: releaseError, body: release } = await curl(
     "https://api.github.com/repos/oven-sh/bun/releases/latest",
     { json: true },
@@ -1346,17 +1356,22 @@ export async function getCanaryRevision() {
     return 1;
   }
 
-  const { tag_name: latest } = body;
   const commit = getCommit();
+  const { tag_name: latest } = release;
   const { error: compareError, body: compare } = await curl(
     `https://api.github.com/repos/oven-sh/bun/compare/${latest}...${commit}`,
     { json: true },
   );
-  if (!compareError) {
-    const { ahead_by: revision } = body;
-    if (typeof revision === "number") {
-      return revision;
+  if (compareError) {
+    return 1;
+  }
+
+  const { ahead_by: revision } = compare;
+  if (typeof revision === "number") {
+    if (isBuildkite) {
+      await spawn(["buildkite-agent", "meta-data", "set", "canary", revision]);
     }
+    return revision;
   }
 
   return 1;

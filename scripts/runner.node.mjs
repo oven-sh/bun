@@ -35,6 +35,7 @@ import {
   printEnvironment,
   startGroup,
   tmpdir,
+  unzip,
 } from "./utils.mjs";
 
 const cwd = dirname(import.meta.dirname);
@@ -1095,17 +1096,7 @@ async function getExecPathFromBuildKite(target) {
     throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
   }
 
-  if (isWindows) {
-    await spawnSafe({
-      command: "powershell",
-      args: ["-Command", `Expand-Archive -Path ${zipPath} -DestinationPath ${releasePath} -Force`],
-    });
-  } else {
-    await spawnSafe({
-      command: "unzip",
-      args: ["-o", zipPath, "-d", releasePath],
-    });
-  }
+  await unzip(zipPath, releasePath);
 
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
     const execPath = join(releasePath, entry);

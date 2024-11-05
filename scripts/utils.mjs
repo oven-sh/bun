@@ -1415,7 +1415,7 @@ export function printEnvironment() {
     startGroup("CI", () => {
       console.log("Build ID:", getBuildId());
       console.log("Build Label:", getBuildLabel());
-      console.log("Build URL:", getBuildUrl());
+      console.log("Build URL:", `${getBuildUrl()}`);
     });
   }
 }

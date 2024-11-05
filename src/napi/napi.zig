@@ -614,19 +614,7 @@ pub export fn napi_strict_equals(env_: napi_env, lhs_: napi_value, rhs_: napi_va
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub extern fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result_: ?*napi_value) napi_status;
-pub export fn napi_instanceof(env_: napi_env, object_: napi_value, constructor_: napi_value, result_: ?*bool) napi_status {
-    log("napi_instanceof", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    const result = result_ orelse {
-        return env.invalidArg();
-    };
-    const object, const constructor = .{ object_.get(), constructor_.get() };
-    // TODO: does this throw object_expected in node?
-    result.* = object.isObject() and object.isInstanceOf(env.toJS(), constructor);
-    return env.ok();
-}
+pub extern fn napi_instanceof(env_: napi_env, object_: napi_value, constructor_: napi_value, result_: ?*bool) napi_status;
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;
 pub extern fn napi_get_new_target(env: napi_env, cbinfo: napi_callback_info, result: *napi_value) napi_status;
 pub extern fn napi_define_class(

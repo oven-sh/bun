@@ -2743,6 +2743,33 @@ extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
+extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_value constructor, bool* result)
+{
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_ARG(env, result);
+
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSValue objectValue = toJS(object);
+    JSValue constructorValue = toJS(constructor);
+    JSC::JSObject* constructorObject = constructorValue.getObject();
+
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (!constructorObject || !constructorValue.isConstructor()) {
+        throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Constructor must be a function"_s));
+        return napi_set_last_error(env, napi_pending_exception);
+    }
+
+    if (UNLIKELY(!constructorObject->structure()->typeInfo().implementsHasInstance())) {
+        *result = false;
+    } else {
+        *result = constructorObject->hasInstance(globalObject, objectValue);
+    }
+
+    return napi_set_last_error(env, napi_ok);
+}
+
 extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     napi_value func_napi, size_t argc,
     const napi_value* argv,

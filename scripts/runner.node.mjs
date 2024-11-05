@@ -23,6 +23,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { join, basename, dirname, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  getBuildLabel,
+  getBuildUrl,
   getEnv,
   getFileUrl,
   getWindowsExitReason,

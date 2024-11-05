@@ -702,7 +702,6 @@ export async function getChangedFiles(cwd, base, head) {
   head ||= `${base}^1`;
 
   const url = `https://api.github.com/repos/${repository}/compare/${head}...${base}`;
-  console.log({ url });
   const { error, body } = await curl(url, { json: true });
 
   if (error) {
@@ -1333,6 +1332,34 @@ export function getDistroRelease() {
       return stdout.trim();
     }
   }
+}
+
+/**
+ * @returns {Promise<number | undefined>}
+ */
+export async function getCanaryRevision() {
+  const { error: releaseError, body: release } = await curl(
+    "https://api.github.com/repos/oven-sh/bun/releases/latest",
+    { json: true },
+  );
+  if (releaseError) {
+    return 1;
+  }
+
+  const { tag_name: latest } = body;
+  const commit = getCommit();
+  const { error: compareError, body: compare } = await curl(
+    `https://api.github.com/repos/oven-sh/bun/compare/${latest}...${commit}`,
+    { json: true },
+  );
+  if (!compareError) {
+    const { ahead_by: revision } = body;
+    if (typeof revision === "number") {
+      return revision;
+    }
+  }
+
+  return 1;
 }
 
 /**

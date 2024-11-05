@@ -271,10 +271,7 @@ function getPipeline(buildId) {
 
   const getBuildZigStep = platform => {
     const { os, arch, abi, baseline } = platform;
-
-    let toolchain = `${os}-${arch}`;
-    if (abi) toolchain += `-${abi}`;
-    if (baseline) toolchain += `-baseline`;
+    const toolchain = getKey(platform);
 
     return {
       key: `${getKey(platform)}-build-zig`,

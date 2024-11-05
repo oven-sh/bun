@@ -230,7 +230,7 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern int Bun__JSC_onBeforeWait(void*);
+extern int Bun__JSC_onBeforeWaitWithTimer(void* vm, int hasTimer);
 extern void Bun__JSC_onAfterWait(void*);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
@@ -250,7 +250,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     int needs_after_wait = 0;
     if (loop->data.jsc_vm) {
-        needs_after_wait = Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        needs_after_wait = Bun__JSC_onBeforeWaitWithTimer(loop->data.jsc_vm, 1);
     }
 
     /* Fetch ready polls */

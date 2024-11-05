@@ -835,6 +835,8 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
+    vm.heap.disableStopIfNecessaryTimer();
+
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (UNLIKELY(executionContextId > -1)) {
             auto* structure = Zig::GlobalObject::createStructure(vm);

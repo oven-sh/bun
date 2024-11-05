@@ -9,6 +9,8 @@ const EE = require("node:events");
 function Stream(opts) {
   EE.$call(this, opts);
 }
+Stream.constructor = Stream;
+
 Stream.prototype = {
   __proto__: EE.prototype,
 };

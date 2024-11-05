@@ -104,6 +104,8 @@ function Duplex(options) {
   }
 }
 
+Duplex.constructor = Duplex;
+
 Duplex.prototype = Object.create(Readable.prototype);
 Object.defineProperty(Duplex, Symbol.toStringTag, {
   value: "Duplex",

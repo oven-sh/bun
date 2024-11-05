@@ -40,6 +40,8 @@ function PassThrough(options) {
   Transform.$call(this, options);
 }
 
+PassThrough.constructor = PassThrough;
+
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };

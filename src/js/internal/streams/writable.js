@@ -424,6 +424,8 @@ function Writable(options) {
   }
 }
 
+Writable.constructor = Writable;
+
 Writable.prototype = Object.create(Stream.prototype);
 ObjectSetPrototypeOf(Writable, Stream);
 

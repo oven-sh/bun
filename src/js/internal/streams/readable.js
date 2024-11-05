@@ -348,6 +348,8 @@ function Readable(options) {
   }
 }
 
+Readable.constructor = Readable;
+
 Readable.prototype.destroy = destroyImpl.destroy;
 Readable.prototype._undestroy = destroyImpl.undestroy;
 Readable.prototype._destroy = function (err, cb) {

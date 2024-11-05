@@ -149,6 +149,8 @@ function prefinish() {
   }
 }
 
+Transform.constructor = Transform;
+
 Transform.prototype._final = final;
 
 Transform.prototype._transform = function (chunk, encoding, callback) {

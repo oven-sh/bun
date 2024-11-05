@@ -850,7 +850,7 @@ export async function getPreviousBuildId() {
 
       const { id, state, prev_branch_build: previousBuild, steps } = body;
       if (depth++) {
-        if (state === "failed" || state === "passed") {
+        if (state === "failed" || state === "passed" || state === "canceled") {
           const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
           if (buildSteps.length) {
             if (buildSteps.every(({ outcome }) => outcome === "passed")) {
@@ -923,7 +923,7 @@ export function tmpdir() {
   if (isWindows) {
     for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
       const tmpdir = getEnv(key, false);
-      if (/cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
+      if (!tmpdir || /cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
         continue;
       }
       return normalizeWindows(tmpdir);
@@ -1273,7 +1273,7 @@ export function getDistro() {
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/ID=(.*)/);
+      const match = releaseFile.match(/ID=\"(.*)\"/);
       if (match) {
         return match[1];
       }
@@ -1314,7 +1314,7 @@ export function getDistroRelease() {
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
       const releaseFile = readFile(releasePath, { cache: true });
-      const match = releaseFile.match(/VERSION_ID=(.*)/);
+      const match = releaseFile.match(/VERSION_ID=\"(.*)\"/);
       if (match) {
         return match[1];
       }

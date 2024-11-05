@@ -31,15 +31,6 @@ pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn chown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
-// TODO: this is wrong on Windows
-pub extern "c" fn lstat64([*c]const u8, [*c]libc_stat) c_int;
-pub extern "c" fn lstat([*c]const u8, [*c]libc_stat) c_int;
-// TODO: this is wrong on Windows
-pub extern "c" fn fstat64(c_int, [*c]libc_stat) c_int;
-pub extern "c" fn fstat(c_int, [*c]libc_stat) c_int;
-// TODO: this is wrong on Windows
-pub extern "c" fn stat64([*c]const u8, [*c]libc_stat) c_int;
-pub extern "c" fn stat([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lchmod(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn truncate([*:0]const u8, i64) c_int; // note: truncate64 is not a thing
 
@@ -50,6 +41,22 @@ pub extern "c" fn memcmp(s1: [*c]const u8, s2: [*c]const u8, n: usize) c_int;
 pub extern "c" fn memchr(s: [*]const u8, c: u8, n: usize) ?[*]const u8;
 
 pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
+
+pub const lstat = blk: {
+    const T = *const fn ([*c]const u8, [*c]libc_stat) callconv(.C) c_int; // TODO: this is wrong on Windows
+    if (bun.Environment.isMusl) break :blk @extern(T, .{ .library_name = "c", .name = "lstat" });
+    break :blk @extern(T, .{ .name = "lstat64" });
+};
+pub const fstat = blk: {
+    const T = *const fn (c_int, [*c]libc_stat) callconv(.C) c_int; // TODO: this is wrong on Windows
+    if (bun.Environment.isMusl) break :blk @extern(T, .{ .library_name = "c", .name = "fstat" });
+    break :blk @extern(T, .{ .name = "fstat64" });
+};
+pub const stat = blk: {
+    const T = *const fn ([*c]const u8, [*c]libc_stat) callconv(.C) c_int; // TODO: this is wrong on Windows
+    if (bun.Environment.isMusl) break :blk @extern(T, .{ .library_name = "c", .name = "stat" });
+    break :blk @extern(T, .{ .name = "stat64" });
+};
 
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {

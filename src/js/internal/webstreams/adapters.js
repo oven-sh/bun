@@ -546,7 +546,7 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
       // ended, we signal an error on the stream.Writable.
       closed = true;
       if (!isWritableEnded(writable))
-        destroy(writable, new ERR_STREAM_PREMATURE_CLOSE());
+        destroy(writable, $ERR_STREAM_PREMATURE_CLOSE());
     },
     (error) => {
       // If the WritableStream errors before the stream.Writable has been

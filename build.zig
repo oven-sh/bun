@@ -314,6 +314,8 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
         });
     }
 

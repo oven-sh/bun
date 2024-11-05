@@ -8,13 +8,16 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  getCanaryRevision,
   getChangedFiles,
   getCommitMessage,
   getPreviousBuildId,
+  isBuildkite,
   isFork,
   isMainBranch,
   isMergeQueue,
   printEnvironment,
+  spawnSafe,
 } from "../scripts/utils.mjs";
 
 function toYaml(obj, indent = 0) {
@@ -379,8 +382,20 @@ async function main() {
     buildSkip = true;
   }
 
+  console.log("Checking if build is a named release...");
+  let buildRelease;
+  {
+    const message = getCommitMessage();
+    const match = /\[(release|release build|build release)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      buildRelease = true;
+    }
+  }
+
   let buildId;
-  if (buildSkip) {
+  if (buildSkip && !buildRelease) {
     console.log("Checking if a previous build is available...");
     buildId = await getPreviousBuildId();
     if (buildId) {
@@ -399,6 +414,15 @@ async function main() {
   console.log("Generated pipeline:");
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
+
+  if (isBuildkite) {
+    console.log("Setting canary revision...");
+    const canaryRevision = buildRelease ? 0 : await getCanaryRevision();
+    await spawnSafe("buildkite-agent", ["meta-data", "set", "canary", `${canaryRevision}`]);
+
+    console.log("Uploading pipeline...");
+    await spawnSafe("buildkite-agent", ["pipeline", "upload", contentPath]);
+  }
 }
 
 await main();

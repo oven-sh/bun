@@ -1338,16 +1338,6 @@ export function getDistroRelease() {
  * @returns {Promise<number | undefined>}
  */
 export async function getCanaryRevision() {
-  if (isBuildkite) {
-    const { error, stdout } = await spawn(["buildkite-agent", "meta-data", "get", "canary"]);
-    if (!error) {
-      const revision = parseInt(stdout.trim());
-      if (!isNaN(revision)) {
-        return revision;
-      }
-    }
-  }
-
   const { error: releaseError, body: release } = await curl(
     "https://api.github.com/repos/oven-sh/bun/releases/latest",
     { json: true },
@@ -1368,9 +1358,6 @@ export async function getCanaryRevision() {
 
   const { ahead_by: revision } = compare;
   if (typeof revision === "number") {
-    if (isBuildkite) {
-      await spawn(["buildkite-agent", "meta-data", "set", "canary", revision]);
-    }
     return revision;
   }
 

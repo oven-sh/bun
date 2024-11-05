@@ -413,7 +413,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return {};
     }
 
-    // TODO(@heimskr): get the module version without node_api_module_get_api_version_v1 a different way
+    // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;
     if (node_api_module_get_api_version_v1) {
         module_version = node_api_module_get_api_version_v1();

@@ -1320,6 +1320,11 @@ pub const VirtualMachine = struct {
 
     pub fn onBeforeExit(this: *VirtualMachine) void {
         Bun__queueFinishNapiFinalizers(this.global);
+        while (this.isEventLoopAlive()) {
+            this.tick();
+            this.eventLoop().autoTickActive();
+        }
+
         this.exit_handler.dispatchOnBeforeExit();
         var dispatch = false;
         while (true) {

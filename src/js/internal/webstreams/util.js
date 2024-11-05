@@ -69,7 +69,7 @@ function ArrayBufferViewGetBuffer(view) {
 }
 
 function ArrayBufferViewGetByteLength(view) {
-  return ReflectGet(view.constructor.prototype, "byteLength", view);
+  return data.$byteLength
 }
 
 function ArrayBufferViewGetByteOffset(view) {

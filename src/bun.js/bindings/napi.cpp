@@ -1833,6 +1833,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     Bun::NapiHandleScope handleScope(jsCast<Zig::GlobalObject*>(globalObject));
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
+    napi_set_last_error(napi->env(), napi_ok);
     RETURN_IF_EXCEPTION(scope, {});
     if (ret.isEmpty()) {
         ret = jsUndefined();

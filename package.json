@@ -29,7 +29,6 @@
   "resolutions": {
     "bun-types": "workspace:packages/bun-types"
   },
-  "type": "module",
   "scripts": {
     "build": "bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug",
     "build:debug": "bun run build",

@@ -1,37 +1,45 @@
 //#FILE: test-net-socket-write-error.js
 //#SHA1: a69bb02fc98fc265ad23ff03e7ae16e9c984202d
 //-----------------
-"use strict";
+'use strict';
 
-const net = require("net");
+const net = require('net');
 
-test("net socket write error", done => {
-  const server = net.createServer().listen(0, connectToServer);
+describe('Net Socket Write Error', () => {
+  let server;
 
-  function connectToServer() {
-    const client = net
-      .createConnection(this.address().port, () => {
-        client.on("error", () => {
-          throw new Error("Error event should not be emitted");
-        });
+  beforeAll((done) => {
+    server = net.createServer().listen(0, () => {
+      done();
+    });
+  });
 
-        expect(() => {
-          client.write(1337);
-        }).toThrow(
-          expect.objectContaining({
-            code: "ERR_INVALID_ARG_TYPE",
-            name: "TypeError",
-            message: expect.any(String),
-          }),
-        );
+  afterAll((done) => {
+    server.close(done);
+  });
 
-        client.destroy();
-      })
-      .on("close", () => {
-        server.close();
-        done();
+  test('should throw TypeError when writing non-string/buffer', (done) => {
+    const client = net.createConnection(server.address().port, () => {
+      client.on('error', () => {
+        done.fail('Client should not emit error');
       });
-  }
+
+      expect(() => {
+        client.write(1337);
+      }).toThrow(expect.objectContaining({
+        code: 'ERR_INVALID_ARG_TYPE',
+        name: 'TypeError'
+      }));
+
+      client.destroy();
+      done();
+    });
+
+    client.on('close', () => {
+      // This ensures the server closes after the client disconnects
+      server.close();
+    });
+  });
 });
 
 //<#END_FILE: test-net-socket-write-error.js

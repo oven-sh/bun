@@ -239,7 +239,7 @@ pub const JSBundler = struct {
 
             if (config.getTruthy(globalThis, "minify")) |minify| {
                 if (minify.isBoolean()) {
-                    const value = minify.toBooleanSlow(globalThis);
+                    const value = minify.toBoolean();
                     this.minify.whitespace = value;
                     this.minify.syntax = value;
                     this.minify.identifiers = value;

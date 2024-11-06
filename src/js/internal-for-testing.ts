@@ -143,6 +143,9 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   0,
 );
 
-export const frameworkRouterInternals = {
-  parseRoutePattern: $newZigFunction("FrameworkRouter.zig", "js_bindings.parseRoutePattern", 2),
+export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
+  parseRoutePattern: () => void;
+  FrameworkRouter: {
+    new(): any;
+  };
 };

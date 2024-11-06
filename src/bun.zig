@@ -3965,7 +3965,7 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             none = std.math.maxInt(backing_int),
             _,
 
-            pub inline fn init(maybe: ?Index) ?Index {
+            pub inline fn init(maybe: ?Index) Optional {
                 return if (maybe) |i| i.toOptional() else .none;
             }
 
@@ -4102,3 +4102,10 @@ pub inline fn writeAnyToHasher(hasher: anytype, thing: anytype) void {
 pub inline fn isComptimeKnown(x: anytype) bool {
     return comptime @typeInfo(@TypeOf(.{x})).Struct.fields[0].is_comptime;
 }
+
+pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
+    return if (index < slice.len) slice[index] else null;
+}
+
+/// Code used by the classes generator
+pub const gen_classes_lib = @import("gen_classes_lib.zig");

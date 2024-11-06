@@ -1642,8 +1642,8 @@ pub const Formatter = struct {
                     this.writer.writeAll(" ") catch unreachable;
                 }
                 if (!is_iterator) {
-                    const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
-                    const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
+                    const key = nextValue.getIndex(globalObject, 0);
+                    const value = nextValue.getIndex(globalObject, 1);
 
                     if (!single_line) {
                         this.formatter.writeIndent(Writer, this.writer) catch unreachable;
@@ -2981,7 +2981,7 @@ pub const Formatter = struct {
 
                                                 var j: usize = 0;
                                                 while (j < length) : (j += 1) {
-                                                    const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
+                                                    const child = children.getIndex(this.globalThis, @as(u32, @intCast(j)));
                                                     this.format(Tag.getAdvanced(child, this.globalThis, .{ .hide_global = true }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                     if (j + 1 < length) {
                                                         writer.writeAll("\n");

@@ -1,6 +1,6 @@
 import { allocUnsafe } from "bun";
 import { readFileSync } from "fs";
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 function polyfill(chunks) {
   var size = 0;

@@ -1,8 +1,9 @@
 import process from "node:process";
-import * as Mitata from "../node_modules/mitata/src/cli.mjs";
+import * as Mitata from "mitata";
 
 const asJSON = !!process?.env?.BENCHMARK_RUNNER;
 
+/** @param {Parameters<typeof Mitata["run"]>["0"]} opts */
 export function run(opts = {}) {
   opts ??= {};
 
@@ -13,10 +14,6 @@ export function run(opts = {}) {
   return Mitata.run(opts);
 }
 
-export function bench(name, fn) {
-  return Mitata.bench(name, fn);
-}
+export const bench = Mitata.bench
 
-export function group(name, fn) {
-  return Mitata.group(name, fn);
-}
+export const group = Mitata.group

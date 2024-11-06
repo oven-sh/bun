@@ -1,4 +1,4 @@
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 var bunEscapeHTML = globalThis.escapeHTML || Bun.escapeHTML;
 

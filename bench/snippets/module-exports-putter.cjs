@@ -1,6 +1,6 @@
 // This is a stress test of some internals in How Bun does the module.exports assignment.
 // If it crashes or throws then this fails
-import("./runner.mjs").then(({ bench, run }) => {
+import("../runner.mjs").then(({ bench, run }) => {
   bench("Object.defineProperty(module, 'exports', { get() { return 42; } })", () => {
     Object.defineProperty(module, "exports", {
       get() {

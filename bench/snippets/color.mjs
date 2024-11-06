@@ -1,6 +1,6 @@
 import Color from "color";
 import tinycolor from "tinycolor2";
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const inputs = ["#f00", "rgb(255, 0, 0)", "rgba(255, 0, 0, 1)", "hsl(0, 100%, 50%)"];
 

@@ -1,4 +1,4 @@
-import { bench, run } from "mitata";
+import { bench, run } "../runner.mjs";
 
 const count = 100;
 

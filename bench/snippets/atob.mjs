@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 function makeBenchmark(size) {
   const latin1 = btoa("A".repeat(size));

@@ -1,5 +1,5 @@
 import { performance } from "perf_hooks";
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 bench("process.memoryUsage()", () => {
   process.memoryUsage();

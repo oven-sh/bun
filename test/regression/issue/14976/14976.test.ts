@@ -6,6 +6,7 @@ import { $ } from "bun";
 
 import { name as name1 } from "./mod\u1011.ts";
 import { name as name2 } from "./modထ.ts";
+import { bunExe } from "harness";
 
 test("unicode imports", () => {
   expect(mile𐃘add1(25)).toBe(26);
@@ -40,6 +41,18 @@ test("string escapes", () => {
   expect({ "\\": 1 }[String.fromCodePoint(0x5c)]).toBe(1);
   const tag = (a: TemplateStringsArray) => a.raw;
   expect(tag`$one \$two`).toEqual(["$one \\$two"]);
+});
+
+test("can bundle escaped import", async () => {
+  await $`${bunExe()} build ${import.meta.dirname}/mod_importer.ts`;
+});
+
+test("equals works", async () => {
+  expect(
+    "\n" ===
+      `
+`,
+  ).toBe(true);
 });
 
 test.skip("template literal raw property with unicode in an ascii-only build", async () => {

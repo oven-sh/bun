@@ -812,7 +812,11 @@ const Socket = (function (InternalSocket) {
     }
 
     _final(callback) {
+      if (this.connecting) {
+        return this.once("connect", () => this._final(callback));
+      }
       const socket = this._handle;
+
       // already closed call destroy
       if (!socket) return callback();
 

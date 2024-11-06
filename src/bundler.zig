@@ -15,7 +15,7 @@ const lex = bun.js_lexer;
 const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
-const json_parser = bun.JSON;
+const JSON = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
@@ -449,7 +449,7 @@ pub const Bundler = struct {
             };
 
             // Only re-query if we previously had something cached.
-            if (bundler.resolver.bustDirCache(buster_name)) {
+            if (bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                 if (_resolveEntryPoint(bundler, entry_point)) |result|
                     return result
                 else |_| {
@@ -1450,11 +1450,11 @@ pub const Bundler = struct {
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
                     if (source.path.isJSONCFile())
-                        json_parser.parseTSConfig(&source, bundler.log, allocator, false) catch return null
+                        JSON.parseTSConfig(&source, bundler.log, allocator, false) catch return null
                     else
-                        json_parser.parse(&source, bundler.log, allocator, false) catch return null
+                        JSON.parse(&source, bundler.log, allocator, false) catch return null
                 else if (kind == .toml)
-                    TOML.parse(&source, bundler.log, allocator) catch return null
+                    TOML.parse(&source, bundler.log, allocator, false) catch return null
                 else
                     @compileError("unreachable");
 

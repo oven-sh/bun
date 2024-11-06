@@ -594,7 +594,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.lstat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSys(C.lstat64(path, &stat_), .lstat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -958,6 +958,11 @@ fn openDirAtWindowsT(
         .result => |norm| norm,
     };
 
+    if (comptime T == u8) {
+        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+    } else {
+        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+    }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
 
@@ -1574,7 +1579,7 @@ else if (builtin.os.tag.isDarwin())
 else
     system.writev;
 
-const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc and !bun.Environment.isMusl)
     sys.pread64
 else if (builtin.os.tag.isDarwin())
     system.@"pread$NOCANCEL"
@@ -1603,7 +1608,7 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     }
 }
 
-const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc and !bun.Environment.isMusl)
     sys.pwrite64
 else
     sys.pwrite;
@@ -3013,14 +3018,14 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
-    pub fn openat(other: anytype, path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn openat(other: anytype, path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },
             .err => |err| .{ .err = err },
         };
     }
 
-    pub fn open(path: anytype, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+    pub fn open(path: [:0]const u8, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
         return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 

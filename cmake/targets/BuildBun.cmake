@@ -482,13 +482,16 @@ endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
 
+
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
+  set(IS_ARM64 ON)
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   else()
     set(ZIG_CPU "native")
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
+  set(IS_X86_64 ON)
   if(ENABLE_BASELINE)
     set(ZIG_CPU "nehalem")
   else()
@@ -683,6 +686,14 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include
 )
 
+if(LINUX)
+  include(CheckIncludeFiles)
+  check_include_files("sys/queue.h" HAVE_SYS_QUEUE_H)
+  if(NOT HAVE_SYS_QUEUE_H)
+    target_include_directories(${bun} PRIVATE vendor/lshpack/compat/queue)
+  endif()
+endif()
+
 # --- C/C++ Definitions ---
 
 if(ENABLE_ASSERTIONS)
@@ -743,6 +754,29 @@ if(NOT WIN32)
     -faddrsig
   )
   if(DEBUG)
+    # TODO: this shouldn't be necessary long term
+    if (NOT IS_MUSL)
+      set(ABI_PUBLIC_FLAGS
+        -fsanitize=null
+        -fsanitize-recover=all
+        -fsanitize=bounds
+        -fsanitize=return
+        -fsanitize=nullability-arg
+        -fsanitize=nullability-assign
+        -fsanitize=nullability-return
+        -fsanitize=returns-nonnull-attribute
+        -fsanitize=unreachable
+      )
+      set(ABI_PRIVATE_FLAGS
+        -fsanitize=null
+      )
+    else()
+      set(ABI_PUBLIC_FLAGS
+      )
+      set(ABI_PRIVATE_FLAGS
+      )
+    endif()
+
     target_compile_options(${bun} PUBLIC
       -Werror=return-type
       -Werror=return-stack-address
@@ -758,17 +792,11 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-nullability-completeness
       -Werror
-      -fsanitize=null
-      -fsanitize-recover=all
-      -fsanitize=bounds
-      -fsanitize=return
-      -fsanitize=nullability-arg
-      -fsanitize=nullability-assign
-      -fsanitize=nullability-return
-      -fsanitize=returns-nonnull-attribute
-      -fsanitize=unreachable
+      ${ABI_PUBLIC_FLAGS}
     )
-    target_link_libraries(${bun} PRIVATE -fsanitize=null)
+    target_link_libraries(${bun} PRIVATE
+      ${ABI_PRIVATE_FLAGS}
+    )
   else()
     # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
     target_compile_options(${bun} PUBLIC ${LTO_FLAG}
@@ -813,7 +841,7 @@ if(WIN32)
     )
   endif()
 elseif(APPLE)
-  target_link_options(${bun} PUBLIC 
+  target_link_options(${bun} PUBLIC
     -dead_strip
     -dead_strip_dylibs
     -Wl,-stack_size,0x1200000
@@ -846,6 +874,52 @@ else()
     set(LLD_NAME lld-${LLVM_VERSION_MAJOR})
   endif()
 
+  if (IS_ARM64)
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=statx
+    )
+  elseif(IS_X86_64)
+    set(ARCH_WRAP_FLAGS
+      -Wl,--wrap=fcntl
+      -Wl,--wrap=fcntl64
+      -Wl,--wrap=fstat
+      -Wl,--wrap=fstat64
+      -Wl,--wrap=fstatat
+      -Wl,--wrap=fstatat64
+      -Wl,--wrap=lstat
+      -Wl,--wrap=lstat64
+      -Wl,--wrap=mknod
+      -Wl,--wrap=mknodat
+      -Wl,--wrap=stat
+      -Wl,--wrap=stat64
+      -Wl,--wrap=statx
+    )
+  endif()
+
+  if (NOT IS_MUSL)
+    set(ABI_WRAP_FLAGS
+      -Wl,--wrap=cosf
+      -Wl,--wrap=exp
+      -Wl,--wrap=expf
+      -Wl,--wrap=fmod
+      -Wl,--wrap=fmodf
+      -Wl,--wrap=log
+      -Wl,--wrap=log10f
+      -Wl,--wrap=log2
+      -Wl,--wrap=log2f
+      -Wl,--wrap=logf
+      -Wl,--wrap=pow
+      -Wl,--wrap=powf
+      -Wl,--wrap=sincosf
+      -Wl,--wrap=sinf
+      -Wl,--wrap=tanf
+    )
+  else()
+    set(ABI_WRAP_FLAGS
+    )
+  endif()
+
   target_link_options(${bun} PUBLIC
     -fuse-ld=${LLD_NAME}
     -fno-pic
@@ -856,33 +930,8 @@ else()
     -Wl,--as-needed
     -Wl,--gc-sections
     -Wl,-z,stack-size=12800000
-    -Wl,--wrap=cosf
-    -Wl,--wrap=exp
-    -Wl,--wrap=expf
-    -Wl,--wrap=fcntl
-    -Wl,--wrap=fcntl64
-    -Wl,--wrap=fmod
-    -Wl,--wrap=fmodf
-    -Wl,--wrap=fstat
-    -Wl,--wrap=fstat64
-    -Wl,--wrap=fstatat
-    -Wl,--wrap=fstatat64
-    -Wl,--wrap=log
-    -Wl,--wrap=log10f
-    -Wl,--wrap=log2
-    -Wl,--wrap=log2f
-    -Wl,--wrap=logf
-    -Wl,--wrap=lstat
-    -Wl,--wrap=lstat64
-    -Wl,--wrap=mknod
-    -Wl,--wrap=mknodat
-    -Wl,--wrap=pow
-    -Wl,--wrap=sincosf
-    -Wl,--wrap=sinf
-    -Wl,--wrap=stat
-    -Wl,--wrap=stat64
-    -Wl,--wrap=statx
-    -Wl,--wrap=tanf
+    ${ARCH_WRAP_FLAGS}
+    ${ABI_WRAP_FLAGS}
     -Wl,--compress-debug-sections=zlib
     -Wl,-z,lazy
     -Wl,-z,norelro

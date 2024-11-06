@@ -2357,7 +2357,7 @@ pub const win32 = struct {
         return original_mode;
     }
 
-    const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
+    const watcherChildEnv: [:0]const u16 = strings.toUTF16Literal("_BUN_WATCHER_CHILD");
     // magic exit code to indicate to the watcher manager that the child process should be re-spawned
     // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
     const watcher_reload_exit: w.DWORD = 3224497970;
@@ -3146,8 +3146,8 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
             const ptr = bun.new(T, t);
 
             if (Environment.enable_logs) {
-                if (ptr.ref_count != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                if (ptr.ref_count == 0) {
+                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
                 }
             }
 

@@ -32,6 +32,10 @@ function getCommit() {
   return getEnv("BUILDKITE_COMMIT");
 }
 
+function getCommitMessage() {
+  return getEnv("BUILDKITE_MESSAGE", false) || "";
+}
+
 function getBranch() {
   return getEnv("BUILDKITE_BRANCH");
 }
@@ -60,7 +64,7 @@ function isPullRequest() {
 async function getChangedFiles() {
   const repository = getRepository();
   const head = getCommit();
-  const base = isMainBranch() ? `${head}^1` : getMainBranch();
+  const base = `${head}^1`;
 
   try {
     const response = await fetch(`https://api.github.com/repos/${repository}/compare/${base}...${head}`);
@@ -73,12 +77,42 @@ async function getChangedFiles() {
   }
 }
 
-function isDocumentation(filename) {
-  return /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/.test(filename);
+function getBuildUrl() {
+  return getEnv("BUILDKITE_BUILD_URL");
 }
 
-function isTest(filename) {
-  return /^test/.test(filename);
+async function getBuildIdWithArtifacts() {
+  let depth = 0;
+  let url = getBuildUrl();
+
+  while (url) {
+    const response = await fetch(`${url}.json`, {
+      headers: { "Accept": "application/json" },
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const { id, state, prev_branch_build: lastBuild, steps } = await response.json();
+    if (depth++) {
+      if (state === "failed" || state === "passed") {
+        const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
+        if (buildSteps.length) {
+          if (buildSteps.every(({ outcome }) => outcome === "passed")) {
+            return id;
+          }
+          return;
+        }
+      }
+    }
+
+    if (!lastBuild) {
+      return;
+    }
+
+    url = url.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
+  }
 }
 
 function toYaml(obj, indent = 0) {
@@ -86,6 +120,10 @@ function toYaml(obj, indent = 0) {
   let result = "";
 
   for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined) {
+      continue;
+    }
+
     if (value === null) {
       result += `${spaces}${key}: null\n`;
       continue;
@@ -125,14 +163,20 @@ function toYaml(obj, indent = 0) {
   return result;
 }
 
-function getPipeline() {
+function getPipeline(buildId) {
   /**
    * Helpers
    */
 
   const getKey = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
+    if (abi) {
+      if (baseline) {
+        return `${os}-${arch}-${abi}-baseline`;
+      }
+      return `${os}-${arch}-${abi}`;
+    }
     if (baseline) {
       return `${os}-${arch}-baseline`;
     }
@@ -141,13 +185,15 @@ function getPipeline() {
   };
 
   const getLabel = platform => {
-    const { os, arch, baseline } = platform;
-
-    if (baseline) {
-      return `:${os}: ${arch}-baseline`;
+    const { os, arch, abi, baseline, release } = platform;
+    let label = release ? `:${os}: ${release} ${arch}` : `:${os}: ${arch}`;
+    if (abi) {
+      label += `-${abi}`;
     }
-
-    return `:${os}: ${arch}`;
+    if (baseline) {
+      label += `-baseline`;
+    }
+    return label;
   };
 
   // https://buildkite.com/docs/pipelines/command-step#retry-attributes
@@ -181,15 +227,16 @@ function getPipeline() {
    */
 
   const getBuildVendorStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-vendor`,
-      label: `${getLabel(platform)} - build-vendor`,
+      label: `build-vendor`,
       agents: {
         os,
         arch,
-        queue: `build-${os}`,
+        abi,
+        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
       },
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -201,15 +248,16 @@ function getPipeline() {
   };
 
   const getBuildCppStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-cpp`,
-      label: `${getLabel(platform)} - build-cpp`,
+      label: `build-cpp`,
       agents: {
         os,
         arch,
-        queue: `build-${os}`,
+        abi,
+        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
       },
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -222,12 +270,12 @@ function getPipeline() {
   };
 
   const getBuildZigStep = platform => {
-    const { os, arch, baseline } = platform;
-    const toolchain = baseline ? `${os}-${arch}-baseline` : `${os}-${arch}`;
+    const { os, arch, abi, baseline } = platform;
+    const toolchain = getKey(platform);
 
     return {
       key: `${getKey(platform)}-build-zig`,
-      label: `${getLabel(platform)} - build-zig`,
+      label: `build-zig`,
       agents: {
         queue: "build-zig",
       },
@@ -241,11 +289,11 @@ function getPipeline() {
   };
 
   const getBuildBunStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-bun`,
-      label: `${getLabel(platform)} - build-bun`,
+      label: `build-bun`,
       depends_on: [
         `${getKey(platform)}-build-vendor`,
         `${getKey(platform)}-build-cpp`,
@@ -254,6 +302,7 @@ function getPipeline() {
       agents: {
         os,
         arch,
+        abi,
         queue: `build-${os}`,
       },
       retry: getRetry(),
@@ -267,22 +316,22 @@ function getPipeline() {
   };
 
   const getTestBunStep = platform => {
-    const { os, arch, distro, release } = platform;
+    const { os, arch, abi, distro, release } = platform;
 
     let name;
     if (os === "darwin" || os === "windows") {
-      name = getLabel(platform);
+      name = getLabel({ ...platform, release });
     } else {
-      name = getLabel({ ...platform, os: distro });
+      name = getLabel({ ...platform, os: distro, release });
     }
 
     let agents;
     if (os === "darwin") {
-      agents = { os, arch, queue: `test-darwin` };
+      agents = { os, arch, abi, queue: `test-darwin` };
     } else if (os === "windows") {
-      agents = { os, arch, robobun: true };
+      agents = { os, arch, abi, robobun: true };
     } else {
-      agents = { os, arch, distro, release, robobun: true };
+      agents = { os, arch, abi, distro, release, robobun: true };
     }
 
     let command;
@@ -299,16 +348,34 @@ function getPipeline() {
       parallelism = 10;
     }
 
+    let depends;
+    let env;
+    if (buildId) {
+      env = {
+        BUILDKITE_ARTIFACT_BUILD_ID: buildId,
+      };
+    } else {
+      depends = [`${getKey(platform)}-build-bun`];
+    }
+
+    let retry;
+    if (os !== "windows") {
+      // When the runner fails on Windows, Buildkite only detects an exit code of 1.
+      // Because of this, we don't know if the run was fatal, or soft-failed.
+      retry = getRetry();
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
-      depends_on: [`${getKey(platform)}-build-bun`],
+      depends_on: depends,
       agents,
-      retry: getRetry(),
+      retry,
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
       parallelism,
       command,
+      env,
     };
   };
 
@@ -320,8 +387,10 @@ function getPipeline() {
     { os: "darwin", arch: "aarch64" },
     { os: "darwin", arch: "x64" },
     { os: "linux", arch: "aarch64" },
+    // { os: "linux", arch: "aarch64", abi: "musl" }, // TODO:
     { os: "linux", arch: "x64" },
     { os: "linux", arch: "x64", baseline: true },
+    // { os: "linux", arch: "x64", abi: "musl" }, // TODO:
     { os: "windows", arch: "x64" },
     { os: "windows", arch: "x64", baseline: true },
   ];
@@ -334,12 +403,14 @@ function getPipeline() {
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
+    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "x64", distro: "debian", release: "12", baseline: true },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", baseline: true },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", baseline: true },
+    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
     { os: "windows", arch: "x64", distro: "server", release: "2019" },
     { os: "windows", arch: "x64", distro: "server", release: "2019", baseline: true },
   ];
@@ -350,18 +421,25 @@ function getPipeline() {
       ...buildPlatforms.map(platform => {
         const { os, arch, baseline } = platform;
 
-        return {
-          key: getKey(platform),
-          group: getLabel(platform),
-          steps: [
+        let steps = [
+          ...testPlatforms
+            .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
+            .map(platform => getTestBunStep(platform)),
+        ];
+
+        if (!buildId) {
+          steps.unshift(
             getBuildVendorStep(platform),
             getBuildCppStep(platform),
             getBuildZigStep(platform),
             getBuildBunStep(platform),
-            ...testPlatforms
-              .filter(platform => platform.os === os && platform.arch === arch && baseline === platform.baseline)
-              .map(platform => getTestBunStep(platform)),
-          ],
+          );
+        }
+
+        return {
+          key: getKey(platform),
+          group: getLabel(platform),
+          steps,
         };
       }),
     ],
@@ -373,6 +451,7 @@ async function main() {
   console.log(" - Repository:", getRepository());
   console.log(" - Branch:", getBranch());
   console.log(" - Commit:", getCommit());
+  console.log(" - Commit Message:", getCommitMessage());
   console.log(" - Is Main Branch:", isMainBranch());
   console.log(" - Is Merge Queue:", isMergeQueue());
   console.log(" - Is Pull Request:", isPullRequest());
@@ -382,18 +461,45 @@ async function main() {
     console.log(
       `Found ${changedFiles.length} changed files: \n${changedFiles.map(filename => ` - ${filename}`).join("\n")}`,
     );
+  }
 
-    if (changedFiles.every(filename => isDocumentation(filename))) {
-      console.log("Since changed files are only documentation, skipping...");
-      return;
+  const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
+
+  const isSkip = () => {
+    const message = getCommitMessage();
+    if (/\[(skip ci|no ci|ci skip|ci no)\]/i.test(message)) {
+      return true;
     }
+    return changedFiles && changedFiles.every(filename => isDocumentationFile(filename));
+  };
 
-    if (changedFiles.every(filename => isTest(filename) || isDocumentation(filename))) {
-      // TODO: console.log("Since changed files contain tests, skipping build...");
+  if (isSkip()) {
+    console.log("Skipping CI due to commit message or changed files...");
+    return;
+  }
+
+  const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
+
+  const isSkipBuild = () => {
+    const message = getCommitMessage();
+    if (/\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.test(message)) {
+      return true;
+    }
+    return changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename));
+  };
+
+  let buildId;
+  if (isSkipBuild()) {
+    buildId = await getBuildIdWithArtifacts();
+    if (buildId) {
+      console.log("Skipping build due to commit message or changed files...");
+      console.log("Using build artifacts from previous build:", buildId);
+    } else {
+      console.log("Attempted to skip build, but could not find previous build");
     }
   }
 
-  const pipeline = getPipeline();
+  const pipeline = getPipeline(buildId);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);

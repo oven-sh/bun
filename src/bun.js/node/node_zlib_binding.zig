@@ -114,35 +114,25 @@ pub fn CompressionStream(comptime T: type) type {
             //
 
             const vm = globalThis.bunVM();
-            var task = AsyncJob.new(.{
-                .binding = this,
-            });
+            this.task = .{ .callback = &AsyncJob.runTask };
             this.poll_ref.ref(vm);
-            JSC.WorkPool.schedule(&task.task);
+            JSC.WorkPool.schedule(&this.task);
 
             return .undefined;
         }
 
         const AsyncJob = struct {
-            task: JSC.WorkPoolTask = .{ .callback = &runTask },
-            binding: *T,
-
-            pub usingnamespace bun.New(@This());
-
-            pub fn runTask(this: *JSC.WorkPoolTask) void {
-                var job: *AsyncJob = @fieldParentPtr("task", this);
-                job.run();
-                job.destroy();
+            pub fn runTask(task: *JSC.WorkPoolTask) void {
+                const this: *T = @fieldParentPtr("task", task);
+                AsyncJob.run(this);
             }
 
-            pub fn run(job: *AsyncJob) void {
-                const this = job.binding;
+            pub fn run(this: *T) void {
                 const globalThis: *JSC.JSGlobalObject = this.globalThis;
                 const vm = globalThis.bunVMConcurrently();
 
                 this.stream.doWork();
 
-                this.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
             }
         };
@@ -294,6 +284,29 @@ pub fn CompressionStream(comptime T: type) type {
 
 pub const NativeZlib = JSC.Codegen.JSNativeZlib.getConstructor;
 
+const CountedKeepAlive = struct {
+    keep_alive: bun.Async.KeepAlive = .{},
+    ref_count: u32 = 0,
+
+    pub fn ref(this: *@This(), vm: *JSC.VirtualMachine) void {
+        if (this.ref_count == 0) {
+            this.keep_alive.ref(vm);
+        }
+        this.ref_count += 1;
+    }
+
+    pub fn unref(this: *@This(), vm: *JSC.VirtualMachine) void {
+        this.ref_count -= 1;
+        if (this.ref_count == 0) {
+            this.keep_alive.unref(vm);
+        }
+    }
+
+    pub fn deinit(this: *@This()) void {
+        this.keep_alive.disable();
+    }
+};
+
 pub const SNativeZlib = struct {
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
     pub usingnamespace JSC.Codegen.JSNativeZlib;
@@ -306,11 +319,12 @@ pub const SNativeZlib = struct {
     write_result: ?[*]u32 = null,
     write_callback: JSC.Strong = .{},
     onerror_value: JSC.Strong = .{},
-    poll_ref: bun.Async.KeepAlive = .{},
+    poll_ref: CountedKeepAlive = .{},
     this_value: JSC.Strong = .{},
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,
+    task: JSC.WorkPoolTask = .{ .callback = undefined },
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
         const arguments = callframe.argumentsUndef(4).ptr;
@@ -392,6 +406,7 @@ pub const SNativeZlib = struct {
     pub fn deinit(this: *@This()) void {
         this.write_callback.deinit();
         this.onerror_value.deinit();
+        this.poll_ref.deinit();
         this.destroy();
     }
 };
@@ -662,11 +677,14 @@ pub const SNativeBrotli = struct {
     write_result: ?[*]u32 = null,
     write_callback: JSC.Strong = .{},
     onerror_value: JSC.Strong = .{},
-    poll_ref: bun.Async.KeepAlive = .{},
+    poll_ref: CountedKeepAlive = .{},
     this_value: JSC.Strong = .{},
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,
+    task: JSC.WorkPoolTask = .{
+        .callback = undefined,
+    },
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*@This() {
         const arguments = callframe.argumentsUndef(1).ptr;
@@ -752,6 +770,7 @@ pub const SNativeBrotli = struct {
     pub fn deinit(this: *@This()) void {
         this.write_callback.deinit();
         this.onerror_value.deinit();
+        this.poll_ref.deinit();
         this.destroy();
     }
 };

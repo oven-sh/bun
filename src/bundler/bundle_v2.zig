@@ -1861,8 +1861,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @intFromBool(err.kind == .err));
-                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
+                log.errors += @as(u32, @intFromBool(err.kind == .err));
+                log.warnings += @as(u32, @intFromBool(err.kind == .warn));
 
                 // An error occurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
@@ -2016,8 +2016,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @intFromBool(err.kind == .err));
-                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
+                log.errors += @as(u32, @intFromBool(err.kind == .err));
+                log.warnings += @as(u32, @intFromBool(err.kind == .warn));
             },
             .pending, .consumed => unreachable,
         }
@@ -3522,7 +3522,7 @@ pub const ParseTask = struct {
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
-                const root = try TOML.parse(&source, log, allocator);
+                const root = try TOML.parse(&source, log, allocator, false);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .text => {

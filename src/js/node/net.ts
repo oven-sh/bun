@@ -85,15 +85,15 @@ function endNT(socket, callback, err) {
   callback(err);
 }
 function emitCloseNT(self, hasError) {
-  self.emit("close", hasError);
+  if(hasError) {
+    self.emit("close", hasError); 
+  } else {
+    self.emit("close");
+  }
 }
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
-}
-function finishSocket(hasError) {
-  detachSocket(this);
-  this.emit("close", hasError);
 }
 // Provide a better error message when we call end() as a result
 // of the other side sending a FIN.  The standard 'write after end'
@@ -260,7 +260,7 @@ const Socket = (function (InternalSocket) {
       if (!self.#ended) {
         if (!this.allowHalfOpen) {
           self.write = writeAfterFIN;
-        }
+        
         // close event can be emitted when we still have data to read from the socket
         // we will force the close (not allowing half open) and emit the end event after some time
         setTimeout(Socket.#EmitEndNT, 0, self);

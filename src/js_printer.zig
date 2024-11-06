@@ -4914,15 +4914,16 @@ fn NewPrinter(
                 unreachable;
 
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
+            // uses EString printing because "\u1011" in an import string is the text "\\u1011" in import_record.path.text
             if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
-                p.printStringCharactersUTF8(import_record.path.namespace, quote);
+                p.printStringCharactersEStringUTF8(import_record.path.namespace, quote);
                 p.print(":");
-                p.printStringCharactersUTF8(import_record.path.text, quote);
+                p.printStringCharactersEStringUTF8(import_record.path.text, quote);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.printStringCharactersUTF8(import_record.path.text, quote);
+                p.printStringCharactersEStringUTF8(import_record.path.text, quote);
                 p.print(quote);
             }
         }

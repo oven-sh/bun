@@ -4,10 +4,15 @@ import * as i from "./import_target";
 import { test, expect } from "bun:test";
 import { $ } from "bun";
 
+import { name as name1 } from "./mod\u1011.ts";
+import { name as name2 } from "./modထ.ts";
+
 test("unicode imports", () => {
   expect(mile𐃘add1(25)).toBe(26);
   expect(i.mile𐃘add1(25)).toBe(26);
   expect(m(25)).toBe(26);
+  expect(name1).toBe("hi");
+  expect(name2).toBe("hi");
 });
 
 // prettier-ignore

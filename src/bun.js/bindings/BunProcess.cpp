@@ -58,7 +58,10 @@ typedef int mode_t;
 #include "ProcessBindingNatives.h"
 
 #if OS(LINUX)
+#include <features.h>
+#ifdef __GNU_LIBRARY__
 #include <gnu/libc-version.h>
+#endif
 #endif
 
 #pragma mark - Node.js Process
@@ -1573,8 +1576,11 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         }
 
 #if OS(LINUX)
+#ifdef __GNU_LIBRARY__
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(gnu_get_libc_version()), 0));
+#else
+#endif
 #endif
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);

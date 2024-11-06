@@ -594,7 +594,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.lstat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSys(C.lstat64(path, &stat_), .lstat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSys(C.lstat(path, &stat_), .lstat)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -1579,7 +1579,7 @@ else if (builtin.os.tag.isDarwin())
 else
     system.writev;
 
-const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc and !bun.Environment.isMusl)
     sys.pread64
 else if (builtin.os.tag.isDarwin())
     system.@"pread$NOCANCEL"
@@ -1608,7 +1608,7 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
     }
 }
 
-const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+const pwrite_sym = if (builtin.os.tag == .linux and builtin.link_libc and !bun.Environment.isMusl)
     sys.pwrite64
 else
     sys.pwrite;

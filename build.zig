@@ -165,7 +165,7 @@ pub fn build(b: *Build) !void {
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const os, const arch = brk: {
+    const os, const arch, const abi = brk: {
         // resolve the target query to pick up what operating system and cpu
         // architecture that is desired. this information is used to slightly
         // refine the query.
@@ -179,7 +179,8 @@ pub fn build(b: *Build) !void {
             .windows => .windows,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
-        break :brk .{ os, arch };
+        const abi = temp_resolved.result.abi;
+        break :brk .{ os, arch, abi };
     };
 
     // target must be refined to support older but very popular devices on
@@ -191,7 +192,7 @@ pub fn build(b: *Build) !void {
     }
 
     target_query.os_version_min = getOSVersionMin(os);
-    target_query.glibc_version = getOSGlibCVersion(os);
+    target_query.glibc_version = if (abi.isGnu()) getOSGlibCVersion(os) else null;
 
     const target = b.resolveTargetQuery(target_query);
 
@@ -313,6 +314,8 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
         });
     }
 
@@ -325,20 +328,20 @@ pub fn build(b: *Build) !void {
     }
 }
 
-pub inline fn addMultiCheck(
+pub fn addMultiCheck(
     b: *Build,
     parent_step: *Step,
     root_build_options: BunBuildOptions,
-    to_check: []const struct { os: OperatingSystem, arch: Arch },
+    to_check: []const struct { os: OperatingSystem, arch: Arch, musl: bool = false },
 ) void {
-    inline for (to_check) |check| {
-        inline for (.{ .Debug, .ReleaseFast }) |mode| {
+    for (to_check) |check| {
+        for ([_]std.builtin.Mode{ .Debug, .ReleaseFast }) |mode| {
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,
                 .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
                 .os_version_min = getOSVersionMin(check.os),
-                .glibc_version = getOSGlibCVersion(check.os),
+                .glibc_version = if (check.musl) null else getOSGlibCVersion(check.os),
             });
 
             var options: BunBuildOptions = .{

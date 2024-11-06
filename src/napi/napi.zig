@@ -941,7 +941,8 @@ pub export fn napi_get_version(env_: napi_env, result_: ?*u32) napi_status {
     const result = result_ orelse {
         return env.invalidArg();
     };
-    result.* = env.getVersion();
+    // The result is supposed to be the highest NAPI version Bun supports, rather than the version reported by a NAPI module.
+    result.* = 9;
     return env.ok();
 }
 pub export fn napi_create_promise(env_: napi_env, deferred_: ?*napi_deferred, promise_: ?*napi_value) napi_status {

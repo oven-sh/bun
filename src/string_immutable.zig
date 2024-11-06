@@ -4270,11 +4270,18 @@ pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            var cmp: AsciiVectorU1 = @bitCast((vec > max_16_ascii));
-            cmp |= @bitCast((vec < min_16_ascii));
-            cmp |= @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))));
-            cmp |= @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))));
-            if (quote_char == '`') cmp |= @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))));
+            const cmp: AsciiVectorU1 = if (comptime quote_char == '`') ( //
+                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
+            ) else ( //
+                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
+            );
 
             if (@reduce(.Max, cmp) > 0) {
                 const bitmask = @as(AsciiVectorInt, @bitCast(cmp));

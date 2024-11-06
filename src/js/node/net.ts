@@ -398,7 +398,7 @@ const Socket = (function (InternalSocket) {
     };
 
     bytesRead = 0;
-    [kBytesWritten] = undefined;
+    [kBytesWritten] = 0;
     #closed = false;
     #ended = false;
     connecting = false;
@@ -831,9 +831,12 @@ const Socket = (function (InternalSocket) {
     get localPort() {
       return this.handle?.localPort;
     }
+    get _connecting() {
+      return this.connecting;
+    }
 
     get pending() {
-      return this.connecting;
+      return !this._handle || this.connecting;
     }
 
     resume() {

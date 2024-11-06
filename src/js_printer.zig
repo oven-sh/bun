@@ -3338,8 +3338,9 @@ fn NewPrinter(
                         utf8 = utf8[i + 1 ..];
                         i = 0;
                     },
-                    0x80...0xFF => {
-                        if (ascii_only) {
+
+                    else => {
+                        if ((ascii_only and utf8[i] > last_ascii) or utf8[i] < first_ascii) {
                             p.print(utf8[0..i]);
                             const width = strings.wtf8ByteSequenceLengthWithInvalid(utf8[i]);
                             const clamped_width = @min(@as(usize, width), utf8.len -| i);
@@ -3393,10 +3394,6 @@ fn NewPrinter(
                         } else {
                             i += 1;
                         }
-                    },
-
-                    else => {
-                        i += 1;
                     },
                 }
             }

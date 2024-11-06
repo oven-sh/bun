@@ -11,7 +11,7 @@ interface TemplateStringTest {
 const templateStringTests: Record<string, TemplateStringTest> = {
   // note for writing tests: .print is .trim()'ed due to how run.stdout works
   Empty: { expr: '""', captureRaw: '""' },
-  NullByte: { expr: '"hello\0"', captureRaw: '"hello\0"' },
+  NullByte: { expr: '"hello\0"', captureRaw: '"hello\\u0000"' },
   EmptyTemplate: { expr: "``", captureRaw: '""' },
   ConstantTemplate: { expr: "`asdf`", captureRaw: '"asdf"' },
   AddConstant: { expr: "`${7 + 6}`", capture: true },

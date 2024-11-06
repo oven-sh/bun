@@ -600,8 +600,10 @@ const Socket = (function (InternalSocket) {
           socket: this.#handlers,
           allowHalfOpen: this.allowHalfOpen,
         }).catch(error => {
-          this.emit("error", error);
-          this.emit("close");
+          if (!this.destroyed) {
+            this.emit("error", error);
+            this.emit("close");
+          }
         });
       }
 
@@ -770,8 +772,10 @@ const Socket = (function (InternalSocket) {
             tls,
             allowHalfOpen: this.allowHalfOpen,
           }).catch(error => {
-            this.emit("error", error);
-            this.emit("close");
+            if (!this.destroyed) {
+              this.emit("error", error);
+              this.emit("close");
+            }
           });
         } else {
           // default start
@@ -783,8 +787,10 @@ const Socket = (function (InternalSocket) {
             tls,
             allowHalfOpen: this.allowHalfOpen,
           }).catch(error => {
-            this.emit("error", error);
-            this.emit("close");
+            if (!this.destroyed) {
+              this.emit("error", error);
+              this.emit("close");
+            }
           });
         }
       } catch (error) {

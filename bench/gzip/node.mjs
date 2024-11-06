@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 import { createRequire } from "module";
 import { gunzipSync, gzipSync } from "zlib";
 

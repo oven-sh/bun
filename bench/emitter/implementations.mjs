@@ -1,4 +1,4 @@
-import { group } from "mitata";
+import { group } from "../runner.mjs";
 import EventEmitterNative from "node:events";
 
 export const implementations = [

@@ -1,5 +1,5 @@
 import braces from "braces";
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "../runner.mjs";
 
 // const iterations = 1000;
 const iterations = 100;

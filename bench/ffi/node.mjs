@@ -1,4 +1,4 @@
-import { bench, group, run } from "mitata";
+import { bench, group, run } from "../runner.mjs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);

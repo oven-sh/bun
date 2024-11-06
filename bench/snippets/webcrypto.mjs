@@ -1,5 +1,4 @@
-import { group } from "mitata";
-import { bench, run } from "../runner.mjs";
+import { bench, run, group } from "../runner.mjs";
 
 const sizes = [
   ["small (63 bytes)", 63],

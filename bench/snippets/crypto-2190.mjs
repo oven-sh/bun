@@ -1,5 +1,5 @@
 // https://github.com/oven-sh/bun/issues/2190
-import { bench, run } from "mitata";
+import { bench, run } from "../runner.mjs";
 import { createHash } from "node:crypto";
 
 const data =

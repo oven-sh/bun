@@ -10,8 +10,11 @@ import { join } from "node:path";
 import {
   getCanaryRevision,
   getChangedFiles,
+  getCommit,
   getCommitMessage,
   getLastSuccessfulBuild,
+  getMainBranch,
+  getTargetBranch,
   isBuildkite,
   isFork,
   isMainBranch,
@@ -339,21 +342,24 @@ function getPipeline(buildId) {
 async function main() {
   printEnvironment();
 
-  const lastBuild = await startGroup("Checking last successful build...", async () => {
-    const build = await getLastSuccessfulBuild();
-    if (build) {
-      const { id, path, commit_id: commit } = build;
-      console.log(" - Build ID:", id);
-      console.log(" - Build URL:", new URL(path, "https://buildkite.com/").toString());
-      console.log(" - Commit:", commit);
-    } else {
-      console.log(" - No build found");
-    }
-    return build;
-  });
+  console.log("Checking last successful build...");
+  const lastBuild = await getLastSuccessfulBuild();
+  if (lastBuild) {
+    const { id, path, commit_id: commit } = lastBuild;
+    console.log(" - Build ID:", id);
+    console.log(" - Build URL:", new URL(path, "https://buildkite.com/").toString());
+    console.log(" - Commit:", commit);
+  } else {
+    console.log(" - No build found");
+  }
 
   console.log("Checking changed files...");
-  const changedFiles = await getChangedFiles(undefined, undefined, lastBuild?.commit_id);
+  const baseRef = getCommit();
+  console.log(" - Base Ref:", baseRef);
+  const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+  console.log(" - Head Ref:", headRef);
+
+  const changedFiles = await getChangedFiles(undefined, baseRef, headRef);
   if (changedFiles) {
     if (changedFiles.length) {
       changedFiles.forEach(filename => console.log(` - ${filename}`));
@@ -381,19 +387,19 @@ async function main() {
   }
 
   console.log("Checking if build should be skipped...");
-  let buildSkip;
+  let skipBuild;
   {
     const message = getCommitMessage();
     const match = /\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.exec(message);
     if (match) {
       const [, reason] = match;
       console.log(" - Yes, because commit message contains:", reason);
-      buildSkip = true;
+      skipBuild = true;
     }
   }
   if (changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename))) {
     console.log(" - Yes, because all changed files are tests or documentation");
-    buildSkip = true;
+    skipBuild = true;
   }
 
   console.log("Checking if build is a named release...");
@@ -408,19 +414,8 @@ async function main() {
     }
   }
 
-  let buildId;
-  if (buildSkip && !buildRelease) {
-    console.log("Checking if a previous build is available...");
-    buildId = await getPreviousBuildId();
-    if (buildId) {
-      console.log(" - Yes, found a previous build:", buildId);
-    } else {
-      console.log(" - No, either there is no previous build on this branch or every previous build failed");
-    }
-  }
-
   console.log("Generating pipeline...");
-  const pipeline = getPipeline(buildId);
+  const pipeline = getPipeline(lastBuild && skipBuild ? lastBuild.id : undefined);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);

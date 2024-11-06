@@ -79,8 +79,7 @@ threadlocal var stdout_lock_count: u16 = 0;
 
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
-    //console_: ConsoleObject.Type,
-    _: ConsoleObject.Type,
+    console: *ConsoleObject,
     message_type: MessageType,
     //message_level: u32,
     level: MessageLevel,
@@ -91,8 +90,6 @@ pub fn messageWithTypeAndLevel(
     if (comptime is_bindgen) {
         return;
     }
-
-    var console = global.bunVM().console;
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
@@ -3439,7 +3436,7 @@ pub fn takeHeapSnapshot(
 ) callconv(JSC.conv) void {
     // TODO: this does an extra JSONStringify and we don't need it to!
     var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot()};
-    ConsoleObject.messageWithTypeAndLevel(undefined, MessageType.Log, MessageLevel.Debug, globalThis, &snapshot, 1);
+    globalThis.bunVM().console.messageWithTypeAndLevel(.Log, .Debug, globalThis, &snapshot, 1);
 }
 pub fn timeStamp(
     // console

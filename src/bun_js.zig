@@ -371,9 +371,6 @@ pub const Run = struct {
         {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
-                if (prev_promise.status(vm.global.vm()) == .rejected) {
-                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
-                }
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {

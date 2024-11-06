@@ -4,7 +4,8 @@
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir as nodeTmpdir, type, userInfo } from "node:os";
+import { writeFile, readFile as nodeReadFile } from "node:fs/promises";
+import { hostname, tmpdir as nodeTmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -32,6 +33,47 @@ export const isBuildkite = getEnv("BUILDKITE", false) === "true";
 export const isGithubAction = getEnv("GITHUB_ACTIONS", false) === "true";
 export const isCI = getEnv("CI", false) === "true" || isBuildkite || isGithubAction;
 export const isDebug = getEnv("DEBUG", false) === "1";
+
+/**
+ * @param {string} name
+ * @param {object} [options]
+ * @param {boolean} [options.required]
+ * @param {boolean} [options.redact]
+ * @returns {string}
+ */
+export function getSecret(name, options = { required: true, redact: true }) {
+  const value = getEnv(name, false);
+  if (value) {
+    return value;
+  }
+
+  if (isBuildkite) {
+    const command = ["buildkite-agent", "secret", "get", name];
+    if (options["redact"] === false) {
+      command.push("--skip-redaction");
+    }
+
+    const { error, stdout: secret } = spawnSync(command);
+    if (error || !secret.trim()) {
+      const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false);
+      const clusterId = getEnv("BUILDKITE_CLUSTER_ID", false);
+
+      let hint;
+      if (orgId && clusterId) {
+        hint = `https://buildkite.com/organizations/${orgId}/clusters/${clusterId}/secrets`;
+      } else {
+        hint = "https://buildkite.com/docs/pipelines/buildkite-secrets";
+      }
+
+      throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`, { cause: error });
+    }
+
+    setEnv(name, secret);
+    return secret;
+  }
+
+  return getEnv(name, options["required"]);
+}
 
 /**
  * @param  {...unknown} args
@@ -531,7 +573,7 @@ export function isMergeQueue(cwd) {
  * @returns {string | undefined}
  */
 export function getGithubToken() {
-  const cachedToken = getEnv("GITHUB_TOKEN", false);
+  const cachedToken = getSecret("GITHUB_TOKEN", { required: false });
 
   if (typeof cachedToken === "string") {
     return cachedToken || undefined;
@@ -553,6 +595,7 @@ export function getGithubToken() {
  * @property {number} [retries]
  * @property {boolean} [json]
  * @property {boolean} [arrayBuffer]
+ * @property {string} [filename]
  */
 
 /**
@@ -576,9 +619,10 @@ export async function curl(url, options = {}) {
   let retries = options["retries"] || 3;
   let json = options["json"];
   let arrayBuffer = options["arrayBuffer"];
+  let filename = options["filename"];
 
   if (typeof headers["Authorization"] === "undefined") {
-    if (hostname === "api.github.com") {
+    if (hostname === "api.github.com" || hostname === "uploads.github.com") {
       const githubToken = getGithubToken();
       if (githubToken) {
         headers["Authorization"] = `Bearer ${githubToken}`;
@@ -608,10 +652,14 @@ export async function curl(url, options = {}) {
     statusText = response["statusText"];
     debugLog("$", "curl", href, "->", status, statusText);
 
+    const ok = response["ok"];
     try {
-      if (arrayBuffer && response["ok"]) {
+      if (filename && ok) {
+        const buffer = await response.arrayBuffer();
+        await writeFile(filename, new Uint8Array(buffer));
+      } else if (arrayBuffer && ok) {
         body = await response.arrayBuffer();
-      } else if (json && response["ok"]) {
+      } else if (json && ok) {
         body = await response.json();
       } else {
         body = await response.text();
@@ -627,7 +675,7 @@ export async function curl(url, options = {}) {
 
     error = new Error(`Fetch failed: ${method} ${url}: ${status} ${statusText}`, { cause: body });
 
-    if (status === 404 || status === 422) {
+    if (status === 400 || status === 404 || status === 422) {
       break;
     }
   }
@@ -790,6 +838,92 @@ export function getBuildLabel() {
       return label;
     }
   }
+}
+
+/**
+ * @typedef {object} BuildArtifact
+ * @property {string} [job]
+ * @property {string} filename
+ * @property {string} url
+ */
+
+/**
+ * @returns {Promise<BuildArtifact[] | undefined>}
+ */
+export async function getBuildArtifacts() {
+  const buildId = await getBuildkiteBuildNumber();
+  if (buildId) {
+    return getBuildkiteArtifacts(buildId);
+  }
+}
+
+/**
+ * @returns {Promise<number | undefined>}
+ */
+export async function getBuildkiteBuildNumber() {
+  if (isBuildkite) {
+    const number = parseInt(getEnv("BUILDKITE_BUILD_NUMBER", false));
+    if (!isNaN(number)) {
+      return number;
+    }
+  }
+
+  const repository = getRepository();
+  const commit = getCommit();
+  if (!repository || !commit) {
+    return;
+  }
+
+  const { status, error, body } = await curl(`https://api.github.com/repos/${repository}/commits/${commit}/statuses`, {
+    json: true,
+  });
+  if (status === 404) {
+    return;
+  }
+  if (error) {
+    throw error;
+  }
+
+  for (const { target_url: url } of body) {
+    const { hostname, pathname } = new URL(url);
+    if (hostname === "buildkite.com") {
+      const buildId = parseInt(pathname.split("/").pop());
+      if (!isNaN(buildId)) {
+        return buildId;
+      }
+    }
+  }
+}
+
+/**
+ * @param {string} buildId
+ * @returns {Promise<BuildArtifact[]>}
+ */
+export async function getBuildkiteArtifacts(buildId) {
+  const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false) || "bun";
+  const pipelineId = getEnv("BUILDKITE_PIPELINE_SLUG", false) || "bun";
+  const { jobs } = await curlSafe(`https://buildkite.com/${orgId}/${pipelineId}/builds/${buildId}.json`, {
+    json: true,
+  });
+
+  const artifacts = await Promise.all(
+    jobs.map(async ({ id: jobId, step_key: jobKey }) => {
+      const artifacts = await curlSafe(
+        `https://buildkite.com/organizations/${orgId}/pipelines/${pipelineId}/builds/${buildId}/jobs/${jobId}/artifacts`,
+        { json: true },
+      );
+
+      return artifacts.map(({ path, url }) => {
+        return {
+          job: jobKey,
+          filename: path,
+          url: new URL(url, "https://buildkite.com/").toString(),
+        };
+      });
+    }),
+  );
+
+  return artifacts.flat();
 }
 
 /**
@@ -1338,8 +1472,9 @@ export function getDistroRelease() {
  * @returns {Promise<number | undefined>}
  */
 export async function getCanaryRevision() {
+  const repository = getRepository() || "oven-sh/bun";
   const { error: releaseError, body: release } = await curl(
-    "https://api.github.com/repos/oven-sh/bun/releases/latest",
+    new URL(`repos/${repository}/releases/latest`, getGithubApiUrl()),
     { json: true },
   );
   if (releaseError) {
@@ -1349,7 +1484,7 @@ export async function getCanaryRevision() {
   const commit = getCommit();
   const { tag_name: latest } = release;
   const { error: compareError, body: compare } = await curl(
-    `https://api.github.com/repos/oven-sh/bun/compare/${latest}...${commit}`,
+    new URL(`repos/${repository}/compare/${latest}...${commit}`, getGithubApiUrl()),
     { json: true },
   );
   if (compareError) {
@@ -1362,6 +1497,20 @@ export async function getCanaryRevision() {
   }
 
   return 1;
+}
+
+/**
+ * @returns {URL}
+ */
+export function getGithubApiUrl() {
+  return new URL(getEnv("GITHUB_API_URL", false) || "https://api.github.com");
+}
+
+/**
+ * @returns {URL}
+ */
+export function getGithubUrl() {
+  return new URL(getEnv("GITHUB_SERVER_URL", false) || "https://github.com");
 }
 
 /**

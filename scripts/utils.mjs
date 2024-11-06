@@ -4,7 +4,7 @@
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { writeFile, readFile as nodeReadFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { hostname, tmpdir as nodeTmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -166,7 +166,7 @@ export async function spawn(command, options = {}) {
     error = cause;
   }
 
-  if (process.platform === "win32") {
+  if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
       exitCode = exitReason;
@@ -249,7 +249,7 @@ export function spawnSync(command, options = {}) {
     stderr = stderrBuffer.toString();
   }
 
-  if (process.platform === "win32") {
+  if (exitCode !== 0 && isWindows) {
     const exitReason = getWindowsExitReason(exitCode);
     if (exitReason) {
       exitCode = exitReason;

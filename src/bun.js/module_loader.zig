@@ -809,12 +809,14 @@ pub const ModuleLoader = struct {
                 module.poll_ref.ref(this.vm());
 
                 this.map.append(this.vm().allocator, module) catch unreachable;
-                this.vm().packageManager().drainDependencyList();
+                const install_info = this.vm().packageManagerAndLockfile();
+
+                install_info.manager.drainDependencyList(install_info.lockfile);
             }
 
             pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
                 var this = bun.cast(*Queue, ctx);
-                debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(&dependency.name)});
+                debug("onDependencyError: {s}", .{this.vm().packageManagerAndLockfile().lockfile.str(&dependency.name)});
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -827,7 +829,7 @@ pub const ModuleLoader = struct {
                             this.vm(),
                             module.parse_result.pending_imports.items(.import_record_id)[dep_i],
                             .{
-                                .name = this.vm().packageManager().lockfile.str(&dependency.name),
+                                .name = this.vm().packageManagerAndLockfile().lockfile.str(&dependency.name),
                                 .err = err,
                                 .url = "",
                                 .version = dependency.version,
@@ -854,11 +856,14 @@ pub const ModuleLoader = struct {
             }
 
             pub fn runTasks(this: *Queue) void {
-                var pm = this.vm().packageManager();
+                const info = this.vm().packageManagerAndLockfile();
+                var pm = info.manager;
+                const lockfile = info.lockfile;
 
                 if (Output.enable_ansi_colors_stderr) {
                     pm.startProgressBarIfNone();
                     pm.runTasks(
+                        lockfile,
                         *Queue,
                         this,
                         .{
@@ -873,6 +878,7 @@ pub const ModuleLoader = struct {
                     ) catch unreachable;
                 } else {
                     pm.runTasks(
+                        lockfile,
                         *Queue,
                         this,
                         .{
@@ -944,7 +950,7 @@ pub const ModuleLoader = struct {
             ) void {
                 debug("onPackageDownloadError: {s}", .{name});
 
-                const resolution_ids = this.vm().packageManager().lockfile.buffers.resolutions.items;
+                const resolution_ids = this.vm().packageManagerAndLockfile().lockfile.buffers.resolutions.items;
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
                 outer: for (modules) |module_| {
@@ -973,7 +979,10 @@ pub const ModuleLoader = struct {
             }
 
             pub fn pollModules(this: *Queue) void {
-                var pm = this.vm().packageManager();
+                const install_info = this.vm().packageManagerAndLockfile();
+                var pm = install_info.manager;
+                var lockfile = install_info.lockfile;
+
                 if (pm.pending_tasks.load(.monotonic) > 0) return;
 
                 var modules: []AsyncModule = this.map.items;
@@ -988,7 +997,7 @@ pub const ModuleLoader = struct {
                     var done_count: usize = 0;
                     for (tags, 0..) |tag, tag_i| {
                         const root_id = root_dependency_ids[tag_i];
-                        const resolution_ids = pm.lockfile.buffers.resolutions.items;
+                        const resolution_ids = lockfile.buffers.resolutions.items;
                         if (root_id >= resolution_ids.len) continue;
                         const package_id = resolution_ids[root_id];
 
@@ -1016,17 +1025,17 @@ pub const ModuleLoader = struct {
                             continue;
                         }
 
-                        const package = pm.lockfile.packages.get(package_id);
+                        const package = lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
                         var name_and_version_hash: ?u64 = null;
                         var patchfile_hash: ?u64 = null;
-                        switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
+                        switch (pm.determinePreinstallState(package, lockfile, &name_and_version_hash, &patchfile_hash)) {
                             .done => {
                                 // we are only truly done if all the dependencies are done.
                                 const current_tasks = pm.total_tasks;
                                 // so if enqueuing all the dependencies produces no new tasks, we are done.
-                                pm.enqueueDependencyList(package.dependencies);
+                                pm.enqueueDependencyList(lockfile, package.dependencies);
                                 if (current_tasks == pm.total_tasks) {
                                     tags[tag_i] = .done;
                                     done_count += 1;
@@ -1052,7 +1061,7 @@ pub const ModuleLoader = struct {
                 this.map.items.len = i;
                 if (i == 0) {
                     // ensure we always end the progress bar
-                    this.vm().packageManager().endProgressBar();
+                    this.vm().packageManagerAndLockfile().manager.endProgressBar();
                 }
             }
 
@@ -1109,7 +1118,7 @@ pub const ModuleLoader = struct {
             var jsc_vm = this.globalThis.bunVM();
             jsc_vm.modules.scheduled -= 1;
             if (jsc_vm.modules.scheduled == 0) {
-                jsc_vm.packageManager().endProgressBar();
+                jsc_vm.packageManagerAndLockfile().manager.endProgressBar();
             }
             var log = logger.Log.init(jsc_vm.allocator);
             defer log.deinit();
@@ -1235,7 +1244,7 @@ pub const ModuleLoader = struct {
                     break :brk std.fmt.allocPrint(
                         bun.default_allocator,
                         "{s} '{s}' for package '{s}' (but package exists)",
-                        .{ prefix, vm.packageManager().lockfile.str(&result.version.literal), result.name },
+                        .{ prefix, vm.packageManagerAndLockfile().lockfile.str(&result.version.literal), result.name },
                     );
                 },
                 else => |err| std.fmt.allocPrint(
@@ -1282,7 +1291,7 @@ pub const ModuleLoader = struct {
 
             const msg_args = .{
                 result.name,
-                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
+                result.resolution.fmt(vm.packageManagerAndLockfile().lockfile.buffers.string_bytes.items, .any),
             };
 
             const msg: []u8 = try switch (result.err) {
@@ -1332,7 +1341,7 @@ pub const ModuleLoader = struct {
                     .{
                         bun.asByteSlice(@errorName(err)),
                         result.name,
-                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
+                        result.resolution.fmt(vm.packageManagerAndLockfile().lockfile.buffers.string_bytes.items, .any),
                     },
                 ),
             };
@@ -1383,12 +1392,12 @@ pub const ModuleLoader = struct {
             jsc_vm.bundler.linker.log = log;
             jsc_vm.bundler.log = log;
             jsc_vm.bundler.resolver.log = log;
-            jsc_vm.packageManager().log = log;
+            jsc_vm.packageManagerAndLockfile().manager.log = log;
             defer {
                 jsc_vm.bundler.linker.log = old_log;
                 jsc_vm.bundler.log = old_log;
                 jsc_vm.bundler.resolver.log = old_log;
-                jsc_vm.packageManager().log = old_log;
+                jsc_vm.packageManagerAndLockfile().manager.log = old_log;
             }
 
             // We _must_ link because:
@@ -1573,16 +1582,16 @@ pub const ModuleLoader = struct {
                 jsc_vm.bundler.log = log;
                 jsc_vm.bundler.linker.log = log;
                 jsc_vm.bundler.resolver.log = log;
-                if (jsc_vm.bundler.resolver.package_manager) |pm| {
-                    pm.log = log;
+                if (jsc_vm.bundler.resolver.install_info) |info| {
+                    info.manager.log = log;
                 }
 
                 defer {
                     jsc_vm.bundler.log = old;
                     jsc_vm.bundler.linker.log = old;
                     jsc_vm.bundler.resolver.log = old;
-                    if (jsc_vm.bundler.resolver.package_manager) |pm| {
-                        pm.log = old;
+                    if (jsc_vm.bundler.resolver.install_info) |info| {
+                        info.manager.log = old;
                     }
                 }
 

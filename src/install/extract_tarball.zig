@@ -18,6 +18,7 @@ const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
+const Lockfile = Install.Lockfile;
 
 const ExtractTarball = @This();
 
@@ -30,6 +31,7 @@ skip_verify: bool = false,
 integrity: Integrity = .{},
 url: strings.StringOrTinyString,
 package_manager: *PackageManager,
+lockfile: *Lockfile,
 
 pub inline fn run(this: *const ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
@@ -496,8 +498,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     if (switch (this.resolution.tag) {
         // TODO remove extracted files not matching any globs under "files"
         .github, .local_tarball, .remote_tarball => true,
-        else => this.package_manager.lockfile.trusted_dependencies != null and
-            this.package_manager.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
+        else => this.lockfile.trusted_dependencies != null and
+            this.lockfile.trusted_dependencies.?.contains(@truncate(Semver.String.Builder.stringHash(name))),
     }) {
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.toFD(cache_dir.fd),

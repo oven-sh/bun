@@ -3388,7 +3388,7 @@ pub const File = struct {
     }
 
     pub fn toSource(path: anytype, allocator: std.mem.Allocator) Maybe(bun.logger.Source) {
-        return toSourceAt(std.fs.cwd(), path, allocator);
+        return toSourceAt(bun.FD.cwd(), path, allocator);
     }
 };
 

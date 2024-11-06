@@ -26,16 +26,16 @@ pub const FolderResolution = union(Tag) {
     pub const Tag = enum { package_id, err, new_package_id };
 
     pub const PackageWorkspaceSearchPathFormatter = struct {
-        manager: *PackageManager,
+        lockfile: *Lockfile,
         version: Dependency.Version,
         quoted: bool = true,
 
         pub fn format(this: PackageWorkspaceSearchPathFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             var joined: [bun.MAX_PATH_BYTES + 2]u8 = undefined;
-            const str_to_use = this.manager.lockfile.workspace_paths.getPtr(
-                @truncate(String.Builder.stringHash(this.manager.lockfile.str(&this.version.value.workspace))),
+            const str_to_use = this.lockfile.workspace_paths.getPtr(
+                @truncate(String.Builder.stringHash(this.lockfile.str(&this.version.value.workspace))),
             ) orelse &this.version.value.workspace;
-            var paths = normalizePackageJSONPath(.{ .relative = .workspace }, joined[2..], this.manager.lockfile.str(str_to_use));
+            var paths = normalizePackageJSONPath(.{ .relative = .workspace }, joined[2..], this.lockfile.str(str_to_use));
 
             if (!strings.startsWithChar(paths.rel, '.') and !strings.startsWithChar(paths.rel, std.fs.path.sep)) {
                 joined[0..2].* = ("." ++ std.fs.path.sep_str).*;
@@ -161,6 +161,7 @@ pub const FolderResolution = union(Tag) {
 
     fn readPackageJSONFromDisk(
         manager: *PackageManager,
+        lockfile: *Lockfile,
         abs: stringZ,
         version: Dependency.Version,
         comptime features: Features,
@@ -176,7 +177,7 @@ pub const FolderResolution = union(Tag) {
             const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
 
             try package.parseWithJSON(
-                manager.lockfile,
+                lockfile,
                 manager.allocator,
                 manager.log,
                 json.source,
@@ -206,7 +207,7 @@ pub const FolderResolution = union(Tag) {
             };
 
             try package.parse(
-                manager.lockfile,
+                lockfile,
                 manager.allocator,
                 manager.log,
                 source,
@@ -228,13 +229,13 @@ pub const FolderResolution = union(Tag) {
 
         package.meta.setHasInstallScript(has_scripts);
 
-        if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
+        if (lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;
-            manager.lockfile.packages.set(existing_id, package);
-            return manager.lockfile.packages.get(existing_id);
+            lockfile.packages.set(existing_id, package);
+            return lockfile.packages.get(existing_id);
         }
 
-        return manager.lockfile.appendPackage(package);
+        return lockfile.appendPackage(package);
     }
 
     pub const GlobalOrRelative = union(enum) {
@@ -243,7 +244,13 @@ pub const FolderResolution = union(Tag) {
         cache_folder: []const u8,
     };
 
-    pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
+    pub fn getOrPut(
+        global_or_relative: GlobalOrRelative,
+        version: Dependency.Version,
+        non_normalized_path: string,
+        manager: *PackageManager,
+        lockfile: *Lockfile,
+    ) FolderResolution {
         var joined: bun.PathBuffer = undefined;
         const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
         const abs = paths.abs;
@@ -265,6 +272,7 @@ pub const FolderResolution = union(Tag) {
                 std.mem.copyForwards(u8, &path, non_normalized_path);
                 break :brk readPackageJSONFromDisk(
                     manager,
+                    lockfile,
                     abs,
                     version,
                     Features.link,
@@ -275,6 +283,7 @@ pub const FolderResolution = union(Tag) {
             .relative => |tag| switch (tag) {
                 .folder => readPackageJSONFromDisk(
                     manager,
+                    lockfile,
                     abs,
                     version,
                     Features.folder,
@@ -283,6 +292,7 @@ pub const FolderResolution = union(Tag) {
                 ),
                 .workspace => readPackageJSONFromDisk(
                     manager,
+                    lockfile,
                     abs,
                     version,
                     Features.workspace,
@@ -293,6 +303,7 @@ pub const FolderResolution = union(Tag) {
             },
             .cache_folder => readPackageJSONFromDisk(
                 manager,
+                lockfile,
                 abs,
                 version,
                 Features.npm,

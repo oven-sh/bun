@@ -505,7 +505,7 @@ pub const Resolver = struct {
     caches: CacheSet,
     generation: bun.Generation = 0,
 
-    package_manager: ?*PackageManager = null,
+    install_info: ?PackageManagerAndLockfile = null,
     onWakePackageManager: PackageManager.WakeHandler = .{},
     env_loader: ?*DotEnv.Loader = null,
     store_fd: bool = false,
@@ -561,10 +561,15 @@ pub const Resolver = struct {
     /// over "module" in package.json
     prefer_module_field: bool = true,
 
-    pub fn getPackageManager(this: *Resolver) *PackageManager {
-        return this.package_manager orelse brk: {
+    pub const PackageManagerAndLockfile = struct {
+        manager: *PackageManager,
+        lockfile: *Lockfile,
+    };
+
+    pub fn getPackageManagerAndLockfile(this: *Resolver) PackageManagerAndLockfile {
+        return this.install_info orelse brk: {
             bun.HTTPThread.init(&.{});
-            const pm = PackageManager.initWithRuntime(
+            const pm, const lockfile = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
 
@@ -575,8 +580,11 @@ pub const Resolver = struct {
                 this.env_loader.?,
             ) catch @panic("Failed to initialize package manager");
             pm.onWake = this.onWakePackageManager;
-            this.package_manager = pm;
-            break :brk pm;
+            this.install_info = .{
+                .manager = pm,
+                .lockfile = lockfile,
+            };
+            break :brk this.install_info.?;
         };
     }
 
@@ -1774,7 +1782,9 @@ pub const Resolver = struct {
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                var manager = r.getPackageManager();
+                const info = r.getPackageManagerAndLockfile();
+                var manager = info.manager;
+                const lockfile = info.lockfile;
                 var dependency_version = Dependency.Version{};
                 var dependency_behavior = Dependency.Behavior.normal;
                 var string_buf = esm.version;
@@ -1788,11 +1798,11 @@ pub const Resolver = struct {
                         const resolve_from_lockfile = package_json.package_manager_package_id != Install.invalid_package_id;
 
                         if (resolve_from_lockfile) {
-                            const dependencies = &manager.lockfile.packages.items(.dependencies)[package_json.package_manager_package_id];
+                            const dependencies = &lockfile.packages.items(.dependencies)[package_json.package_manager_package_id];
 
                             // try to find this package name in the dependencies of the enclosing package
-                            dependencies_list = dependencies.get(manager.lockfile.buffers.dependencies.items);
-                            string_buf = manager.lockfile.buffers.string_bytes.items;
+                            dependencies_list = dependencies.get(lockfile.buffers.dependencies.items);
+                            string_buf = lockfile.buffers.string_bytes.items;
                         } else if (esm_.?.version.len == 0) {
                             // If you don't specify a version, default to the one chosen in your package.json
                             dependencies_list = package_json.dependencies.map.values();
@@ -1808,10 +1818,10 @@ pub const Resolver = struct {
                             dependency_behavior = dependency.behavior;
 
                             if (resolve_from_lockfile) {
-                                const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
+                                const resolutions = &lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
 
                                 // found it!
-                                break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
+                                break :brk resolutions.get(lockfile.buffers.resolutions.items)[dependency_id];
                             }
 
                             break;
@@ -1855,13 +1865,13 @@ pub const Resolver = struct {
                             ) orelse break :load_module_from_cache;
                         }
 
-                        if (manager.lockfile.resolve(esm.name, dependency_version)) |id| {
+                        if (lockfile.resolve(esm.name, dependency_version)) |id| {
                             resolved_package_id = id;
                         }
                     }
 
                     if (resolved_package_id != Install.invalid_package_id) {
-                        break :brk manager.lockfile.packages.items(.resolution)[resolved_package_id];
+                        break :brk lockfile.packages.items(.resolution)[resolved_package_id];
                     }
 
                     // unsupported or not found dependency, we might need to install it to the cache
@@ -1881,7 +1891,7 @@ pub const Resolver = struct {
                     }
                 };
 
-                const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
+                const dir_path_for_resolution = manager.pathForResolution(lockfile, resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
                     if (err == error.FileNotFound) {
                         switch (manager.getPreinstallState(resolved_package_id)) {
@@ -1908,11 +1918,12 @@ pub const Resolver = struct {
 
                                 if (st == .extract)
                                     manager.enqueuePackageForDownload(
+                                        lockfile,
                                         esm.name,
-                                        manager.lockfile.buffers.legacyPackageToDependencyID(null, resolved_package_id) catch unreachable,
+                                        lockfile.buffers.legacyPackageToDependencyID(null, resolved_package_id) catch unreachable,
                                         resolved_package_id,
                                         resolution.value.npm.version,
-                                        manager.lockfile.str(&resolution.value.npm.url),
+                                        lockfile.str(&resolution.value.npm.url),
                                         .{
                                             .root_request_id = 0,
                                         },
@@ -2046,7 +2057,7 @@ pub const Resolver = struct {
         dir_path_maybe_trail_slash: string,
         package_id: Install.PackageID,
     ) !?*DirInfo {
-        assert(r.package_manager != null);
+        assert(r.install_info != null);
 
         const dir_path = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
 
@@ -2161,21 +2172,23 @@ pub const Resolver = struct {
         }
 
         const input_package_id = input_package_id_.*;
-        var pm = r.getPackageManager();
+        const info = r.getPackageManagerAndLockfile();
+        var pm = info.manager;
+        var lockfile = info.lockfile;
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved
-            assert(pm.lockfile.resolve(esm.name, version) == null);
+            assert(lockfile.resolve(esm.name, version) == null);
         }
 
         // Add the containing package to the lockfile
 
         var package: Package = .{};
 
-        const is_main = pm.lockfile.packages.len == 0 and input_package_id == Install.invalid_package_id;
+        const is_main = lockfile.packages.len == 0 and input_package_id == Install.invalid_package_id;
         if (is_main) {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
-                    pm.lockfile,
+                    lockfile,
                     package_json,
                     Install.Features{
                         .dev_dependencies = true,
@@ -2187,7 +2200,7 @@ pub const Resolver = struct {
                     return .{ .failure = err };
                 };
                 package.meta.setHasInstallScript(package.scripts.hasAny());
-                package = pm.lockfile.appendPackage(package) catch |err| {
+                package = lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
                 package_json.package_manager_package_id = package.meta.id;
@@ -2202,16 +2215,16 @@ pub const Resolver = struct {
                     },
                 };
                 package.meta.setHasInstallScript(package.scripts.hasAny());
-                package = pm.lockfile.appendPackage(package) catch |err| {
+                package = lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
             }
         }
 
         if (r.opts.prefer_offline_install) {
-            if (pm.resolveFromDiskCache(esm.name, version)) |package_id| {
+            if (pm.resolveFromDiskCache(lockfile, esm.name, version)) |package_id| {
                 input_package_id_.* = package_id;
-                return .{ .resolution = pm.lockfile.packages.items(.resolution)[package_id] };
+                return .{ .resolution = lockfile.packages.items(.resolution)[package_id] };
             }
         }
 
@@ -2219,7 +2232,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, &version, version_buf, behavior)) {
+            switch (pm.enqueueDependencyToRoot(lockfile, esm.name, &version, version_buf, behavior)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };

@@ -847,7 +847,8 @@ pub const PackageJSON = struct {
 
                 // // if there is a name & version, check if the lockfile has the package
                 if (package_json.name.len > 0 and package_json.version.len > 0) {
-                    if (r.package_manager) |pm| {
+                    if (r.install_info) |info| {
+                        const lockfile = info.lockfile;
                         const tag = Dependency.Version.Tag.infer(package_json.version);
 
                         if (tag == .npm) {
@@ -862,7 +863,7 @@ pub const PackageJSON = struct {
                                 r.log,
                             )) |dependency_version| {
                                 if (dependency_version.value.npm.version.isExact()) {
-                                    if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
+                                    if (lockfile.resolve(package_json.name, dependency_version)) |resolved| {
                                         package_json.package_manager_package_id = resolved;
                                         if (resolved > 0) {
                                             break :update_dependencies;

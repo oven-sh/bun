@@ -12,6 +12,9 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JSAst = bun.JSAst;
+const OOM = bun.OOM;
+const BunLock = @import("./bun.lock.zig");
+const TextLockfile = BunLock.Lockfile;
 
 const JSLexer = bun.js_lexer;
 const logger = bun.logger;
@@ -49,7 +52,7 @@ const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
-const Lockfile = @This();
+pub const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
@@ -127,7 +130,7 @@ const GlobWalker = bun.glob.GlobWalker_(ignoredWorkspacePaths, bun.glob.SyscallA
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
-format: FormatVersion = FormatVersion.current,
+binary_format_version: BinaryFormatVersion = BinaryFormatVersion.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -151,7 +154,19 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 
-const Stream = std.io.FixedBufferStream([]u8);
+pub const Format = enum {
+    binary,
+    text,
+
+    pub fn filename(this: Format) stringZ {
+        return switch (this) {
+            .binary => "bun.lockb",
+            .text => "bun.lock",
+        };
+    }
+};
+
+const Stream = std.io.FixedBufferStream([]const u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
@@ -209,85 +224,142 @@ pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or (this.packages.len == 1 and this.packages.get(0).resolutions.len == 0);
 }
 
-pub const LoadFromDiskResult = union(enum) {
+pub fn updateLockfileIfNeeded(
+    this: *Lockfile,
+    load_lockfile_result: Lockfile.LoadResult,
+) void {
+    if (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update) {
+        const slice = this.packages.slice();
+        for (slice.items(.meta)) |*meta| {
+            // these are possibly updated later, but need to make sure non are zero
+            meta.setHasInstallScript(false);
+        }
+    }
+}
+
+pub const LoadResult = union(enum) {
     not_found: void,
     err: struct {
         step: Step,
-        value: anyerror,
+        err: anyerror,
+        lockfile_path: string,
     },
     ok: struct {
-        lockfile: *Lockfile,
-        was_migrated: bool = false,
-        serializer_result: Serializer.SerializerLoadResult,
+        lockfile: union(enum) {
+            text: *TextLockfile,
+            binary: *Lockfile,
+            @"package-lock.json": *Lockfile,
+        },
+        // loaded_from: enum { binary, text, @"package-lock.json" },
+        serializer_result: Serializer.LoadResult,
     },
 
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
-pub fn loadFromDisk(
-    this: *Lockfile,
-    manager: *PackageManager,
+pub fn loadFromCwd(
     allocator: Allocator,
     log: *logger.Log,
-    filename: stringZ,
-    comptime attempt_loading_from_other_lockfile: bool,
-) LoadFromDiskResult {
+    // comptime from_stdin: bool,
+    comptime attempt_migrate: bool,
+    install_options: if (attempt_migrate) *const PackageManager.Options else void,
+    workspace_json_cache: if (attempt_migrate) *PackageManager.WorkspacePackageJSONCache else void,
+) LoadResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
-    const buf = (if (filename.len > 0)
-        File.readFrom(std.fs.cwd(), filename, allocator).unwrap()
-    else
-        File.from(std.io.getStdIn()).readToEnd(allocator).unwrap()) catch |err| {
-        return switch (err) {
-            error.EACCESS, error.EPERM, error.ENOENT => {
-                if (comptime attempt_loading_from_other_lockfile) {
-                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                    return migration.detectAndLoadOtherLockfile(
-                        this,
-                        manager,
-                        allocator,
-                        log,
-                        filename,
-                    );
-                }
+    var format: Format = .text;
+    const file = File.open("bun.lock", bun.O.RDONLY, 0).unwrap() catch |err1| file: {
+        if (err1 != error.ENOENT) {
+            return .{ .err = .{
+                .step = .open_file,
+                .err = err1,
+                .lockfile_path = "bun.lock",
+            } };
+        }
 
-                return LoadFromDiskResult{
-                    .err = .{ .step = .open_file, .value = err },
-                };
-            },
-            error.EINVAL, error.ENOTDIR, error.EISDIR => LoadFromDiskResult{ .not_found = {} },
-            else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
+        format = .binary;
+        break :file File.open("bun.lockb", bun.O.RDONLY, 0).unwrap() catch |err2| {
+            if (err2 != error.ENOENT) {
+                return .{ .err = .{
+                    .step = .open_file,
+                    .err = err2,
+                    .lockfile_path = "bun.lockb",
+                } };
+            }
+            if (comptime attempt_migrate) {
+                return migration.detectAndLoadOtherLockfileFromCwd(
+                    allocator,
+                    log,
+                    install_options,
+                    workspace_json_cache,
+                );
+            }
+
+            return .not_found;
         };
     };
 
-    return this.loadFromBytes(buf, allocator, log);
+    const contents = file.readToEnd(allocator).unwrap() catch |err| {
+        return .{
+            .err = .{
+                .step = .read_file,
+                .err = err,
+                .lockfile_path = format.filename(),
+            },
+        };
+    };
+
+    return loadFromSource(
+        &logger.Source.initPathString(format.filename(), contents),
+        allocator,
+        log,
+        format,
+    ) catch |err| {
+        switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+        }
+    };
 }
 
-pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *logger.Log) LoadFromDiskResult {
-    var stream = Stream{ .buffer = buf, .pos = 0 };
+pub fn loadFromSource(
+    // this: *Lockfile,
+    source: *const logger.Source,
+    allocator: Allocator,
+    log: *logger.Log,
+    format: Format,
+) OOM!LoadResult {
+    if (format == .binary) {
+        const this = try allocator.create(Lockfile);
 
-    this.format = FormatVersion.current;
-    this.scripts = .{};
-    this.trusted_dependencies = null;
-    this.workspace_paths = .{};
-    this.workspace_versions = .{};
-    this.overrides = .{};
-    this.patched_dependencies = .{};
+        var stream = Stream{ .buffer = source.contents, .pos = 0 };
 
-    const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
-        return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
-    };
+        this.binary_format_version = BinaryFormatVersion.current;
+        this.scripts = .{};
+        this.trusted_dependencies = null;
+        this.workspace_paths = .{};
+        this.workspace_versions = .{};
+        this.overrides = .{};
+        this.patched_dependencies = .{};
 
-    if (Environment.allow_assert) {
-        this.verifyData() catch @panic("lockfile data is corrupt");
+        const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
+            return LoadResult{ .err = .{ .step = .parse_file, .err = err, .lockfile_path = "bun.lockb" } };
+        };
+
+        if (Environment.allow_assert) {
+            this.verifyData() catch @panic("lockfile data is corrupt");
+        }
+
+        return LoadResult{
+            .ok = .{
+                .lockfile = .{
+                    .binary = this,
+                },
+                .serializer_result = load_result,
+            },
+        };
     }
 
-    return LoadFromDiskResult{
-        .ok = .{
-            .lockfile = this,
-            .serializer_result = load_result,
-        },
-    };
+    return .not_found;
 }
 
 pub const InstallResult = struct {
@@ -703,9 +775,7 @@ pub const Tree = struct {
 /// Our in-memory representation is all that's left.
 pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
-    manager: *PackageManager,
     features: Features,
-    exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     const old_packages = old.packages.slice();
@@ -735,7 +805,16 @@ pub fn maybeCloneFilteringRootPackages(
 
     if (!any_changes) return old;
 
-    return try old.clean(manager, &.{}, exact_versions, log_level);
+    // This is wasteful, but we rarely log anything so it's fine.
+    var log = logger.Log.init(bun.default_allocator);
+    defer {
+        for (log.msgs.items) |*item| {
+            item.deinit(bun.default_allocator);
+        }
+        log.deinit();
+    }
+
+    return try old.clean(&log, features.dev_dependencies, null, log_level);
 }
 
 fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
@@ -809,24 +888,6 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
         }
     }
 }
-pub fn clean(
-    old: *Lockfile,
-    manager: *PackageManager,
-    updates: []PackageManager.UpdateRequest,
-    exact_versions: bool,
-    comptime log_level: PackageManager.Options.LogLevel,
-) !*Lockfile {
-    // This is wasteful, but we rarely log anything so it's fine.
-    var log = logger.Log.init(bun.default_allocator);
-    defer {
-        for (log.msgs.items) |*item| {
-            item.deinit(bun.default_allocator);
-        }
-        log.deinit();
-    }
-
-    return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
-}
 
 /// Is this a direct dependency of the workspace root package.json?
 pub fn isWorkspaceRootDependency(this: *const Lockfile, id: DependencyID) bool {
@@ -878,7 +939,7 @@ pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?Packag
     } else 0;
 }
 
-pub fn cleanWithLogger(
+pub fn cleanWithUpdates(
     old: *Lockfile,
     manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
@@ -886,12 +947,9 @@ pub fn cleanWithLogger(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start() else {};
-
-    const old_trusted_dependencies = old.trusted_dependencies;
-    const old_scripts = old.scripts;
-    // We will only shrink the number of packages here.
-    // never grow
+    if (updates.len > 0) {
+        try old.preprocessUpdateRequests(updates, exact_versions);
+    }
 
     // preinstall_state is used during installPackages. the indexes(package ids) need
     // to be remapped. Also ensure `preinstall_state` has enough capacity to contain
@@ -899,13 +957,70 @@ pub fn cleanWithLogger(
     // preinstall state before linking stage.
     manager.ensurePreinstallStateListCapacity(old.packages.len);
     var preinstall_state = manager.preinstall_state;
-    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    var old_preinstall_state = try preinstall_state.clone(old.allocator);
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
 
+    const new = try old.clean(
+        log,
+        manager.options.local_package_features.dev_dependencies,
+        .{
+            .old = old_preinstall_state.items,
+            .new = preinstall_state.items,
+        },
+        log_level,
+    );
+
+    // cloning finished, items in lockfile buffer might have a different order, meaning
+    // package ids and dependency ids have changed
+    manager.clearCachedItemsDependingOnLockfileBuffer();
+
     if (updates.len > 0) {
-        try old.preprocessUpdateRequests(updates, exact_versions);
+        const string_buf = new.buffers.string_bytes.items;
+        const slice = new.packages.slice();
+
+        // updates might be applied to the root package.json or one
+        // of the workspace package.json files.
+        const workspace_package_id = manager.root_package_id.get(new, manager.workspace_name_hash);
+
+        const dep_list = slice.items(.dependencies)[workspace_package_id];
+        const res_list = slice.items(.resolutions)[workspace_package_id];
+        const workspace_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
+        const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
+
+        request_updated: for (updates) |*update| {
+            if (update.package_id == invalid_package_id) {
+                for (resolved_ids, workspace_deps) |package_id, dep| {
+                    if (update.matches(dep, string_buf)) {
+                        if (package_id > new.packages.len) continue;
+                        update.version_buf = string_buf;
+                        update.version = dep.version;
+                        update.package_id = package_id;
+
+                        continue :request_updated;
+                    }
+                }
+            }
+        }
     }
+
+    return new;
+}
+
+pub fn clean(
+    old: *Lockfile,
+    log: *logger.Log,
+    prefer_dev_dependencies: bool,
+    preinstall_state: ?Cloner.PreinstallStatePair,
+    comptime log_level: PackageManager.Options.LogLevel,
+) !*Lockfile {
+    // We will only shrink the number of packages here.
+    // never grow
+
+    var timer: if (log_level.isVerbose()) std.time.Timer else void = if (comptime log_level.isVerbose()) try std.time.Timer.start() else {};
+
+    const old_trusted_dependencies = old.trusted_dependencies;
+    const old_scripts = old.scripts;
 
     var new: *Lockfile = try old.allocator.create(Lockfile);
     new.initEmpty(
@@ -941,8 +1056,8 @@ pub fn cleanWithLogger(
         .mapping = package_id_mapping,
         .clone_queue = clone_queue_,
         .log = log,
-        .old_preinstall_state = old_preinstall_state,
-        .manager = manager,
+        .preinstall = preinstall_state,
+        .prefer_dev_dependencies = prefer_dev_dependencies,
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -1030,34 +1145,6 @@ pub fn cleanWithLogger(
     }
 
     // Don't allow invalid memory to happen
-    if (updates.len > 0) {
-        const string_buf = new.buffers.string_bytes.items;
-        const slice = new.packages.slice();
-
-        // updates might be applied to the root package.json or one
-        // of the workspace package.json files.
-        const workspace_package_id = manager.root_package_id.get(new, manager.workspace_name_hash);
-
-        const dep_list = slice.items(.dependencies)[workspace_package_id];
-        const res_list = slice.items(.resolutions)[workspace_package_id];
-        const workspace_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
-        const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
-
-        request_updated: for (updates) |*update| {
-            if (update.package_id == invalid_package_id) {
-                for (resolved_ids, workspace_deps) |package_id, dep| {
-                    if (update.matches(dep, string_buf)) {
-                        if (package_id > new.packages.len) continue;
-                        update.version_buf = string_buf;
-                        update.version = dep.version;
-                        update.package_id = package_id;
-
-                        continue :request_updated;
-                    }
-                }
-            }
-        }
-    }
 
     if (comptime log_level.isVerbose()) {
         Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
@@ -1109,8 +1196,13 @@ const Cloner = struct {
     trees: Tree.List = Tree.List{},
     trees_count: u32 = 1,
     log: *logger.Log,
-    old_preinstall_state: std.ArrayListUnmanaged(Install.PreinstallState),
-    manager: *PackageManager,
+    preinstall: ?PreinstallStatePair,
+    prefer_dev_dependencies: bool,
+
+    pub const PreinstallStatePair = struct {
+        old: []Install.PreinstallState,
+        new: []Install.PreinstallState,
+    };
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -1132,10 +1224,6 @@ const Cloner = struct {
                 this,
             );
         }
-
-        // cloning finished, items in lockfile buffer might have a different order, meaning
-        // package ids and dependency ids have changed
-        this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
             try this.hoist(this.lockfile);
@@ -1159,7 +1247,7 @@ const Cloner = struct {
             .dependencies = lockfile.buffers.dependencies.items,
             .log = this.log,
             .lockfile = lockfile,
-            .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
+            .prefer_dev_dependencies = this.prefer_dev_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
@@ -1202,7 +1290,7 @@ pub const Printer = struct {
         allocator: Allocator,
         log: *logger.Log,
         input_lockfile_path: string,
-        format: Format,
+        format: Printer.Format,
     ) !void {
         @setCold(true);
 
@@ -1231,26 +1319,21 @@ pub const Printer = struct {
 
         _ = try FileSystem.init(null);
 
-        var lockfile = try allocator.create(Lockfile);
-
-        // TODO remove the need for manager when migrating from package-lock.json
-        const manager = &PackageManager.instance;
-
-        const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
-        switch (load_from_disk) {
+        const load_from_disk = Lockfile.loadFromCwd(allocator, log, false, {}, {});
+        const lockfile = switch (load_from_disk) {
             .err => |cause| {
                 switch (cause.step) {
                     .open_file => Output.prettyErrorln("<r><red>error<r> opening lockfile:<r> {s}.", .{
-                        @errorName(cause.value),
+                        @errorName(cause.err),
                     }),
                     .parse_file => Output.prettyErrorln("<r><red>error<r> parsing lockfile:<r> {s}", .{
-                        @errorName(cause.value),
+                        @errorName(cause.err),
                     }),
                     .read_file => Output.prettyErrorln("<r><red>error<r> reading lockfile:<r> {s}", .{
-                        @errorName(cause.value),
+                        @errorName(cause.err),
                     }),
                     .migrating => Output.prettyErrorln("<r><red>error<r> while migrating lockfile:<r> {s}", .{
-                        @errorName(cause.value),
+                        @errorName(cause.err),
                     }),
                 }
                 if (log.errors > 0) {
@@ -1265,8 +1348,13 @@ pub const Printer = struct {
                 Global.crash();
             },
 
-            .ok => {},
-        }
+            .ok => |ok| switch (ok.lockfile) {
+                .binary, .@"package-lock.json" => |lock| lock,
+                .text => {
+                    @panic("oops");
+                },
+            },
+        };
 
         const writer = Output.writer();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
@@ -1276,7 +1364,7 @@ pub const Printer = struct {
     pub fn printWithLockfile(
         allocator: Allocator,
         lockfile: *Lockfile,
-        format: Format,
+        format: Printer.Format,
         comptime Writer: type,
         writer: Writer,
     ) !void {
@@ -1507,7 +1595,7 @@ pub const Printer = struct {
 
             if (this.manager) |manager| {
                 const package_name = packages_slice.items(.name)[package_id].slice(string_buf);
-                if (manager.formatLaterVersionInCache(package_name, dependency.name_hash, resolution)) |later_version_fmt| {
+                if (manager.formatLaterVersionInCache(this.lockfile, package_name, dependency.name_hash, resolution)) |later_version_fmt| {
                     const fmt = comptime brk: {
                         if (enable_ansi_colors) {
                             break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
@@ -1975,7 +2063,7 @@ pub const Printer = struct {
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
-    assert(this.format == Lockfile.FormatVersion.current);
+    assert(this.binary_format_version == Lockfile.BinaryFormatVersion.current);
     var i: usize = 0;
     while (i < this.packages.len) : (i += 1) {
         const package: Lockfile.Package = this.packages.get(i);
@@ -1992,10 +2080,10 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
+pub fn saveToDisk(this: *Lockfile, format: Format) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
-            Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
+            Output.errGeneric("failed to verify lockfile: {s}", .{@errorName(err)});
             Global.crash();
         };
         assert(FileSystem.instance_loaded);
@@ -2044,20 +2132,20 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
             .err => |err| {
                 file.close();
                 _ = bun.sys.unlink(tmpname);
-                Output.err(err, "failed to change lockfile permissions\n{}", .{});
+                Output.err(err.toZigErr(), "failed to change lockfile permissions", .{});
                 Global.crash();
             },
             .result => {},
         }
     }
 
-    file.closeAndMoveTo(tmpname, filename) catch |err| {
+    file.closeAndMoveTo(tmpname, format.filename()) catch |err| {
         bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
         // note: file is already closed here.
         _ = bun.sys.unlink(tmpname);
 
-        Output.err(err, "Failed to replace old lockfile with new lockfile on disk", .{});
+        Output.err(err, "failed to replace old lockfile with new lockfile on disk", .{});
         Global.crash();
     };
 }
@@ -2088,7 +2176,7 @@ inline fn strWithType(this: *const Lockfile, comptime Type: type, slicable: Type
 
 pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
     this.* = .{
-        .format = Lockfile.FormatVersion.current,
+        .binary_format_version = Lockfile.BinaryFormatVersion.current,
         .packages = .{},
         .buffers = .{},
         .package_index = PackageIndex.Map.initContext(allocator, .{}),
@@ -2691,7 +2779,7 @@ pub const OverrideMap = struct {
     }
 };
 
-pub const FormatVersion = enum(u32) {
+pub const BinaryFormatVersion = enum(u32) {
     v0 = 0,
     // bun v0.0.x - bun v0.1.6
     v1 = 1,
@@ -2700,7 +2788,7 @@ pub const FormatVersion = enum(u32) {
     v2 = 2,
 
     _,
-    pub const current = FormatVersion.v2;
+    pub const current = BinaryFormatVersion.v2;
 };
 
 pub const PackageIDSlice = ExternalSlice(PackageID);
@@ -3264,8 +3352,10 @@ pub const Package = extern struct {
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        if (cloner.manager.preinstall_state.items.len > 0) {
-            cloner.manager.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
+        if (cloner.preinstall) |preinstall| {
+            if (preinstall.new.len > 0) {
+                preinstall.new[new_package.meta.id] = preinstall.old[this.meta.id];
+            }
         }
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {
@@ -5655,7 +5745,7 @@ const Buffers = struct {
         const misaligned = std.mem.bytesAsSlice(PointerType, stream.buffer[start_pos..end_pos]);
 
         return ArrayList{
-            .items = try allocator.dupe(PointerType, @as([*]PointerType, @alignCast(misaligned.ptr))[0..misaligned.len]),
+            .items = try allocator.dupe(PointerType, @as([*]const PointerType, @alignCast(misaligned.ptr))[0..misaligned.len]),
             .capacity = misaligned.len,
         };
     }
@@ -5912,7 +6002,7 @@ pub const Serializer = struct {
 
         var writer = bytes.writer();
         try writer.writeAll(header_bytes);
-        try writer.writeInt(u32, @intFromEnum(this.format), .little);
+        try writer.writeInt(u32, @intFromEnum(this.binary_format_version), .little);
 
         try writer.writeAll(&this.meta_hash);
 
@@ -6076,7 +6166,7 @@ pub const Serializer = struct {
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
     }
 
-    pub const SerializerLoadResult = struct {
+    pub const LoadResult = struct {
         packages_need_update: bool = false,
     };
 
@@ -6085,8 +6175,8 @@ pub const Serializer = struct {
         stream: *Stream,
         allocator: Allocator,
         log: *logger.Log,
-    ) !SerializerLoadResult {
-        var res = SerializerLoadResult{};
+    ) !Serializer.LoadResult {
+        var res: Serializer.LoadResult = .{};
         var reader = stream.reader();
         var header_buf_: [header_bytes.len]u8 = undefined;
         const header_buf = header_buf_[0..try reader.readAll(&header_buf_)];
@@ -6096,11 +6186,11 @@ pub const Serializer = struct {
         }
 
         const format = try reader.readInt(u32, .little);
-        if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
+        if (format != @intFromEnum(Lockfile.BinaryFormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
 
-        lockfile.format = Lockfile.FormatVersion.current;
+        lockfile.binary_format_version = Lockfile.BinaryFormatVersion.current;
         lockfile.allocator = allocator;
 
         _ = try reader.readAll(&lockfile.meta_hash);
@@ -6663,7 +6753,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
     defer w.endObject() catch {};
 
     try w.objectField("format");
-    try w.write(@tagName(this.format));
+    try w.write(@tagName(this.binary_format_version));
     try w.objectField("meta_hash");
     try w.write(std.fmt.bytesToHex(this.meta_hash, .lower));
 

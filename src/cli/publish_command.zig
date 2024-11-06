@@ -280,36 +280,34 @@ pub const PublishCommand = struct {
                 ctx: Command.Context,
                 manager: *PackageManager,
             ) FromWorkspaceError!Context(directory_publish) {
-                var lockfile: Lockfile = undefined;
-                const load_from_disk_result = lockfile.loadFromDisk(
-                    manager,
-                    manager.allocator,
-                    manager.log,
-                    manager.options.lockfile_path,
-                    false,
-                );
+                const load_from_disk_result = Lockfile.loadFromCwd(manager.allocator, manager.log, false, {}, {});
 
                 var pack_ctx: Pack.Context = .{
                     .allocator = ctx.allocator,
                     .manager = manager,
                     .command_ctx = ctx,
                     .lockfile = switch (load_from_disk_result) {
-                        .ok => |ok| ok.lockfile,
+                        .ok => |ok| switch (ok.lockfile) {
+                            .binary, .@"package-lock.json" => |lock| lock,
+                            .text => {
+                                @panic("OOPS");
+                            },
+                        },
                         .not_found => null,
                         .err => |cause| err: {
                             switch (cause.step) {
                                 .open_file => {
-                                    if (cause.value == error.ENOENT) break :err null;
-                                    Output.errGeneric("failed to open lockfile: {s}", .{@errorName(cause.value)});
+                                    if (cause.err == error.ENOENT) break :err null;
+                                    Output.errGeneric("failed to open lockfile: {s}", .{@errorName(cause.err)});
                                 },
                                 .parse_file => {
-                                    Output.errGeneric("failed to parse lockfile: {s}", .{@errorName(cause.value)});
+                                    Output.errGeneric("failed to parse lockfile: {s}", .{@errorName(cause.err)});
                                 },
                                 .read_file => {
-                                    Output.errGeneric("failed to read lockfile: {s}", .{@errorName(cause.value)});
+                                    Output.errGeneric("failed to read lockfile: {s}", .{@errorName(cause.err)});
                                 },
                                 .migrating => {
-                                    Output.errGeneric("failed to migrate lockfile: {s}", .{@errorName(cause.value)});
+                                    Output.errGeneric("failed to migrate lockfile: {s}", .{@errorName(cause.err)});
                                 },
                             }
 
@@ -495,7 +493,7 @@ pub const PublishCommand = struct {
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
     ) PublishError!void {
-        const registry = ctx.manager.scopeForPackageName(ctx.package_name);
+        const registry = ctx.manager.options.scopeForPackageName(ctx.package_name);
 
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
@@ -880,7 +878,7 @@ pub const PublishCommand = struct {
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
-        const registry = manager.scopeForPackageName(package_name);
+        const registry = manager.options.scopeForPackageName(package_name);
 
         const version_without_build_tag = Dependency.withoutBuildTag(package_version);
 

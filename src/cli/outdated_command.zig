@@ -44,15 +44,15 @@ pub const OutdatedCommand = struct {
     }
 
     fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
-        const load_lockfile_result = manager.lockfile.loadFromDisk(
-            manager,
+        const load_lockfile_result = Lockfile.loadFromCwd(
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             true,
+            &manager.options,
+            &manager.workspace_package_json_cache,
         );
 
-        manager.lockfile = switch (load_lockfile_result) {
+        const lockfile = switch (load_lockfile_result) {
             .not_found => {
                 if (log_level != .silent) {
                     Output.errGeneric("missing lockfile, nothing outdated", .{});
@@ -63,16 +63,16 @@ pub const OutdatedCommand = struct {
                 if (log_level != .silent) {
                     switch (cause.step) {
                         .open_file => Output.errGeneric("failed to open lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                         .parse_file => Output.errGeneric("failed to parse lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                         .read_file => Output.errGeneric("failed to read lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                         .migrating => Output.errGeneric("failed to migrate lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                     }
 
@@ -83,7 +83,12 @@ pub const OutdatedCommand = struct {
 
                 Global.crash();
             },
-            .ok => |ok| ok.lockfile,
+            .ok => |ok| switch (ok.lockfile) {
+                .binary, .@"package-lock.json" => |lock| lock,
+                .text => {
+                    @panic("TODO!!");
+                },
+            },
         };
 
         switch (Output.enable_ansi_colors) {
@@ -93,20 +98,20 @@ pub const OutdatedCommand = struct {
                     const workspace_pkg_ids = findMatchingWorkspaces(
                         bun.default_allocator,
                         original_cwd,
-                        manager,
+                        lockfile,
                         filters,
                     ) catch bun.outOfMemory();
                     defer bun.default_allocator.free(workspace_pkg_ids);
 
-                    try updateManifestsIfNecessary(manager, log_level, workspace_pkg_ids);
-                    try printOutdatedInfoTable(manager, workspace_pkg_ids, true, enable_ansi_colors);
+                    try updateManifestsIfNecessary(manager, lockfile, log_level, workspace_pkg_ids);
+                    try printOutdatedInfoTable(manager, lockfile, workspace_pkg_ids, true, enable_ansi_colors);
                 } else {
                     // just the current workspace
-                    const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
+                    const root_pkg_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
                     if (root_pkg_id == invalid_package_id) return;
 
-                    try updateManifestsIfNecessary(manager, log_level, &.{root_pkg_id});
-                    try printOutdatedInfoTable(manager, &.{root_pkg_id}, false, enable_ansi_colors);
+                    try updateManifestsIfNecessary(manager, lockfile, log_level, &.{root_pkg_id});
+                    try printOutdatedInfoTable(manager, lockfile, &.{root_pkg_id}, false, enable_ansi_colors);
                 }
             },
         }
@@ -137,10 +142,9 @@ pub const OutdatedCommand = struct {
     fn findMatchingWorkspaces(
         allocator: std.mem.Allocator,
         original_cwd: string,
-        manager: *PackageManager,
+        lockfile: *Lockfile,
         filters: []const string,
     ) error{OutOfMemory}![]const PackageID {
-        const lockfile = manager.lockfile;
         const packages = lockfile.packages.slice();
         const pkg_names = packages.items(.name);
         const pkg_resolutions = packages.items(.resolution);
@@ -243,6 +247,7 @@ pub const OutdatedCommand = struct {
 
     fn printOutdatedInfoTable(
         manager: *PackageManager,
+        lockfile: *Lockfile,
         workspace_pkg_ids: []const PackageID,
         was_filtered: bool,
         comptime enable_ansi_colors: bool,
@@ -299,7 +304,6 @@ pub const OutdatedCommand = struct {
         var max_latest: usize = 0;
         var max_workspace: usize = 0;
 
-        const lockfile = manager.lockfile;
         const string_buf = lockfile.buffers.string_bytes.items;
         const dependencies = lockfile.buffers.dependencies.items;
         const packages = lockfile.packages.slice();
@@ -350,7 +354,7 @@ pub const OutdatedCommand = struct {
                 const package_name = pkg_names[package_id].slice(string_buf);
                 var expired = false;
                 const manifest = manager.manifests.byNameAllowExpired(
-                    manager.scopeForPackageName(package_name),
+                    manager.options.scopeForPackageName(package_name),
                     package_name,
                     &expired,
                 ) orelse continue;
@@ -471,7 +475,7 @@ pub const OutdatedCommand = struct {
 
                     var expired = false;
                     const manifest = manager.manifests.byNameAllowExpired(
-                        manager.scopeForPackageName(package_name),
+                        manager.options.scopeForPackageName(package_name),
                         package_name,
                         &expired,
                     ) orelse continue;
@@ -555,10 +559,10 @@ pub const OutdatedCommand = struct {
 
     fn updateManifestsIfNecessary(
         manager: *PackageManager,
+        lockfile: *Lockfile,
         comptime log_level: PackageManager.Options.LogLevel,
         workspace_pkg_ids: []const PackageID,
     ) !void {
-        const lockfile = manager.lockfile;
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
         const string_buf = lockfile.buffers.string_bytes.items;
@@ -580,7 +584,7 @@ pub const OutdatedCommand = struct {
 
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
-                    manager.scopeForPackageName(package_name),
+                    manager.options.scopeForPackageName(package_name),
                     package_name,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
@@ -591,6 +595,7 @@ pub const OutdatedCommand = struct {
                     var task = manager.getNetworkTask();
                     task.* = .{
                         .package_manager = &PackageManager.instance,
+                        .lockfile = lockfile,
                         .callback = undefined,
                         .task_id = task_id,
                         .allocator = manager.allocator,
@@ -598,7 +603,7 @@ pub const OutdatedCommand = struct {
                     try task.forManifest(
                         package_name,
                         manager.allocator,
-                        manager.scopeForPackageName(package_name),
+                        manager.options.scopeForPackageName(package_name),
                         null,
                         dep.behavior.optional,
                     );
@@ -612,6 +617,7 @@ pub const OutdatedCommand = struct {
 
             if (manager.pendingTaskCount() > 1) {
                 try manager.runTasks(
+                    lockfile,
                     *PackageManager,
                     manager,
                     .{
@@ -633,10 +639,12 @@ pub const OutdatedCommand = struct {
 
         const RunClosure = struct {
             manager: *PackageManager,
+            lockfile: *Lockfile,
             err: ?anyerror = null,
             pub fn isDone(closure: *@This()) bool {
                 if (closure.manager.pendingTaskCount() > 0) {
                     closure.manager.runTasks(
+                        closure.lockfile,
                         *PackageManager,
                         closure.manager,
                         .{
@@ -659,7 +667,7 @@ pub const OutdatedCommand = struct {
             }
         };
 
-        var run_closure: RunClosure = .{ .manager = manager };
+        var run_closure: RunClosure = .{ .manager = manager, .lockfile = lockfile };
         manager.sleepUntil(&run_closure, &RunClosure.isDone);
 
         if (comptime log_level.showProgress()) {

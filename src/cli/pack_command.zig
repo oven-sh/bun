@@ -46,7 +46,7 @@ pub const PackCommand = struct {
         // `bun pack` does not require a lockfile, but
         // it's possible we will need it for finding
         // workspace versions. This is the only valid lockfile
-        // pointer in this file. `manager.lockfile` is incorrect
+        // pointer in this file.
         lockfile: ?*Lockfile,
 
         bundled_deps: std.ArrayListUnmanaged(BundledDep) = .{},
@@ -101,13 +101,12 @@ pub const PackCommand = struct {
         Output.prettyln("<r><b>bun pack <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        var lockfile: Lockfile = undefined;
-        const load_from_disk_result = lockfile.loadFromDisk(
-            manager,
+        const load_from_disk_result = Lockfile.loadFromCwd(
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             false,
+            {},
+            {},
         );
 
         var pack_ctx: Context = .{
@@ -115,23 +114,28 @@ pub const PackCommand = struct {
             .allocator = ctx.allocator,
             .command_ctx = ctx,
             .lockfile = switch (load_from_disk_result) {
-                .ok => |ok| ok.lockfile,
+                .ok => |ok| switch (ok.lockfile) {
+                    .binary, .@"package-lock.json" => |lock| lock,
+                    .text => {
+                        @panic("OOOPS");
+                    },
+                },
                 .err => |cause| err: {
                     switch (cause.step) {
                         .open_file => {
-                            if (cause.value == error.ENOENT) break :err null;
+                            if (cause.err == error.ENOENT) break :err null;
                             Output.errGeneric("failed to open lockfile: {s}", .{
-                                @errorName(cause.value),
+                                @errorName(cause.err),
                             });
                         },
                         .parse_file => Output.errGeneric("failed to parse lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                         .read_file => Output.errGeneric("failed to read lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                         .migrating => Output.errGeneric("failed to migrate lockfile: {s}", .{
-                            @errorName(cause.value),
+                            @errorName(cause.err),
                         }),
                     }
 

@@ -26,6 +26,7 @@ const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrusted
 const Environment = bun.Environment;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
 const Npm = Install.Npm;
+const File = bun.sys.File;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -41,38 +42,47 @@ const ByName = struct {
 };
 
 pub const PackageManagerCommand = struct {
-    pub fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadFromDiskResult, pm: *PackageManager) void {
+    pub fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadResult, options: *const PackageManager.Options) *Lockfile {
         if (load_lockfile == .not_found) {
-            if (pm.options.log_level != .silent) {
+            if (options.log_level != .silent) {
                 Output.errGeneric("Lockfile not found", .{});
             }
             Global.exit(1);
         }
 
         if (load_lockfile == .err) {
-            if (pm.options.log_level != .silent) {
-                Output.errGeneric("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+            if (options.log_level != .silent) {
+                Output.errGeneric("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.err)});
             }
             Global.exit(1);
         }
+
+        return switch (load_lockfile.ok.lockfile) {
+            .binary, .@"package-lock.json" => |lock| lock,
+            .text => {
+                @panic("OOPS");
+            },
+        };
     }
 
-    pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
+    pub fn printHash(ctx: Command.Context, lockfile_path: []const u8) !void {
         @setCold(true);
-        var lockfile_buffer: bun.PathBuffer = undefined;
-        @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
-        lockfile_buffer[lockfile_.len] = 0;
-        const lockfile = lockfile_buffer[0..lockfile_.len :0];
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
+        const pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
         defer ctx.allocator.free(cwd);
 
-        const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, lockfile, true);
-        handleLoadLockfileErrors(load_lockfile, pm);
+        const lockfile_source = File.toSource(lockfile_path, ctx.allocator).unwrap() catch |err| {
+            Output.err(err, "failed to read lockfile: '{s}'", .{lockfile_path});
+            Global.crash();
+        };
+
+        const load_result = Lockfile.loadFromSource(&lockfile_source, ctx.allocator, ctx.log, .binary) catch bun.outOfMemory();
+
+        const lockfile = handleLoadLockfileErrors(load_result, &pm.options);
 
         Output.flush();
         Output.disableBuffering();
-        try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+        try Output.writer().print("{}", .{lockfile.fmtMetaHash()});
         Output.enableBuffering();
         Global.exit(0);
     }
@@ -198,30 +208,30 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             return;
         } else if (strings.eqlComptime(subcommand, "hash")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
-            handleLoadLockfileErrors(load_lockfile, pm);
+            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
-            _ = try pm.lockfile.hasMetaHashChanged(false, pm.lockfile.packages.len);
+            _ = try lockfile.hasMetaHashChanged(false, lockfile.packages.len);
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{}", .{lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
-            handleLoadLockfileErrors(load_lockfile, pm);
+            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{}", .{lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
-            handleLoadLockfileErrors(load_lockfile, pm);
+            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
-            _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
+            _ = try lockfile.hasMetaHashChanged(true, lockfile.packages.len);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
@@ -291,12 +301,11 @@ pub const PackageManagerCommand = struct {
             try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
-            handleLoadLockfileErrors(load_lockfile, pm);
+            const load_lockfile = Lockfile.loadFromCwd(ctx.allocator, ctx.log, true, &pm.options, &pm.workspace_package_json_cache);
+            const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
 
             Output.flush();
             Output.disableBuffering();
-            const lockfile = load_lockfile.ok.lockfile;
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
 
             var max_depth: usize = 0;
@@ -378,12 +387,11 @@ pub const PackageManagerCommand = struct {
                 , .{});
                 Global.exit(1);
             }
-            const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfile(
-                pm.lockfile,
-                pm,
+            const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfileFromCwd(
                 ctx.allocator,
                 pm.log,
-                pm.options.lockfile_path,
+                &pm.options,
+                &pm.workspace_package_json_cache,
             );
             if (load_lockfile == .not_found) {
                 Output.prettyErrorln(
@@ -391,9 +399,9 @@ pub const PackageManagerCommand = struct {
                 , .{});
                 Global.exit(1);
             }
-            handleLoadLockfileErrors(load_lockfile, pm);
-            const lockfile = load_lockfile.ok.lockfile;
-            lockfile.saveToDisk(pm.options.lockfile_path);
+            const lockfile = handleLoadLockfileErrors(load_lockfile, &pm.options);
+            const save_format: Lockfile.Format = if (pm.options.save_text_lockfile) .text else .binary;
+            lockfile.saveToDisk(save_format);
             Global.exit(0);
         }
 

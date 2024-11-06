@@ -384,8 +384,8 @@ pub const Bundler = struct {
         to.linker.resolver = &to.resolver;
     }
 
-    pub inline fn getPackageManager(this: *Bundler) *PackageManager {
-        return this.resolver.getPackageManager();
+    pub inline fn getPackageManagerAndLockfile(this: *Bundler) Resolver.PackageManagerAndLockfile {
+        return this.resolver.getPackageManagerAndLockfile();
     }
 
     pub fn setLog(this: *Bundler, log: *logger.Log) void {

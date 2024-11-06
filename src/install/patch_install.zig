@@ -40,7 +40,10 @@ pub const max_buntag_hash_buf_len: comptime_int = max_hex_hash_len + bun_hash_ta
 pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 pub const PatchTask = struct {
+    // TODO: are either of these needed?
     manager: *PackageManager,
+    lockfile: *Lockfile,
+
     tempdir: std.fs.Dir,
     project_dir: []const u8,
     callback: union(enum) {
@@ -148,13 +151,12 @@ pub const PatchTask = struct {
             if (this.pre) _ = manager.pending_pre_calc_hashes.fetchSub(1, .monotonic);
         }
         switch (this.callback) {
-            .calc_hash => try this.runFromMainThreadCalcHash(manager, log_level),
-            .apply => this.runFromMainThreadApply(manager),
+            .calc_hash => try this.runFromMainThreadCalcHash(manager, this.lockfile, log_level),
+            .apply => this.runFromMainThreadApply(),
         }
     }
 
-    pub fn runFromMainThreadApply(this: *PatchTask, manager: *PackageManager) void {
-        _ = manager; // autofix
+    pub fn runFromMainThreadApply(this: *PatchTask) void {
         if (this.callback.apply.logger.errors > 0) {
             defer this.callback.apply.logger.deinit();
             Output.errGeneric("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
@@ -165,6 +167,7 @@ pub const PatchTask = struct {
     fn runFromMainThreadCalcHash(
         this: *PatchTask,
         manager: *PackageManager,
+        lockfile: *Lockfile,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         // TODO only works for npm package
@@ -189,7 +192,7 @@ pub const PatchTask = struct {
             Global.crash();
         };
 
-        var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
+        var gop = lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
         if (gop.found_existing) {
             gop.value_ptr.setPatchfileHash(hash);
         } else @panic("No entry for patched dependency, this is a bug in Bun.");
@@ -199,26 +202,27 @@ pub const PatchTask = struct {
             const pkg_id = state.pkg_id;
             const dep_id = state.dependency_id;
 
-            const pkg = manager.lockfile.packages.get(pkg_id);
+            const pkg = lockfile.packages.get(pkg_id);
 
             var out_name_and_version_hash: ?u64 = null;
             var out_patchfile_hash: ?u64 = null;
-            manager.setPreinstallState(pkg.meta.id, manager.lockfile, .unknown);
-            switch (manager.determinePreinstallState(pkg, manager.lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
+            manager.setPreinstallState(pkg.meta.id, lockfile, .unknown);
+            switch (manager.determinePreinstallState(pkg, lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
                 .done => {
                     // patched pkg in folder path, should now be handled by PackageInstall.install()
-                    debug("pkg: {s} done", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+                    debug("pkg: {s} done", .{pkg.name.slice(lockfile.buffers.string_bytes.items)});
                 },
                 .extract => {
-                    debug("pkg: {s} extract", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+                    debug("pkg: {s} extract", .{pkg.name.slice(lockfile.buffers.string_bytes.items)});
                     const network_task = try manager.generateNetworkTaskForTarball(
+                        lockfile,
                         // TODO: not just npm package
                         Task.Id.forNPMPackage(
-                            manager.lockfile.str(&pkg.name),
+                            lockfile.str(&pkg.name),
                             pkg.resolution.value.npm.version,
                         ),
                         url,
-                        manager.lockfile.buffers.dependencies.items[dep_id].behavior.isRequired(),
+                        lockfile.buffers.dependencies.items[dep_id].behavior.isRequired(),
                         dep_id,
                         pkg,
                         this.callback.calc_hash.name_and_version_hash,
@@ -228,20 +232,21 @@ pub const PatchTask = struct {
                         },
                     ) orelse unreachable;
                     if (manager.getPreinstallState(pkg.meta.id) == .extract) {
-                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .extracting);
+                        manager.setPreinstallState(pkg.meta.id, lockfile, .extracting);
                         manager.enqueueNetworkTask(network_task);
                     }
                 },
                 .apply_patch => {
-                    debug("pkg: {s} apply patch", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+                    debug("pkg: {s} apply patch", .{pkg.name.slice(lockfile.buffers.string_bytes.items)});
                     const patch_task = PatchTask.newApplyPatchHash(
                         manager,
+                        lockfile,
                         pkg.meta.id,
                         hash,
                         this.callback.calc_hash.name_and_version_hash,
                     );
                     if (manager.getPreinstallState(pkg.meta.id) == .apply_patch) {
-                        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .applying_patch);
+                        manager.setPreinstallState(pkg.meta.id, lockfile, .applying_patch);
                         manager.enqueuePatchTask(patch_task);
                     }
                 },
@@ -261,7 +266,7 @@ pub const PatchTask = struct {
         debug("apply patch task", .{});
         bun.assert(this.callback == .apply);
 
-        const strbuf: []const u8 = this.manager.lockfile.buffers.string_bytes.items;
+        const strbuf: []const u8 = this.lockfile.buffers.string_bytes.items;
 
         const patch: *const ApplyPatch = &this.callback.apply;
         const dir = this.project_dir;
@@ -329,7 +334,7 @@ pub const PatchTask = struct {
             .package_version = resolution_label,
             // dummy value
             .node_modules = &dummy_node_modules,
-            .lockfile = this.manager.lockfile,
+            .lockfile = this.lockfile,
         };
 
         switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
@@ -428,7 +433,7 @@ pub const PatchTask = struct {
                     const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
                     const args = .{
                         this.callback.calc_hash.patchfile_path,
-                        this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
+                        this.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.lockfile.buffers.string_bytes.items),
                     };
                     log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args) catch bun.outOfMemory();
                     return null;
@@ -512,11 +517,12 @@ pub const PatchTask = struct {
 
     pub fn newCalcPatchHash(
         manager: *PackageManager,
+        lockfile: *Lockfile,
         name_and_version_hash: u64,
         state: ?CalcPatchHash.EnqueueAfterState,
     ) *PatchTask {
-        const patchdep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse @panic("This is a bug");
-        const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
+        const patchdep = lockfile.patched_dependencies.get(name_and_version_hash) orelse @panic("This is a bug");
+        const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
 
         const pt = bun.new(PatchTask, .{
             .tempdir = manager.getTemporaryDirectory(),
@@ -529,6 +535,7 @@ pub const PatchTask = struct {
                 },
             },
             .manager = manager,
+            .lockfile = lockfile,
             .project_dir = FileSystem.instance.top_level_dir,
         });
 
@@ -536,26 +543,28 @@ pub const PatchTask = struct {
     }
 
     pub fn newApplyPatchHash(
-        pkg_manager: *PackageManager,
+        manager: *PackageManager,
+        lockfile: *Lockfile,
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
     ) *PatchTask {
-        const pkg_name = pkg_manager.lockfile.packages.items(.name)[pkg_id];
-        const resolution: *const Resolution = &pkg_manager.lockfile.packages.items(.resolution)[pkg_id];
+        const pkg_name = lockfile.packages.items(.name)[pkg_id];
+        const resolution: *const Resolution = &lockfile.packages.items(.resolution)[pkg_id];
 
         var folder_path_buf: bun.PathBuffer = undefined;
-        const stuff = pkg_manager.computeCacheDirAndSubpath(
-            pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items),
+        const stuff = manager.computeCacheDirAndSubpath(
+            lockfile,
+            pkg_name.slice(lockfile.buffers.string_bytes.items),
             resolution,
             &folder_path_buf,
             patch_hash,
         );
 
-        const patchfilepath = pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
+        const patchfilepath = manager.allocator.dupe(u8, lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = pkg_manager.getTemporaryDirectory(),
+            .tempdir = manager.getTemporaryDirectory(),
             .callback = .{
                 .apply = .{
                     .pkg_id = pkg_id,
@@ -564,16 +573,17 @@ pub const PatchTask = struct {
                     .name_and_version_hash = name_and_version_hash,
                     .cache_dir = stuff.cache_dir,
                     .patchfilepath = patchfilepath,
-                    .pkgname = pkg_manager.allocator.dupe(u8, pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
-                    .logger = logger.Log.init(pkg_manager.allocator),
+                    .pkgname = manager.allocator.dupe(u8, pkg_name.slice(lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
+                    .logger = logger.Log.init(manager.allocator),
                     // need to dupe this as it's calculated using
                     // `PackageManager.cached_package_folder_name_buf` which may be
                     // modified
-                    .cache_dir_subpath = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath) catch bun.outOfMemory(),
-                    .cache_dir_subpath_without_patch_hash = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath[0 .. std.mem.indexOf(u8, stuff.cache_dir_subpath, "_patch_hash=") orelse @panic("This is a bug in Bun.")]) catch bun.outOfMemory(),
+                    .cache_dir_subpath = manager.allocator.dupeZ(u8, stuff.cache_dir_subpath) catch bun.outOfMemory(),
+                    .cache_dir_subpath_without_patch_hash = manager.allocator.dupeZ(u8, stuff.cache_dir_subpath[0 .. std.mem.indexOf(u8, stuff.cache_dir_subpath, "_patch_hash=") orelse @panic("This is a bug in Bun.")]) catch bun.outOfMemory(),
                 },
             },
-            .manager = pkg_manager,
+            .manager = manager,
+            .lockfile = lockfile,
             .project_dir = FileSystem.instance.top_level_dir,
         });
 

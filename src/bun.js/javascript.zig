@@ -1236,8 +1236,8 @@ pub const VirtualMachine = struct {
         this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
     }
 
-    pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
-        return this.bundler.getPackageManager();
+    pub inline fn packageManagerAndLockfile(this: *VirtualMachine) Resolver.Resolver.PackageManagerAndLockfile {
+        return this.bundler.getPackageManagerAndLockfile();
     }
 
     pub fn garbageCollect(this: *const VirtualMachine, sync: bool) JSValue {

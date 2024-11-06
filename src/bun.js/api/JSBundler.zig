@@ -44,6 +44,8 @@ const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 const Index = @import("../../ast/base.zig").Index;
 
+const debug = bun.Output.scoped(.Bundler, false);
+
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
@@ -782,6 +784,8 @@ pub const JSBundler = struct {
         }
     };
 
+    const DeferredTask = bun.bundle_v2.DeferredTask;
+
     pub const Load = struct {
         source_index: Index,
         default_loader: options.Loader,
@@ -798,6 +802,13 @@ pub const JSBundler = struct {
 
         /// Faster path: skip the extra threadpool dispatch when the file is not found
         was_file: bool = false,
+
+        deferred_promise: JSC.JSPromise.Strong = .{},
+        defer_task: DeferredTask = undefined,
+        // We only allow the user to call defer once right now
+        called_defer: bool = false,
+
+        const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
         pub fn create(
             completion: *bun.BundleV2.JSBundleCompletionTask,
@@ -847,6 +858,10 @@ pub const JSBundler = struct {
         };
 
         pub fn deinit(this: *Load) void {
+            debug_deferred("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
+            if (std.mem.indexOf(u8, this.path, "foo.ts") != null) {
+                std.debug.print("HI\n", .{});
+            }
             this.value.deinit();
             if (this.completion) |completion|
                 completion.deref();
@@ -855,22 +870,28 @@ pub const JSBundler = struct {
         const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
         pub fn runOnJSThread(this: *Load) void {
-            var completion = this.completion orelse {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
                 this.deinit();
                 return;
             };
 
-            completion.plugins.?.matchOnLoad(
-                completion.globalThis,
-                this.path,
-                this.namespace,
-                this,
-                this.default_loader,
-            );
+            if (this.deferred_promise.strong.has()) {
+                // The onLoad callback has been called and .defer()
+                // was used inside of it
+                this.onRunDeferFromJSThread();
+            } else {
+                completion.plugins.?.matchOnLoad(
+                    completion.globalThis,
+                    this.path,
+                    this.namespace,
+                    this,
+                    this.default_loader,
+                );
+            }
         }
 
         pub fn dispatch(this: *Load) void {
-            var completion = this.completion orelse {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
                 this.deinit();
                 return;
             };
@@ -881,6 +902,75 @@ pub const JSBundler = struct {
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
         }
 
+        pub fn onRunDeferFromBundler(this: *Load) void {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
+                this.deinit();
+                return;
+            };
+
+            debug_deferred("scheduling resume (0{x}, {s})", .{ @intFromPtr(this), this.path });
+
+            // If the completion is null, it should deinit I think?
+
+            // completion.bundler.loop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.js_task));
+            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.js_task));
+        }
+
+        pub fn onRunDeferFromJSThread(this: *Load) void {
+            const completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
+                this.deinit();
+                return;
+            };
+
+            // TODO: If there's a build error, we should reject this promise instead of leaving it hanging.
+            const globalThis = this.deferred_promise.strong.globalThis.?;
+            const promise = this.deferred_promise.swap();
+            // this.deferred_promise.resolve(this.deferred_promise.strong.globalThis.?, .undefined);
+
+            if (completion.result == .err) {
+                promise.reject(globalThis, .undefined);
+            } else {
+                promise.resolve(globalThis, .undefined);
+            }
+        }
+
+        export fn JSBundlerPlugin__onDefer(
+            this: *Load,
+            globalObject: *JSC.JSGlobalObject,
+        ) JSC.JSValue {
+            if (this.called_defer) {
+                // TODO: throw error or something
+                return JSC.JSValue.undefined;
+            }
+            this.called_defer = true;
+            this.deferred_promise = JSC.JSPromise.Strong.init(globalObject);
+
+            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.deferred_pending, .Add, 1, .monotonic);
+            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .monotonic);
+
+            debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
+                @intFromPtr(this),
+                this.path,
+                @atomicLoad(
+                    usize,
+                    &this.parse_task.ctx.graph.parse_pending,
+                    .monotonic,
+                ),
+                @atomicLoad(
+                    usize,
+                    &this.parse_task.ctx.graph.deferred_pending,
+                    .monotonic,
+                ),
+            });
+
+            this.defer_task = .{
+                .ctx = this.parse_task.ctx,
+            };
+            this.defer_task.recordDeferredTask();
+
+            return this.deferred_promise.value();
+        }
+
         export fn JSBundlerPlugin__onLoadAsync(
             this: *Load,
             _: *anyopaque,
@@ -888,7 +978,7 @@ pub const JSBundler = struct {
             loader_as_int: JSValue,
         ) void {
             JSC.markBinding(@src());
-            var completion = this.completion orelse {
+            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
                 this.deinit();
                 return;
             };
@@ -902,12 +992,13 @@ pub const JSBundler = struct {
                     return;
                 }
             } else {
+                const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
                 const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(completion.globalThis, source_code_value, bun.default_allocator) catch
                 // TODO:
                     @panic("Unexpected: source_code is not a string");
                 this.value = .{
                     .success = .{
-                        .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),
+                        .loader = options.Loader.fromAPI(loader),
                         .source_code = source_code,
                     },
                 };
@@ -988,6 +1079,7 @@ pub const JSBundler = struct {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
             defer tracer.end();
+            debug("JSBundler.matchOnLoad(0x{x}, {s}, {s})", .{ @intFromPtr(this), namespace, path });
             const namespace_string = if (namespace.len == 0)
                 bun.String.static("file")
             else

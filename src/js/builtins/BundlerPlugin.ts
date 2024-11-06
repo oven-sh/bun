@@ -23,6 +23,7 @@ interface BundlerPlugin {
   onResolveAsync(internalID, a, b, c): void;
   addError(internalID, error, number): void;
   addFilter(filter, namespace, number): void;
+  generateDeferPromise(): Promise<void>;
 }
 
 // Extra types
@@ -99,6 +100,14 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     validate(filterObject, callback, onResolvePlugins);
   }
 
+  function onStart(callback) {
+    if (!callback || !$isCallable(callback)) {
+      throw new TypeError("callback must be a function");
+    }
+
+    callback();
+  }
+
   const processSetupResult = () => {
     var anyOnLoad = false,
       anyOnResolve = false;
@@ -160,7 +169,7 @@ export function runSetupFunction(this: BundlerPlugin, setup: Setup, config: Buil
     onEnd: notImplementedIssueFn(2771, "On-end callbacks"),
     onLoad,
     onResolve,
-    onStart: notImplementedIssueFn(2771, "On-start callbacks"),
+    onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
     module: () => {
       throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
@@ -299,7 +308,8 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
   const LOADERS_MAP = $LoaderLabelToId;
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
-  var promiseResult = (async (internalID, path, namespace, defaultLoader) => {
+  const generateDefer = () => this.generateDeferPromise(internalID);
+  var promiseResult = (async (internalID, path, namespace, defaultLoader, generateDefer) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);
@@ -314,6 +324,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
           // suffix
           // pluginData
           loader: defaultLoader,
+          defer: generateDefer,
         });
 
         while (
@@ -353,7 +364,7 @@ export function runOnLoadPlugins(this: BundlerPlugin, internalID, path, namespac
 
     this.onLoadAsync(internalID, null, null);
     return null;
-  })(internalID, path, namespace, loaderName);
+  })(internalID, path, namespace, loaderName, generateDefer);
 
   while (
     promiseResult &&

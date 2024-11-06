@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { resolve } from "path";
+import { dirname, join, resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -187,6 +187,7 @@ plugin({
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
 import "./module-plugins";
+import { itBundled } from "bundler/expectBundled";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
@@ -478,5 +479,319 @@ describe("errors", () => {
     });
     const { default: text } = await import(`http://${server.hostname}:${server.port}/hey.txt`);
     expect(text).toBe(result);
+  });
+});
+
+describe("start", () => {
+  {
+    let state: string = "Should not see this!";
+
+    itBundled("works", {
+      experimentalCss: true,
+      minifyWhitespace: true,
+      files: {
+        "/entry.css": /* css */ `
+          body {
+            background: white;
+            color: blue; }
+        `,
+      },
+      plugins: [
+        {
+          name: "demo",
+          setup(build) {
+            build.onStart(() => {
+              state = "red";
+            });
+
+            build.onLoad({ filter: /\.css/ }, async ({ path }) => {
+              console.log("[plugin] Path", path);
+              return {
+                contents: `body { color: ${state} }`,
+                loader: "css",
+              };
+            });
+          },
+        },
+      ],
+      outfile: "/out.js",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toEqualIgnoringWhitespace(`body{color:${state}}`);
+      },
+    });
+  }
+
+  {
+    type Action = "onLoad" | "onStart";
+    let actions: Action[] = [];
+
+    itBundled("executes before everything", {
+      experimentalCss: true,
+      minifyWhitespace: true,
+      files: {
+        "/entry.css": /* css */ `
+          body {
+            background: white;
+            color: blue; }
+        `,
+      },
+      plugins: [
+        {
+          name: "demo",
+          setup(build) {
+            build.onLoad({ filter: /\.css/ }, async ({ path }) => {
+              actions.push("onLoad");
+              return {
+                contents: `body { color: red }`,
+                loader: "css",
+              };
+            });
+
+            build.onStart(() => {
+              actions.push("onStart");
+            });
+          },
+        },
+      ],
+      outfile: "/out.js",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toEqualIgnoringWhitespace(`body{ color: red }`);
+
+        expect(actions).toStrictEqual(["onStart", "onLoad"]);
+      },
+    });
+  }
+});
+
+describe("defer", () => {
+  {
+    type Action = {
+      type: "load" | "defer";
+      path: string;
+    };
+    let actions: Action[] = [];
+    function logLoad(path: string) {
+      actions.push({ type: "load", path });
+    }
+    function logDefer(path: string) {
+      actions.push({ type: "defer", path });
+    }
+
+    itBundled("basic", {
+      experimentalCss: true,
+      files: {
+        "/index.ts": /* ts */ `
+import { lmao } from "./lmao.ts";
+import foo from "./a.css";
+
+console.log("Foo", foo, lmao);
+      `,
+        "/lmao.ts": `
+import { foo } from "./foo.ts";
+export const lmao = "lolss";
+console.log(foo);
+      `,
+        "/foo.ts": `
+      export const foo = 'lkdfjlsdf';
+      console.log('hi')`,
+        "/a.css": `
+      h1 {
+        color: blue;
+      }
+            `,
+      },
+      entryPoints: ["index.ts"],
+      plugins: [
+        {
+          name: "demo",
+          setup(build) {
+            build.onLoad({ filter: /\.(ts)/ }, async ({ defer, path }) => {
+              // console.log("Running on load plugin", path);
+              if (path.includes("index.ts")) {
+                logLoad(path);
+                return undefined;
+              }
+              logDefer(path);
+              await defer();
+              logLoad(path);
+              return undefined;
+            });
+          },
+        },
+      ],
+      outdir: "/out",
+      onAfterBundle(api) {
+        const expected_actions: Action[] = [
+          {
+            type: "load",
+            path: "index.ts",
+          },
+          {
+            type: "defer",
+            path: "lmao.ts",
+          },
+          {
+            type: "load",
+            path: "lmao.ts",
+          },
+          {
+            type: "defer",
+            path: "foo.ts",
+          },
+          {
+            type: "load",
+            path: "foo.ts",
+          },
+        ];
+
+        expect(actions.length).toBe(expected_actions.length);
+        for (let i = 0; i < expected_actions.length; i++) {
+          const expected = expected_actions[i];
+          const action = actions[i];
+          const filename = action.path.split("/").pop();
+
+          expect(action.type).toEqual(expected.type);
+          expect(filename).toEqual(expected.path);
+        }
+      },
+    });
+  }
+
+  itBundled("edgecase", {
+    experimentalCss: true,
+    minifyWhitespace: true,
+    files: {
+      "/entry.css": /* css */ `
+          body {
+            background: white;
+            color: black }
+        `,
+    },
+    plugins: [
+      {
+        name: "demo",
+        setup(build) {
+          build.onLoad({ filter: /\.css/ }, async ({ path }) => {
+            console.log("[plugin] Path", path);
+            return {
+              contents: 'h1 [this_worked="nice!"] { color: red; }',
+              loader: "css",
+            };
+          });
+        },
+      },
+    ],
+    outfile: "/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`h1 [this_worked=nice\\!]{color:red}
+`);
+    },
+  });
+
+  // encountered double free when CSS build has error
+  itBundled("shouldn't crash on CSS parse error", {
+    experimentalCss: true,
+    files: {
+      "/index.ts": /* ts */ `
+  import { lmao } from "./lmao.ts";
+  import foo from "./a.css";
+
+  console.log("Foo", foo, lmao);
+        `,
+      "/lmao.ts": `
+  import { foo } from "./foo.ts";
+  export const lmao = "lolss";
+  console.log(foo);
+        `,
+      "/foo.ts": `
+  export const foo = "LOL bro";
+  console.log("FOOOO", foo);
+        `,
+      "/a.css": `
+        /* helllooo friends */
+              `,
+    },
+    entryPoints: ["index.ts"],
+    plugins: [
+      {
+        name: "demo",
+        setup(build) {
+          build.onLoad({ filter: /\.css/ }, async ({ path }) => {
+            console.log("[plugin] CSS path", path);
+            return {
+              // this fails, because it causes a Build error I think?
+              contents: `hello friends`,
+              loader: "css",
+            };
+          });
+
+          build.onLoad({ filter: /\.(ts)/ }, async ({ defer, path }) => {
+            // console.log("Running on load plugin", path);
+            if (path.includes("index.ts")) {
+              console.log("[plugin] Path", path);
+              return undefined;
+            }
+            await defer();
+            return undefined;
+          });
+        },
+      },
+    ],
+    outdir: "/out",
+    bundleErrors: {
+      "/a.css": ["end_of_input"],
+    },
+  });
+
+  itBundled("works as expected when onLoad error occurs after defer", {
+    experimentalCss: true,
+    files: {
+      "/index.ts": /* ts */ `
+  import { lmao } from "./lmao.ts";
+  import foo from "./a.css";
+
+  console.log("Foo", foo, lmao);
+        `,
+      "/lmao.ts": `
+  import { foo } from "./foo.ts";
+  export const lmao = "lolss";
+  console.log(foo);
+        `,
+      "/foo.ts": `
+  export const foo = "LOL bro";
+  console.log("FOOOO", foo);
+        `,
+      "/a.css": `
+        /* helllooo friends */
+              `,
+    },
+    entryPoints: ["index.ts"],
+    plugins: [
+      {
+        name: "demo",
+        setup(build) {
+          build.onLoad({ filter: /\.css/ }, async ({ path }) => {
+            return {
+              // this fails, because it causes a Build error I think?
+              contents: `hello friends`,
+              loader: "css",
+            };
+          });
+
+          build.onLoad({ filter: /\.(ts)/ }, async ({ defer, path }) => {
+            if (path.includes("index.ts")) {
+              return undefined;
+            }
+            await defer();
+            throw new Error("woopsie");
+          });
+        },
+      },
+    ],
+    outdir: "/out",
+    bundleErrors: {
+      "/a.css": ["end_of_input"],
+      "/lmao.ts": ["woopsie"],
+    },
   });
 });

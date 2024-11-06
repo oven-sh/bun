@@ -104,7 +104,7 @@ const ThisBundler = @import("../bundler.zig").Bundler;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
-const Index = @import("../ast/base.zig").Index;
+pub const Index = @import("../ast/base.zig").Index;
 const Batcher = bun.Batcher;
 const Symbol = js_ast.Symbol;
 const EventLoop = bun.JSC.AnyEventLoop;
@@ -128,6 +128,8 @@ const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 const Loc = Logger.Loc;
 const bake = bun.bake;
+
+const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
 
@@ -367,6 +369,9 @@ pub const BundleV2 = struct {
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
+    /// This is a lock-free concurrent queue so that we can append to this from any thread
+    deferred_tasks: bun.UnboundedQueue(DeferredTask, .next) = .{},
+
     /// Allocations not tracked by a threadlocal heap
     free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),
 
@@ -566,9 +571,54 @@ pub const BundleV2 = struct {
     }
 
     pub fn waitForParse(this: *BundleV2) void {
+        while (true) {
+            this.enqueueDeferredTasks();
+            this.waitForParseImpl();
+
+            // After running the above statement, we may have resolved more files.
+            // Those may have a matching onLoad plugin which may call `.defer()`
+            if (@atomicLoad(usize, &this.graph.deferred_pending, .monotonic) > 0) {
+                std.atomic.spinLoopHint();
+            } else {
+                return;
+            }
+        }
+    }
+
+    pub fn waitForParseImpl(this: *BundleV2) void {
         this.loop().tick(this, &isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
+    }
+
+    pub fn enqueueDeferredTasks(this: *BundleV2) void {
+        const batch = this.deferred_tasks.popBatch();
+        var iter = batch.iterator();
+        var batch_to_schedule = JSC.ConcurrentTask.Queue.Batch{};
+        while (iter.next()) |deferred| {
+            debug_deferred("enqueueDeferredTasks task=(0{x}, {s}) parse_pending={d} deferred_pending={d}", .{
+                @intFromPtr(deferred.loadTask()),
+                deferred.loadTask().path,
+                @atomicLoad(
+                    usize,
+                    &this.graph.parse_pending,
+                    .monotonic,
+                ),
+                @atomicLoad(
+                    usize,
+                    &this.graph.deferred_pending,
+                    .monotonic,
+                ),
+            });
+
+            batch_to_schedule.push(JSC.ConcurrentTask.createFrom(&deferred.loadTask().js_task));
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
+            _ = @atomicRmw(usize, &this.graph.deferred_pending, .Sub, 1, .monotonic);
+        }
+
+        if (batch_to_schedule.count > 0) {
+            this.completion.?.jsc_event_loop.enqueueTaskConcurrentBatch(batch_to_schedule);
+        }
     }
 
     /// This runs on the Bundle Thread.
@@ -1635,6 +1685,7 @@ pub const BundleV2 = struct {
         pub fn deref(this: *JSBundleCompletionTask) void {
             if (this.ref_count.fetchSub(1, .monotonic) == 1) {
                 this.config.deinit(bun.default_allocator);
+                debug("Deinit JSBundleCompletionTask(0{x})", .{@intFromPtr(this)});
                 bun.default_allocator.destroy(this);
             }
         }
@@ -1973,6 +2024,7 @@ pub const BundleV2 = struct {
     }
 
     pub fn deinit(this: *BundleV2) void {
+        // this.deferred_tasks.deinit(bun.default_allocator);
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
@@ -2671,6 +2723,15 @@ pub const BundleV2 = struct {
 
     const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
 
+    /// This is safe to call on multiple threads because it uses a lock-free concurrent queue
+    pub fn recordDeferredTask(deferred_task: *DeferredTask, this: *BundleV2) void {
+        debug_deferred("recordDeferredTask deferred_task=(0x{x}, {s})", .{
+            @intFromPtr(deferred_task.loadTask()),
+            deferred_task.loadTask().path,
+        });
+        this.deferred_tasks.push(deferred_task);
+    }
+
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
         const trace = tracer(@src(), "onParseTaskComplete");
         defer trace.end();
@@ -2932,7 +2993,7 @@ pub const BundleV2 = struct {
                         this.bundler.log.addErrorFmt(
                             null,
                             Logger.Loc.Empty,
-                            bun.default_allocator,
+                            this.bundler.log.msgs.allocator,
                             "{s} while {s}",
                             .{ @errorName(err.err), @tagName(err.step) },
                         ) catch unreachable;
@@ -3129,16 +3190,38 @@ pub fn BundleThread(CompletionStruct: type) type {
 const UseDirective = js_ast.UseDirective;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 
+pub const DeferredTask = struct {
+    ctx: *BundleV2,
+    next: ?*DeferredTask = null,
+
+    pub fn loadTask(this: *DeferredTask) *JSC.API.JSBundler.Load {
+        const load: *JSC.API.JSBundler.Load = @fieldParentPtr("defer_task", this);
+        return load;
+    }
+
+    pub fn resumeFromBundleThread(this: *DeferredTask) void {
+        this.loadTask().onRunDeferFromBundler();
+    }
+
+    pub fn recordDeferredTask(this: *DeferredTask) void {
+        BundleV2.recordDeferredTask(this, this.ctx);
+    }
+};
+
+const ContentsOrFd = union(Tag) {
+    fd: struct {
+        dir: StoredFileDescriptorType,
+        file: StoredFileDescriptorType,
+    },
+    contents: string,
+
+    const Tag = enum { fd, contents };
+};
+
 pub const ParseTask = struct {
     path: Fs.Path,
     secondary_path_for_commonjs_interop: ?Fs.Path = null,
-    contents_or_fd: union(enum) {
-        fd: struct {
-            dir: StoredFileDescriptorType,
-            file: StoredFileDescriptorType,
-        },
-        contents: string,
-    },
+    contents_or_fd: ContentsOrFd,
     side_effects: _resolver.SideEffects,
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
@@ -3549,11 +3632,11 @@ pub const ParseTask = struct {
                 if (bundler.options.experimental_css) {
                     // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     // unique_key_for_additional_file.* = unique_key;
-                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
+                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 }); // put this after parsing
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     var css_ast =
-                        switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parseBundler(
+                        switch (bun.css.BundlerStyleSheet.parseBundler(
                         allocator,
                         source_code,
                         bun.css.ParserOptions.default(allocator, bundler.log),
@@ -3561,7 +3644,15 @@ pub const ParseTask = struct {
                     )) {
                         .result => |v| v,
                         .err => |e| {
-                            log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
+                            log.addErrorFmt(
+                                &source,
+                                if (e.loc) |loc| Logger.Loc{
+                                    .start = @intCast(loc.line),
+                                } else Logger.Loc.Empty,
+                                allocator,
+                                "{}",
+                                .{e.kind},
+                            ) catch unreachable;
                             return error.SyntaxError;
                         },
                     };
@@ -3569,7 +3660,15 @@ pub const ParseTask = struct {
                         .targets = .{},
                         .unused_symbols = .{},
                     }).asErr()) |e| {
-                        log.addErrorFmt(&source, Logger.Loc.Empty, allocator, "{?}: {}", .{ if (e.loc) |l| l.withFilename(source.path.pretty) else null, e.kind }) catch unreachable;
+                        log.addErrorFmt(
+                            &source,
+                            if (e.loc) |loc| Logger.Loc{
+                                .start = @intCast(loc.line),
+                            } else Logger.Loc.Empty,
+                            allocator,
+                            "{}",
+                            .{e.kind},
+                        ) catch unreachable;
                         return error.MinifyError;
                     }
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
@@ -3676,7 +3775,31 @@ pub const ParseTask = struct {
             },
         };
 
-        errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
+        // WARNING: Do not change the variant of `task.contents_or_fd` from
+        // `.fd` to `.contents` (or back) after this point!
+        //
+        // When `task.contents_or_fd == .fd`, `entry.contents` is an owned string.
+        // When `task.contents_or_fd == .contents`, `entry.contents` is NOT owned! Freeing it here will cause a double free!
+        //
+        // Changing from `.contents` to `.fd` will cause a double free.
+        // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
+        // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(allocator)` below).
+        const debug_original_variant_check: if (bun.Environment.isDebug) ContentsOrFd.Tag else u0 =
+            if (bun.Environment.isDebug)
+            @as(ContentsOrFd.Tag, task.contents_or_fd)
+        else
+            0;
+        errdefer {
+            if (comptime bun.Environment.isDebug) {
+                if (@as(ContentsOrFd.Tag, task.contents_or_fd) != debug_original_variant_check) {
+                    std.debug.panic("BUG: `task.contents_or_fd` changed in a way that will cause a double free or memory to leak!\n\n    Original = {s}\n    New = {s}\n", .{
+                        @tagName(debug_original_variant_check),
+                        @tagName(task.contents_or_fd),
+                    });
+                }
+            }
+            if (task.contents_or_fd == .fd) entry.deinit(allocator);
+        }
 
         const will_close_file_descriptor = task.contents_or_fd == .fd and
             entry.fd.isValid() and !entry.fd.isStdio() and
@@ -3684,7 +3807,7 @@ pub const ParseTask = struct {
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
             task.contents_or_fd = .{ .fd = .{ .file = bun.invalid_fd, .dir = bun.invalid_fd } };
-        } else {
+        } else if (task.contents_or_fd == .fd) {
             task.contents_or_fd = .{ .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,
@@ -3827,6 +3950,7 @@ pub const ParseTask = struct {
         const this: *ParseTask = @fieldParentPtr("task", task);
         var worker = ThreadPool.Worker.get(this.ctx);
         defer worker.unget();
+        debug("ParseTask(0x{x}, {s}) callback", .{ @intFromPtr(this), this.path.text });
 
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
@@ -4301,6 +4425,9 @@ pub const Graph = struct {
     // using u32, since Ref does not support addressing sources above maxInt(u31)
     parse_pending: usize = 0,
     resolve_pending: usize = 0,
+    /// This is incremented whenever an onLoad plugin calls `.defer()`
+    /// And then is correspondingly decremented whenever we resume that onLoad plugin
+    deferred_pending: usize = 0,
 
     /// Maps a hashed path string to a source index, if it exists in the compilation.
     /// Instead of accessing this directly, consider using BundleV2.pathToSourceIndexMap
@@ -5756,7 +5883,7 @@ pub const LinkerContext = struct {
                     source_index,
                 ) catch bun.outOfMemory();
 
-                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()].?;
+                const repr: *const bun.css.BundlerStyleSheet = visitor.css_asts[source_index.get()] orelse return;
                 const top_level_rules = &repr.rules;
 
                 // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?

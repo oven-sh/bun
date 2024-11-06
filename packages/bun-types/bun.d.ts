@@ -3785,7 +3785,7 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.sh/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css";
 
   interface PluginConstraints {
     /**
@@ -3873,10 +3873,24 @@ declare module "bun" {
      * The default loader for this file extension
      */
     loader: Loader;
+
+    /**
+     * Defer the execution of this plugin until
+     * @returns
+     *
+     *
+     * Strong to the defer promise
+     *
+     * Drain the regular tasks
+     * then the deferred tasks
+     * in while loop until nothing done basically
+     */
+    defer: () => Promise<void>;
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
+  type OnStartCallback = () => void | Promise<void>;
 
   interface OnResolveArgs {
     /**
@@ -3953,6 +3967,20 @@ declare module "bun" {
      * ```
      */
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
+    /**
+     * Register a callback which will be invoked when bundling starts.
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   setup(builder) {
+     *     builder.onStarrt(() => {
+     *       console.log("bundle just started!!")
+     *     });
+     *   },
+     * });
+     * ```
+     */
+    onStart(callback: OnStartCallback): void;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */

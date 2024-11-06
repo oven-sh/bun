@@ -1294,8 +1294,7 @@ pub export fn napi_get_buffer_info(env_: napi_env, value_: napi_value, data: ?*[
     };
     const value = value_.get();
     const array_buf = value.asArrayBuffer(env.toJS()) orelse {
-        // TODO: is invalid_arg what to return here?
-        return env.setLastError(.arraybuffer_expected);
+        return env.setLastError(.invalid_arg);
     };
 
     if (data) |dat|

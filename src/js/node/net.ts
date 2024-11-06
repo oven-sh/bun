@@ -829,7 +829,7 @@ const Socket = (function (InternalSocket) {
     }
 
     get localPort() {
-      return this.handle?.localPort;
+      return this._handle?.localPort;
     }
     get _connecting() {
       return this.connecting;

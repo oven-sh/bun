@@ -32,6 +32,7 @@ pub const ImportRule = css_rules.import.ImportRule;
 pub const StyleRule = css_rules.style.StyleRule;
 pub const StyleContext = css_rules.StyleContext;
 pub const SupportsRule = css_rules.supports.SupportsRule;
+pub const TailwindAtRule = css_rules.tailwind.TailwindAtRule;
 
 pub const MinifyContext = css_rules.MinifyContext;
 
@@ -560,7 +561,7 @@ pub fn DeriveParse(comptime T: type) type {
                 .err => |e| return .{ .err = e },
             };
             if (Map.getCaseInsensitiveWithEql(ident, bun.strings.eqlComptimeIgnoreLen)) |matched| {
-                inline for (bun.meta.EnumFields(enum_type)) |field| {
+                inline for (bun.meta.EnumFields(enum_actual_type)) |field| {
                     if (field.value == @intFromEnum(matched)) {
                         if (comptime is_union_enum) return .{ .result = @unionInit(T, field.name, void) };
                         return .{ .result = @enumFromInt(field.value) };
@@ -1290,16 +1291,45 @@ pub const DefaultAtRuleParser = struct {
     };
 };
 
+pub const BundlerAtRule = TailwindAtRule;
+
 pub const BundlerAtRuleParser = struct {
     const This = @This();
     allocator: Allocator,
     import_records: *bun.BabyList(ImportRecord),
+    options: *const ParserOptions,
 
     pub const CustomAtRuleParser = struct {
-        pub const Prelude = void;
-        pub const AtRule = DefaultAtRule;
+        pub const Prelude = union(enum) {
+            tailwind: TailwindAtRule,
+        };
+        pub const AtRule = TailwindAtRule;
 
-        pub fn parsePrelude(_: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
+        pub fn parsePrelude(this: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
+            const PreludeNames = enum {
+                tailwind,
+            };
+            const Map = comptime bun.ComptimeEnumMap(PreludeNames);
+            if (Map.getASCIIICaseInsensitive(name)) |prelude| return switch (prelude) {
+                .tailwind => {
+                    const loc_ = input.currentSourceLocation();
+                    const loc = css_rules.Location{
+                        .source_index = this.options.source_index,
+                        .line = loc_.line,
+                        .column = loc_.column,
+                    };
+                    const style_name = switch (css_rules.tailwind.TailwindStyleName.parse(input)) {
+                        .result => |v| v,
+                        .err => return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) },
+                    };
+                    return .{ .result = .{
+                        .tailwind = .{
+                            .style_name = style_name,
+                            .loc = loc,
+                        },
+                    } };
+                },
+            };
             return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
@@ -1307,8 +1337,10 @@ pub const BundlerAtRuleParser = struct {
             return .{ .err = input.newError(BasicParseErrorKind.at_rule_body_invalid) };
         }
 
-        pub fn ruleWithoutBlock(_: *This, _: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
-            return .{ .err = {} };
+        pub fn ruleWithoutBlock(_: *This, prelude: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
+            return switch (prelude) {
+                .tailwind => |v| return .{ .result = v },
+            };
         }
 
         pub fn onImportRule(this: *This, import_rule: *ImportRule, start_position: u32, end_position: u32) void {
@@ -2636,10 +2668,15 @@ pub const MinifyOptions = struct {
     }
 };
 
-pub const BundlerStyleSheet = StyleSheet(DefaultAtRule);
-pub const BundlerCssRuleList = CssRuleList(DefaultAtRule);
-pub const BundlerCssRule = CssRule(DefaultAtRule);
-pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(DefaultAtRule);
+pub const BundlerStyleSheet = StyleSheet(BundlerAtRule);
+pub const BundlerCssRuleList = CssRuleList(BundlerAtRule);
+pub const BundlerCssRule = CssRule(BundlerAtRule);
+pub const BundlerLayerBlockRule = css_rules.layer.LayerBlockRule(BundlerAtRule);
+pub const BundlerTailwindState = struct {
+    source: []const u8,
+    index: bun.bundle_v2.Index,
+    output_from_tailwind: ?[]const u8 = null,
+};
 
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
@@ -2649,6 +2686,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
         source_map_urls: ArrayList(?[]const u8),
         license_comments: ArrayList([]const u8),
         options: ParserOptions,
+        tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0 = if (AtRule == BundlerAtRule) null else 0,
 
         const This = @This();
 
@@ -2775,6 +2813,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             var at_rule_parser = BundlerAtRuleParser{
                 .import_records = import_records,
                 .allocator = allocator,
+                .options = &options,
             };
             return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records);
         }
@@ -2840,6 +2879,100 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .options = options,
                 },
             };
+        }
+
+        pub fn containsTailwindDirectives(this: *const @This()) bool {
+            if (comptime AtRule != BundlerAtRule) @compileError("Expected BundlerAtRule for this function.");
+            var found_import: bool = false;
+            for (this.rules.v.items) |*rule| {
+                switch (rule.*) {
+                    .custom => {
+                        return true;
+                    },
+                    // .charset => {},
+                    // TODO: layer
+                    .layer_block => {},
+                    .import => {
+                        found_import = true;
+                    },
+                    else => {
+                        return false;
+                    },
+                }
+            }
+            return false;
+        }
+
+        pub fn newFromTailwindImports(
+            allocator: Allocator,
+            options: ParserOptions,
+            imports_from_tailwind: CssRuleList(AtRule),
+        ) @This() {
+            _ = allocator; // autofix
+            if (comptime AtRule != BundlerAtRule) @compileError("Expected BundlerAtRule for this function.");
+
+            const stylesheet = This{
+                .rules = imports_from_tailwind,
+                .sources = .{},
+                .source_map_urls = .{},
+                .license_comments = .{},
+                .options = options,
+            };
+
+            return stylesheet;
+        }
+
+        /// *NOTE*: Used for Tailwind stylesheets only
+        ///
+        /// This plucks out the import rules from the Tailwind stylesheet into a separate rule list,
+        /// replacing them with `.ignored` rules.
+        ///
+        /// We do this because Tailwind's compiler pipeline does not bundle imports, so we handle that
+        /// ourselves in the bundler.
+        pub fn pluckImports(this: *const @This(), allocator: Allocator, out: *CssRuleList(AtRule), new_import_records: *bun.BabyList(ImportRecord)) void {
+            if (comptime AtRule != BundlerAtRule) @compileError("Expected BundlerAtRule for this function.");
+            const State = enum { count, exec };
+
+            const STATES = comptime [_]State{ .count, .exec };
+
+            var count: u32 = 0;
+            inline for (STATES[0..]) |state| {
+                if (comptime state == .exec) {
+                    out.v.ensureUnusedCapacity(allocator, count) catch bun.outOfMemory();
+                }
+                var saw_imports = false;
+                for (this.rules.v.items) |*rule| {
+                    switch (rule.*) {
+                        // TODO: layer, might have imports
+                        .layer_block => {},
+                        .import => {
+                            if (!saw_imports) saw_imports = true;
+                            switch (state) {
+                                .count => count += 1,
+                                .exec => {
+                                    const import_rule = &rule.import;
+                                    out.v.appendAssumeCapacity(rule.*);
+                                    const import_record_idx = new_import_records.len;
+                                    import_rule.import_record_idx = import_record_idx;
+                                    new_import_records.push(allocator, ImportRecord{
+                                        .path = bun.fs.Path.init(import_rule.url),
+                                        .kind = if (import_rule.supports != null) .at_conditional else .at,
+                                        .range = bun.logger.Range.None,
+                                    }) catch bun.outOfMemory();
+                                    rule.* = .ignored;
+                                },
+                            }
+                        },
+                        .unknown => {
+                            if (bun.strings.eqlComptime(rule.unknown.name, "tailwind")) {
+                                continue;
+                            }
+                        },
+                        else => {},
+                    }
+                    if (saw_imports) break;
+                }
+            }
         }
     };
 }

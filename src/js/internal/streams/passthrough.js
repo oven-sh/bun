@@ -37,12 +37,10 @@ ObjectSetPrototypeOf(PassThrough, Transform);
 function PassThrough(options) {
   if (!(this instanceof PassThrough)) return new PassThrough(options);
 
-  this.constructor = PassThrough;
-
   Transform.$call(this, options);
 }
 
-PassThrough.constructor = PassThrough;
+PassThrough.prototype.constructor = PassThrough;
 
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);

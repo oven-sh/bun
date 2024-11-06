@@ -8,14 +8,13 @@ const EE = require("node:events");
 
 function Stream(opts) {
   EE.$call(this, opts);
-  this.constructor = Stream;
 }
-Stream.constructor = Stream;
 
 Stream.prototype = {
   __proto__: EE.prototype,
 };
 ObjectSetPrototypeOf(Stream, EE);
+Stream.prototype.constructor = Stream;
 
 Stream.prototype.pipe = function (dest, options) {
   const source = this;

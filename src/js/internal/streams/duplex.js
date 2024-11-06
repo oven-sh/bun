@@ -40,8 +40,6 @@ const { kOnConstructed } = require("internal/streams/utils");
 function Duplex(options) {
   if (!(this instanceof Duplex)) return new Duplex(options);
 
-  this.constructor = Duplex;
-
   this._events ??= {
     close: undefined,
     error: undefined,
@@ -106,8 +104,6 @@ function Duplex(options) {
   }
 }
 
-Duplex.constructor = Duplex;
-
 Duplex.prototype = Object.create(Readable.prototype);
 Object.defineProperty(Duplex, Symbol.toStringTag, {
   value: "Duplex",
@@ -115,6 +111,8 @@ Object.defineProperty(Duplex, Symbol.toStringTag, {
 });
 const WritableProtoype = Writable.prototype;
 ObjectSetPrototypeOf(Duplex, Readable);
+
+Duplex.prototype.constructor = Duplex;
 
 {
   const keys = ObjectKeys(WritableProtoype);

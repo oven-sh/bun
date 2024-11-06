@@ -388,7 +388,6 @@ WritableState.prototype[kOnConstructed] = function onConstructed(stream) {
 function Writable(options) {
   if (!(this instanceof Writable)) return new Writable(options);
 
-  this.constructor = Writable;
   this._events ??= {
     close: undefined,
     error: undefined,
@@ -425,10 +424,10 @@ function Writable(options) {
   }
 }
 
-Writable.constructor = Writable;
-
 Writable.prototype = Object.create(Stream.prototype);
 ObjectSetPrototypeOf(Writable, Stream);
+
+Writable.prototype.constructor = Writable;
 
 const OriginalInstanceOf = Function.prototype[Symbol.hasInstance];
 Object.defineProperty(Writable, Symbol.hasInstance, {

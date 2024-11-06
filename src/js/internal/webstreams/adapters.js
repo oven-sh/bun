@@ -562,8 +562,6 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
   return writable;
 }
 
-console.log(";");
-
 
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 var closer = [false];
@@ -620,8 +618,6 @@ var closer = [false];
   const _handleResult = Symbol("_handleResult");
   const _internalRead = Symbol("_internalRead");
 
-console.log("a");
-
   function NativeReadable(this, ptr, options) {
     if (!(this instanceof NativeReadable)) {
       return new NativeReadable(path, options);
@@ -649,13 +645,11 @@ console.log("a");
     ptr.onDrain = this[_onDrain].bind(this);
   }
 
-console.log("a1");
 
   NativeReadable.prototype = {};
   Object.setPrototypeOf(NativeReadable.prototype, Readable.prototype);
 
 
-console.log("a2");
   NativeReadable.prototype[_onClose] = function () {
     this.push(null);
   };
@@ -810,14 +804,12 @@ console.log("a2");
     }
   };
 
-console.log("a3");
 
   NativeReadable.prototype[kEnsureConstructed] = function () {
     if (this[constructed]) return;
     this[_internalConstruct](this.$bunNativePtr);
   };
 
-console.log("b");
 
 var nativeReadableStreamPrototypes = {
   0: undefined,
@@ -974,7 +966,6 @@ ReadableFromWeb.prototype._destroy = function(error, callback) {
 };
 
 
-console.log("c");
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
 const { fileSinkSymbol: _fileSink } = require("internal/shared");
 const _native = Symbol("native");
@@ -1107,7 +1098,6 @@ NativeWritable.prototype.unref = function unref() {
   return this;
 };
 
-console.log("d");
 
 function newStreamReadableFromReadableStream(readableStream, options = {}) {
   if (!(readableStream instanceof ReadableStream)) {

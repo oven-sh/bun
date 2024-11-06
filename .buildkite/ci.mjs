@@ -11,13 +11,14 @@ import {
   getCanaryRevision,
   getChangedFiles,
   getCommitMessage,
-  getPreviousBuildId,
+  getLastSuccessfulBuild,
   isBuildkite,
   isFork,
   isMainBranch,
   isMergeQueue,
   printEnvironment,
   spawnSafe,
+  startGroup,
 } from "../scripts/utils.mjs";
 
 function toYaml(obj, indent = 0) {
@@ -338,8 +339,21 @@ function getPipeline(buildId) {
 async function main() {
   printEnvironment();
 
+  const lastBuild = await startGroup("Checking last successful build...", async () => {
+    const build = await getLastSuccessfulBuild();
+    if (build) {
+      const { id, path, commit_id: commit } = build;
+      console.log(" - Build ID:", id);
+      console.log(" - Build URL:", new URL(path, "https://buildkite.com/").toString());
+      console.log(" - Commit:", commit);
+    } else {
+      console.log(" - No build found");
+    }
+    return build;
+  });
+
   console.log("Checking changed files...");
-  const changedFiles = await getChangedFiles();
+  const changedFiles = await getChangedFiles(undefined, undefined, lastBuild?.commit_id);
   if (changedFiles) {
     if (changedFiles.length) {
       changedFiles.forEach(filename => console.log(` - ${filename}`));

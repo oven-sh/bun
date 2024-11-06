@@ -968,13 +968,22 @@ export function getFileUrl(filename, line) {
 }
 
 /**
- * @returns {Promise<string | undefined>}
+ * @typedef {object} BuildkiteBuild
+ * @property {string} id
+ * @property {string} commit_id
+ * @property {string} branch_name
  */
-export async function getPreviousBuildId() {
+
+/**
+ * @returns {Promise<BuildkiteBuild | undefined>}
+ */
+export async function getLastSuccessfulBuild() {
   if (isBuildkite) {
     let depth = 0;
     let url = getBuildUrl();
-    url.hash = "";
+    if (url) {
+      url.hash = "";
+    }
 
     while (url) {
       const { error, body } = await curl(`${url}.json`, { json: true });
@@ -982,13 +991,13 @@ export async function getPreviousBuildId() {
         return;
       }
 
-      const { id, state, prev_branch_build: previousBuild, steps } = body;
+      const { state, prev_branch_build: previousBuild, steps } = body;
       if (depth++) {
         if (state === "failed" || state === "passed" || state === "canceled") {
           const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
           if (buildSteps.length) {
             if (buildSteps.every(({ outcome }) => outcome === "passed")) {
-              return id;
+              return body;
             }
             return;
           }

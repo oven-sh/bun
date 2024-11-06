@@ -160,11 +160,16 @@ async function runTests() {
 
     if (isBuildkite) {
       const { ok, error, stdoutPreview } = result;
-      const markdown = formatTestToMarkdown(result);
-      if (markdown) {
-        const style = title.startsWith("vendor") ? "warning" : "error";
-        const priority = title.startsWith("vendor") ? 1 : 5;
-        reportAnnotationToBuildKite({ label: title, content: markdown, style, priority });
+      if (title.startsWith("vendor")) {
+        const markdown = formatTestToMarkdown({ ...result, testPath: title });
+        if (markdown) {
+          reportAnnotationToBuildKite({ label: title, content: markdown, style: "warning", priority: 5 });
+        }
+      } else {
+        const markdown = formatTestToMarkdown(result);
+        if (markdown) {
+          reportAnnotationToBuildKite({ label: title, content: markdown, style: "error" });
+        }
       }
 
       if (!ok) {
@@ -738,25 +743,6 @@ async function spawnBunInstall(execPath, options) {
     stdout,
     stdoutPreview: stdout,
   };
-}
-
-/**
- * @returns {string | undefined}
- */
-function getGitSha() {
-  const sha = process.env["GITHUB_SHA"] || process.env["BUILDKITE_COMMIT"];
-  if (sha?.length === 40) {
-    return sha;
-  }
-  try {
-    const { stdout } = spawnSync("git", ["rev-parse", "HEAD"], {
-      encoding: "utf-8",
-      timeout: spawnTimeout,
-    });
-    return stdout.trim();
-  } catch (error) {
-    console.warn(error);
-  }
 }
 
 /**

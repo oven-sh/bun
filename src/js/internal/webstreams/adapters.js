@@ -10,8 +10,11 @@ const {
   PromiseResolve,
 } = require("internal/primordials");
 
-const { Stream } = require("../streams/legacy");
-const { Buffer } = require("node:buffer");
+const { Stream }  = require("../streams/legacy");
+
+var kEnsureConstructed = Symbol("kEnsureConstructed");
+
+const { Buffer }  = require("node:buffer");
 
 const eos = require("../streams/end-of-stream");
 
@@ -23,6 +26,7 @@ const { validateObject, validateBoolean } = require("../validators");
 const { createDeferredPromise } = require("../../node/util");
 
 const Readable = require("../streams/readable");
+const Writable = require("../streams/writable");
 
 const { isReadableStream, isWritableStream } = require("../streams/utils");
 
@@ -558,12 +562,11 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
   return writable;
 }
 
-
+console.log(";");
 
 
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
-function createNativeStreamReadable(Readable) {
-  var closer = [false];
+var closer = [false];
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {
     if (result > 0) {
       const slice = view.subarray(0, result);
@@ -617,6 +620,8 @@ function createNativeStreamReadable(Readable) {
   const _handleResult = Symbol("_handleResult");
   const _internalRead = Symbol("_internalRead");
 
+console.log("a");
+
   function NativeReadable(this, ptr, options) {
     if (!(this instanceof NativeReadable)) {
       return new NativeReadable(path, options);
@@ -644,9 +649,13 @@ function createNativeStreamReadable(Readable) {
     ptr.onDrain = this[_onDrain].bind(this);
   }
 
+console.log("a1");
+
   NativeReadable.prototype = {};
   Object.setPrototypeOf(NativeReadable.prototype, Readable.prototype);
 
+
+console.log("a2");
   NativeReadable.prototype[_onClose] = function () {
     this.push(null);
   };
@@ -801,13 +810,14 @@ function createNativeStreamReadable(Readable) {
     }
   };
 
-  NativeReadable.prototype[Stream[Symbol.for("::bunternal::")].kEnsureConstructed] = function () {
+console.log("a3");
+
+  NativeReadable.prototype[kEnsureConstructed] = function () {
     if (this[constructed]) return;
     this[_internalConstruct](this.$bunNativePtr);
   };
 
-  return NativeReadable;
-}
+console.log("b");
 
 var nativeReadableStreamPrototypes = {
   0: undefined,
@@ -818,8 +828,8 @@ var nativeReadableStreamPrototypes = {
   5: undefined,
 };
 
-function getNativeReadableStreamPrototype(nativeType, Readable) {
-  return (nativeReadableStreamPrototypes[nativeType] ??= createNativeStreamReadable(Readable));
+function getNativeReadableStreamPrototype(nativeType) {
+  return (nativeReadableStreamPrototypes[nativeType] ??= NativeReadable);
 }
 
 function getNativeReadableStream(Readable, stream, options) {
@@ -963,6 +973,142 @@ ReadableFromWeb.prototype._destroy = function(error, callback) {
   }
 };
 
+
+console.log("c");
+const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
+const { fileSinkSymbol: _fileSink } = require("internal/shared");
+const _native = Symbol("native");
+
+function NativeWritable(pathOrFdOrSink, options = {}) {
+  Writable.$call(this, options);
+
+  this[_native] = true;
+
+  this._construct = NativeWritable_internalConstruct;
+  this._final = NativeWritable_internalFinal;
+  this._write = NativeWritablePrototypeWrite;
+
+  this[_pathOrFdOrSink] = pathOrFdOrSink;
+}
+
+NativeWritable.prototype = Object.create(Writable.prototype);
+Object.setPrototypeOf(NativeWritable, Writable);
+
+// These are confusingly two different fns for construct which initially were the same thing because
+// `_construct` is part of the lifecycle of Writable and is not called lazily,
+// so we need to separate our _construct for Writable state and actual construction of the write stream
+function NativeWritable_internalConstruct(cb) {
+  this._writableState.constructed = true;
+  this.constructed = true;
+  if (typeof cb === "function") process.nextTick(cb);
+  process.nextTick(() => {
+    this.emit("open", this.fd);
+    this.emit("ready");
+  });
+}
+
+function NativeWritable_lazyConstruct(stream) {
+  // TODO: Turn this check into check for instanceof FileSink
+  var sink = stream[_pathOrFdOrSink];
+  if (typeof sink === "object") {
+    if (typeof sink.write === "function") {
+      return (stream[_fileSink] = sink);
+    } else {
+      throw new Error("Invalid FileSink");
+    }
+  } else {
+    return (stream[_fileSink] = Bun.file(sink).writer());
+  }
+}
+
+function NativeWritablePrototypeWrite(chunk, encoding, cb) {
+  var fileSink = this[_fileSink] ?? NativeWritable_lazyConstruct(this);
+  var result = fileSink.write(chunk);
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+  }
+
+  if ($isPromise(result)) {
+    // var writePromises = this.#writePromises;
+    // var i = writePromises.length;
+    // writePromises[i] = result;
+    result
+      .then(result => {
+        this.emit("drain");
+        if (cb) {
+          cb(null, result);
+        }
+      })
+      .catch(
+        cb
+          ? err => {
+              cb(err);
+            }
+          : err => {
+              this.emit("error", err);
+            },
+      );
+    return false;
+  }
+
+  // TODO: Should we just have a calculation based on encoding and length of chunk?
+  if (cb) cb(null, chunk.byteLength);
+  return true;
+}
+
+const WritablePrototypeEnd = Writable.prototype.end;
+NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
+  return WritablePrototypeEnd.$call(this, chunk, encoding, cb, native ?? this[_native]);
+};
+
+NativeWritable.prototype._destroy = function (error, cb) {
+  const w = this._writableState;
+  const r = this._readableState;
+
+  if (w) {
+    w.destroyed = true;
+    w.closeEmitted = true;
+  }
+  if (r) {
+    r.destroyed = true;
+    r.closeEmitted = true;
+  }
+
+  if (typeof cb === "function") cb(error);
+
+  if (w?.closeEmitted || r?.closeEmitted) {
+    this.emit("close");
+  }
+};
+
+function NativeWritable_internalFinal(cb) {
+  var sink = this[_fileSink];
+  if (sink) {
+    const end = sink.end(true);
+    if ($isPromise(end) && cb) {
+      end.then(() => {
+        if (cb) cb();
+      }, cb);
+    }
+  }
+  if (cb) cb();
+}
+
+NativeWritable.prototype.ref = function ref() {
+  const sink = (this[_fileSink] ||= NativeWritable_lazyConstruct(this));
+  sink.ref();
+  return this;
+};
+
+NativeWritable.prototype.unref = function unref() {
+  const sink = (this[_fileSink] ||= NativeWritable_lazyConstruct(this));
+  sink.unref();
+  return this;
+};
+
+console.log("d");
+
 function newStreamReadableFromReadableStream(readableStream, options = {}) {
   if (!(readableStream instanceof ReadableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
@@ -1091,6 +1237,12 @@ function newReadableStreamFromStreamReadable(streamReadable, options = {}) {
   );
 }
 
+Stream[Symbol.for("::bunternal::")] = {
+  _ReadableFromWeb: newReadableStreamFromStreamReadable,
+  _ReadableFromWebForUndici: ReadableFromWeb,
+  kEnsureConstructed: kEnsureConstructed,
+};
+
 export default {
   newStreamWritableFromWritableStream,
   newWritableStreamFromStreamWritable,
@@ -1101,4 +1253,9 @@ export default {
   newStreamReadableFromReadableStream,
   newReadableStreamFromStreamReadable,
   ReadableFromWeb,
+
+
+  getNativeReadableStreamPrototype,
+  NativeReadable,
+  NativeWritable,
 };

@@ -61,6 +61,7 @@ class Response extends WebResponse {
       var web = super.body;
       if (!web) return null;
       if (!BodyReadable) loadBodyReadable();
+      if (!BodyReadable) console.log("???");
       body = this[kBody] = new BodyReadable({}, web);
     }
 

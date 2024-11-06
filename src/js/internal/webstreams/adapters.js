@@ -1100,5 +1100,5 @@ export default {
 
   newStreamReadableFromReadableStream,
   newReadableStreamFromStreamReadable,
-  ReadableFromWeb
+  ReadableFromWeb,
 };

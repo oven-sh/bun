@@ -47,12 +47,14 @@ test("can bundle escaped import", async () => {
   await $`${bunExe()} build ${import.meta.dirname}/mod_importer.ts`;
 });
 
-test("equals works", async () => {
+test("constant-folded equals doesn't lie", async () => {
   expect(
     "\n" ===
       `
 `,
   ).toBe(true);
+  // prettier-ignore
+  console.log("\"" === '"');
 });
 
 test.skip("template literal raw property with unicode in an ascii-only build", async () => {

@@ -1023,7 +1023,7 @@ fn NewLexer_(
             if (original_text.len < 1024) {
                 var buf = FakeArrayList16{ .items = &small_escape_sequence_buffer, .i = 0 };
                 try lexer.decodeEscapeSequences(lexer.start, original_text, FakeArrayList16, &buf);
-                result.contents = lexer.utf16ToString(buf.items[0..buf.i]);
+                result.contents = try lexer.utf16ToString(buf.items[0..buf.i]);
             } else {
                 if (!large_escape_sequence_list_loaded) {
                     large_escape_sequence_list = try std.ArrayList(u16).initCapacity(lexer.allocator, original_text.len);
@@ -1032,7 +1032,7 @@ fn NewLexer_(
 
                 large_escape_sequence_list.shrinkRetainingCapacity(0);
                 try lexer.decodeEscapeSequences(lexer.start, original_text, std.ArrayList(u16), &large_escape_sequence_list);
-                result.contents = lexer.utf16ToString(large_escape_sequence_list.items);
+                result.contents = try lexer.utf16ToString(large_escape_sequence_list.items);
             }
 
             const identifier = if (kind != .private)
@@ -2278,13 +2278,12 @@ fn NewLexer_(
         }
 
         pub fn utf16ToStringWithValidation(lexer: *LexerType, js: JavascriptString) !string {
-            return std.unicode.utf16leToUtf8Alloc(lexer.allocator, js);
+            return try strings.toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(lexer.allocator, []const u16, js);
         }
 
-        pub fn utf16ToString(lexer: *LexerType, js: JavascriptString) string {
-            return std.unicode.wtf16LeToWtf8Alloc(lexer.allocator, js) catch bun.outOfMemory();
+        pub fn utf16ToString(lexer: *LexerType, js: JavascriptString) !string {
+            return try strings.toUTF8AllocWithType(lexer.allocator, []const u16, js);
         }
-
         pub fn nextInsideJSXElement(lexer: *LexerType) !void {
             lexer.assertNotJSON();
 

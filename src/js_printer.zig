@@ -163,11 +163,11 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool) usize {
+pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
     var remaining = input;
     var len: usize = 2; // for quotes
 
-    while (strings.indexOfNeedsEscape(remaining)) |i| {
+    while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
@@ -205,7 +205,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Writer, quote_char: u8, comptime ascii_only: bool, comptime encoding: strings.Encoding) !void {
+pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime encoding: strings.Encoding) !void {
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
@@ -244,7 +244,7 @@ pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Wri
 
             switch (encoding) {
                 .ascii, .utf8 => {
-                    if (strings.indexOfNeedsEscape(remain)) |j| {
+                    if (strings.indexOfNeedsEscape(remain, quote_char)) |j| {
                         const text_chunk = text[i .. i + clamped_width];
                         try writer.writeAll(text_chunk);
                         i += clamped_width;
@@ -381,9 +381,9 @@ pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Wri
 pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
-    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only));
+    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '\"', ascii_only, .utf8);
+    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, .utf8);
     bytes.appendChar('"') catch unreachable;
 }
 
@@ -1575,7 +1575,12 @@ fn NewPrinter(
 
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
-            writePreQuotedString(text, @TypeOf(writer), writer, quote, ascii_only, .utf8) catch |err| switch (err) {};
+            (switch (quote) {
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, .utf8),
+                else => unreachable,
+            }) catch |err| switch (err) {};
         }
         pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
             var i: usize = 0;

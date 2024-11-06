@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bench, run } "../runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 const SET_SIZE = 10_000;
 

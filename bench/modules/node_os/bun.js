@@ -1,4 +1,4 @@
-import { bench, run } "../runner.mjs";
+import { bench, run } from "../runner.mjs";
 import {
   arch,
   cpus,

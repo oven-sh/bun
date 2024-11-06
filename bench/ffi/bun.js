@@ -1,5 +1,5 @@
 import { CString, dlopen, ptr } from "bun:ffi";
-import { bench, group, run } "../runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const { napiNoop, napiHash, napiString } = require(import.meta.dir + "/src/ffi_napi_bench.node");
 

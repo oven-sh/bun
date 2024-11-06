@@ -1,5 +1,5 @@
 import { gunzipSync, gzipSync } from "bun";
-import { bench, group, run } "../runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const data = await Bun.file(require.resolve("@babel/standalone/babel.min.js")).arrayBuffer();
 

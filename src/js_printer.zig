@@ -3646,7 +3646,7 @@ fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if (js_lexer.isIdentifier(key.data)) {
+                        if (!is_json and js_lexer.isIdentifier(key.data)) {
                             p.printIdentifier(key.data);
                         } else {
                             allow_shorthand = false;
@@ -3690,7 +3690,7 @@ fn NewPrinter(
                                 else => {},
                             }
                         }
-                    } else if (p.canPrintIdentifierUTF16(key.slice16())) {
+                    } else if (!is_json and p.canPrintIdentifierUTF16(key.slice16())) {
                         p.printSpaceBeforeIdentifier();
                         p.printIdentifierUTF16(key.slice16()) catch unreachable;
 

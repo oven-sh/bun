@@ -4916,13 +4916,13 @@ fn NewPrinter(
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
             if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
-                p.print(import_record.path.namespace);
+                p.printStringCharactersUTF8(import_record.path.namespace, quote);
                 p.print(":");
-                p.printIdentifier(import_record.path.text);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.printIdentifier(import_record.path.text);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             }
         }

@@ -2861,6 +2861,38 @@ extern "C" JS_EXPORT napi_status node_api_create_property_key_utf8(napi_env env,
     return napi_create_string_utf8(env, str, length, result);
 }
 
+extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_env env,
+    napi_value arraybuffer,
+    size_t byte_offset,
+    size_t byte_length,
+    napi_value* result)
+{
+    NAPI_LOG_CURRENT_FUNCTION;
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
+    NAPI_CHECK_ARG(env, result);
+
+    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
+    NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
+
+    auto* globalObject = toJS(env);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (byte_offset + byte_length > jsArrayBuffer->impl()->byteLength()) {
+        JSC::throwRangeError(globalObject, scope, "byteOffset exceeds source ArrayBuffer byteLength"_s);
+        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    }
+
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(globalObject, subclassStructure, byte_length);
+    void* destination = uint8Array->vector();
+    const void* source = reinterpret_cast<const char*>(jsArrayBuffer->impl()->data()) + byte_offset;
+    memmove(destination, source, byte_length);
+
+    *result = toNapi(uint8Array, globalObject);
+    scope.release();
+    return napi_set_last_error(env, napi_ok);
+}
+
 extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
 {
     env->cleanup();

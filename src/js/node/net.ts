@@ -398,7 +398,7 @@ const Socket = (function (InternalSocket) {
     };
 
     bytesRead = 0;
-    [kBytesWritten] = 0;
+    [kBytesWritten] = undefined;
     #closed = false;
     #ended = false;
     connecting = false;

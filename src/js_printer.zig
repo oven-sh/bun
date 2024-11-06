@@ -4592,9 +4592,9 @@ fn NewPrinter(
                                 },
 
                                 .auto_onimportcss, .facade_onimportcss => {
-                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
-                                    p.print(record.path.text);
-                                    p.print("\"}));\n");
+                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: ");
+                                    p.printStringLiteralUTF8(record.path.text, false);
+                                    p.print("}));\n");
 
                                     // If they actually use the code, then we emit a facade that just echos whatever they write
                                     if (s.default_name) |name| {

@@ -358,12 +358,12 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (setsockopt(fd,
                     SOL_SOCKET,
                     SO_KEEPALIVE,
-                    (const char*)&enable,
-                    sizeof enable) == -1) {
+                    (const char*)&on,
+                    sizeof on) == -1) {
         return WSAGetLastError();
     }
 
-    if (!enable)
+    if (!on)
         return 0;
 
     if (delay < 1) {

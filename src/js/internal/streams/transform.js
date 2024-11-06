@@ -77,6 +77,8 @@ const kCallback = Symbol("kCallback");
 function Transform(options) {
   if (!(this instanceof Transform)) return new Transform(options);
 
+  this.constructor = Transform;
+
   // TODO (ronag): This should preferably always be
   // applied but would be semver-major. Or even better;
   // make Transform a Readable with the Writable interface.

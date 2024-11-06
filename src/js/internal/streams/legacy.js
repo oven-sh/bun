@@ -8,6 +8,7 @@ const EE = require("node:events");
 
 function Stream(opts) {
   EE.$call(this, opts);
+  this.constructor = Stream;
 }
 Stream.constructor = Stream;
 

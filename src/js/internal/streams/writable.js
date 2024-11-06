@@ -388,6 +388,7 @@ WritableState.prototype[kOnConstructed] = function onConstructed(stream) {
 function Writable(options) {
   if (!(this instanceof Writable)) return new Writable(options);
 
+  this.constructor = Writable;
   this._events ??= {
     close: undefined,
     error: undefined,

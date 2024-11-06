@@ -37,6 +37,8 @@ ObjectSetPrototypeOf(PassThrough, Transform);
 function PassThrough(options) {
   if (!(this instanceof PassThrough)) return new PassThrough(options);
 
+  this.constructor = PassThrough;
+
   Transform.$call(this, options);
 }
 

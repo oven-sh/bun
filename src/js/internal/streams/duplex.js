@@ -40,6 +40,8 @@ const { kOnConstructed } = require("internal/streams/utils");
 function Duplex(options) {
   if (!(this instanceof Duplex)) return new Duplex(options);
 
+  this.constructor = Duplex;
+
   this._events ??= {
     close: undefined,
     error: undefined,

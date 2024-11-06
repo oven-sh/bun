@@ -311,6 +311,7 @@ ReadableState.prototype[kOnConstructed] = function onConstructed(stream) {
 function Readable(options) {
   if (!(this instanceof Readable)) return new Readable(options);
 
+  this.constructor = Readable;
   this._events ??= {
     close: undefined,
     error: undefined,

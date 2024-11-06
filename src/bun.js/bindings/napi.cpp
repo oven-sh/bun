@@ -17,6 +17,7 @@
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
+#include <iostream>
 #include <wtf/text/ExternalStringImpl.h>
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
@@ -1316,11 +1317,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
         // Otherwise, it's cheaper to just call .addFinalizer.
         vm.heap.addFinalizer(object, [env, finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
             NAPI_LOG("finalizer %p", finalize_hint);
-            if (env->mustAlwaysDefer()) {
-                napi_internal_enqueue_finalizer(env, finalize_cb, native_object, finalize_hint);
-            } else {
-                finalize_cb(env, native_object, finalize_hint);
-            }
+            env->doFinalizer(finalize_cb, native_object, finalize_hint);
         });
     }
 
@@ -2117,10 +2114,8 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     Zig::GlobalObject* globalObject = toJS(env);
 
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
-        if (finalize_cb != nullptr) {
-            NAPI_LOG("external buffer finalizer");
-            finalize_cb(env, p, finalize_hint);
-        }
+        NAPI_LOG("external buffer finalizer");
+        env->doFinalizer(finalize_cb, p, finalize_hint);
     }));
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
@@ -2140,10 +2135,8 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     JSC::VM& vm = globalObject->vm();
 
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
-        if (finalize_cb != nullptr) {
-            NAPI_LOG("external ArrayBuffer finalizer");
-            finalize_cb(env, p, finalize_hint);
-        }
+        NAPI_LOG("external ArrayBuffer finalizer");
+        env->doFinalizer(finalize_cb, p, finalize_hint);
     }));
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTFMove(arrayBuffer));

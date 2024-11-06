@@ -61,6 +61,19 @@ public:
         }
     }
 
+    void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
+    {
+        if (!finalize_cb) {
+            return;
+        }
+
+        if (mustAlwaysDefer()) {
+            napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
+        } else {
+            finalize_cb(this, data, finalize_hint);
+        }
+    }
+
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     inline const napi_module& napiModule() const { return m_napiModule; }
 

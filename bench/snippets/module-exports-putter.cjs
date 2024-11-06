@@ -36,7 +36,9 @@ import("../runner.mjs").then(({ bench, run }) => {
       a: 1,
     };
 
-    console.log(
+    const log = !process?.env?.BENCHMARK_RUNNER ? console.log : () => {};
+
+    log(
       module?.exports,
       require.cache[module.id].exports,
       module?.exports === require.cache[module.id],
@@ -49,10 +51,11 @@ import("../runner.mjs").then(({ bench, run }) => {
       return 42;
     };
 
-    console.log(module.exports, module.exports());
+    log(module.exports);
+    log(module.exports, module.exports());
 
     queueMicrotask(() => {
-      console.log(
+      log(
         module?.exports,
         require.cache[module.id].exports,
         module?.exports === require.cache[module.id]?.exports,

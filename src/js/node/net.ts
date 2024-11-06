@@ -95,6 +95,28 @@ function finishSocket(hasError) {
   detachSocket(this);
   this.emit("close", hasError);
 }
+// Provide a better error message when we call end() as a result
+// of the other side sending a FIN.  The standard 'write after end'
+// is overly vague, and makes it seem like the user's code is to blame.
+function writeAfterFIN(chunk, encoding, cb) {
+  if (!this.writableEnded) {
+    return Duplex.prototype.write.$call(this, chunk, encoding, cb);
+  }
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+    encoding = null;
+  }
+
+  const err = new Error("This socket has been ended by the other party");
+  err.code = "EPIPE";
+  if (typeof cb === "function") {
+    process.nextTick(cb, err);
+  }
+  this.destroy(err);
+
+  return false;
+}
 
 var SocketClass;
 const Socket = (function (InternalSocket) {
@@ -217,6 +239,9 @@ const Socket = (function (InternalSocket) {
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
+      if (!this.allowHalfOpen) {
+        self.write = writeAfterFIN;
+      }
       // we just reuse the same code but we can push null or enqueue right away
       Socket.#EmitEndNT(self);
     }
@@ -233,6 +258,9 @@ const Socket = (function (InternalSocket) {
       //socket cannot be used after close
       detachSocket(self);
       if (!self.#ended) {
+        if (!this.allowHalfOpen) {
+          self.write = writeAfterFIN;
+        }
         // close event can be emitted when we still have data to read from the socket
         // we will force the close (not allowing half open) and emit the end event after some time
         setTimeout(Socket.#EmitEndNT, 0, self);
@@ -774,16 +802,9 @@ const Socket = (function (InternalSocket) {
         this._writableState.destroyed = true;
       }
 
-      if (this.writableFinished) {
-        // closed we can detach the socket
-        detachSocket(self);
-        callback(err);
-        process.nextTick(emitCloseNT, this, !!err);
-      } else {
-        callback(err);
-        // lets wait for the finish event before detaching the socket
-        this.once("finish", finishSocket.bind(this, !!err));
-      }
+      detachSocket(self);
+      callback(err);
+      process.nextTick(emitCloseNT, this, !!err);
     }
 
     _final(callback) {

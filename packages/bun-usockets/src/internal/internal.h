@@ -64,18 +64,11 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
+#define LIBUS_ERR WSAGetLastError()
 #else
+#include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
-#endif
-
-#ifdef _WIN32
-#define LIBUS_ERR() ({ \
-    WSAGetLastError(); \
-})
-#else
-#define LIBUS_ERR() ({ \
-    errno; \
-})
+#define LIBUS_ERR errno
 #endif
 /* Poll type and what it polls for */
 enum {

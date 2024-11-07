@@ -597,14 +597,14 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     while (IS_EINTR(result));
 
     if (result == -1) {
-        *error = LIBUS_ERR();
+        *error = LIBUS_ERR;
         return -1;
     }
 
     do 
         result = listen(listenFd, backlog);
     while (IS_EINTR(result));
-    *error = LIBUS_ERR();
+    *error = LIBUS_ERR;
 
     return result;
 }

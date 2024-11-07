@@ -4319,8 +4319,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
             return ZigType.fromJS(value);
         }
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     extern fn JSC__JSValue__dateInstanceFromNullTerminatedString(*JSGlobalObject, [*:0]const u8) JSValue;
@@ -4341,13 +4339,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn isDate(this: JSValue) bool {
         return this.jsType() == .JSDate;
-    }
-
-    pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
-        if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
-            return null;
-
-        return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
     pub fn protect(this: JSValue) void {

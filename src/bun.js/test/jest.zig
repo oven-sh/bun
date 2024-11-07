@@ -39,7 +39,6 @@ const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSType = JSValue.JSType;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;

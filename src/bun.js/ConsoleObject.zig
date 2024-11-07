@@ -32,6 +32,7 @@ const Counter = std.AutoHashMapUnmanaged(u64, u32);
 const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
 error_writer: BufferedWriter,
 writer: BufferedWriter,
+default_indent: u16 = 0,
 
 counts: Counter = .{},
 
@@ -93,6 +94,17 @@ pub fn messageWithTypeAndLevel(
     }
 
     var console = global.bunVM().console;
+    defer console.default_indent +|= @as(u16, @intFromBool(message_type == .StartGroup));
+
+    if (message_type == .StartGroup and len == 0) {
+        // undefined is printed if passed explicitly.
+        return;
+    }
+
+    if (message_type == .EndGroup) {
+        console.default_indent -|= 1;
+        return;
+    }
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
@@ -157,6 +169,7 @@ pub fn messageWithTypeAndLevel(
         .enable_colors = enable_colors,
         .add_newline = true,
         .flush = true,
+        .default_indent = console.default_indent,
     };
 
     if (message_type == .Table and len >= 1) {
@@ -170,6 +183,7 @@ pub fn messageWithTypeAndLevel(
                 tabular_data,
                 properties,
             );
+            table_printer.value_formatter.indent += console.default_indent;
 
             switch (enable_colors) {
                 inline else => |colors| table_printer.printTable(Writer, writer, colors) catch return,
@@ -667,6 +681,7 @@ pub const FormatOptions = struct {
     quote_strings: bool = false,
     max_depth: u16 = 2,
     single_line: bool = false,
+    default_indent: u16 = 0,
 
     pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) !void {
         const arg1 = arguments[0];
@@ -758,8 +773,10 @@ pub fn format2(
             .quote_strings = options.quote_strings,
             .max_depth = options.max_depth,
             .single_line = options.single_line,
+            .indent = options.default_indent,
         };
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
+        fmt.writeIndent(Writer, writer) catch return;
 
         if (tag.tag == .String) {
             if (options.enable_colors) {
@@ -836,8 +853,11 @@ pub fn format2(
         .ordered_properties = options.ordered_properties,
         .quote_strings = options.quote_strings,
         .single_line = options.single_line,
+        .indent = options.default_indent,
     };
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
+
+    fmt.writeIndent(Writer, writer) catch return;
 
     var any = false;
     if (options.enable_colors) {

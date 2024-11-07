@@ -105,6 +105,14 @@ else()
   unsupported(CMAKE_HOST_SYSTEM_NAME)
 endif()
 
+if(EXISTS "/lib/ld-musl-aarch64.so.1")
+  set(IS_MUSL ON)
+elseif(EXISTS "/lib/ld-musl-x86_64.so.1")
+  set(IS_MUSL ON)
+else()
+  set(IS_MUSL OFF)
+endif()
+
 if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
   set(HOST_OS "aarch64")
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
@@ -369,7 +377,7 @@ function(register_command)
   if(CMD_ENVIRONMENT)
     set(CMD_COMMAND ${CMAKE_COMMAND} -E env ${CMD_ENVIRONMENT} ${CMD_COMMAND})
   endif()
-  
+
   if(NOT CMD_COMMENT)
     string(JOIN " " CMD_COMMENT ${CMD_COMMAND})
   endif()
@@ -519,7 +527,7 @@ function(parse_package_json)
     set(NPM_NODE_MODULES)
     set(NPM_NODE_MODULES_PATH ${NPM_CWD}/node_modules)
     set(NPM_NODE_MODULES_PROPERTIES "devDependencies" "dependencies")
-    
+
     foreach(property ${NPM_NODE_MODULES_PROPERTIES})
       string(JSON NPM_${property} ERROR_VARIABLE error GET "${NPM_PACKAGE_JSON}" "${property}")
       if(error MATCHES "not found")
@@ -875,7 +883,7 @@ function(register_compiler_flags)
       if(NOT COMPILER_TARGETS)
         add_compile_options($<$<COMPILE_LANGUAGE:${lang}>:${flag}>)
       endif()
-      
+
       foreach(target ${COMPILER_TARGETS})
         get_target_property(type ${target} TYPE)
         if(type MATCHES "EXECUTABLE|LIBRARY")
@@ -887,7 +895,7 @@ function(register_compiler_flags)
 endfunction()
 
 function(register_compiler_definitions)
-  
+
 endfunction()
 
 # register_linker_flags()

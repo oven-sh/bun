@@ -11,3 +11,4 @@ bun run sqlite
 BUN=path/to/bun bun run ffi
 # or edit .env file
 ```
+

@@ -4,4 +4,4 @@
 #include <node.h>
 
 // TODO(@190n): remove this
-typedef struct node_api_nogc_env node_api_basic_env;
+typedef node_api_nogc_env node_api_basic_env;

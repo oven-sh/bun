@@ -179,8 +179,7 @@ pub fn parseJSON(
         if (item.data != .e_string)
             return error.InvalidSourceMap;
 
-        item.data.e_string.toUTF8(alloc) catch return error.InvalidSourceMap;
-        source_paths_slice.?[i] = try alloc.dupe(u8, item.data.e_string.slice8());
+        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string.string(alloc));
 
         i += 1;
     };

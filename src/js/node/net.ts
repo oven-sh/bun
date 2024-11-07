@@ -1000,7 +1000,7 @@ const Socket = (function (InternalSocket) {
       // If we are still connecting, then buffer this for later.
       // The Writable logic will buffer up any more writes while
       // waiting for this one to be done.
-      if (this.connecting || !this._handle) {
+      if (this.connecting) {
         this.#writeCallback = callback;
         this._pendingData = chunk;
         this._pendingEncoding = encoding;

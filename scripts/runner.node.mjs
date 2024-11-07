@@ -20,41 +20,31 @@ import {
   rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir, hostname, userInfo, homedir } from "node:os";
 import { join, basename, dirname, relative, sep } from "node:path";
-import { normalize as normalizeWindows } from "node:path/win32";
-import { isIP } from "node:net";
 import { parseArgs } from "node:util";
+import {
+  getBuildLabel,
+  getBuildUrl,
+  getEnv,
+  getFileUrl,
+  getWindowsExitReason,
+  isBuildkite,
+  isCI,
+  isGithubAction,
+  isWindows,
+  printEnvironment,
+  startGroup,
+  tmpdir,
+  unzip,
+} from "./utils.mjs";
+import { userInfo } from "node:os";
+
+const cwd = dirname(import.meta.dirname);
+const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
-
-const isLinux = process.platform === "linux";
-const isMacOS = process.platform === "darwin";
-const isWindows = process.platform === "win32";
-
-const isGitHubAction = !!process.env["GITHUB_ACTIONS"];
-const isBuildKite = !!process.env["BUILDKITE"];
-const isBuildKiteTestSuite = !!process.env["BUILDKITE_ANALYTICS_TOKEN"];
-const isCI = !!process.env["CI"] || isGitHubAction || isBuildKite;
-
-const isAWS =
-  /^ec2/i.test(process.env["USERNAME"]) ||
-  /^ec2/i.test(process.env["USER"]) ||
-  /^(?:ec2|ip)/i.test(process.env["HOSTNAME"]) ||
-  /^(?:ec2|ip)/i.test(getHostname());
-const isCloud = isAWS;
-
-const baseUrl = process.env["GITHUB_SERVER_URL"] || "https://github.com";
-const repository = process.env["GITHUB_REPOSITORY"] || "oven-sh/bun";
-const pullRequest = /^pull\/(\d+)$/.exec(process.env["GITHUB_REF"])?.[1];
-const gitSha = getGitSha();
-const gitRef = getGitRef();
-
-const cwd = dirname(import.meta.dirname);
-const testsPath = join(cwd, "test");
-const tmpPath = getTmpdir();
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -73,11 +63,11 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["shard"]: {
       type: "string",
-      default: process.env["BUILDKITE_PARALLEL_JOB"] || "0",
+      default: getEnv("BUILDKITE_PARALLEL_JOB", false) || "0",
     },
     ["max-shards"]: {
       type: "string",
-      default: process.env["BUILDKITE_PARALLEL_JOB_COUNT"] || "1",
+      default: getEnv("BUILDKITE_PARALLEL_JOB_COUNT", false) || "1",
     },
     ["include"]: {
       type: "string",
@@ -99,37 +89,6 @@ const { values: options, positionals: filters } = parseArgs({
     },
   },
 });
-
-async function printInfo() {
-  console.log("Timestamp:", new Date());
-  console.log("OS:", getOsPrettyText(), getOsEmoji());
-  console.log("Arch:", getArchText(), getArchEmoji());
-  if (isLinux) {
-    console.log("Glibc:", getGlibcVersion());
-  }
-  console.log("Hostname:", getHostname());
-  if (isCI) {
-    console.log("CI:", getCI());
-    console.log("Shard:", options["shard"], "/", options["max-shards"]);
-    console.log("Build URL:", getBuildUrl());
-    console.log("Environment:", process.env);
-    if (isCloud) {
-      console.log("Public IP:", await getPublicIp());
-      console.log("Cloud:", getCloud());
-    }
-    const tailscaleIp = await getTailscaleIp();
-    if (tailscaleIp) {
-      console.log("Tailscale IP:", tailscaleIp);
-    }
-  }
-  console.log("Cwd:", cwd);
-  console.log("Tmpdir:", tmpPath);
-  console.log("Commit:", gitSha);
-  console.log("Ref:", gitRef);
-  if (pullRequest) {
-    console.log("Pull Request:", pullRequest);
-  }
-}
 
 /**
  *
@@ -197,27 +156,32 @@ async function runTests() {
    */
   const runTest = async (title, fn) => {
     const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
-    const result = await runTask(label, fn);
+    const result = await startGroup(label, fn);
     results.push(result);
 
-    if (isBuildKite) {
+    if (isBuildkite) {
       const { ok, error, stdoutPreview } = result;
-      const markdown = formatTestToMarkdown(result);
-      if (markdown) {
-        const style = title.startsWith("vendor") ? "warning" : "error";
-        const priority = title.startsWith("vendor") ? 1 : 5;
-        reportAnnotationToBuildKite({ label: title, content: markdown, style, priority });
+      if (title.startsWith("vendor")) {
+        const markdown = formatTestToMarkdown({ ...result, testPath: title });
+        if (markdown) {
+          reportAnnotationToBuildKite({ label: title, content: markdown, style: "warning", priority: 5 });
+        }
+      } else {
+        const markdown = formatTestToMarkdown(result);
+        if (markdown) {
+          reportAnnotationToBuildKite({ label: title, content: markdown, style: "error" });
+        }
       }
 
       if (!ok) {
         const label = `${getAnsi("red")}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
-        await runTask(label, () => {
+        startGroup(label, () => {
           process.stderr.write(stdoutPreview);
         });
       }
     }
 
-    if (isGitHubAction) {
+    if (isGithubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
         const longMarkdown = formatTestToMarkdown(result);
@@ -267,23 +231,24 @@ async function runTests() {
 
         if (testRunner === "bun") {
           await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
-        } else if (testRunner === "node") {
-          const preload = join(import.meta.dirname, "..", "test", "runners", "node.ts");
+        } else {
+          const testRunnerPath = join(import.meta.dirname, "..", "test", "runners", `${testRunner}.ts`);
+          if (!existsSync(testRunnerPath)) {
+            throw new Error(`Unsupported test runner: ${testRunner}`);
+          }
           await runTest(title, () =>
-            spawnBun(execPath, {
+            spawnBunTest(execPath, testPath, {
               cwd: vendorPath,
-              args: ["--preload", preload, testPath],
+              args: ["--preload", testRunnerPath],
             }),
           );
-        } else {
-          throw new Error(`Unsupported test runner: ${testRunner}`);
         }
       }
     }
   }
 
   const failedTests = results.filter(({ ok }) => !ok);
-  if (isGitHubAction) {
+  if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedTests.length);
     const markdown = formatTestToMarkdown(failedTests);
     reportOutputToGitHubAction("failing_tests", markdown);
@@ -462,7 +427,7 @@ async function spawnSafe(options) {
     error = "timeout";
   } else if (exitCode !== 0) {
     if (isWindows) {
-      const winCode = getWindowsExitCode(exitCode);
+      const winCode = getWindowsExitReason(exitCode);
       if (winCode) {
         exitCode = winCode;
       }
@@ -488,14 +453,14 @@ async function spawnSafe(options) {
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = addPath(dirname(execPath), process.env.PATH);
-  const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
-  const { username } = userInfo();
+  const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
+  const { username, homedir } = userInfo();
   const bunEnv = {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
     USER: username,
-    HOME: homedir(),
+    HOME: homedir,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
@@ -511,23 +476,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   if (env) {
     Object.assign(bunEnv, env);
   }
-  // Use Linux namespaces to isolate the child process
-  // https://man7.org/linux/man-pages/man1/unshare.1.html
-  // if (isLinux) {
-  //   const { uid, gid } = userInfo();
-  //   args = [
-  //     `--wd=${cwd}`,
-  //     "--user",
-  //     `--map-user=${uid}`,
-  //     `--map-group=${gid}`,
-  //     "--fork",
-  //     "--kill-child",
-  //     "--pid",
-  //     execPath,
-  //     ...args,
-  //   ];
-  //   execPath = "unshare";
-  // }
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;
@@ -592,15 +540,17 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @param {string} testPath
  * @param {object} [options]
  * @param {string} [options.cwd]
+ * @param {string[]} [options.args]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
-  const isReallyTest = isTestStrict(testPath);
   const absPath = join(options["cwd"], testPath);
+  const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
+  const args = options["args"] ?? [];
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, absPath] : [absPath],
+    args: isReallyTest ? ["test", ...args, `--timeout=${perTestTimeout}`, absPath] : [...args, absPath],
     cwd: options["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env: {
@@ -638,9 +588,9 @@ function getTestTimeout(testPath) {
  * @param {string} chunk
  */
 function pipeTestStdout(io, chunk) {
-  if (isGitHubAction) {
+  if (isGithubAction) {
     io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
-  } else if (isBuildKite) {
+  } else if (isBuildkite) {
     io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
   } else {
     io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
@@ -800,75 +750,6 @@ async function spawnBunInstall(execPath, options) {
 }
 
 /**
- * @returns {string | undefined}
- */
-function getGitSha() {
-  const sha = process.env["GITHUB_SHA"] || process.env["BUILDKITE_COMMIT"];
-  if (sha?.length === 40) {
-    return sha;
-  }
-  try {
-    const { stdout } = spawnSync("git", ["rev-parse", "HEAD"], {
-      encoding: "utf-8",
-      timeout: spawnTimeout,
-    });
-    return stdout.trim();
-  } catch (error) {
-    console.warn(error);
-  }
-}
-
-/**
- * @returns {string}
- */
-function getGitRef() {
-  const ref = process.env["GITHUB_REF_NAME"] || process.env["BUILDKITE_BRANCH"];
-  if (ref) {
-    return ref;
-  }
-  try {
-    const { stdout } = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-      encoding: "utf-8",
-      timeout: spawnTimeout,
-    });
-    return stdout.trim();
-  } catch (error) {
-    console.warn(error);
-    return "<unknown>";
-  }
-}
-
-/**
- * @returns {string}
- */
-function getTmpdir() {
-  if (isWindows) {
-    for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
-      const tmpdir = process.env[key] || "";
-      // HACK: There are too many bugs with cygwin directories.
-      // We should probably run Windows tests in both cygwin and powershell.
-      if (/cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
-        continue;
-      }
-      return normalizeWindows(tmpdir);
-    }
-    const appData = process.env["LOCALAPPDATA"];
-    if (appData) {
-      const appDataTemp = join(appData, "Temp");
-      if (existsSync(appDataTemp)) {
-        return appDataTemp;
-      }
-    }
-  }
-  if (isMacOS) {
-    if (existsSync("/tmp")) {
-      return "/tmp";
-    }
-  }
-  return tmpdir();
-}
-
-/**
  * @param {string} path
  * @returns {boolean}
  */
@@ -937,6 +818,7 @@ function getTests(cwd) {
  * @property {string} [packageManager]
  * @property {string} [testPath]
  * @property {string} [testRunner]
+ * @property {string[]} [testExtensions]
  * @property {boolean | Record<string, boolean | string>} [skipTests]
  */
 
@@ -979,68 +861,77 @@ async function getVendorTests(cwd) {
   }
 
   return Promise.all(
-    relevantVendors.map(async ({ package: name, repository, tag, testPath, testRunner, packageManager, skipTests }) => {
-      const vendorPath = join(cwd, "vendor", name);
+    relevantVendors.map(
+      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+        const vendorPath = join(cwd, "vendor", name);
 
-      if (!existsSync(vendorPath)) {
+        if (!existsSync(vendorPath)) {
+          await spawnSafe({
+            command: "git",
+            args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
+            timeout: testTimeout,
+            cwd,
+          });
+        }
+
         await spawnSafe({
           command: "git",
-          args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
+          args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
-          cwd,
+          cwd: vendorPath,
         });
-      }
 
-      await spawnSafe({
-        command: "git",
-        args: ["fetch", "--depth", "1", "origin", "tag", tag],
-        timeout: testTimeout,
-        cwd: vendorPath,
-      });
-
-      const packageJsonPath = join(vendorPath, "package.json");
-      if (!existsSync(packageJsonPath)) {
-        throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
-      }
-
-      const testPathPrefix = testPath || "test";
-      const testParentPath = join(vendorPath, testPathPrefix);
-      if (!existsSync(testParentPath)) {
-        throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
-      }
-
-      const isTest = path => {
-        if (!isJavaScriptTest(path)) {
-          return false;
+        const packageJsonPath = join(vendorPath, "package.json");
+        if (!existsSync(packageJsonPath)) {
+          throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
         }
 
-        if (typeof skipTests === "boolean") {
-          return !skipTests;
+        const testPathPrefix = testPath || "test";
+        const testParentPath = join(vendorPath, testPathPrefix);
+        if (!existsSync(testParentPath)) {
+          throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
         }
 
-        if (typeof skipTests === "object") {
-          for (const [glob, reason] of Object.entries(skipTests)) {
-            const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
-            if (pattern.test(path) && reason) {
-              return false;
+        const isTest = path => {
+          if (!isJavaScriptTest(path)) {
+            return false;
+          }
+
+          if (typeof skipTests === "boolean") {
+            return !skipTests;
+          }
+
+          if (typeof skipTests === "object") {
+            for (const [glob, reason] of Object.entries(skipTests)) {
+              const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
+              if (pattern.test(path) && reason) {
+                return false;
+              }
             }
           }
-        }
 
-        return true;
-      };
+          return true;
+        };
 
-      const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
-        .filter(filename => isTest(filename))
-        .map(filename => join(testPathPrefix, filename));
+        const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
+          .filter(filename =>
+            testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
+          )
+          .map(filename => join(testPathPrefix, filename))
+          .filter(
+            filename =>
+              !filters?.length ||
+              filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
+          );
 
-      return {
-        cwd: vendorPath,
-        packageManager: packageManager || "bun",
-        testRunner: testRunner || "bun",
-        testPaths,
-      };
-    }),
+        return {
+          cwd: vendorPath,
+          packageManager: packageManager || "bun",
+          testRunner: testRunner || "bun",
+          testPaths,
+        };
+      },
+    ),
   );
 }
 
@@ -1126,27 +1017,6 @@ function getRelevantTests(cwd) {
   return filteredTests;
 }
 
-let ntStatus;
-
-/**
- * @param {number} exitCode
- * @returns {string}
- */
-function getWindowsExitCode(exitCode) {
-  if (ntStatus === undefined) {
-    const ntStatusPath = "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0\\shared\\ntstatus.h";
-    try {
-      ntStatus = readFileSync(ntStatusPath, "utf-8");
-    } catch (error) {
-      console.warn(error);
-      ntStatus = "";
-    }
-  }
-
-  const match = ntStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
-  return match?.[1];
-}
-
 /**
  * @param {string} bunExe
  * @returns {string}
@@ -1216,17 +1086,7 @@ async function getExecPathFromBuildKite(target) {
     throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
   }
 
-  if (isWindows) {
-    await spawnSafe({
-      command: "powershell",
-      args: ["-Command", `Expand-Archive -Path ${zipPath} -DestinationPath ${releasePath} -Force`],
-    });
-  } else {
-    await spawnSafe({
-      command: "unzip",
-      args: ["-o", zipPath, "-d", releasePath],
-    });
-  }
+  await unzip(zipPath, releasePath);
 
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
     const execPath = join(releasePath, entry);
@@ -1263,308 +1123,6 @@ function getRevision(execPath) {
 }
 
 /**
- * @returns {string}
- */
-function getOsText() {
-  const { platform } = process;
-  switch (platform) {
-    case "darwin":
-      return "darwin";
-    case "linux":
-      return "linux";
-    case "win32":
-      return "windows";
-    default:
-      return platform;
-  }
-}
-
-/**
- * @returns {string}
- */
-function getOsPrettyText() {
-  const { platform } = process;
-  if (platform === "darwin") {
-    const properties = {};
-    for (const property of ["productName", "productVersion", "buildVersion"]) {
-      try {
-        const { error, stdout } = spawnSync("sw_vers", [`-${property}`], {
-          encoding: "utf-8",
-          timeout: spawnTimeout,
-          env: {
-            PATH: process.env.PATH,
-          },
-        });
-        if (error) {
-          throw error;
-        }
-        properties[property] = stdout.trim();
-      } catch (error) {
-        console.warn(error);
-      }
-    }
-    const { productName, productVersion, buildVersion } = properties;
-    if (!productName) {
-      return "macOS";
-    }
-    if (!productVersion) {
-      return productName;
-    }
-    if (!buildVersion) {
-      return `${productName} ${productVersion}`;
-    }
-    return `${productName} ${productVersion} (build: ${buildVersion})`;
-  }
-  if (platform === "linux") {
-    try {
-      const { error, stdout } = spawnSync("lsb_release", ["--description", "--short"], {
-        encoding: "utf-8",
-        timeout: spawnTimeout,
-        env: {
-          PATH: process.env.PATH,
-        },
-      });
-      if (error) {
-        throw error;
-      }
-      return stdout.trim();
-    } catch (error) {
-      console.warn(error);
-      return "Linux";
-    }
-  }
-  if (platform === "win32") {
-    try {
-      const { error, stdout } = spawnSync("cmd", ["/c", "ver"], {
-        encoding: "utf-8",
-        timeout: spawnTimeout,
-        env: {
-          PATH: process.env.PATH,
-        },
-      });
-      if (error) {
-        throw error;
-      }
-      return stdout.trim();
-    } catch (error) {
-      console.warn(error);
-      return "Windows";
-    }
-  }
-  return platform;
-}
-
-/**
- * @returns {string}
- */
-function getOsEmoji() {
-  const { platform } = process;
-  switch (platform) {
-    case "darwin":
-      return isBuildKite ? ":apple:" : "";
-    case "win32":
-      return isBuildKite ? ":windows:" : "🪟";
-    case "linux":
-      return isBuildKite ? ":linux:" : "🐧";
-    default:
-      return "🔮";
-  }
-}
-
-/**
- * @returns {string}
- */
-function getArchText() {
-  const { arch } = process;
-  switch (arch) {
-    case "x64":
-      return "x64";
-    case "arm64":
-      return "aarch64";
-    default:
-      return arch;
-  }
-}
-
-/**
- * @returns {string}
- */
-function getArchEmoji() {
-  const { arch } = process;
-  switch (arch) {
-    case "x64":
-      return "🖥";
-    case "arm64":
-      return "💪";
-    default:
-      return "🔮";
-  }
-}
-
-/**
- * @returns {string | undefined}
- */
-function getGlibcVersion() {
-  if (!isLinux) {
-    return;
-  }
-  try {
-    const { header } = process.report.getReport();
-    const { glibcVersionRuntime } = header;
-    if (typeof glibcVersionRuntime === "string") {
-      return glibcVersionRuntime;
-    }
-  } catch (error) {
-    console.warn(error);
-  }
-}
-
-/**
- * @returns {string | undefined}
- */
-function getBuildUrl() {
-  if (isBuildKite) {
-    const buildUrl = process.env["BUILDKITE_BUILD_URL"];
-    const jobId = process.env["BUILDKITE_JOB_ID"];
-    if (buildUrl) {
-      return jobId ? `${buildUrl}#${jobId}` : buildUrl;
-    }
-  }
-  if (isGitHubAction) {
-    const baseUrl = process.env["GITHUB_SERVER_URL"];
-    const repository = process.env["GITHUB_REPOSITORY"];
-    const runId = process.env["GITHUB_RUN_ID"];
-    if (baseUrl && repository && runId) {
-      return `${baseUrl}/${repository}/actions/runs/${runId}`;
-    }
-  }
-}
-
-/**
- * @returns {string}
- */
-function getBuildLabel() {
-  if (isBuildKite) {
-    const label = process.env["BUILDKITE_LABEL"] || process.env["BUILDKITE_GROUP_LABEL"];
-    if (label) {
-      return label.replace("- test-bun", "").replace("- bun-test", "").trim();
-    }
-  }
-  return `${getOsEmoji()} ${getArchText()}`;
-}
-
-/**
- * @param {string} file
- * @param {number} [line]
- * @returns {string | undefined}
- */
-function getFileUrl(file, line) {
-  const filePath = file.replace(/\\/g, "/");
-
-  let url;
-  if (pullRequest) {
-    const fileMd5 = crypto.createHash("md5").update(filePath).digest("hex");
-    url = `${baseUrl}/${repository}/pull/${pullRequest}/files#diff-${fileMd5}`;
-    if (line !== undefined) {
-      url += `L${line}`;
-    }
-  } else if (gitSha) {
-    url = `${baseUrl}/${repository}/blob/${gitSha}/${filePath}`;
-    if (line !== undefined) {
-      url += `#L${line}`;
-    }
-  }
-
-  return url;
-}
-
-/**
- * @returns {string | undefined}
- */
-function getCI() {
-  if (isBuildKite) {
-    return "BuildKite";
-  }
-  if (isGitHubAction) {
-    return "GitHub Actions";
-  }
-  if (isCI) {
-    return "CI";
-  }
-}
-
-/**
- * @returns {string | undefined}
- */
-function getCloud() {
-  if (isAWS) {
-    return "AWS";
-  }
-}
-
-/**
- * @returns {string | undefined}
- */
-function getHostname() {
-  if (isBuildKite) {
-    return process.env["BUILDKITE_AGENT_NAME"];
-  }
-  try {
-    return hostname();
-  } catch (error) {
-    console.warn(error);
-  }
-}
-
-/**
- * @returns {Promise<string | undefined>}
- */
-async function getPublicIp() {
-  const addressUrls = ["https://checkip.amazonaws.com", "https://ipinfo.io/ip"];
-  if (isAWS) {
-    addressUrls.unshift("http://169.254.169.254/latest/meta-data/public-ipv4");
-  }
-  for (const url of addressUrls) {
-    try {
-      const response = await fetch(url);
-      const { ok, status, statusText } = response;
-      if (!ok) {
-        throw new Error(`${status} ${statusText}: ${url}`);
-      }
-      const text = await response.text();
-      const address = text.trim();
-      if (isIP(address)) {
-        return address;
-      } else {
-        throw new Error(`Invalid IP address: ${address}`);
-      }
-    } catch (error) {
-      console.warn(error);
-    }
-  }
-}
-
-/**
- * @returns {string | undefined}
- */
-function getTailscaleIp() {
-  try {
-    const { status, stdout } = spawnSync("tailscale", ["ip", "--1"], {
-      encoding: "utf-8",
-      timeout: spawnTimeout,
-      env: {
-        PATH: process.env.PATH,
-      },
-    });
-    if (status === 0) {
-      return stdout.trim();
-    }
-  } catch {
-    // ...
-  }
-}
-
-/**
  * @param  {...string} paths
  * @returns {string}
  */
@@ -1573,28 +1131,6 @@ function addPath(...paths) {
     return paths.join(";");
   }
   return paths.join(":");
-}
-
-/**
- * @param {string} title
- * @param {function} fn
- */
-async function runTask(title, fn) {
-  if (isGitHubAction) {
-    console.log(`::group::${stripAnsi(title)}`);
-  } else if (isBuildKite) {
-    console.log(`--- ${title}`);
-  } else {
-    console.log(title);
-  }
-  try {
-    return await fn();
-  } finally {
-    if (isGitHubAction) {
-      console.log("::endgroup::");
-    }
-    console.log();
-  }
 }
 
 /**
@@ -1649,7 +1185,7 @@ function formatTestToMarkdown(result, concise) {
       markdown += "</li>\n";
     } else {
       markdown += "</summary>\n\n";
-      if (isBuildKite) {
+      if (isBuildkite) {
         const preview = escapeCodeBlock(stdout);
         markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
       } else {
@@ -1844,42 +1380,6 @@ function parseDuration(duration) {
 }
 
 /**
- * @param {string} status
- * @returns {string}
- */
-function getTestEmoji(status) {
-  switch (status) {
-    case "pass":
-      return "✅";
-    case "fail":
-      return "❌";
-    case "skip":
-      return "⏭";
-    case "todo":
-      return "✏️";
-    default:
-      return "🔮";
-  }
-}
-
-/**
- * @param {string} status
- * @returns {string}
- */
-function getTestColor(status) {
-  switch (status) {
-    case "pass":
-      return getAnsi("green");
-    case "fail":
-      return getAnsi("red");
-    case "skip":
-    case "todo":
-    default:
-      return getAnsi("gray");
-  }
-}
-
-/**
  * @param {string} execPath
  * @returns {boolean}
  */
@@ -1902,7 +1402,7 @@ function getExitCode(outcome) {
   if (outcome === "pass") {
     return 0;
   }
-  if (!isBuildKite) {
+  if (!isBuildkite) {
     return 1;
   }
   // On Buildkite, you can define a `soft_fail` property to differentiate
@@ -1917,51 +1417,24 @@ function getExitCode(outcome) {
 }
 
 /**
- * @returns {Promise<Date | undefined>}
- */
-async function getDoomsdayDate() {
-  try {
-    const response = await fetch("http://169.254.169.254/latest/meta-data/spot/instance-action");
-    if (response.ok) {
-      const { time } = await response.json();
-      return new Date(time);
-    }
-  } catch {
-    // Ignore
-  }
-}
-
-/**
  * @param {string} signal
  */
-async function beforeExit(signal) {
-  const endOfWorld = await getDoomsdayDate();
-  if (endOfWorld) {
-    const timeMin = 10 * 1000;
-    const timeLeft = Math.max(0, date.getTime() - Date.now());
-    if (timeLeft > timeMin) {
-      setTimeout(() => onExit(signal), timeLeft - timeMin);
-      return;
-    }
-  }
-  onExit(signal);
-}
-
-/**
- * @param {string} signal
- */
-async function onExit(signal) {
+function onExit(signal) {
   const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
-  await runTask(label, () => {
+  startGroup(label, () => {
     process.exit(getExitCode("cancel"));
   });
 }
 
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => beforeExit(signal));
+export async function main() {
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => onExit(signal));
+  }
+
+  printEnvironment();
+  const results = await runTests();
+  const ok = results.every(({ ok }) => ok);
+  process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 
-await runTask("Environment", printInfo);
-const results = await runTests();
-const ok = results.every(({ ok }) => ok);
-process.exit(getExitCode(ok ? "pass" : "fail"));
+await main();

@@ -1687,10 +1687,14 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`console.log("\\u1011")`, `console.log("ထ")`);
     });
 
-    it("unicode paired surrogate", () => {
+    it("unicode surrogates", () => {
       expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
       expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
       expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
+      expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
+      expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
     });
 
     it("fold string addition", () => {

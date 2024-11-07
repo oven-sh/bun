@@ -176,7 +176,7 @@ fn NewLexer_(
         allocator: std.mem.Allocator,
         string_literal_raw_content: string = "",
         string_literal_start: usize = 0,
-        string_literal_raw_format: enum { utf8, utf16, needs_decode } = .utf8,
+        string_literal_raw_format: enum { ascii, utf16, needs_decode } = .ascii,
         temp_buffer_u16: std.ArrayList(u16),
 
         /// Only used for JSON stringification when bundling
@@ -779,7 +779,7 @@ fn NewLexer_(
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
             lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
-            lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .utf8;
+            lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
             lexer.string_literal_start = lexer.start;
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
 
@@ -2096,8 +2096,8 @@ fn NewLexer_(
 
         pub fn toEString(lexer: *LexerType) !js_ast.E.String {
             switch (lexer.string_literal_raw_format) {
-                .utf8 => {
-                    // string_literal_raw_content contains utf-8 without escapes
+                .ascii => {
+                    // string_literal_raw_content contains ascii without escapes
                     return js_ast.E.String.init(lexer.string_literal_raw_content);
                 },
                 .utf16 => {
@@ -2111,7 +2111,15 @@ fn NewLexer_(
                     defer lexer.temp_buffer_u16.clearRetainingCapacity();
                     try lexer.temp_buffer_u16.ensureUnusedCapacity(lexer.string_literal_raw_content.len);
                     try lexer.decodeEscapeSequences(lexer.string_literal_start, lexer.string_literal_raw_content, std.ArrayList(u16), &lexer.temp_buffer_u16);
-                    return js_ast.E.String.init(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
+                    const first_non_ascii = strings.firstNonASCII16([]const u16, lexer.temp_buffer_u16.items);
+                    // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding is not yet supported on utf-16.
+                    if (first_non_ascii != null) {
+                        return js_ast.E.String.init(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
+                    } else {
+                        const result = try lexer.allocator.alloc(u8, lexer.temp_buffer_u16.items.len);
+                        strings.copyU16IntoU8(result, []const u16, lexer.temp_buffer_u16.items);
+                        return js_ast.E.String.init(result);
+                    }
                 },
             }
         }
@@ -2410,7 +2418,7 @@ fn NewLexer_(
                 lexer.string_literal_raw_format = .utf16;
             } else {
                 lexer.string_literal_raw_content = raw_content_slice;
-                lexer.string_literal_raw_format = .utf8;
+                lexer.string_literal_raw_format = .ascii;
             }
         }
 
@@ -2486,7 +2494,7 @@ fn NewLexer_(
                             }
                         } else {
                             lexer.string_literal_raw_content = raw_content_slice;
-                            lexer.string_literal_raw_format = .utf8;
+                            lexer.string_literal_raw_format = .ascii;
                         }
                     },
                 }

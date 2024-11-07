@@ -286,7 +286,7 @@ pub const Parser = struct {
                 const c = val[i];
                 if (esc) {
                     switch (c) {
-                        '\\' => try unesc.appendSlice(&[_]u8{ '\\', '\\' }),
+                        '\\' => try unesc.appendSlice(&[_]u8{'\\'}),
                         ';', '#', '$' => try unesc.append(c),
                         '.' => {
                             if (comptime usage == .section) {

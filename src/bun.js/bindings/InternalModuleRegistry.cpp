@@ -6,7 +6,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
-
+#include <JavaScriptCore/Debugger.h>
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
@@ -54,6 +54,9 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (UNLIKELY(globalObject->hasDebugger() && globalObject->debugger()->isInteractivelyDebugging())) {
+        globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
+    }
 
     JSC::MarkedArgumentBuffer argList;
     JSValue result = JSC::profiledCall(

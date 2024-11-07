@@ -73,6 +73,8 @@ const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 
+const napi = @import("../../napi/napi.zig");
+
 const TCC = @import("../../tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
@@ -431,6 +433,8 @@ pub const FFI = struct {
             if (this.deferred_errors.items.len > 0) {
                 return error.DeferredErrors;
             }
+
+            _ = TCC.tcc_add_symbol(state, "napiEnv", globalThis.makeNapiEnvForFFI());
 
             for (this.define.items) |define| {
                 TCC.tcc_define_symbol(state, define[0], define[1]);
@@ -791,7 +795,7 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
             const allocator = bun.default_allocator;
 
-            function.compile(allocator) catch |err| {
+            function.compile(allocator, globalThis) catch |err| {
                 if (!globalThis.hasException()) {
                     const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
                         @errorName(err),
@@ -1131,7 +1135,7 @@ pub const FFI = struct {
                 function.symbol_from_dynamic_library = resolved_symbol;
             }
 
-            function.compile(allocator) catch |err| {
+            function.compile(allocator, global) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
@@ -1236,7 +1240,7 @@ pub const FFI = struct {
                 return ret;
             }
 
-            function.compile(allocator) catch |err| {
+            function.compile(allocator, global) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
@@ -1541,10 +1545,7 @@ pub const FFI = struct {
 
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
-        pub fn compile(
-            this: *Function,
-            allocator: std.mem.Allocator,
-        ) !void {
+        pub fn compile(this: *Function, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) !void {
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
@@ -1565,6 +1566,7 @@ pub const FFI = struct {
             }
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
+            _ = TCC.tcc_add_symbol(state, "napiEnv", globalThis.makeNapiEnvForFFI());
 
             CompilerRT.define(state);
 
@@ -1672,6 +1674,7 @@ pub const FFI = struct {
             }
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
+            _ = TCC.tcc_add_symbol(state, "napiEnv", js_context.makeNapiEnvForFFI());
 
             CompilerRT.define(state);
 
@@ -1800,7 +1803,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  void* handleScope = NapiHandleScope__open(JS_GLOBAL_OBJECT, false);
+                    \\  void* handleScope = NapiHandleScope__open(&napiEnv, false);
                     \\
                 );
             }
@@ -1813,7 +1816,7 @@ pub const FFI = struct {
                 for (this.arg_types.items, 0..) |arg, i| {
                     if (arg == .napi_env) {
                         try writer.print(
-                            \\  napi_env arg{d} = (napi_env)JS_GLOBAL_OBJECT;
+                            \\  napi_env arg{d} = (napi_env)&napiEnv;
                             \\  argsPtr++;
                             \\
                         ,
@@ -1913,7 +1916,7 @@ pub const FFI = struct {
 
             if (this.needsHandleScope()) {
                 try writer.writeAll(
-                    \\  NapiHandleScope__close(JS_GLOBAL_OBJECT, handleScope);
+                    \\  NapiHandleScope__close(&napiEnv, handleScope);
                     \\
                 );
             }
@@ -2229,7 +2232,7 @@ pub const FFI = struct {
                         try writer.writeAll("JSVALUE_TO_FLOAT(");
                     },
                     .napi_env => {
-                        try writer.writeAll("(napi_env)JS_GLOBAL_OBJECT");
+                        try writer.writeAll("((napi_env)&napiEnv)");
                         return;
                     },
                     .napi_value => {
@@ -2290,7 +2293,7 @@ pub const FFI = struct {
                         try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
                     },
                     .napi_env => {
-                        try writer.writeAll("JS_GLOBAL_OBJECT");
+                        try writer.writeAll("((napi_env)&napiEnv)");
                     },
                     .napi_value => {
                         try writer.print("((EncodedJSValue) {{.asNapiValue = {s} }} )", .{self.symbol});

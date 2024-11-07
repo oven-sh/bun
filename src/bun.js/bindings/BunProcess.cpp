@@ -423,10 +423,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
 
+    // TODO(@heimskr): escape characters like % and #
+    char* filename_cstr = strdup(("file://" + filename.utf8().toStdString()).c_str());
+
     napi_module nmodule {
         .nm_version = module_version,
         .nm_flags = 0,
-        .nm_filename = "[no filename]",
+        .nm_filename = filename_cstr,
         .nm_register_func = nullptr,
         .nm_modname = "[no modname]",
         .nm_priv = nullptr,
@@ -435,7 +438,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     static_assert(sizeof(napi_value) == sizeof(EncodedJSValue), "EncodedJSValue must be reinterpretable as a pointer");
 
-    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject->makeNapiEnv(nmodule), reinterpret_cast<napi_value>(exportsValue)));
+    auto env = globalObject->makeNapiEnv(nmodule);
+    env->filename = filename_cstr;
+
+    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
 
     RETURN_IF_EXCEPTION(scope, {});
 

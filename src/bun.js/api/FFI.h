@@ -62,6 +62,7 @@ typedef enum {
 } napi_status;
 void* NapiHandleScope__open(void* jsGlobalObject, bool detached);
 void NapiHandleScope__close(void* jsGlobalObject, void* handleScope);
+extern void *napiEnv;
 #endif
 
 

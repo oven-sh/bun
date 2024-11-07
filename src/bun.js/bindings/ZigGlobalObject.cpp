@@ -2423,7 +2423,6 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
     auto& vm = globalObject->vm();
@@ -2442,6 +2441,11 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*
 
     auto callData = JSC::getCallData(function);
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
+extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
+{
+    return globalObject->makeNapiEnvForFFI();
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
@@ -4277,6 +4281,20 @@ napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
 {
     m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
     return m_napiEnvs.last().get();
+}
+
+napi_env GlobalObject::makeNapiEnvForFFI()
+{
+    auto out = makeNapiEnv(napi_module {
+        .nm_version = 9,
+        .nm_flags = 0,
+        .nm_filename = "ffi://",
+        .nm_register_func = nullptr,
+        .nm_modname = "[ffi]",
+        .nm_priv = nullptr,
+        .reserved = {},
+    });
+    return out;
 }
 
 void GlobalObject::finishNapiFinalizers()

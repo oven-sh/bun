@@ -28,6 +28,11 @@ public:
         napi_internal_register_cleanup_zig(this);
     }
 
+    ~napi_env__()
+    {
+        std::free(filename);
+    }
+
     void cleanup()
     {
         for (const BoundFinalizer& boundFinalizer : m_finalizers) {
@@ -92,6 +97,7 @@ public:
 
     void* instanceData = nullptr;
     WTF::RefPtr<Bun::NapiFinalizer> instanceDataFinalizer;
+    char* filename = nullptr;
 
 private:
     struct BoundFinalizer {

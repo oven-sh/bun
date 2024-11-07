@@ -600,6 +600,7 @@ public:
 
     WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
     napi_env makeNapiEnv(const napi_module&);
+    napi_env makeNapiEnvForFFI();
     void finishNapiFinalizers();
 
 private:

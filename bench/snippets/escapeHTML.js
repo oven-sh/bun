@@ -92,11 +92,11 @@ function reactEscapeHtml(string) {
 // }
 
 for (let input of [
-  `long string, nothing to escape... `.repeat(9999999 * 3),
+  "long string, nothing to escape... ".repeat(9999999 * 3),
   FIXTURE.repeat(8000),
   // "[unicode]" + FIXTURE_WITH_UNICODE,
 ]) {
-  const name = `"${input.substring(0, Math.min(input.length, 32))}" (${new Intl.NumberFormat().format(input.length / 100_000_000_0)}} GB)`
+  const name = `"${input.substring(0, Math.min(input.length, 32))}" (${new Intl.NumberFormat().format(input.length / 100_000_000_0)} GB)`
   group(
     {
       summary: true,

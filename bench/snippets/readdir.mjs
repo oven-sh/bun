@@ -46,8 +46,8 @@ await run();
 
 if (!process?.env?.BENCHMARK_RUNNER) {
   console.log("\n", count, "files/dirs in", dir, "\n", "SHA256:", hash, "\n");
-}
 
-if (count !== syncCount) {
-  throw new Error(`Mismatched file counts: ${count} async !== ${syncCount} sync`);
+  if (count !== syncCount) {
+    throw new Error(`Mismatched file counts: ${count} async !== ${syncCount} sync`);
+  }
 }

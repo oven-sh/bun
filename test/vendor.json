@@ -3,13 +3,5 @@
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
     "tag": "1.1.24"
-  },
-  {
-    "package": "uuid",
-    "repository": "https://github.com/uuidjs/uuid",
-    "tag": "v10.0.0",
-    "testRunner": "node",
-    "testPath": "src/test",
-    "skipTests": true
   }
 ]

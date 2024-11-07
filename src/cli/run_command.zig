@@ -194,17 +194,6 @@ pub const RunCommand = struct {
                     delimiter = 0;
                 },
 
-                // do we need to escape?
-                ' ' => {
-                    delimiter = ' ';
-                },
-                '"' => {
-                    delimiter = '"';
-                },
-                '\'' => {
-                    delimiter = '\'';
-                },
-
                 'n' => {
                     if (delimiter > 0) {
                         if (strings.hasPrefixComptime(script[start..], "npm run ")) {
@@ -235,24 +224,6 @@ pub const RunCommand = struct {
                     }
 
                     delimiter = 0;
-                },
-                // TODO: handle escape sequences properly
-                // https://github.com/oven-sh/bun/issues/53
-                '\\' => {
-                    delimiter = 0;
-
-                    if (entry_i + 1 < script.len) {
-                        switch (script[entry_i + 1]) {
-                            '"', '\'' => {
-                                entry_i += 1;
-                                continue;
-                            },
-                            '\\' => {
-                                entry_i += 1;
-                            },
-                            else => {},
-                        }
-                    }
                 },
                 else => {
                     delimiter = 0;

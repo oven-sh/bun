@@ -124,7 +124,7 @@ describe("Hash is consistent", () => {
         for (let buffer of inputs) {
           for (let i = 0; i < 100; i++) {
             const hasher = new Bun.CryptoHasher(algorithm);
-            expect(hasher.update(buffer)).toBeInstanceOf(Bun.CryptoHasher);
+            expect(hasher.update(buffer, "base64")).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "base64")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "base64"),
             );
@@ -144,7 +144,7 @@ describe("Hash is consistent", () => {
         for (let buffer of inputs) {
           for (let i = 0; i < 100; i++) {
             const hasher = new Bun.CryptoHasher(algorithm);
-            expect(hasher.update(buffer)).toBeInstanceOf(Bun.CryptoHasher);
+            expect(hasher.update(buffer, "hex")).toBeInstanceOf(Bun.CryptoHasher);
             expect(Bun.CryptoHasher.hash(algorithm, buffer, "hex")).toEqual(
               Bun.CryptoHasher.hash(algorithm, buffer, "hex"),
             );
@@ -156,6 +156,24 @@ describe("Hash is consistent", () => {
 
             expect(instance1.digest("hex")).toEqual(instance2.digest("hex"));
             expect(Class.hash(buffer, "hex")).toEqual(Class.hash(buffer, "hex"));
+          }
+        }
+      });
+
+      test("blob", () => {
+        for (let buffer of inputs) {
+          for (let i = 0; i < 100; i++) {
+            const hasher = new Bun.CryptoHasher(algorithm);
+            expect(hasher.update(buffer)).toBeInstanceOf(Bun.CryptoHasher);
+            expect(Bun.CryptoHasher.hash(algorithm, buffer)).toEqual(Bun.CryptoHasher.hash(algorithm, buffer));
+
+            const instance1 = new Class();
+            instance1.update(buffer);
+            const instance2 = new Class();
+            instance2.update(buffer);
+
+            expect(instance1.digest()).toEqual(instance2.digest());
+            expect(Class.hash(buffer)).toEqual(Class.hash(buffer));
           }
         }
       });

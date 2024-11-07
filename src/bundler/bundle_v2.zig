@@ -564,7 +564,7 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
-        if (@atomicLoad(usize, &this.graph.parse_pending, .acquire) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .acquire) == 0) {
+        if (@atomicLoad(usize, &this.graph.parse_pending, .monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0) {
             if (this.graph.drainDeferredTasks(this) > 0) {
                 return false;
             }
@@ -3139,6 +3139,11 @@ pub fn BundleThread(CompletionStruct: type) type {
 const UseDirective = js_ast.UseDirective;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 
+/// This task is run once all parse and resolve tasks have been complete
+/// and we have deferred onLoad plugins that we need to resume
+///
+/// It enqueues a task to be run on the JS thread which resolves the promise
+/// for every onLoad callback which called `.defer()`.
 pub const DeferredBatchTask = struct {
     completion: ?*bun.BundleV2.JSBundleCompletionTask,
     js_task: JSC.AnyTask = undefined,
@@ -3164,8 +3169,8 @@ pub const DeferredBatchTask = struct {
     }
 
     pub fn runOnJSThread(this: *DeferredBatchTask) void {
+        defer this.deinit();
         var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
-            defer this.deinit();
             return;
         };
 
@@ -3597,7 +3602,6 @@ pub const ParseTask = struct {
                 if (bundler.options.experimental_css) {
                     // const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     // unique_key_for_additional_file.* = unique_key;
-                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 }); // put this after parsing
                     var import_records = BabyList(ImportRecord){};
                     const source_code = source.contents;
                     var css_ast =
@@ -3636,6 +3640,7 @@ pub const ParseTask = struct {
                         ) catch unreachable;
                         return error.MinifyError;
                     }
+                    const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                     const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
                     var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
                     ast.css = css_ast_heap;
@@ -4440,6 +4445,10 @@ pub const Graph = struct {
         content_hash_for_additional_file: u64 = 0,
     };
 
+    /// Schedule a task to be run on the JS thread which resolves the promise of each `.defer()` called in an
+    /// onLoad plugin.
+    ///
+    /// Returns the amount of deferred tasks to resume.
     pub fn drainDeferredTasks(this: *@This(), bundler: *BundleV2) usize {
         const pending_deferred = this.deferred_pending.swap(0, .acq_rel);
         if (pending_deferred > 0) {

@@ -139,10 +139,6 @@ public:
         return ptr;
     }
 
-    ~JSBundlerPlugin()
-    {
-    }
-
     DECLARE_INFO;
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

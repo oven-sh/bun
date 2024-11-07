@@ -894,24 +894,6 @@ pub const JSBundler = struct {
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
         }
 
-        pub fn onRunDeferFromJSThread(this: *Load) void {
-            const completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
-                this.deinit();
-                return;
-            };
-
-            // TODO: If there's a build error, we should reject this promise instead of leaving it hanging.
-            const globalThis = this.deferred_promise.strong.globalThis.?;
-            const promise = this.deferred_promise.swap();
-            // this.deferred_promise.resolve(this.deferred_promise.strong.globalThis.?, .undefined);
-
-            if (completion.result == .err) {
-                promise.reject(globalThis, .undefined);
-            } else {
-                promise.resolve(globalThis, .undefined);
-            }
-        }
-
         export fn JSBundlerPlugin__onDefer(
             this: *Load,
             globalObject: *JSC.JSGlobalObject,
@@ -940,43 +922,6 @@ pub const JSBundler = struct {
             const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
             return promise;
         }
-
-        // export fn JSBundlerPlugin__onDefer(
-        //     this: *Load,
-        //     globalObject: *JSC.JSGlobalObject,
-        // ) JSC.JSValue {
-        //     if (this.called_defer) {
-        //         // TODO: throw error or something
-        //         return JSC.JSValue.undefined;
-        //     }
-        //     this.called_defer = true;
-        //     this.deferred_promise = JSC.JSPromise.Strong.init(globalObject);
-
-        //     _ = @atomicRmw(usize, &this.parse_task.ctx.graph.deferred_pending, .Add, 1, .monotonic);
-        //     _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .monotonic);
-
-        //     debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-        //         @intFromPtr(this),
-        //         this.path,
-        //         @atomicLoad(
-        //             usize,
-        //             &this.parse_task.ctx.graph.parse_pending,
-        //             .monotonic,
-        //         ),
-        //         @atomicLoad(
-        //             usize,
-        //             &this.parse_task.ctx.graph.deferred_pending,
-        //             .monotonic,
-        //         ),
-        //     });
-
-        //     this.defer_task = .{
-        //         .ctx = this.parse_task.ctx,
-        //     };
-        //     this.defer_task.recordDeferredTask();
-
-        //     return this.deferred_promise.value();
-        // }
 
         export fn JSBundlerPlugin__onLoadAsync(
             this: *Load,

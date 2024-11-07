@@ -1291,8 +1291,10 @@ pub const DefaultAtRuleParser = struct {
     };
 };
 
-pub const BundlerAtRule = TailwindAtRule;
+/// We may want to enable this later
+pub const ENABLE_TAILWIND_PARSING = false;
 
+pub const BundlerAtRule = if (ENABLE_TAILWIND_PARSING) TailwindAtRule else DefaultAtRule;
 pub const BundlerAtRuleParser = struct {
     const This = @This();
     allocator: Allocator,
@@ -1300,36 +1302,38 @@ pub const BundlerAtRuleParser = struct {
     options: *const ParserOptions,
 
     pub const CustomAtRuleParser = struct {
-        pub const Prelude = union(enum) {
+        pub const Prelude = if (ENABLE_TAILWIND_PARSING) union(enum) {
             tailwind: TailwindAtRule,
-        };
-        pub const AtRule = TailwindAtRule;
+        } else void;
+        pub const AtRule = if (ENABLE_TAILWIND_PARSING) TailwindAtRule else DefaultAtRule;
 
         pub fn parsePrelude(this: *This, name: []const u8, input: *Parser, _: *const ParserOptions) Result(Prelude) {
-            const PreludeNames = enum {
-                tailwind,
-            };
-            const Map = comptime bun.ComptimeEnumMap(PreludeNames);
-            if (Map.getASCIIICaseInsensitive(name)) |prelude| return switch (prelude) {
-                .tailwind => {
-                    const loc_ = input.currentSourceLocation();
-                    const loc = css_rules.Location{
-                        .source_index = this.options.source_index,
-                        .line = loc_.line,
-                        .column = loc_.column,
-                    };
-                    const style_name = switch (css_rules.tailwind.TailwindStyleName.parse(input)) {
-                        .result => |v| v,
-                        .err => return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) },
-                    };
-                    return .{ .result = .{
-                        .tailwind = .{
-                            .style_name = style_name,
-                            .loc = loc,
-                        },
-                    } };
-                },
-            };
+            if (comptime ENABLE_TAILWIND_PARSING) {
+                const PreludeNames = enum {
+                    tailwind,
+                };
+                const Map = comptime bun.ComptimeEnumMap(PreludeNames);
+                if (Map.getASCIIICaseInsensitive(name)) |prelude| return switch (prelude) {
+                    .tailwind => {
+                        const loc_ = input.currentSourceLocation();
+                        const loc = css_rules.Location{
+                            .source_index = this.options.source_index,
+                            .line = loc_.line,
+                            .column = loc_.column,
+                        };
+                        const style_name = switch (css_rules.tailwind.TailwindStyleName.parse(input)) {
+                            .result => |v| v,
+                            .err => return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) },
+                        };
+                        return .{ .result = .{
+                            .tailwind = .{
+                                .style_name = style_name,
+                                .loc = loc,
+                            },
+                        } };
+                    },
+                };
+            }
             return .{ .err = input.newError(BasicParseErrorKind{ .at_rule_invalid = name }) };
         }
 
@@ -1338,9 +1342,12 @@ pub const BundlerAtRuleParser = struct {
         }
 
         pub fn ruleWithoutBlock(_: *This, prelude: CustomAtRuleParser.Prelude, _: *const ParserState, _: *const ParserOptions, _: bool) Maybe(CustomAtRuleParser.AtRule, void) {
-            return switch (prelude) {
-                .tailwind => |v| return .{ .result = v },
-            };
+            if (comptime ENABLE_TAILWIND_PARSING) {
+                return switch (prelude) {
+                    .tailwind => |v| return .{ .result = v },
+                };
+            }
+            return .{ .err = {} };
         }
 
         pub fn onImportRule(this: *This, import_rule: *ImportRule, start_position: u32, end_position: u32) void {

@@ -45,6 +45,7 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
                 return .{ .batch = self };
             }
 
+            /// This is not safe to call on other threads
             pub fn push(self: *Self.Batch, item: *T) void {
                 if (self.last) |l| {
                     l.next = item;

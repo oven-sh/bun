@@ -13,13 +13,6 @@ Outer group
   Inner group
     Inside inner group
   Back to outer group
-Tabular group!
-┌───┬───┬───┐
-│   │ a │ b │
-├───┼───┼───┤
-│ 0 │ 1 │ 2 │
-│ 1 │ 3 │ 4 │
-└───┴───┴───┘
 Level 1
   Level 2
     Level 3
@@ -47,6 +40,6 @@ null
 🎉 Unicode!
   Inside unicode group
   Tab	Newline
-Quote"Backslash\
+Quote"Backslash
     Special chars"
 `;

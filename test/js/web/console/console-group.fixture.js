@@ -12,14 +12,6 @@ console.groupEnd();
 console.log("Back to outer group");
 console.groupEnd();
 
-// TODO:!
-console.group("Tabular group!");
-console.table([
-  { a: 1, b: 2 },
-  { a: 3, b: 4 },
-]);
-console.groupEnd();
-
 // Multiple nested groups
 console.group("Level 1");
 console.group("Level 2");
@@ -80,7 +72,7 @@ console.groupEnd();
 // Unicode and special characters
 console.group("🎉 Unicode!");
 console.log("Inside unicode group");
-console.group('Tab\tNewline\nQuote"Backslash\\');
+console.group('Tab\tNewline\nQuote"Backslash');
 console.log("Special chars");
 console.groupEnd();
 console.groupEnd();

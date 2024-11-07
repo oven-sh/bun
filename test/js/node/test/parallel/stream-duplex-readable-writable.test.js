@@ -22,18 +22,16 @@ test("Duplex with readable false", () => {
   duplex.on("end", endHandler);
 
   return new Promise(resolve => {
-    setImmediate(() => {
-      expect(errorHandler).toHaveBeenCalledTimes(1);
-      expect(errorHandler).toHaveBeenCalledWith(
-        expect.objectContaining({
-          code: "ERR_STREAM_PUSH_AFTER_EOF",
-          message: expect.any(String),
-        }),
-      );
-      expect(dataHandler).not.toHaveBeenCalled();
-      expect(endHandler).not.toHaveBeenCalled();
-      resolve();
-    });
+    expect(errorHandler).toHaveBeenCalledTimes(1);
+    expect(errorHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "ERR_STREAM_PUSH_AFTER_EOF",
+        message: expect.any(String),
+      }),
+    );
+    expect(dataHandler).not.toHaveBeenCalled();
+    expect(endHandler).not.toHaveBeenCalled();
+    resolve();
   });
 });
 

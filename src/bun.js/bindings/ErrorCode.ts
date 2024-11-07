@@ -51,6 +51,7 @@ export default [
   ["ERR_MULTIPLE_CALLBACK", Error, "Error"],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error, "Error"],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
+  ["ERR_STREAM_PUSH_AFTER_EOF", Error, "Error"],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError, "TypeError"],

@@ -476,6 +476,7 @@ function readableAddChunkPushByteMode(stream, state, chunk, encoding) {
   }
 
   if ((state[kState] & kEnded) !== 0) {
+    errorOrDestroy(stream, $ERR_STREAM_PUSH_AFTER_EOF("Push after end"));
     return false;
   }
 

@@ -279,10 +279,6 @@ const Socket = (function (InternalSocket) {
       const callback = self.#writeCallback;
       if (callback) {
         const writeChunk = self._pendingData;
-<<<<<<< HEAD
-=======
-
->>>>>>> main
         if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
           self._pendingData = self.#writeCallback = null;
           callback(null);

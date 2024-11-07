@@ -4,7 +4,7 @@ import { bench, group, run } from "../runner.mjs";
 async function forEachBackend(name, fn) {
   group(name, () => {
     for (let backend of ["libc", "c-ares", process.platform === "darwin" ? "system" : ""].filter(Boolean))
-      bench(backend, fn(backend));
+      bench(`${backend} (${name})`, fn(backend));
   });
 }
 

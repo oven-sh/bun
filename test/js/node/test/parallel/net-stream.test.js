@@ -4,53 +4,55 @@
 "use strict";
 
 const net = require("net");
-
+const { once } = require("events");
 const SIZE = 2e6;
 const N = 10;
 const buf = Buffer.alloc(SIZE, "a");
 
-let server;
+test("net stream behavior", async () => {
+  let server;
+  try {
+    const { promise, resolve: done } = Promise.withResolvers();
 
-beforeAll(done => {
-  server = net
-    .createServer(socket => {
+    server = net.createServer(socket => {
       socket.setNoDelay();
 
-      const onError = jest.fn(() => socket.destroy());
-      const onClose = jest.fn(() => server.close());
-
-      socket.on("error", onError).on("close", onClose);
+      let onErrorCalls = 0;
+      let onCloseCalls = 0;
+      socket
+        .on("error", () => {
+          onErrorCalls++;
+          socket.destroy();
+        })
+        .on("close", () => {
+          onCloseCalls++;
+          done({ onErrorCalls, onCloseCalls });
+        });
 
       for (let i = 0; i < N; ++i) {
         socket.write(buf, () => {});
       }
+
       socket.end();
-
-      socket.on("close", () => {
-        expect(onError).toHaveBeenCalled();
-        expect(onClose).toHaveBeenCalled();
-        done();
-      });
-    })
-    .listen(0, () => {
-      done();
     });
-});
+    await once(server.listen(0), "listening");
 
-afterAll(() => {
-  server.close();
-});
+    const conn = net.connect(server.address().port, "127.0.0.1");
+    const { promise: dataPromise, resolve: dataResolve } = Promise.withResolvers();
+    conn.on("data", buf => {
+      dataResolve(conn.pause());
+      setTimeout(() => {
+        conn.destroy();
+      }, 20);
+    });
+    expect(await dataPromise).toBe(conn);
 
-test("net stream behavior", done => {
-  const conn = net.connect(server.address().port, "127.0.0.1");
-
-  conn.on("data", buf => {
-    expect(conn.pause()).toBe(conn);
-    setTimeout(() => {
-      conn.destroy();
-      done();
-    }, 20);
-  });
-});
+    const { onCloseCalls, onErrorCalls } = await promise;
+    expect(onErrorCalls).toBeGreaterThan(0);
+    expect(onCloseCalls).toBeGreaterThan(0);
+  } finally {
+    server.close();
+  }
+}, 100000);
 
 //<#END_FILE: test-net-stream.js

@@ -774,6 +774,7 @@ pub const Listener = struct {
                 },
             );
             const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
+            log("Failed to listen {d}", .{errno});
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -1462,7 +1463,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             log("resume", .{});
             if (this.flags.is_paused) {
-                this.flags.is_paused = !this.socket.resumeStream(this.buffered_data_for_node_net.len > 0);
+                this.flags.is_paused = !this.socket.resumeStream();
             }
             return .undefined;
         }
@@ -1471,7 +1472,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             log("pause", .{});
             if (!this.flags.is_paused) {
-                this.flags.is_paused = this.socket.pauseStream(this.buffered_data_for_node_net.len > 0);
+                this.flags.is_paused = this.socket.pauseStream();
             }
             return .undefined;
         }
@@ -1941,9 +1942,21 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
+            var js_error: JSValue = .undefined;
+            if (err != 0) {
+                if (bun.C.SystemErrno.init(err)) |str| {
+                    js_error = globalObject.createErrorInstance("Error: {s}", .{@tagName(str)});
+                    js_error.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(err));
+                    js_error.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
+                } else {
+                    js_error = globalObject.createErrorInstance("Unknown error: {d}", .{err});
+                    js_error.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(err));
+                }
+            }
+
             _ = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
-                JSValue.jsNumber(@as(i32, err)),
+                js_error,
             }) catch |e| {
                 _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(e) });
             };

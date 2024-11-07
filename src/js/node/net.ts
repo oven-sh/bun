@@ -243,31 +243,31 @@ const Socket = (function (InternalSocket) {
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
-      if (!this.allowHalfOpen) {
-        self.write = writeAfterFIN;
-      }
       // we just reuse the same code but we can push null or enqueue right away
       Socket.#EmitEndNT(self);
     }
-    static #EmitEndNT(self) {
+    static #EmitEndNT(self, err) {
       if (!self.#ended) {
+        if (!self.allowHalfOpen) {
+          self.write = writeAfterFIN;
+        }
         self.#ended = true;
         self.push(null);
       }
+      if (err) {
+        self.destroy(err);
+      }
     }
-    static #Close(socket) {
+    static #Close(socket, err) {
       const self = socket.data;
       if (!self || self.#closed) return;
       self.#closed = true;
       //socket cannot be used after close
       detachSocket(self);
       if (!self.#ended) {
-        if (!this.allowHalfOpen) {
-          self.write = writeAfterFIN;
-        }
         // close event can be emitted when we still have data to read from the socket
         // we will force the close (not allowing half open) and emit the end event after some time
-        setTimeout(Socket.#EmitEndNT, 0, self);
+        setTimeout(Socket.#EmitEndNT, 0, self, err);
       }
       self.data = null;
     }
@@ -291,10 +291,10 @@ const Socket = (function (InternalSocket) {
 
     static [bunSocketServerHandlers] = {
       data: Socket.#Handlers.data,
-      close(socket) {
+      close(socket, err) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.close(socket);
+        Socket.#Handlers.close(socket, err);
         data.server[bunSocketServerConnections]--;
         data.server._emitCloseIfDrained();
       },

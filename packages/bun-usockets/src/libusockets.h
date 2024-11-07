@@ -469,6 +469,9 @@ void us_socket_unref(us_socket_r s);
 
 void us_socket_nodelay(us_socket_r s, int enabled);
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
+void us_socket_resume(int ssl, us_socket_r s);
+void us_socket_pause(int ssl, us_socket_r s);
+
 #ifdef __cplusplus
 }
 #endif

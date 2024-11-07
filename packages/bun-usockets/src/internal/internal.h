@@ -68,6 +68,15 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #endif
 
+#ifdef _WIN32
+#define LIBUS_ERR() ({ \
+    WSAGetLastError(); \
+})
+#else
+#define LIBUS_ERR() ({ \
+    errno; \
+})
+#endif
 /* Poll type and what it polls for */
 enum {
   /* Three first bits */

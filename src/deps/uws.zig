@@ -1110,8 +1110,6 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     }
 } else void;
 
-threadlocal var us_events = [2]i32{ 0, 0 };
-
 pub const InternalSocket = union(enum) {
     connected: *Socket,
     connecting: *ConnectingSocket,
@@ -1119,24 +1117,16 @@ pub const InternalSocket = union(enum) {
     upgradedDuplex: *UpgradedDuplex,
     pipe: *WindowsNamedPipe,
 
-    pub fn pauseResume(this: InternalSocket, comptime ssl: bool, pause: bool, hasBufferedData: bool) bool {
+    pub fn pauseResume(this: InternalSocket, comptime ssl: bool, comptime pause: bool) bool {
         switch (this) {
             .detached => return true,
             .connected => |socket| {
-                const context = us_socket_context(@intFromBool(ssl), socket) orelse return false;
-                const loop = context.getLoop(ssl) orelse return false;
-                const poll: *Poll = @ptrCast(socket);
                 if (pause) {
                     // Pause
-                    const events = poll.getEvents();
-                    if (events != 0) {
-                        us_events[if (hasBufferedData) 1 else 0] = events;
-                    }
-                    poll.change(loop, 0);
+                    us_socket_pause(@intFromBool(ssl), socket);
                 } else {
                     // Resume
-                    const events = us_events[if (hasBufferedData) 1 else 0];
-                    poll.change(loop, events);
+                    us_socket_resume(@intFromBool(ssl), socket);
                 }
                 return true;
             },
@@ -1273,11 +1263,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn setKeepAlive(this: ThisSocket, enabled: bool, delay: u32) bool {
             return this.socket.setKeepAlive(enabled, delay);
         }
-        pub fn pauseStream(this: ThisSocket, hasBufferedData: bool) bool {
-            return this.socket.pauseResume(is_ssl, true, hasBufferedData);
+        pub fn pauseStream(this: ThisSocket) bool {
+            return this.socket.pauseResume(is_ssl, true);
         }
-        pub fn resumeStream(this: ThisSocket, hasBufferedData: bool) bool {
-            return this.socket.pauseResume(is_ssl, false, hasBufferedData);
+        pub fn resumeStream(this: ThisSocket) bool {
+            return this.socket.pauseResume(is_ssl, false);
         }
         pub fn detach(this: *ThisSocket) void {
             this.socket.detach();
@@ -2814,6 +2804,8 @@ extern fn us_socket_close(ssl: i32, s: ?*Socket, code: CloseCode, reason: ?*anyo
 
 extern fn us_socket_nodelay(s: ?*Socket, enable: c_int) void;
 extern fn us_socket_keepalive(s: ?*Socket, enable: c_int, delay: c_uint) c_int;
+extern fn us_socket_pause(ssl: i32, s: ?*Socket) void;
+extern fn us_socket_resume(ssl: i32, s: ?*Socket) void;
 
 extern fn us_connecting_socket_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
 extern fn us_connecting_socket_long_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;

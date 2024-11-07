@@ -389,6 +389,12 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 }
             },
             .DOMWrapper => {
+                if (value.as(JSC.WebCore.Blob)) |blob| {
+                    if (blob.store) |store| {
+                        store.ref();
+                    }
+                    return .{ .blob = blob.* };
+                }
                 if (allow_request_response) {
                     if (value.as(JSC.WebCore.Request)) |request| {
                         request.body.value.toBlobIfPossible();

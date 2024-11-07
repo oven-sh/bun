@@ -1,12 +1,11 @@
 FROM alpine:edge
 ENV HOME=/root
 WORKDIR /root
-COPY ./bun-build/release/bun .
+COPY ./build-alpine/release/bun .
 COPY ./test ./test
 COPY ./scripts ./scripts
 COPY ./package.json ./package.json
 COPY ./packages ./packages
-COPY ./.git ./.git
 
 RUN apk update
 RUN apk add nodejs lsb-release-minimal git python3 npm make g++
@@ -18,4 +17,4 @@ RUN /root/bun
 
 RUN ./scripts/runner.node.mjs --exec-path /root/bun
 
-# docker build -f ./dockerhub/alpine/test.Dockerfile --progress=plain .
+# docker build -f ./ci/alpine/test.Dockerfile --progress=plain .

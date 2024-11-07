@@ -1,6 +1,9 @@
 FROM alpine:edge AS build
+ARG GIT_SHA
+ENV GIT_SHA=${GIT_SHA}
 WORKDIR /app/bun
 ENV HOME=/root
+
 COPY . .
 RUN touch $HOME/.bashrc
 RUN ./scripts/bootstrap.sh
@@ -17,4 +20,4 @@ RUN cp -R /app/bun/build/* .
 FROM scratch AS artifact
 COPY --from=build /output /
 
-# docker build -f ./dockerhub/alpine/build.Dockerfile --progress=plain --target=artifact --output type=local,dest=./build-alpine .
+# docker build -f ./ci/alpine/build.Dockerfile --progress=plain --build-arg GIT_SHA="$(git rev-parse HEAD)" --target=artifact --output type=local,dest=./build-alpine .

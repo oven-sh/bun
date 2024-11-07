@@ -3,6 +3,7 @@
 **/.next
 **/CMakeCache.txt
 **/node_modules
+.git
 examples
 node_modules
 packages/**/bun

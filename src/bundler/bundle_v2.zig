@@ -369,9 +369,6 @@ pub const BundleV2 = struct {
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
-    /// This is a lock-free concurrent queue so that we can append to this from any thread
-    deferred_tasks: bun.UnboundedQueue(DeferredTask, .next) = .{},
-
     /// Allocations not tracked by a threadlocal heap
     free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),
 
@@ -567,58 +564,19 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
-        return @atomicLoad(usize, &this.graph.parse_pending, .monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0;
+        if (@atomicLoad(usize, &this.graph.parse_pending, .acquire) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .acquire) == 0) {
+            if (this.graph.drainDeferredTasks(this) > 0) {
+                return false;
+            }
+            return true;
+        }
+        return false;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
-        while (true) {
-            this.enqueueDeferredTasks();
-            this.waitForParseImpl();
-
-            // After running the above statement, we may have resolved more files.
-            // Those may have a matching onLoad plugin which may call `.defer()`
-            if (@atomicLoad(usize, &this.graph.deferred_pending, .monotonic) > 0) {
-                std.atomic.spinLoopHint();
-            } else {
-                return;
-            }
-        }
-    }
-
-    pub fn waitForParseImpl(this: *BundleV2) void {
         this.loop().tick(this, &isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
-    }
-
-    pub fn enqueueDeferredTasks(this: *BundleV2) void {
-        const batch = this.deferred_tasks.popBatch();
-        var iter = batch.iterator();
-        var batch_to_schedule = JSC.ConcurrentTask.Queue.Batch{};
-        while (iter.next()) |deferred| {
-            debug_deferred("enqueueDeferredTasks task=(0{x}, {s}) parse_pending={d} deferred_pending={d}", .{
-                @intFromPtr(deferred.loadTask()),
-                deferred.loadTask().path,
-                @atomicLoad(
-                    usize,
-                    &this.graph.parse_pending,
-                    .monotonic,
-                ),
-                @atomicLoad(
-                    usize,
-                    &this.graph.deferred_pending,
-                    .monotonic,
-                ),
-            });
-
-            batch_to_schedule.push(JSC.ConcurrentTask.createFrom(&deferred.loadTask().js_task));
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
-            _ = @atomicRmw(usize, &this.graph.deferred_pending, .Sub, 1, .monotonic);
-        }
-
-        if (batch_to_schedule.count > 0) {
-            this.completion.?.jsc_event_loop.enqueueTaskConcurrentBatch(batch_to_schedule);
-        }
     }
 
     /// This runs on the Bundle Thread.
@@ -2723,15 +2681,6 @@ pub const BundleV2 = struct {
 
     const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
 
-    /// This is safe to call on multiple threads because it uses a lock-free concurrent queue
-    pub fn recordDeferredTask(deferred_task: *DeferredTask, this: *BundleV2) void {
-        debug_deferred("recordDeferredTask deferred_task=(0x{x}, {s})", .{
-            @intFromPtr(deferred_task.loadTask()),
-            deferred_task.loadTask().path,
-        });
-        this.deferred_tasks.push(deferred_task);
-    }
-
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
         const trace = tracer(@src(), "onParseTaskComplete");
         defer trace.end();
@@ -3190,21 +3139,37 @@ pub fn BundleThread(CompletionStruct: type) type {
 const UseDirective = js_ast.UseDirective;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 
-pub const DeferredTask = struct {
-    ctx: *BundleV2,
-    next: ?*DeferredTask = null,
+pub const DeferredBatchTask = struct {
+    completion: ?*bun.BundleV2.JSBundleCompletionTask,
+    js_task: JSC.AnyTask = undefined,
 
-    pub fn loadTask(this: *DeferredTask) *JSC.API.JSBundler.Load {
-        const load: *JSC.API.JSBundler.Load = @fieldParentPtr("defer_task", this);
-        return load;
+    const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
+
+    pub fn new(completion: *bun.BundleV2.JSBundleCompletionTask) *DeferredBatchTask {
+        var deferred_batch_task = bun.create(bun.default_allocator, DeferredBatchTask, .{
+            .completion = completion,
+        });
+
+        deferred_batch_task.js_task = AnyTask.init(deferred_batch_task);
+        return deferred_batch_task;
     }
 
-    pub fn resumeFromBundleThread(this: *DeferredTask) void {
-        this.loadTask().onRunDeferFromBundler();
+    pub fn schedule(this: *DeferredBatchTask) void {
+        const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
+        this.completion.?.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
     }
 
-    pub fn recordDeferredTask(this: *DeferredTask) void {
-        BundleV2.recordDeferredTask(this, this.ctx);
+    pub fn deinit(this: *DeferredBatchTask) void {
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn runOnJSThread(this: *DeferredBatchTask) void {
+        var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
+            defer this.deinit();
+            return;
+        };
+
+        completion.bundler.plugins.?.drainDeferred(completion.result == .err);
     }
 };
 
@@ -4427,7 +4392,7 @@ pub const Graph = struct {
     resolve_pending: usize = 0,
     /// This is incremented whenever an onLoad plugin calls `.defer()`
     /// And then is correspondingly decremented whenever we resume that onLoad plugin
-    deferred_pending: usize = 0,
+    deferred_pending: std.atomic.Value(usize) = .{ .raw = 0 },
 
     /// Maps a hashed path string to a source index, if it exists in the compilation.
     /// Instead of accessing this directly, consider using BundleV2.pathToSourceIndexMap
@@ -4474,6 +4439,17 @@ pub const Graph = struct {
         unique_key_for_additional_file: string = "",
         content_hash_for_additional_file: u64 = 0,
     };
+
+    pub fn drainDeferredTasks(this: *@This(), bundler: *BundleV2) usize {
+        const pending_deferred = this.deferred_pending.swap(0, .acq_rel);
+        if (pending_deferred > 0) {
+            _ = @atomicRmw(usize, &this.parse_pending, .Add, pending_deferred, .acq_rel);
+            var task = DeferredBatchTask.new(bundler.completion.?);
+            task.schedule();
+            return pending_deferred;
+        }
+        return pending_deferred;
+    }
 };
 
 pub const AdditionalFile = union(enum) {

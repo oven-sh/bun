@@ -139,8 +139,8 @@ public:
         return ptr;
     }
 
-    ~JSBundlerPlugin() {
-        printf("JSBundlerPlugin destroyed\n");
+    ~JSBundlerPlugin()
+    {
     }
 
     DECLARE_INFO;
@@ -259,9 +259,22 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundlerPlugin* pluginObject, bool rejected)
+{
+    JSC::JSGlobalObject* globalObject = pluginObject->globalObject();
+    Strong<JSPromise> strong_promise = JSC::Strong<JSPromise>(globalObject->vm(), JSPromise::create(globalObject->vm(), globalObject->promiseStructure()));
+    JSPromise* ret = strong_promise.get();
+    pluginObject->plugin.deferredPromises.append(strong_promise);
+
+    return JSC::JSValue::encode(ret);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSBundlerPlugin__onDefer(UNWRAP_BUNDLER_PLUGIN(callFrame), globalObject);
+    JSBundlerPlugin* plugin = (JSBundlerPlugin*)UNWRAP_BUNDLER_PLUGIN(callFrame);
+    JSC::EncodedJSValue encoded_defer_promise = JSBundlerPlugin__onDefer(plugin, globalObject);
+    return encoded_defer_promise;
 }
 
 void JSBundlerPlugin::finishCreation(JSC::VM& vm)
@@ -432,6 +445,20 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
 extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
 {
     plugin->plugin.config = config;
+}
+
+extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
+{
+    auto deferredPromises = std::exchange(pluginObject->plugin.deferredPromises, {});
+    for (auto& promise : deferredPromises) {
+        if (rejected) {
+            promise->reject(pluginObject->globalObject(), JSC::jsUndefined());
+        } else {
+            promise->resolve(pluginObject->globalObject(), JSC::jsUndefined());
+        }
+        promise.clear();
+    }
+    return;
 }
 
 extern "C" void JSBundlerPlugin__tombestone(Bun::JSBundlerPlugin* plugin)

@@ -803,8 +803,6 @@ pub const JSBundler = struct {
         /// Faster path: skip the extra threadpool dispatch when the file is not found
         was_file: bool = false,
 
-        deferred_promise: JSC.JSPromise.Strong = .{},
-        defer_task: DeferredTask = undefined,
         // We only allow the user to call defer once right now
         called_defer: bool = false,
 
@@ -875,19 +873,13 @@ pub const JSBundler = struct {
                 return;
             };
 
-            if (this.deferred_promise.strong.has()) {
-                // The onLoad callback has been called and .defer()
-                // was used inside of it
-                this.onRunDeferFromJSThread();
-            } else {
-                completion.plugins.?.matchOnLoad(
-                    completion.globalThis,
-                    this.path,
-                    this.namespace,
-                    this,
-                    this.default_loader,
-                );
-            }
+            completion.plugins.?.matchOnLoad(
+                completion.globalThis,
+                this.path,
+                this.namespace,
+                this,
+                this.default_loader,
+            );
         }
 
         pub fn dispatch(this: *Load) void {
@@ -900,20 +892,6 @@ pub const JSBundler = struct {
             this.js_task = AnyTask.init(this);
             const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
-        }
-
-        pub fn onRunDeferFromBundler(this: *Load) void {
-            var completion: *bun.BundleV2.JSBundleCompletionTask = this.completion orelse {
-                this.deinit();
-                return;
-            };
-
-            debug_deferred("scheduling resume (0{x}, {s})", .{ @intFromPtr(this), this.path });
-
-            // If the completion is null, it should deinit I think?
-
-            // completion.bundler.loop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.js_task));
-            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.js_task));
         }
 
         pub fn onRunDeferFromJSThread(this: *Load) void {
@@ -937,16 +915,15 @@ pub const JSBundler = struct {
         export fn JSBundlerPlugin__onDefer(
             this: *Load,
             globalObject: *JSC.JSGlobalObject,
-        ) JSC.JSValue {
+        ) JSValue {
             if (this.called_defer) {
-                // TODO: throw error or something
-                return JSC.JSValue.undefined;
+                globalObject.throw("can't call defer twice within a onLoad plugin", .{});
+                return .undefined;
             }
             this.called_defer = true;
-            this.deferred_promise = JSC.JSPromise.Strong.init(globalObject);
 
-            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.deferred_pending, .Add, 1, .monotonic);
-            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .monotonic);
+            _ = this.parse_task.ctx.graph.deferred_pending.fetchAdd(1, .acq_rel);
+            _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .acq_rel);
 
             debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
                 @intFromPtr(this),
@@ -956,20 +933,50 @@ pub const JSBundler = struct {
                     &this.parse_task.ctx.graph.parse_pending,
                     .monotonic,
                 ),
-                @atomicLoad(
-                    usize,
-                    &this.parse_task.ctx.graph.deferred_pending,
-                    .monotonic,
-                ),
+                this.parse_task.ctx.graph.deferred_pending.load(.monotonic),
             });
 
-            this.defer_task = .{
-                .ctx = this.parse_task.ctx,
-            };
-            this.defer_task.recordDeferredTask();
-
-            return this.deferred_promise.value();
+            defer this.parse_task.ctx.loop().wakeup();
+            const promise: JSValue = if (this.completion) |c| c.plugins.?.appendDeferPromise() else return .undefined;
+            return promise;
         }
+
+        // export fn JSBundlerPlugin__onDefer(
+        //     this: *Load,
+        //     globalObject: *JSC.JSGlobalObject,
+        // ) JSC.JSValue {
+        //     if (this.called_defer) {
+        //         // TODO: throw error or something
+        //         return JSC.JSValue.undefined;
+        //     }
+        //     this.called_defer = true;
+        //     this.deferred_promise = JSC.JSPromise.Strong.init(globalObject);
+
+        //     _ = @atomicRmw(usize, &this.parse_task.ctx.graph.deferred_pending, .Add, 1, .monotonic);
+        //     _ = @atomicRmw(usize, &this.parse_task.ctx.graph.parse_pending, .Sub, 1, .monotonic);
+
+        //     debug_deferred("JSBundlerPlugin__onDefer(0x{x}, {s}) parse_pending={d} deferred_pending={d}", .{
+        //         @intFromPtr(this),
+        //         this.path,
+        //         @atomicLoad(
+        //             usize,
+        //             &this.parse_task.ctx.graph.parse_pending,
+        //             .monotonic,
+        //         ),
+        //         @atomicLoad(
+        //             usize,
+        //             &this.parse_task.ctx.graph.deferred_pending,
+        //             .monotonic,
+        //         ),
+        //     });
+
+        //     this.defer_task = .{
+        //         .ctx = this.parse_task.ctx,
+        //     };
+        //     this.defer_task.recordDeferredTask();
+
+        //     return this.deferred_promise.value();
+        // }
 
         export fn JSBundlerPlugin__onLoadAsync(
             this: *Load,
@@ -1049,6 +1056,13 @@ pub const JSBundler = struct {
             u8,
         ) void;
 
+        extern fn JSBundlerPlugin__drainDeferred(*Plugin, rejected: bool) void;
+        extern fn JSBundlerPlugin__appendDeferPromise(*Plugin, rejected: bool) JSValue;
+
+        pub fn appendDeferPromise(this: *Plugin) JSValue {
+            return JSBundlerPlugin__appendDeferPromise(this, false);
+        }
+
         pub fn hasAnyMatches(
             this: *Plugin,
             path: *const Fs.Path,
@@ -1123,6 +1137,10 @@ pub const JSBundler = struct {
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();
             return JSBundlerPlugin__runSetupFunction(this, object, config);
+        }
+
+        pub fn drainDeferred(this: *Plugin, rejected: bool) void {
+            JSBundlerPlugin__drainDeferred(this, rejected);
         }
 
         pub fn deinit(this: *Plugin) void {

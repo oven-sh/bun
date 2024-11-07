@@ -61,6 +61,8 @@ public:
     NamespaceList onResolve = {};
     BunPluginTarget target { BunPluginTargetBrowser };
 
+    Vector<Strong<JSPromise>> deferredPromises = {};
+
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;

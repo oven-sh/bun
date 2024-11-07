@@ -158,6 +158,8 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     return ret;
 }
 
+extern int Bun__isEpollPwait2SupportedOnLinuxKernel();
+
 #endif
 
 /* Loop */
@@ -172,6 +174,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
+
+    if (has_epoll_pwait2 == -1) {
+        if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
+            has_epoll_pwait2 = 0;
+        } 
+    }
+
 #else
     loop->fd = kqueue();
 #endif

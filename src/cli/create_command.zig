@@ -714,11 +714,7 @@ pub const CreateCommand = struct {
                 const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                    }
+                    try ctx.log.print(Output.errorWriter());
 
                     package_json_file = null;
                     break :process_package_json;
@@ -2080,11 +2076,7 @@ pub const Example = struct {
             refresher.refresh();
 
             if (ctx.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
@@ -2096,11 +2088,7 @@ pub const Example = struct {
             progress.end();
             refresher.refresh();
 
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
+            try ctx.log.print(Output.errorWriter());
             Global.exit(1);
         }
 
@@ -2216,11 +2204,7 @@ pub const Example = struct {
         var source = logger.Source.initPathString("examples.json", mutable.list.items);
         const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
-                if (Output.enable_ansi_colors) {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-                }
+                try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
@@ -2229,11 +2213,7 @@ pub const Example = struct {
         };
 
         if (ctx.log.errors > 0) {
-            if (Output.enable_ansi_colors) {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-            } else {
-                try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
-            }
+            try ctx.log.print(Output.errorWriter());
             Global.exit(1);
         }
 

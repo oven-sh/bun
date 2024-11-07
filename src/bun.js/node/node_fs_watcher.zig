@@ -353,6 +353,8 @@ pub const FSWatcher = struct {
                 }
                 return null;
             };
+            var should_deinit_path = true;
+            defer if (should_deinit_path) path.deinit();
 
             if (exception.* != null) return null;
             var listener: JSC.JSValue = .zero;
@@ -365,7 +367,7 @@ pub const FSWatcher = struct {
 
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.get(ctx, "persistent")) |persistent_| {
+                    if (options_or_callable.getTruthy(ctx, "persistent")) |persistent_| {
                         if (!persistent_.isBoolean()) {
                             JSC.throwInvalidArguments(
                                 "persistent must be a boolean.",
@@ -378,7 +380,7 @@ pub const FSWatcher = struct {
                         persistent = persistent_.toBoolean();
                     }
 
-                    if (options_or_callable.get(ctx, "verbose")) |verbose_| {
+                    if (options_or_callable.getTruthy(ctx, "verbose")) |verbose_| {
                         if (!verbose_.isBoolean()) {
                             JSC.throwInvalidArguments(
                                 "verbose must be a boolean.",
@@ -391,30 +393,11 @@ pub const FSWatcher = struct {
                         verbose = verbose_.toBoolean();
                     }
 
-                    if (options_or_callable.get(ctx, "encoding")) |encoding_| {
-                        if (!encoding_.isString()) {
-                            JSC.throwInvalidArguments(
-                                "encoding must be a string.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        if (JSC.Node.Encoding.fromJS(encoding_, ctx.ptr())) |node_encoding| {
-                            encoding = node_encoding;
-                        } else {
-                            JSC.throwInvalidArguments(
-                                "invalid encoding.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
+                    if (options_or_callable.fastGet(ctx, .encoding)) |encoding_| {
+                        encoding = JSC.Node.Encoding.assert(encoding_, ctx, encoding) catch return null;
                     }
 
-                    if (options_or_callable.get(ctx, "recursive")) |recursive_| {
+                    if (options_or_callable.getTruthy(ctx, "recursive")) |recursive_| {
                         if (!recursive_.isBoolean()) {
                             JSC.throwInvalidArguments(
                                 "recursive must be a boolean.",
@@ -428,7 +411,7 @@ pub const FSWatcher = struct {
                     }
 
                     // abort signal
-                    if (options_or_callable.get(ctx, "signal")) |signal_| {
+                    if (options_or_callable.getTruthy(ctx, "signal")) |signal_| {
                         if (JSC.AbortSignal.fromJS(signal_)) |signal_obj| {
                             //Keep it alive
                             signal_.ensureStillAlive();
@@ -465,6 +448,8 @@ pub const FSWatcher = struct {
                 exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
                 return null;
             }
+
+            should_deinit_path = false;
 
             return Arguments{
                 .path = path,

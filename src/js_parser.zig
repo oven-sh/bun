@@ -3113,7 +3113,7 @@ pub const Parser = struct {
         const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
             if (comptime Environment.isWasm) {
                 Output.print("JSParser.parse: caught error {s} at location: {d}\n", .{ @errorName(err), p.lexer.loc().start });
-                p.log.printForLogLevel(Output.writer()) catch {};
+                p.log.print(Output.writer()) catch {};
             }
             return err;
         };
@@ -14700,7 +14700,7 @@ fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
+            p.log.print(panic_stream.writer()) catch unreachable;
 
             Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
@@ -16345,24 +16345,7 @@ fn NewParser_(
 
                             const runtime = if (p.options.jsx.runtime == .automatic) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                             const is_key_after_spread = e_.flags.contains(.is_key_after_spread);
-                            var children_count = e_.children.len;
-
-                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and
-                                tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.slice(p.allocator));
-
-                            children_count = if (is_childless_tag) 0 else children_count;
-
-                            if (children_count != e_.children.len) {
-                                // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
-                                // ^ from react-dom
-                                p.log.addWarningFmt(
-                                    p.source,
-                                    tag.loc,
-                                    p.allocator,
-                                    "\\<{s} /> is a void element and must not have \"children\"",
-                                    .{tag.data.e_string.slice(p.allocator)},
-                                ) catch {};
-                            }
+                            const children_count = e_.children.len;
 
                             // TODO: maybe we should split these into two different AST Nodes
                             // That would reduce the amount of allocations a little

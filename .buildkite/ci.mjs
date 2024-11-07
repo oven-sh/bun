@@ -7,119 +7,22 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-function getEnv(name, required = true) {
-  const value = process.env[name];
-
-  if (!value && required) {
-    throw new Error(`Missing environment variable: ${name}`);
-  }
-
-  return value;
-}
-
-function getRepository() {
-  const url = getEnv("BUILDKITE_PULL_REQUEST_REPO", false) || getEnv("BUILDKITE_REPO");
-  const match = url.match(/github.com\/([^/]+)\/([^/]+)\.git$/);
-  if (!match) {
-    throw new Error(`Unsupported repository: ${url}`);
-  }
-  const [, owner, repo] = match;
-  return `${owner}/${repo}`;
-}
-
-function getCommit() {
-  return getEnv("BUILDKITE_COMMIT");
-}
-
-function getBranch() {
-  return getEnv("BUILDKITE_BRANCH");
-}
-
-function getMainBranch() {
-  return getEnv("BUILDKITE_PIPELINE_DEFAULT_BRANCH", false) || "main";
-}
-
-function isFork() {
-  const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
-  return !!repository && repository !== getEnv("BUILDKITE_REPO");
-}
-
-function isMainBranch() {
-  return getBranch() === getMainBranch() && !isFork();
-}
-
-function isMergeQueue() {
-  return /^gh-readonly-queue/.test(getEnv("BUILDKITE_BRANCH"));
-}
-
-function isPullRequest() {
-  return getEnv("BUILDKITE_PULL_REQUEST", false) === "true";
-}
-
-async function getChangedFiles() {
-  const repository = getRepository();
-  const head = getCommit();
-  const base = `${head}^1`;
-
-  try {
-    const response = await fetch(`https://api.github.com/repos/${repository}/compare/${base}...${head}`);
-    if (response.ok) {
-      const { files } = await response.json();
-      return files.filter(({ status }) => !/removed|unchanged/i.test(status)).map(({ filename }) => filename);
-    }
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-function getBuildUrl() {
-  return getEnv("BUILDKITE_BUILD_URL");
-}
-
-async function getBuildIdWithArtifacts() {
-  let depth = 0;
-  let url = getBuildUrl();
-
-  while (url) {
-    const response = await fetch(`${url}.json`, {
-      headers: {
-        "Accept": "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      return;
-    }
-
-    const { id, state, prev_branch_build: lastBuild, steps } = await response.json();
-    if (depth++) {
-      if (state === "failed" || state === "passed") {
-        const buildSteps = steps.filter(({ label }) => label.endsWith("build-bun"));
-        if (buildSteps.length) {
-          if (buildSteps.every(({ outcome }) => outcome === "passed")) {
-            return id;
-          }
-          return;
-        }
-      }
-    }
-
-    if (!lastBuild) {
-      return;
-    }
-
-    url = url.replace(/\/builds\/[0-9]+/, `/builds/${lastBuild["number"]}`);
-  }
-}
-
-function isDocumentation(filename) {
-  return /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/.test(filename);
-}
-
-function isTest(filename) {
-  return /^test/.test(filename);
-}
+import {
+  getCanaryRevision,
+  getChangedFiles,
+  getCommit,
+  getCommitMessage,
+  getLastSuccessfulBuild,
+  getMainBranch,
+  getTargetBranch,
+  isBuildkite,
+  isFork,
+  isMainBranch,
+  isMergeQueue,
+  printEnvironment,
+  spawnSafe,
+  startGroup,
+} from "../scripts/utils.mjs";
 
 function toYaml(obj, indent = 0) {
   const spaces = " ".repeat(indent);
@@ -175,8 +78,14 @@ function getPipeline(buildId) {
    */
 
   const getKey = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
+    if (abi) {
+      if (baseline) {
+        return `${os}-${arch}-${abi}-baseline`;
+      }
+      return `${os}-${arch}-${abi}`;
+    }
     if (baseline) {
       return `${os}-${arch}-baseline`;
     }
@@ -185,13 +94,15 @@ function getPipeline(buildId) {
   };
 
   const getLabel = platform => {
-    const { os, arch, baseline } = platform;
-
-    if (baseline) {
-      return `:${os}: ${arch}-baseline`;
+    const { os, arch, abi, baseline, release } = platform;
+    let label = release ? `:${os}: ${release} ${arch}` : `:${os}: ${arch}`;
+    if (abi) {
+      label += `-${abi}`;
     }
-
-    return `:${os}: ${arch}`;
+    if (baseline) {
+      label += `-baseline`;
+    }
+    return label;
   };
 
   // https://buildkite.com/docs/pipelines/command-step#retry-attributes
@@ -225,15 +136,16 @@ function getPipeline(buildId) {
    */
 
   const getBuildVendorStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-vendor`,
-      label: `${getLabel(platform)} - build-vendor`,
+      label: `build-vendor`,
       agents: {
         os,
         arch,
-        queue: `build-${os}`,
+        abi,
+        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
       },
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -245,15 +157,16 @@ function getPipeline(buildId) {
   };
 
   const getBuildCppStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-cpp`,
-      label: `${getLabel(platform)} - build-cpp`,
+      label: `build-cpp`,
       agents: {
         os,
         arch,
-        queue: `build-${os}`,
+        abi,
+        queue: abi ? `build-${os}-${abi}` : `build-${os}`,
       },
       retry: getRetry(),
       cancel_on_build_failing: isMergeQueue(),
@@ -266,12 +179,12 @@ function getPipeline(buildId) {
   };
 
   const getBuildZigStep = platform => {
-    const { os, arch, baseline } = platform;
-    const toolchain = baseline ? `${os}-${arch}-baseline` : `${os}-${arch}`;
+    const { os, arch, abi, baseline } = platform;
+    const toolchain = getKey(platform);
 
     return {
       key: `${getKey(platform)}-build-zig`,
-      label: `${getLabel(platform)} - build-zig`,
+      label: `build-zig`,
       agents: {
         queue: "build-zig",
       },
@@ -285,11 +198,11 @@ function getPipeline(buildId) {
   };
 
   const getBuildBunStep = platform => {
-    const { os, arch, baseline } = platform;
+    const { os, arch, abi, baseline } = platform;
 
     return {
       key: `${getKey(platform)}-build-bun`,
-      label: `${getLabel(platform)} - build-bun`,
+      label: `build-bun`,
       depends_on: [
         `${getKey(platform)}-build-vendor`,
         `${getKey(platform)}-build-cpp`,
@@ -298,6 +211,7 @@ function getPipeline(buildId) {
       agents: {
         os,
         arch,
+        abi,
         queue: `build-${os}`,
       },
       retry: getRetry(),
@@ -311,22 +225,22 @@ function getPipeline(buildId) {
   };
 
   const getTestBunStep = platform => {
-    const { os, arch, distro, release } = platform;
+    const { os, arch, abi, distro, release } = platform;
 
     let name;
     if (os === "darwin" || os === "windows") {
-      name = getLabel(platform);
+      name = getLabel({ ...platform, release });
     } else {
-      name = getLabel({ ...platform, os: distro });
+      name = getLabel({ ...platform, os: distro, release });
     }
 
     let agents;
     if (os === "darwin") {
-      agents = { os, arch, queue: `test-darwin` };
+      agents = { os, arch, abi, queue: `test-darwin` };
     } else if (os === "windows") {
-      agents = { os, arch, robobun: true };
+      agents = { os, arch, abi, robobun: true };
     } else {
-      agents = { os, arch, distro, release, robobun: true };
+      agents = { os, arch, abi, distro, release, robobun: true };
     }
 
     let command;
@@ -353,12 +267,19 @@ function getPipeline(buildId) {
       depends = [`${getKey(platform)}-build-bun`];
     }
 
+    let retry;
+    if (os !== "windows") {
+      // When the runner fails on Windows, Buildkite only detects an exit code of 1.
+      // Because of this, we don't know if the run was fatal, or soft-failed.
+      retry = getRetry();
+    }
+
     return {
       key: `${getKey(platform)}-${distro}-${release.replace(/\./g, "")}-test-bun`,
       label: `${name} - test-bun`,
       depends_on: depends,
       agents,
-      retry: getRetry(),
+      retry,
       cancel_on_build_failing: isMergeQueue(),
       soft_fail: isMainBranch(),
       parallelism,
@@ -375,8 +296,10 @@ function getPipeline(buildId) {
     { os: "darwin", arch: "aarch64" },
     { os: "darwin", arch: "x64" },
     { os: "linux", arch: "aarch64" },
+    // { os: "linux", arch: "aarch64", abi: "musl" }, // TODO:
     { os: "linux", arch: "x64" },
     { os: "linux", arch: "x64", baseline: true },
+    // { os: "linux", arch: "x64", abi: "musl" }, // TODO:
     { os: "windows", arch: "x64" },
     { os: "windows", arch: "x64", baseline: true },
   ];
@@ -389,12 +312,14 @@ function getPipeline(buildId) {
     { os: "linux", arch: "aarch64", distro: "debian", release: "12" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04" },
+    // { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
     { os: "linux", arch: "x64", distro: "debian", release: "12" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04" },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04" },
     { os: "linux", arch: "x64", distro: "debian", release: "12", baseline: true },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "22.04", baseline: true },
     { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", baseline: true },
+    // { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "edge" }, // TODO:
     { os: "windows", arch: "x64", distro: "server", release: "2019" },
     { os: "windows", arch: "x64", distro: "server", release: "2019", baseline: true },
   ];
@@ -431,37 +356,82 @@ function getPipeline(buildId) {
 }
 
 async function main() {
-  console.log("Checking environment...");
-  console.log(" - Repository:", getRepository());
-  console.log(" - Branch:", getBranch());
-  console.log(" - Commit:", getCommit());
-  console.log(" - Is Main Branch:", isMainBranch());
-  console.log(" - Is Merge Queue:", isMergeQueue());
-  console.log(" - Is Pull Request:", isPullRequest());
+  printEnvironment();
 
-  let buildId;
-  const changedFiles = await getChangedFiles();
+  console.log("Checking last successful build...");
+  const lastBuild = await getLastSuccessfulBuild();
+  if (lastBuild) {
+    const { id, path, commit_id: commit } = lastBuild;
+    console.log(" - Build ID:", id);
+    console.log(" - Build URL:", new URL(path, "https://buildkite.com/").toString());
+    console.log(" - Commit:", commit);
+  } else {
+    console.log(" - No build found");
+  }
+
+  console.log("Checking changed files...");
+  const baseRef = getCommit();
+  console.log(" - Base Ref:", baseRef);
+  const headRef = lastBuild?.commit_id || getTargetBranch() || getMainBranch();
+  console.log(" - Head Ref:", headRef);
+
+  const changedFiles = await getChangedFiles(undefined, baseRef, headRef);
   if (changedFiles) {
-    console.log(
-      `Found ${changedFiles.length} changed files: \n${changedFiles.map(filename => ` - ${filename}`).join("\n")}`,
-    );
-
-    if (changedFiles.every(filename => isDocumentation(filename))) {
-      console.log("Since changed files are only documentation, skipping...");
-      return;
-    }
-
-    if (changedFiles.every(filename => isTest(filename) || isDocumentation(filename))) {
-      buildId = await getBuildIdWithArtifacts();
-      if (buildId) {
-        console.log("Since changed files are only tests, using build artifacts from previous build...", buildId);
-      } else {
-        console.log("Changed files are only tests, but could not find previous build artifacts...");
-      }
+    if (changedFiles.length) {
+      changedFiles.forEach(filename => console.log(` - ${filename}`));
+    } else {
+      console.log(" - No changed files");
     }
   }
 
-  const pipeline = getPipeline(buildId);
+  const isDocumentationFile = filename => /^(\.vscode|\.github|bench|docs|examples)|\.(md)$/i.test(filename);
+  const isTestFile = filename => /^test/i.test(filename) || /runner\.node\.mjs$/i.test(filename);
+
+  console.log("Checking if CI should be skipped...");
+  {
+    const message = getCommitMessage();
+    const match = /\[(skip ci|no ci|ci skip|ci no)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      return;
+    }
+  }
+  if (changedFiles && changedFiles.every(filename => isDocumentationFile(filename))) {
+    console.log(" - Yes, because all changed files are documentation");
+    return;
+  }
+
+  console.log("Checking if build should be skipped...");
+  let skipBuild;
+  {
+    const message = getCommitMessage();
+    const match = /\[(only tests?|tests? only|skip build|no build|build skip|build no)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      skipBuild = true;
+    }
+  }
+  if (changedFiles && changedFiles.every(filename => isTestFile(filename) || isDocumentationFile(filename))) {
+    console.log(" - Yes, because all changed files are tests or documentation");
+    skipBuild = true;
+  }
+
+  console.log("Checking if build is a named release...");
+  let buildRelease;
+  {
+    const message = getCommitMessage();
+    const match = /\[(release|release build|build release)\]/i.exec(message);
+    if (match) {
+      const [, reason] = match;
+      console.log(" - Yes, because commit message contains:", reason);
+      buildRelease = true;
+    }
+  }
+
+  console.log("Generating pipeline...");
+  const pipeline = getPipeline(lastBuild && skipBuild ? lastBuild.id : undefined);
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
   writeFileSync(contentPath, content);
@@ -469,6 +439,15 @@ async function main() {
   console.log("Generated pipeline:");
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
+
+  if (isBuildkite) {
+    console.log("Setting canary revision...");
+    const canaryRevision = buildRelease ? 0 : await getCanaryRevision();
+    await spawnSafe(["buildkite-agent", "meta-data", "set", "canary", `${canaryRevision}`]);
+
+    console.log("Uploading pipeline...");
+    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath]);
+  }
 }
 
 await main();

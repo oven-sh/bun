@@ -29,7 +29,6 @@ pub const StrictModeReservedWords = tables.StrictModeReservedWords;
 pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
-pub const ChildlessJSXTags = tables.ChildlessJSXTags;
 
 fn notimpl() noreturn {
     Output.panic("not implemented yet!", .{});

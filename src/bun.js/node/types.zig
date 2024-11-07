@@ -380,15 +380,13 @@ pub const BlobOrStringOrBuffer = union(enum) {
 
     pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool, allow_request_response: bool) ?BlobOrStringOrBuffer {
         switch (value.jsType()) {
-            .Blob => {
+            .DOMWrapper => {
                 if (value.as(JSC.WebCore.Blob)) |blob| {
                     if (blob.store) |store| {
                         store.ref();
                     }
                     return .{ .blob = blob.* };
                 }
-            },
-            .DOMWrapper => {
                 if (allow_request_response) {
                     if (value.as(JSC.WebCore.Request)) |request| {
                         request.body.value.toBlobIfPossible();
@@ -669,7 +667,6 @@ pub const Encoding = enum(u8) {
         };
     }
 
-    /// Caller must verify the value is a string
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
         return map.fromJSCaseInsensitive(global, value);
     }
@@ -677,6 +674,40 @@ pub const Encoding = enum(u8) {
     /// Caller must verify the value is a string
     pub fn from(slice: []const u8) ?Encoding {
         return strings.inMapCaseInsensitive(slice, map);
+    }
+
+    pub fn assert(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) !Encoding {
+        if (value.isFalsey()) {
+            return default;
+        }
+
+        if (!value.isString()) {
+            throwEncodingError(globalObject, value);
+            return error.JSError;
+        }
+
+        return fromJSWithDefaultOnEmpty(value, globalObject, default) orelse {
+            throwEncodingError(globalObject, value);
+            return error.JSError;
+        };
+    }
+
+    pub fn fromJSWithDefaultOnEmpty(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) ?Encoding {
+        const str = bun.String.tryFromJS(value, globalObject) orelse return null;
+        defer str.deref();
+        if (str.isEmpty()) {
+            return default;
+        }
+        return str.inMapCaseInsensitive(Encoding.map);
+    }
+
+    pub fn throwEncodingError(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        globalObject.ERR_INVALID_ARG_VALUE(
+            "encoding '{}' is an invalid encoding",
+            .{
+                value.fmtString(globalObject),
+            },
+        ).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {

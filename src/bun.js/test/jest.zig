@@ -39,7 +39,6 @@ const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSType = JSValue.JSType;
-const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
@@ -1853,7 +1852,7 @@ inline fn createIfScope(
     }
 
     const name = ZigString.static(property);
-    const value = args[0].toBooleanSlow(globalThis);
+    const value = args[0].toBoolean();
 
     const truthy_falsey = comptime switch (tag) {
         .pass => .{ Scope.skip, Scope.call },

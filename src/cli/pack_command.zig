@@ -136,12 +136,7 @@ pub const PackCommand = struct {
                     }
 
                     if (manager.log.hasErrors()) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| try manager.log.printForLogLevelWithEnableAnsiColors(
-                                Output.errorWriter(),
-                                enable_ansi_colors,
-                            ),
-                        }
+                        try manager.log.print(Output.errorWriter());
                     }
 
                     Global.crash();
@@ -1090,11 +1085,7 @@ pub const PackCommand = struct {
             },
             .parse_err => |err| {
                 Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
+                manager.log.print(Output.errorWriter()) catch {};
                 Global.crash();
             },
             .entry => |entry| entry,

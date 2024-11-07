@@ -81,9 +81,9 @@ pub const TOML = struct {
     log: *logger.Log,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !TOML {
+    pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log, redact_logs: bool) !TOML {
         return TOML{
-            .lexer = try Lexer.init(log, source_, allocator),
+            .lexer = try Lexer.init(log, source_, allocator, redact_logs),
             .allocator = allocator,
             .log = log,
         };
@@ -166,7 +166,7 @@ pub const TOML = struct {
         return head;
     }
 
-    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
+    pub fn parse(source_: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, redact_logs: bool) !Expr {
         switch (source_.contents.len) {
             // This is to be consisntent with how disabled JS files are handled
             0 => {
@@ -175,7 +175,7 @@ pub const TOML = struct {
             else => {},
         }
 
-        var parser = try TOML.init(allocator, source_.*, log);
+        var parser = try TOML.init(allocator, source_.*, log, redact_logs);
 
         return try parser.runParser();
     }

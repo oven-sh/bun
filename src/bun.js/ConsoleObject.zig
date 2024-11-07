@@ -418,6 +418,7 @@ pub const TablePrinter = struct {
         row_key: RowKey,
         row_value: JSValue,
     ) !void {
+        this.value_formatter.writeIndent(Writer, writer) catch return;
         try writer.writeAll("│");
         {
             const len: u32 = switch (row_key) {
@@ -568,13 +569,16 @@ pub const TablePrinter = struct {
                 col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidthExcludeANSIColors(false))));
             }
 
+            this.value_formatter.writeIndent(Writer, writer) catch return;
             try writer.writeAll("┌");
             for (columns.items, 0..) |*col, i| {
                 if (i > 0) try writer.writeAll("┬");
                 try writeStringNTimes(Writer, writer, "─", col.width + (PADDING * 2));
             }
 
-            try writer.writeAll("┐\n│");
+            try writer.writeAll("┐\n");
+            this.value_formatter.writeIndent(Writer, writer) catch return;
+            try writer.writeAll("│");
 
             for (columns.items, 0..) |col, i| {
                 if (i > 0) try writer.writeAll("│");
@@ -591,7 +595,9 @@ pub const TablePrinter = struct {
                 try writer.writeByteNTimes(' ', needed + PADDING);
             }
 
-            try writer.writeAll("│\n├");
+            try writer.writeAll("│\n");
+            this.value_formatter.writeIndent(Writer, writer) catch return;
+            try writer.writeAll("├");
             for (columns.items, 0..) |col, i| {
                 if (i > 0) try writer.writeAll("┼");
                 try writeStringNTimes(Writer, writer, "─", col.width + (PADDING * 2));
@@ -627,6 +633,7 @@ pub const TablePrinter = struct {
 
         // print the table bottom border
         {
+            this.value_formatter.writeIndent(Writer, writer) catch return;
             try writer.writeAll("└");
             try writeStringNTimes(Writer, writer, "─", columns.items[0].width + (PADDING * 2));
             for (columns.items[1..]) |*column| {
@@ -3293,16 +3300,24 @@ pub fn count(
     // len
     len: usize,
 ) callconv(JSC.conv) void {
-    var this = globalThis.bunVM().console;
+    var console = globalThis.bunVM().console;
     const slice = ptr[0..len];
     const hash = bun.hash(slice);
     // we don't want to store these strings, it will take too much memory
-    const counter = this.counts.getOrPut(globalThis.allocator(), hash) catch unreachable;
+    const counter = console.counts.getOrPut(globalThis.allocator(), hash) catch unreachable;
     const current = @as(u32, if (counter.found_existing) counter.value_ptr.* else @as(u32, 0)) + 1;
     counter.value_ptr.* = current;
 
-    var writer_ctx = &this.writer;
+    var writer_ctx = &console.writer;
     var writer = &writer_ctx.writer();
+    const Writer = @TypeOf(writer);
+
+    var fmt = ConsoleObject.Formatter{
+        .globalThis = globalThis,
+        .indent = console.default_indent,
+    };
+    fmt.writeIndent(Writer, writer) catch return;
+
     if (Output.enable_ansi_colors_stdout)
         writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", true), .{ slice, current }) catch unreachable
     else
@@ -3355,7 +3370,7 @@ pub fn timeEnd(
     // console
     _: ConsoleObject.Type,
     // global
-    _: *JSGlobalObject,
+    globalThis: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
 ) callconv(JSC.conv) void {
@@ -3366,6 +3381,17 @@ pub fn timeEnd(
     const id = bun.hash(chars[0..len]);
     const result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
     var value: std.time.Timer = result.value orelse return;
+
+    var console = globalThis.bunVM().console;
+    var fmt = ConsoleObject.Formatter{
+        .globalThis = globalThis,
+        .indent = console.default_indent,
+    };
+    const writer = console.error_writer.writer();
+    const Writer = @TypeOf(writer);
+    fmt.writeIndent(Writer, writer) catch return;
+    writer.context.flush() catch {};
+
     // get the duration in microseconds
     // then display it in milliseconds
     Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
@@ -3381,7 +3407,7 @@ pub fn timeLog(
     // console
     _: ConsoleObject.Type,
     // global
-    global: *JSGlobalObject,
+    globalThis: *JSGlobalObject,
     // chars
     chars: [*]const u8,
     // len
@@ -3396,6 +3422,20 @@ pub fn timeLog(
 
     const id = bun.hash(chars[0..len]);
     var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
+
+    var console = globalThis.bunVM().console;
+    var fmt = ConsoleObject.Formatter{
+        .remaining_values = &[_]JSValue{},
+        .globalThis = globalThis,
+        .ordered_properties = false,
+        .quote_strings = false,
+        .indent = console.default_indent,
+    };
+    var writer = console.error_writer.writer();
+    const Writer = @TypeOf(writer);
+    fmt.writeIndent(Writer, writer) catch return;
+    writer.context.flush() catch {};
+
     // get the duration in microseconds
     // then display it in milliseconds
     Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
@@ -3406,22 +3446,13 @@ pub fn timeLog(
     Output.flush();
 
     // print the arguments
-    var fmt = ConsoleObject.Formatter{
-        .remaining_values = &[_]JSValue{},
-        .globalThis = global,
-        .ordered_properties = false,
-        .quote_strings = false,
-    };
-    var console = global.bunVM().console;
-    var writer = console.error_writer.writer();
-    const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {
-        const tag = ConsoleObject.Formatter.Tag.get(arg, global);
+        const tag = ConsoleObject.Formatter.Tag.get(arg, globalThis);
         _ = writer.write(" ") catch 0;
         if (Output.enable_ansi_colors_stderr) {
-            fmt.format(tag, Writer, writer, arg, global, true);
+            fmt.format(tag, Writer, writer, arg, globalThis, true);
         } else {
-            fmt.format(tag, Writer, writer, arg, global, false);
+            fmt.format(tag, Writer, writer, arg, globalThis, false);
         }
     }
     _ = writer.write("\n") catch 0;

@@ -475,9 +475,11 @@ describe("bundler", () => {
         capture(+'-123.567');
         capture(+'8.325');
         capture(+'100000000');
-        // unsupported
         capture(+'\\u0030\\u002e\\u0031');
         capture(+'\\x30\\x2e\\x31');
+        capture(+'NotANumber');
+        // not supported
+        capture(+'æ');
       `,
     },
     minifySyntax: true,
@@ -486,9 +488,11 @@ describe("bundler", () => {
       "-123.567",
       "8.325",
       "1e8",
+      "0.1",
+      "0.1",
+      "NaN",
       // untouched
-      "+\"0.1\"",
-      "+\"0.1\"",
+      '+"æ"',
     ],
   });
 });

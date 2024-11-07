@@ -61,15 +61,15 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   },
   TernaryWithEscapeVariable: {
     expr: '`${"1"}\\${${VARIABLE ? "SOMETHING" : ""}`',
-    captureRaw: '`${"1"}\\${${VARIABLE?"SOMETHING":""}`',
+    captureRaw: '`1\\${${VARIABLE?"SOMETHING":""}`',
   },
   TernaryWithEscapeTrue: {
     expr: '`${"1"}\\${${true ? "SOMETHING" : ""}`',
-    captureRaw: '`${"1"}\\${${"SOMETHING"}`',
+    captureRaw: '"1${SOMETHING"',
   },
   TernaryWithEscapeFalse: {
     expr: '`${"1"}\\${${false ? "SOMETHING" : ""}`',
-    captureRaw: '`${"1"}\\${${""}`',
+    captureRaw: '"1${"',
   },
   Fold: { expr: "`a${'b'}c${'d'}e`", capture: true },
   FoldNested1: { expr: "`a${`b`}c${`${'d'}`}e`", capture: true },

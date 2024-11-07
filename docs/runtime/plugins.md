@@ -338,6 +338,7 @@ namespace Bun {
 }
 
 type PluginBuilder = {
+  onStart(callback: () => void): void;
   onResolve: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string; importer: string }) => {
@@ -360,3 +361,50 @@ type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
 ```
 
 The `onLoad` method optionally accepts a `namespace` in addition to the `filter` regex. This namespace will be be used to prefix the import in transpiled code; for instance, a loader with a `filter: /\.yaml$/` and `namespace: "yaml:"` will transform an import from `./myfile.yaml` into `yaml:./myfile.yaml`.
+
+### `onStart`
+
+This callback runs once the bundler starts.
+
+### `onResolve`
+
+This callback allows you to modify the path of a module before it is parsed.
+
+You can optionally return a new `path`.
+
+### `onLoad`
+
+The callback of `onLoad` allows you to optionally modify the contents of a module before it is parsed by Bun.
+
+#### `.defer()`
+
+One of the arguments passed to the `onLoad` callback is a `defer` function. This functions returns a `Promise` that is resolved when all other modules have been parsed.
+
+This allows you to delay execution of the `onLoad` callback until all other modules have been parsed.
+
+This is useful for returning contens of a module that depends on other modules.
+
+```ts
+// Example: generating a JSON file which contains every server route which is bundled
+
+// This will be populated by
+let serverRoutes: ServerRoute[] = [];
+
+build.onLoad({ filter: /routes\/\.(ts|tsx)$/ }, ({ path, contents, defer }) => {
+  serverRoutes.push(asServerRoute(path, contents));
+  return undefined;
+});
+
+build.onLoad({ filter: /server-routes\.json/ }, ({ defer }) => {
+  // Wait until all server routes have been parsed
+  await defer();
+
+  // Emit JSON file
+  const json = JSON.stringify(serverRoutes);
+
+  return {
+    contents: json,
+    loader: "json",
+  };
+});
+```

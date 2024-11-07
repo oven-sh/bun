@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
-import { dirname, join, resolve } from "path";
+import { describe, expect, it, test } from "bun:test";
+import path, { dirname, join, resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -188,6 +188,8 @@ plugin({
 import "../../third_party/svelte";
 import "./module-plugins";
 import { itBundled } from "bundler/expectBundled";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { filter } from "js/node/test/fixtures/aead-vectors";
 
 describe("require", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", () => {
@@ -793,5 +795,160 @@ console.log(foo);
       "/a.css": ["end_of_input"],
       "/lmao.ts": ["woopsie"],
     },
+  });
+
+  test("integration", async () => {
+    const folder = tempDirWithFiles("integration", {
+      "module_data.json": "{}",
+      "package.json": `{
+        "name": "integration-test",
+        "version": "1.0.0",
+        "private": true,
+        "type": "module",
+        "dependencies": {
+        }
+      }`,
+      "src/index.ts": `
+import { greet } from "./utils/greetings";
+import { formatDate } from "./utils/dates";
+import { calculateTotal } from "./math/calculations";
+import { logger } from "./services/logger";
+import moduleData from "../module_data.json";
+import path from "path";
+
+
+await Bun.write(path.join(import.meta.dirname, 'output.json'), JSON.stringify(moduleData))
+
+function main() {
+  const today = new Date();
+  logger.info("Application started");
+  
+  const total = calculateTotal([10, 20, 30, 40]);
+  console.log(greet("World"));
+  console.log(\`Today is \${formatDate(today)}\`);
+  console.log(\`Total: \${total}\`);
+}
+`,
+      "src/utils/greetings.ts": `
+export function greet(name: string): string {
+  return \`Hello \${name}!\`;
+}
+`,
+      "src/utils/dates.ts": `
+export function formatDate(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric", 
+    month: "long",
+    day: "numeric"
+  });
+}
+`,
+      "src/math/calculations.ts": `
+export function calculateTotal(numbers: number[]): number {
+  return numbers.reduce((sum, num) => sum + num, 0);
+}
+
+export function multiply(a: number, b: number): number {
+  return a * b;
+}
+`,
+      "src/services/logger.ts": `
+export const logger = {
+  info: (msg: string) => console.log(\`[INFO] \${msg}\`),
+  error: (msg: string) => console.error(\`[ERROR] \${msg}\`),
+  warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
+};
+`,
+    });
+
+    const entrypoint = path.join(folder, "src", "index.ts");
+    await Bun.$`${bunExe()} install`.env(bunEnv).cwd(folder);
+
+    const outdir = path.join(folder, "dist");
+
+    const result = await Bun.build({
+      entrypoints: [entrypoint],
+      outdir,
+      plugins: [
+        {
+          name: "xXx123_import_checker_321xXx",
+          setup(build) {
+            type Import = {
+              imported: string[];
+              dep: string;
+            };
+            type Export = {
+              ident: string;
+            };
+            let imports_and_exports: Record<string, { imports: Array<Import>; exports: Array<Export> }> = {};
+
+            build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
+              const contents = await Bun.$`cat ${path}`.quiet().text();
+
+              const import_regex = /import\s+(?:([\s\S]*?)\s+from\s+)?['"]([^'"]+)['"];/g;
+              const imports: Array<Import> = [...contents.toString().matchAll(import_regex)].map(m => ({
+                imported: m
+                  .slice(1, m.length - 1)
+                  .map(match => (match[0] === "{" ? match.slice(2, match.length - 2) : match)),
+                dep: m[m.length - 1],
+              }));
+
+              const export_regex =
+                /export\s+(?:default\s+|const\s+|let\s+|var\s+|function\s+|class\s+|enum\s+|type\s+|interface\s+)?([\w$]+)?(?:\s*=\s*|(?:\s*{[^}]*})?)?[^;]*;/g;
+              const exports: Array<Export> = [...contents.matchAll(export_regex)].map(m => ({
+                ident: m[1],
+              }));
+
+              imports_and_exports[path.replaceAll("\\", "/").split("/").pop()!] = { imports, exports };
+              return undefined;
+            });
+
+            build.onLoad({ filter: /module_data\.json/ }, async ({ defer }) => {
+              await defer();
+              const contents = JSON.stringify(imports_and_exports);
+
+              return {
+                contents,
+                loader: "json",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBeTrue();
+    await Bun.$`${bunExe()} run ${result.outputs[0].path}`;
+    const output = await Bun.$`cat ${path.join(folder, "dist", "output.json")}`.json();
+    expect(output).toStrictEqual({
+      "index.ts": {
+        "imports": [
+          { "imported": ["greet"], "dep": "./utils/greetings" },
+          { "imported": ["formatDate"], "dep": "./utils/dates" },
+          { "imported": ["calculateTotal"], "dep": "./math/calculations" },
+          { "imported": ["logger"], "dep": "./services/logger" },
+          { "imported": ["moduleData"], "dep": "../module_data.json" },
+          { "imported": ["path"], "dep": "path" },
+        ],
+        "exports": [],
+      },
+      "greetings.ts": {
+        "imports": [],
+        "exports": [{ "ident": "greet" }],
+      },
+      "dates.ts": {
+        "imports": [],
+        "exports": [{ "ident": "formatDate" }],
+      },
+      "calculations.ts": {
+        "imports": [],
+        "exports": [{ "ident": "calculateTotal" }, { "ident": "multiply" }],
+      },
+      "logger.ts": {
+        "imports": [],
+        "exports": [{ "ident": "logger" }],
+      },
+    });
   });
 });

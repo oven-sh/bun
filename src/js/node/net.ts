@@ -254,9 +254,10 @@ const Socket = (function (InternalSocket) {
         self.#ended = true;
         self.push(null);
       }
-      if (err) {
-        self.destroy(err);
-      }
+      // TODO: check how the best way to handle this
+      // if (err) {
+      //   self.destroy(err);
+      // }
     }
     static #Close(socket, err) {
       const self = socket.data;

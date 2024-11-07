@@ -636,7 +636,7 @@ pub const IniTestingAPIs = struct {
             }
         };
 
-        return parser.out.toJS(bun.default_allocator, globalThis, .{ .decode_escape_sequences = true }) catch |e| {
+        return parser.out.toJS(bun.default_allocator, globalThis, .{}) catch |e| {
             globalThis.throwError(e, "failed to turn AST into JS");
             return .undefined;
         };

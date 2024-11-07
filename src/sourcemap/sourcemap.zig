@@ -179,10 +179,8 @@ pub fn parseJSON(
         if (item.data != .e_string)
             return error.InvalidSourceMap;
 
-        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
-        defer arena.free(utf16_decode);
-        source_paths_slice.?[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
-            return error.InvalidSourceMap;
+        item.data.e_string.toUTF8(alloc) catch return error.InvalidSourceMap;
+        source_paths_slice.?[i] = try alloc.dupe(u8, item.data.e_string.slice8());
 
         i += 1;
     };
@@ -229,11 +227,7 @@ pub fn parseJSON(
             break :content null;
         }
 
-        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(str, arena);
-        defer arena.free(utf16_decode);
-
-        break :content bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
-            return error.InvalidSourceMap;
+        break :content try alloc.dupe(u8, str);
     } else null;
 
     return .{

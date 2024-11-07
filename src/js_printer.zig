@@ -205,14 +205,15 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime encoding: strings.Encoding) !void {
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime encoding: strings.Encoding) !void {
+    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
         const width = switch (comptime encoding) {
             .latin1, .ascii => 1,
             .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
-            else => @compileError("TODO"),
+            .utf16 => 1,
         };
         const clamped_width = @min(@as(usize, width), n -| i);
         const c = switch (encoding) {
@@ -231,13 +232,18 @@ pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Wri
             ),
             .ascii => brk: {
                 std.debug.assert(text[i] <= 0x7F);
-                break :brk 1;
+                break :brk text[i];
             },
             .latin1 => brk: {
                 if (text[i] <= 0x7F) break :brk text[i];
                 break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
             },
-            else => @compileError("TODO"),
+            .utf16 => brk: {
+                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
+                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
+                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
+                break :brk @as(i32, text[i]);
+            },
         };
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + clamped_width ..];
@@ -256,13 +262,12 @@ pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Wri
                         break;
                     }
                 },
-                .latin1 => {
+                .latin1, .utf16 => {
                     var codepoint_bytes: [4]u8 = undefined;
                     const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
                     try writer.writeAll(codepoint_bytes[0..codepoint_len]);
                     i += clamped_width;
                 },
-                else => @compileError("TODO"),
             }
             continue;
         }
@@ -280,7 +285,11 @@ pub fn writePreQuotedString(text: []const u8, comptime Writer: type, writer: Wri
                 i += 1;
             },
             '\n' => {
-                try writer.writeAll("\\n");
+                if (quote_char == '`') {
+                    try writer.writeAll("\n");
+                } else {
+                    try writer.writeAll("\\n");
+                }
                 i += 1;
             },
             std.ascii.control_code.cr => {
@@ -1583,227 +1592,15 @@ fn NewPrinter(
             }) catch |err| switch (err) {};
         }
         pub fn printStringCharactersUTF16(e: *Printer, text: []const u16, quote: u8) void {
-            var i: usize = 0;
-            const n: usize = text.len;
+            const slice = std.mem.sliceAsBytes(text);
 
-            outer: while (i < n) {
-                const CodeUnitType = u32;
-
-                const c: CodeUnitType = text[i];
-                i += 1;
-
-                switch (c) {
-
-                    // Special-case the null character since it may mess with code written in C
-                    // that treats null characters as the end of the string.
-                    0x00 => {
-                        // We don't want "\x001" to be written as "\01"
-                        if (i < n and text[i] >= '0' and text[i] <= '9') {
-                            e.print("\\x00");
-                        } else {
-                            e.print("\\0");
-                        }
-                    },
-
-                    // Special-case the bell character since it may cause dumping this file to
-                    // the terminal to make a sound, which is undesirable. Note that we can't
-                    // use an octal literal to print this shorter since octal literals are not
-                    // allowed in strict mode (or in template strings).
-                    0x07 => {
-                        e.print("\\x07");
-                    },
-                    0x08 => {
-                        if (quote == '`')
-                            e.print(0x08)
-                        else
-                            e.print("\\b");
-                    },
-                    0x0C => {
-                        if (quote == '`')
-                            e.print(0x000C)
-                        else
-                            e.print("\\f");
-                    },
-                    '\t' => {
-                        if (quote == '`')
-                            e.print("\t")
-                        else
-                            e.print("\\t");
-                    },
-                    '\n' => {
-                        if (quote == '`') {
-                            e.print('\n');
-                        } else {
-                            e.print("\\n");
-                        }
-                    },
-                    // we never print \r un-escaped
-                    std.ascii.control_code.cr => {
-                        e.print("\\r");
-                    },
-                    // \v
-                    std.ascii.control_code.vt => {
-                        if (quote == '`') {
-                            e.print(std.ascii.control_code.vt);
-                        } else {
-                            e.print("\\v");
-                        }
-                    },
-                    // "\\"
-                    '\\' => {
-                        e.print("\\\\");
-                    },
-
-                    '\'' => {
-                        if (quote == '\'') {
-                            e.print('\\');
-                        }
-                        e.print("'");
-                    },
-
-                    '"' => {
-                        if (quote == '"') {
-                            e.print('\\');
-                        }
-
-                        e.print("\"");
-                    },
-                    '`' => {
-                        if (quote == '`') {
-                            e.print('\\');
-                        }
-
-                        e.print("`");
-                    },
-                    '$' => {
-                        if (quote == '`' and i < n and text[i] == '{') {
-                            e.print('\\');
-                        }
-
-                        e.print('$');
-                    },
-                    0x2028 => {
-                        e.print("\\u2028");
-                    },
-                    0x2029 => {
-                        e.print("\\u2029");
-                    },
-                    0xFEFF => {
-                        e.print("\\uFEFF");
-                    },
-
-                    else => {
-                        switch (c) {
-                            first_ascii...last_ascii => {
-                                e.print(@as(u8, @intCast(c)));
-
-                                // Fast path for printing long UTF-16 template literals
-                                // this only applies to template literal strings
-                                // but we print a template literal if there is a \n or a \r
-                                // which is often if the string is long and UTF-16
-                                if (quote == '`') {
-                                    const remain = text[i..];
-                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
-                                        remain[0] != '$' and
-                                        remain[0] != '\\' and
-                                        remain[0] != '`')
-                                    {
-                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
-                                            if (count_ == 0)
-                                                unreachable; // conditional above checks this
-
-                                            const len = count_ - 1;
-                                            i += len;
-                                            var ptr = e.writer.reserve(len) catch unreachable;
-                                            const to_copy = ptr[0..len];
-
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
-                                            e.writer.advance(len);
-                                            continue :outer;
-                                        } else {
-                                            const count = @as(u32, @truncate(remain.len));
-                                            var ptr = e.writer.reserve(count) catch unreachable;
-                                            const to_copy = ptr[0..count];
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain);
-                                            e.writer.advance(count);
-                                            i += count;
-                                        }
-                                    }
-                                }
-                            },
-                            first_high_surrogate...last_high_surrogate => {
-
-                                // Is there a next character?
-
-                                if (i < n) {
-                                    const c2: CodeUnitType = text[i];
-
-                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
-                                        i += 1;
-
-                                        // Escape this character if UTF-8 isn't allowed
-                                        if (ascii_only_always_on_unless_minifying) {
-                                            var ptr = e.writer.reserve(12) catch unreachable;
-                                            ptr[0..12].* = [_]u8{
-                                                '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
-                                                '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
-                                            };
-                                            e.writer.advance(12);
-
-                                            continue;
-                                            // Otherwise, encode to UTF-8
-                                        }
-
-                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
-
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
-                                        continue;
-                                    }
-                                }
-
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            // Is this an unpaired low surrogate or four-digit hex escape?
-                            first_low_surrogate...last_low_surrogate => {
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            else => {
-                                if (ascii_only_always_on_unless_minifying) {
-                                    if (c > 0xFF) {
-                                        var ptr = e.writer.reserve(6) catch unreachable;
-                                        // Write an unpaired high surrogate
-                                        ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                        e.writer.advance(6);
-                                    } else {
-                                        // Can this be a two-digit hex escape?
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                    }
-                                } else {
-                                    // chars < 255 as two digit hex escape
-                                    if (c <= 0xFF) {
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                        continue;
-                                    }
-
-                                    var ptr = e.writer.reserve(4) catch return;
-                                    e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, c));
-                                }
-                            },
-                        }
-                    },
-                }
-            }
+            const writer = e.writer.stdWriter();
+            (switch (quote) {
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, .utf16),
+                else => unreachable,
+            }) catch |err| switch (err) {};
         }
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
@@ -3293,112 +3090,7 @@ fn NewPrinter(
             if (!str.isUTF8()) {
                 p.printStringCharactersUTF16(str.slice16(), c);
             } else {
-                p.printStringCharactersEStringUTF8(str.data, c);
-            }
-        }
-        pub fn printStringCharactersEStringUTF16(p: *Printer, str: []const u16, c: u8) void {
-            // A utf-16 e-string requires escaping
-            p.printStringCharactersUTF16(str, c);
-        }
-
-        // Add one outer branch so the inner loop does fewer branches
-        pub fn printStringCharactersEStringUTF8(p: *Printer, str: string, c: u8) void {
-            // A utf-8 e-string is already mostly escaped and only needs additional escapes depending on the quote char
-            switch (c) {
-                '`' => _printStringCharactersEStringUTF8(p, str, '`'),
-                '"' => _printStringCharactersEStringUTF8(p, str, '"'),
-                '\'' => _printStringCharactersEStringUTF8(p, str, '\''),
-                else => unreachable,
-            }
-        }
-
-        fn _printStringCharactersEStringUTF8(p: *Printer, str: string, comptime c: u8) void {
-            var utf8 = str;
-            var i: usize = 0;
-            // Walk the string searching for quote characters
-            // Escape any we find
-            // Skip over already-escaped strings
-            // Escape unicode in ascii_only mode
-            while (i < utf8.len) {
-                switch (utf8[i]) {
-                    '\\' => i += 2,
-                    '$' => {
-                        if (comptime c == '`') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-                            utf8 = utf8[i + 1 ..];
-                            i = 0;
-                        } else {
-                            i += 1;
-                        }
-                    },
-                    c => {
-                        p.print(utf8[0..i]);
-                        p.print("\\" ++ &[_]u8{c});
-                        utf8 = utf8[i + 1 ..];
-                        i = 0;
-                    },
-
-                    else => {
-                        if ((ascii_only and utf8[i] > last_ascii) or utf8[i] < first_ascii) {
-                            p.print(utf8[0..i]);
-                            const width = strings.wtf8ByteSequenceLengthWithInvalid(utf8[i]);
-                            const clamped_width = @min(@as(usize, width), utf8.len -| i);
-                            const codepoint = strings.decodeWTF8RuneT(
-                                &switch (clamped_width) {
-                                    // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                                    1 => .{ utf8[i], 0, 0, 0 },
-                                    2 => utf8[i..][0..2].* ++ .{ 0, 0 },
-                                    3 => utf8[i..][0..3].* ++ .{0},
-                                    4 => utf8[i..][0..4].*,
-                                    else => unreachable,
-                                },
-                                width,
-                                i32,
-                                0,
-                            );
-
-                            if (codepoint < 0xFFFF) {
-                                const k = @as(usize, @intCast(codepoint));
-
-                                p.print(&[_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[(k >> 12) & 0xF],
-                                    hex_chars[(k >> 8) & 0xF],
-                                    hex_chars[(k >> 4) & 0xF],
-                                    hex_chars[k & 0xF],
-                                });
-                            } else {
-                                const k = codepoint - 0x10000;
-                                const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                                const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
-
-                                p.print(&[_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[lo >> 12],
-                                    hex_chars[(lo >> 8) & 15],
-                                    hex_chars[(lo >> 4) & 15],
-                                    hex_chars[lo & 15],
-                                    '\\',
-                                    'u',
-                                    hex_chars[hi >> 12],
-                                    hex_chars[(hi >> 8) & 15],
-                                    hex_chars[(hi >> 4) & 15],
-                                    hex_chars[hi & 15],
-                                });
-                            }
-                            utf8 = utf8[i + clamped_width ..];
-                            i = 0;
-                        } else {
-                            i += 1;
-                        }
-                    },
-                }
-            }
-            if (utf8.len > 0) {
-                p.print(utf8);
+                p.printStringCharactersUTF8(str.data, c);
             }
         }
 
@@ -3730,7 +3422,7 @@ fn NewPrinter(
                     } else {
                         const c = bestQuoteCharForString(u16, key.slice16(), false);
                         p.print(c);
-                        p.printStringCharactersEStringUTF16(key.slice16(), c);
+                        p.printStringCharactersUTF16(key.slice16(), c);
                         p.print(c);
                     }
                 },
@@ -4914,16 +4606,15 @@ fn NewPrinter(
                 unreachable;
 
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
-            // uses EString printing because "\u1011" in an import string is the text "\\u1011" in import_record.path.text
             if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
-                p.printStringCharactersEStringUTF8(import_record.path.namespace, quote);
+                p.printStringCharactersUTF8(import_record.path.namespace, quote);
                 p.print(":");
-                p.printStringCharactersEStringUTF8(import_record.path.text, quote);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.printStringCharactersEStringUTF8(import_record.path.text, quote);
+                p.printStringCharactersUTF8(import_record.path.text, quote);
                 p.print(quote);
             }
         }

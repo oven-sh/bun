@@ -54,6 +54,12 @@ test("constant-folded equals doesn't lie", async () => {
 `,
   ).toBe(true);
   // prettier-ignore
+  expect(
+    "\a\n" ===
+      `a
+`,
+  ).toBe(true);
+  // prettier-ignore
   console.log("\"" === '"');
 });
 

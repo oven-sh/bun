@@ -11068,7 +11068,7 @@ fn NewParser_(
             if (strings.eqlComptime(name, "require") and p.lexer.token == .t_open_paren) {
                 // "import ns = require('x')"
                 try p.lexer.next();
-                const path = p.newExpr(p.lexer.toEString(), p.lexer.loc());
+                const path = p.newExpr(try p.lexer.toEString(), p.lexer.loc());
                 try p.lexer.expect(.t_string_literal);
                 try p.lexer.expect(.t_close_paren);
                 if (!opts.is_typescript_declare) {
@@ -11106,16 +11106,16 @@ fn NewParser_(
         fn parseClauseAlias(p: *P, kind: string) !string {
             const loc = p.lexer.loc();
 
-            // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154)
+            // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
             if (p.lexer.token == .t_string_literal) {
-                if (p.lexer.string_literal_is_ascii) {
-                    return p.lexer.string_literal_slice;
-                } else if (p.lexer.utf16ToStringWithValidation(p.lexer.string_literal)) |alias| {
-                    return alias;
-                } else |_| {
+                var estr = try p.lexer.toEString();
+                if (estr.isUTF8()) {
+                    return estr.slice8();
+                } else if (strings.toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(p.lexer.allocator, []const u16, estr.slice16())) |alias_utf8| {
+                    return alias_utf8;
+                } else |err| {
                     const r = p.source.rangeOfString(loc);
-                    // TODO: improve error message
-                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate (like emoji)", .{kind});
+                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate ({s})", .{ kind, @errorName(err) });
                     return p.source.textForRange(r);
                 }
             }
@@ -11789,7 +11789,7 @@ fn NewParser_(
 
                 // Parse the name
                 if (p.lexer.token == .t_string_literal) {
-                    value.name = p.lexer.toUTF8EString().data;
+                    value.name = (try p.lexer.toUTF8EString()).slice8();
                     needs_symbol = js_lexer.isIdentifier(value.name);
                 } else if (p.lexer.isIdentifierOrKeyword()) {
                     value.name = p.lexer.identifier;
@@ -12138,9 +12138,10 @@ fn NewParser_(
         }
 
         pub fn parsePath(p: *P) !ParsedPath {
+            const path_text = try p.lexer.toUTF8EString();
             var path = ParsedPath{
                 .loc = p.lexer.loc(),
-                .text = p.lexer.string_literal_slice,
+                .text = path_text.slice8(),
                 .is_macro = false,
                 .import_tag = .none,
             };
@@ -12180,11 +12181,10 @@ fn NewParser_(
                                 }
                             }
                         } else if (p.lexer.token == .t_string_literal) {
-                            if (p.lexer.string_literal_is_ascii) {
-                                inline for (comptime std.enums.values(SupportedAttribute)) |t| {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, @tagName(t))) {
-                                        break :brk t;
-                                    }
+                            const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                            inline for (comptime std.enums.values(SupportedAttribute)) |t| {
+                                if (strings.eqlComptime(string_literal_text, @tagName(t))) {
+                                    break :brk t;
                                 }
                             }
                         } else {
@@ -12198,44 +12198,43 @@ fn NewParser_(
                     try p.lexer.expect(.t_colon);
 
                     try p.lexer.expect(.t_string_literal);
-                    if (p.lexer.string_literal_is_ascii) {
-                        if (supported_attribute) |attr| {
-                            switch (attr) {
-                                .type => {
-                                    const type_attr = p.lexer.string_literal_slice;
-                                    if (strings.eqlComptime(type_attr, "macro")) {
-                                        path.is_macro = true;
-                                    } else if (strings.eqlComptime(type_attr, "sqlite")) {
-                                        path.import_tag = .with_type_sqlite;
-                                        if (has_seen_embed_true) {
-                                            path.import_tag = .with_type_sqlite_embedded;
-                                        }
-                                    } else if (strings.eqlComptime(type_attr, "json")) {
-                                        path.import_tag = .with_type_json;
-                                    } else if (strings.eqlComptime(type_attr, "toml")) {
-                                        path.import_tag = .with_type_toml;
-                                    } else if (strings.eqlComptime(type_attr, "text")) {
-                                        path.import_tag = .with_type_text;
-                                    } else if (strings.eqlComptime(type_attr, "file")) {
-                                        path.import_tag = .with_type_file;
+                    const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                    if (supported_attribute) |attr| {
+                        switch (attr) {
+                            .type => {
+                                const type_attr = string_literal_text;
+                                if (strings.eqlComptime(type_attr, "macro")) {
+                                    path.is_macro = true;
+                                } else if (strings.eqlComptime(type_attr, "sqlite")) {
+                                    path.import_tag = .with_type_sqlite;
+                                    if (has_seen_embed_true) {
+                                        path.import_tag = .with_type_sqlite_embedded;
                                     }
-                                },
-                                .embed => {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "true")) {
-                                        has_seen_embed_true = true;
-                                        if (path.import_tag == .with_type_sqlite) {
-                                            path.import_tag = .with_type_sqlite_embedded;
-                                        }
+                                } else if (strings.eqlComptime(type_attr, "json")) {
+                                    path.import_tag = .with_type_json;
+                                } else if (strings.eqlComptime(type_attr, "toml")) {
+                                    path.import_tag = .with_type_toml;
+                                } else if (strings.eqlComptime(type_attr, "text")) {
+                                    path.import_tag = .with_type_text;
+                                } else if (strings.eqlComptime(type_attr, "file")) {
+                                    path.import_tag = .with_type_file;
+                                }
+                            },
+                            .embed => {
+                                if (strings.eqlComptime(string_literal_text, "true")) {
+                                    has_seen_embed_true = true;
+                                    if (path.import_tag == .with_type_sqlite) {
+                                        path.import_tag = .with_type_sqlite_embedded;
                                     }
-                                },
-                                .bunBakeGraph => {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "ssr")) {
-                                        path.import_tag = .bake_resolve_to_ssr_graph;
-                                    } else {
-                                        try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
-                                    }
-                                },
-                            }
+                                }
+                            },
+                            .bunBakeGraph => {
+                                if (strings.eqlComptime(string_literal_text, "ssr")) {
+                                    path.import_tag = .bake_resolve_to_ssr_graph;
+                                } else {
+                                    try p.lexer.addRangeError(p.lexer.range(), "'bunBakeGraph' can only be set to 'ssr'", .{}, true);
+                                }
+                            },
                         }
                     }
 
@@ -13788,7 +13787,7 @@ fn NewParser_(
                 try p.lexer.rescanCloseBraceAsTemplateToken();
 
                 const tail: E.Template.Contents = brk: {
-                    if (!include_raw) break :brk .{ .cooked = p.lexer.toEString() };
+                    if (!include_raw) break :brk .{ .cooked = try p.lexer.toEString() };
                     break :brk .{ .raw = p.lexer.rawTemplateContents() };
                 };
 
@@ -13814,7 +13813,7 @@ fn NewParser_(
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
         pub fn parseStringLiteral(p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
-            var str = p.lexer.toEString();
+            var str = try p.lexer.toEString();
             str.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
 
             const expr = p.newExpr(str, loc);
@@ -14899,7 +14898,7 @@ fn NewParser_(
                     return try p.parseStringLiteral();
                 },
                 .t_template_head => {
-                    const head = p.lexer.toEString();
+                    const head = try p.lexer.toEString();
 
                     const parts = try p.parseTemplateParts(false);
 
@@ -15486,7 +15485,7 @@ fn NewParser_(
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token == .t_string_literal) {
                 previous_string_with_backslash_loc.start = @max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
-                const expr = p.newExpr(p.lexer.toEString(), previous_string_with_backslash_loc.*);
+                const expr = p.newExpr(try p.lexer.toEString(), previous_string_with_backslash_loc.*);
 
                 try p.lexer.nextInsideJSXElement();
                 return expr;
@@ -15622,7 +15621,7 @@ fn NewParser_(
                                 //  <div foo="foo" />
                                 // note: template literals are not supported, operations on strings are not supported either
                                 T.t_string_literal => {
-                                    const key = p.newExpr(p.lexer.toEString(), p.lexer.loc());
+                                    const key = p.newExpr(try p.lexer.toEString(), p.lexer.loc());
                                     try p.lexer.next();
                                     try props.append(G.Property{ .value = key, .key = key, .kind = .normal });
                                 },
@@ -15695,7 +15694,7 @@ fn NewParser_(
             while (true) {
                 switch (p.lexer.token) {
                     .t_string_literal => {
-                        try children.append(p.newExpr(p.lexer.toEString(), loc));
+                        try children.append(p.newExpr(try p.lexer.toEString(), loc));
                         try p.lexer.nextJSXElementChild();
                     },
                     .t_open_brace => {

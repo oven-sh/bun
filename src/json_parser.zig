@@ -193,7 +193,7 @@ fn JSONLikeParser_(
                     return newExpr(E.Null{}, loc);
                 },
                 .t_string_literal => {
-                    var str: E.String = p.lexer.toEString();
+                    var str: E.String = try p.lexer.toEString();
                     if (comptime force_utf8) {
                         str.toUTF8(p.allocator) catch unreachable;
                     }
@@ -282,9 +282,9 @@ fn JSONLikeParser_(
                         }
 
                         const str = if (comptime force_utf8)
-                            p.lexer.toUTF8EString()
+                            try p.lexer.toUTF8EString()
                         else
-                            p.lexer.toEString();
+                            try p.lexer.toEString();
 
                         const key_range = p.lexer.range();
                         const key = newExpr(str, key_range.loc);
@@ -297,7 +297,7 @@ fn JSONLikeParser_(
 
                             // Warn about duplicate keys
                             if (duplicate_get_or_put.found_existing) {
-                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{try str.string(p.allocator)}) catch unreachable;
                             }
                         }
 
@@ -419,7 +419,7 @@ pub const PackageJSONVersionChecker = struct {
                 return newExpr(E.Null{}, loc);
             },
             .t_string_literal => {
-                const str: E.String = p.lexer.toEString();
+                const str: E.String = try p.lexer.toEString();
 
                 try p.lexer.next();
                 return newExpr(str, loc);
@@ -466,7 +466,7 @@ pub const PackageJSONVersionChecker = struct {
                         }
                     }
 
-                    const str = p.lexer.toEString();
+                    const str = try p.lexer.toEString();
                     const key_range = p.lexer.range();
 
                     const key = newExpr(str, key_range.loc);

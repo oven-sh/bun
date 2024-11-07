@@ -277,6 +277,7 @@ const Socket = (function (InternalSocket) {
       const self = socket.data;
       if (!self) return;
       const callback = self.#writeCallback;
+      self.connecting = false;
       if (callback) {
         const writeChunk = self._pendingData;
         if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
@@ -555,6 +556,7 @@ const Socket = (function (InternalSocket) {
 
     #closeRawConnection() {
       const connection = this.#upgraded;
+      connection.connecting = false;
       connection._handle = null;
       connection.unref();
       connection.destroy();
@@ -998,22 +1000,22 @@ const Socket = (function (InternalSocket) {
       // If we are still connecting, then buffer this for later.
       // The Writable logic will buffer up any more writes while
       // waiting for this one to be done.
-      if (this.connecting) {
+      if (this.connecting || !this._handle) {
+        this.#writeCallback = callback;
         this._pendingData = chunk;
         this._pendingEncoding = encoding;
         function onClose() {
           callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
         }
-        const isTLS = typeof this[bunTlsSymbol] === "function";
-        this.once(isTLS ? "secureConnect" : "connect", function connect() {
+        this.once("connect", function connect() {
           this.off("close", onClose);
-          this._write(chunk, encoding, callback);
         });
         this.once("close", onClose);
         return;
       }
       this._pendingData = null;
       this._pendingEncoding = "";
+      this.#writeCallback = null;
 
       const socket = this._handle;
       if (!socket) {

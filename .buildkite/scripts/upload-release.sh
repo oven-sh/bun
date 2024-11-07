@@ -174,7 +174,6 @@ function send_bench_webhook() {
   local artifact_url="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/$artifact_path/bun-linux-x64.zip"
   local webhook_url="$BENCH_URL?tag=$tag&commit=$commit&artifact_url=$artifact_url"
   curl -X POST "$webhook_url"
-  echo "Webhook sent to: $webhook_url"
 }
 
 function create_release() {
